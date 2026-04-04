@@ -253,11 +253,11 @@ Run the same protocol and report IDR. If it drops below 0.85, benchmark construc
 | 11 | Rubric ceiling effect — dynamic range investigation | P2 | Open | None |
 | 12 | IDP=1.000 non-finding — precision signal absence | P2 | Open | #11 |
 | 13 | Ensemble metric_mismatch_002 catastrophic failure analysis | P2 | **Resolved** 2026-04-04 | None |
-| 14 | Report restructuring bundle | P2 | Open | #8, #10 |
-| 15 | Related work section | P3 | Open | None |
+| 14 | Report restructuring bundle | P2 | **Resolved** 2026-04-04 | #8, #10 |
+| 15 | Related work section | P3 | **Resolved** 2026-04-04 | None |
 | 16 | Consolidated limitations section | P3 | **Resolved** 2026-04-04 | None |
 | 17 | Convergence operationalization — define or drop | P3 | **Resolved** 2026-04-04 (defined in REPORT.md §1.2) | None |
-| 18 | Difficulty label validation | P3 | Open | None |
+| 18 | Difficulty label validation | P3 | **Resolved** 2026-04-04 (rho=-0.379 non-dw; monotonic easy>medium>hard) | None |
 
 ## Resolution Notes
 
