@@ -11,9 +11,31 @@
 
 This report evaluates the isolated self-debate protocol on a 20-case benchmark of synthetic ML reasoning tasks with known ground truth. The protocol produces two independent agent outputs per case — one adversarial (Critic) and one defensive (Defender) — which are adjudicated by a Judge. A single-pass baseline provides the comparison condition.
 
-The debate protocol achieves a benchmark aggregate mean of **0.970**, compared to **0.384** for the single-pass baseline, a lift of **+0.586**. Nineteen of twenty cases pass the per-case threshold (mean ≥ 0.65, no rubric dimension below 0.5). All three benchmark pass criteria are met. The primary hypothesis is supported. The baseline fails on 18 of 20 cases and scores 0.000 on all five false-positive critique traps.
+The debate protocol achieves a benchmark aggregate mean of **0.970** across three comparison conditions:
+
+| Condition | Score | Lift vs. debate |
+|-----------|-------|-----------------|
+| Single-pass baseline (1 call, no structure) | 0.384 | +0.586 |
+| Compute-matched ensemble (3 assessors + synthesizer, no roles) | 0.754 | +0.216 |
+| **Debate protocol** (Critic + Defender + Judge, isolated) | **0.970** | — |
+
+The reported +0.586 lift vs. single-pass reflects two structural scoring choices (DC=0.0 and DRQ≤0.5 hardcoded for the baseline) that inflate the apparent advantage. With corrections applied, the honest lift range vs. single-pass is **+0.335 to +0.441**. The lift vs. the compute-matched ensemble — the more honest measure of what adversarial role structure specifically adds — is **+0.216** (p=0.004, r=0.758). Nineteen of twenty cases pass the per-case threshold. The primary hypothesis is supported under all rubric scenarios.
 
 > **Post-experiment findings (2026-04-04):** After committing these results, adversarial review by `ml-critic` and `ml-defender` identified rubric design effects that inflate the reported lift. With corrections applied, the honest lift range is **+0.335 to +0.441** (still 3–4× the pre-registered threshold). A two-pass Defender fix resolves the sole case failure. A clean compute-matched ensemble test found that the isolation architecture is not uniquely necessary for exonerating valid work — but that the debate protocol's structural advantage in *empirical test design* is real and not replicable by parallel assessors. The §3.2 "isolation is the only mechanism" finding is qualified accordingly. See `SENSITIVITY_ANALYSIS.md` and `ENSEMBLE_ANALYSIS.md` for full post-experiment analysis.
+
+---
+
+## Related Work
+
+**Debate as an AI alignment and verification mechanism.** Irving et al. (2018) proposed AI safety via debate as an alignment strategy: two AI agents argue opposing positions before a human judge, making it costly to win by deception. Our protocol inherits the core adversarial structure but applies it to ML evaluation rather than alignment, and adds a typed resolution mechanism (`critique_wins`, `defense_wins`, `empirical_test_agreed`) that forces agreement on what constitutes a decisive test.
+
+**Multi-agent debate for LLM reasoning.** Du et al. (2023) showed that having multiple LLM instances propose and debate their answers improves factual accuracy and mathematical reasoning on standard benchmarks. Liang et al. (2023) demonstrated that debate encourages divergent thinking and reduces groupthink in LLM outputs. Our ensemble follow-on (§3.2 qualification) replicates this: multiple independent views partially counter framing bias even without adversarial role structure. The gap between our ensemble (0.754) and debate protocol (0.970) quantifies what role separation adds beyond compute budget.
+
+**Debate as verification.** Khan et al. (2024) showed that debating with more persuasive LLMs leads to more truthful answers — stronger models are more persuasive to judges because correct arguments are easier to construct. Our ETD finding is related: the adversarial forcing function produces empirically falsifiable test specifications precisely because both agents must agree on what evidence would change their position, which requires constructing valid arguments.
+
+**LLM-as-judge and self-evaluation pitfalls.** Zheng et al. (2023) identified systematic biases in LLM-as-judge evaluations (MT-Bench): position bias, verbosity bias, and self-enhancement bias. Our same-model scoring confound (Issue 5 in `tasks/open_issues.md`) is a direct instance of self-enhancement bias — the scorer and the evaluated protocol share the same model family. Cross-model scorer validation remains an open issue.
+
+**Multi-agent evaluation frameworks.** Chan et al. (2023, ChatEval) and related work on Multi-Agent Debate (MAD) frameworks use agent disagreement to improve LLM evaluation quality. Our work differs in two ways: we introduce a typed resolution mechanism that requires explicit empirical test specification rather than synthesizing a single verdict, and we evaluate against a benchmark with known ground truth rather than relying on LLM-generated quality assessments.
 
 ---
 
@@ -74,10 +96,20 @@ Defense_wins cases are false-positive critique traps: methodologically sound wor
 | Criterion | Threshold | Debate | Baseline |
 |-----------|-----------|--------|----------|
 | Benchmark mean | ≥ 0.65 | **0.970** ✓ | 0.384 ✗ |
-| Case pass fraction | ≥ 75% | **95% (19/20)** ✓ | 10% (2/20) ✗ |
+| Case pass fraction | ≥ 75% | **95% (19/20)** ✓ | 0% (0/20) ✗ |
 | Lift | ≥ +0.10 | **+0.586** ✓ | — |
 
 **Benchmark verdict: PASSES.**
+
+**Corrected benchmark criteria (DC=0.5, DRQ uncapped — most empirically grounded rubric scenario):**
+
+| Criterion | Threshold | Debate | Corrected Baseline |
+|-----------|-----------|--------|--------------------|
+| Benchmark mean | ≥ 0.65 | **0.970** ✓ | 0.529 ✗ |
+| Case pass fraction | ≥ 75% | **95% (19/20)** ✓ | 45% (9/20) ✗ |
+| Lift | ≥ +0.10 | **+0.441** ✓ | — |
+
+The formal benchmark verdict stands under all rubric scenarios. The corrected lift (+0.441) still exceeds the pre-registered threshold by 4.4×.
 
 **Statistical tests** (bootstrap CIs and paired Wilcoxon signed-rank — see `stats_analysis.py` and `stats_results.json`):
 
@@ -131,6 +163,15 @@ Both lifts are statistically significant at α = 0.05. The debate vs. baseline l
 *IDR/IDP baseline averages computed over 15 non-defense_wins cases where these dimensions apply.*
 
 The widest protocol advantage is in defense_calibration (+0.867) and final_verdict_correctness (+0.675). The baseline scores 0.000 on defense_calibration in every single case — it structurally cannot calibrate a defense because it has no defense role. IDP is tied at 1.000: both systems are precise about the issues they raise, but the baseline fails to raise the right ones (IDR 0.475 vs 1.000).
+
+**Dimension-stratified comparison** — separating dimensions where both systems have full agency from protocol-diagnostic dimensions where the baseline is structurally disadvantaged:
+
+| Group | Dimensions | Debate mean | Baseline mean | Lift |
+|-------|-----------|-------------|---------------|------|
+| Fair comparison | IDR, IDP, ETD, FVC | 1.000 | 0.683 | **+0.317** |
+| Protocol-diagnostic | DC, DRQ | 0.934 | 0.163 | +0.771 |
+
+The fair-comparison lift (+0.317) is the most defensible measure of genuine protocol reasoning advantage, uncontaminated by structural scoring choices. It still exceeds the pre-registered +0.10 threshold by 3.2×. The protocol-diagnostic lift (+0.771) is mostly a rubric artifact (DC=0.0 hardcoded for baseline) and should not be interpreted as pure reasoning quality.
 
 ### 2.4 Convergence by Difficulty
 
@@ -201,6 +242,8 @@ Both cases still pass (0.833 mean, no floor violations). The protocol produces c
 The expected finding was that hard cases would show lower convergence because secondary issues are harder to identify independently. The observed result is the opposite: convergence by difficulty is easy=0.833, medium=0.944, hard=0.938.
 
 The resolution: the easy convergence decrement is entirely driven by defense_wins failures (defense_wins_003 has conv=0.5), not by issue discovery difficulty. When we examine only the non-defense_wins cases, hard cases show convergence 1.0 in all 8 instances — the planted confounds in hard cases were independently found by both agents. The difficulty categorization reflects reasoning depth required to evaluate the claim, not how easily the primary flaw is identified. The hard confounding cases have clear, identifiable flaws that both agents find independently. The easy defense_wins_003 case involves a calibration judgment about how to label an acknowledged caveat — which is subtler than identifying a flaw.
+
+**Difficulty label validation.** Difficulty labels are author-assigned. As an independent check, `difficulty_validation.py` computes Spearman rank correlation between difficulty (easy=1, medium=2, hard=3) and baseline scores (harder cases should be harder for the single-pass baseline too). Results: rho = −0.038 across all 20 cases; rho = −0.379 excluding defense_wins cases (baseline scores 0.0 by structural construction on all defense_wins cases regardless of difficulty, confounding the analysis). The non-defense_wins rho (−0.379) and monotonic pattern — easy (0.634) > medium (0.528) > hard (0.464) — provides directional validation that labels are a reasonable proxy for task difficulty. Labels should still be treated as "intended difficulty" rather than objectively calibrated; see `difficulty_validation_results.json`.
 
 ---
 
@@ -287,6 +330,8 @@ All experimental artifacts are in `/self_debate_experiment_v2/`:
 | `clean_ensemble_results.json` | Per-case ensemble scores — clean two-phase run |
 | `stats_analysis.py` | Bootstrap CIs and paired Wilcoxon tests on per-case deltas |
 | `stats_results.json` | Output of stats_analysis.py: CIs, p-values, effect sizes |
+| `difficulty_validation.py` | Spearman correlation between difficulty labels and baseline scores |
+| `difficulty_validation_results.json` | Output of difficulty_validation.py |
 | `REPORT.md` | This document |
 
 ---

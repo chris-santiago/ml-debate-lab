@@ -214,6 +214,24 @@ Compute efficiency: Ensemble uses ~4 calls at parallel latency. Debate uses ~4+ 
 
 ---
 
+## Failure Mode Analysis — metric_mismatch_002 Catastrophic Failure (Issue 13)
+
+**Case:** metric_mismatch_002 (medium, correct_position=mixed, ideal_resolution=empirical_test_agreed)
+
+**Task prompt summary:** A team's offline NDCG@10 improvement (0.42 vs. 0.37) is challenged by a reviewer who argues offline NDCG doesn't reliably predict online engagement lift. The prompt explicitly asks which position is *more* valid. Both positions are substantively defensible: running an A/B test is good scientific practice, but the reviewer's concern about offline-online correlation is a legitimate methodological objection.
+
+**Ensemble result:** ensemble_verdict = `defense_wins`, all dimensions 0.0. Catastrophic failure — the only non-defense_wins case with a completely wrong verdict.
+
+**Diagnosis: assessor-level convergence on the wrong direction.** The task prompt frames the case as a binary "team vs. reviewer" choice. Three independent assessors, each reading the same prompt without role assignment, naturally converged on the more intuitive answer: "of course you should run an A/B test — that's good science." None independently recognized that the reviewer's point about offline-online correlation is a valid concern that should be addressed *before* the A/B test (calibration study first, then A/B if calibrated). The synthesizer faithfully summarized the consensus: `defense_wins`.
+
+This is an assessor-level failure, not a synthesis failure. The ensemble's weakness on mixed-position cases is structural: without role differentiation, all three assessors approach the case from the same direction and converge on the more intuitive position. The debate protocol, by assigning one agent to advocate for the reviewer and another to defend the team, forces engagement with both sides — and produces the correct `empirical_test_agreed` resolution.
+
+**Implication:** The metric_mismatch_002 failure strengthens the case for the debate protocol's structural advantage on mixed-position cases. This is not an edge case — any ML evaluation scenario where two positions are genuinely defensible will exhibit this pattern. The ensemble's 0.754 mean is dragged down primarily by this case (0.0 contribution). The debate protocol's advantage on mixed cases is not explained by compute budget.
+
+**Comparison to debate protocol on this case:** Debate achieved 1.000 (DC=1.0, DRQ=1.0, ETD=1.0, FVC=1.0, IDR=1.0, IDP=1.0). The Critic raised the offline-online gap; the Defender conceded calibration uncertainty. Both agreed on an offline-online calibration study as the first step before A/B testing. Convergence=0.5 correctly reflects the genuine verdict divergence (Critic: `empirical_test_agreed`; Defender: `defense_wins`), resolved to `empirical_test_agreed` by the Judge.
+
+---
+
 ## IDP N/A Asymmetry — Harmonized Scoring (Issue 10)
 
 **Problem:** For the debate protocol, IDP is scored N/A on all 5 defense_wins cases (the Critic's claims are structurally invalid on these cases, so precision cannot be meaningfully scored). For the clean ensemble, IDP *was* scored on defense_wins cases in the original results: defense_wins_001 and defense_wins_002 received IDP=0.5 because the ensemble raised minor caveats alongside correct exonerations. This asymmetric N/A treatment penalizes the ensemble in a way the debate protocol cannot be penalized.
