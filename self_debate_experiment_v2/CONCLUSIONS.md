@@ -282,6 +282,8 @@ Both independently identified sku_mix_confound and year_over_year_comparison_wit
 
 **Debate benchmark: PASSES. Baseline benchmark: FAILS.**
 
+> **Statistical significance (2026-04-04):** Bootstrap CIs (10,000 resamples, 95%) and paired Wilcoxon signed-rank tests confirm both lifts are statistically significant. Debate vs. baseline: lift +0.586 [CI: 0.486–0.691], p = 0.000082, r = 1.0 (debate outperforms baseline on every single case). Debate vs. compute-matched ensemble: lift +0.216 [CI: 0.098–0.352], p = 0.004, r = 0.758. See `stats_analysis.py` and `stats_results.json`.
+
 > **Correction (2026-04-04):** The `baseline_pass_count = 2` figure above is incorrect. The two cases reported as passing (`broken_baseline_001`, `metric_mismatch_002`) have DC=0.0 stored in their baseline scores, which fails the per-dimension floor check (all applicable dimensions ≥ 0.5). The pass flags appear to have been set before the DC=0.0 structural override was applied. With DC=0.0 enforced consistently, the correct baseline pass count is **0/20 (0%)**. See `SENSITIVITY_ANALYSIS.md` for full analysis.
 
 ---
