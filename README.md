@@ -23,7 +23,7 @@ To make the comparison meaningful, we needed cases with known correct answers. W
 - A fine-tuned model beating zero-shot, with the team concluding their architecture is superior (the real cause: training regime difference)
 - Methodologically *sound* work, presented under adversarial framing — to test whether the protocol would wrongly condemn it
 
-Pass criteria were set before running anything: benchmark mean ≥ 0.65, ≥ 75% of cases pass, lift ≥ +0.10 over baseline.
+Pass criteria were set before running anything: benchmark mean ≥ 0.65, ≥ 75% of cases pass, lift ≥ +0.10 over baseline. The benchmark has 20 cases — enough to support bootstrap CIs and a paired Wilcoxon test on the primary comparison, but too small for subgroup analysis (the n=5 exoneration finding, for example, is below conventional statistical thresholds). Expanding the benchmark is a known limitation; each case requires authoring, independent verification, and a ground-truth label, which makes them expensive to produce.
 
 ---
 
@@ -31,7 +31,9 @@ Pass criteria were set before running anything: benchmark mean ≥ 0.65, ≥ 75%
 
 **Debate protocol: 0.970. Single-pass baseline: 0.384. Honest corrected lift: +0.335 to +0.441.**
 
-The protocol cleared every pre-registered benchmark criterion. 19 of 20 cases passed; the pre-specified lift threshold of +0.10 was exceeded by 3–4×. (The raw gap of +0.586 is inflated by two rubric choices that mechanically penalize the baseline — DC hardcoded to 0.0, DRQ capped at 0.5 — both confirmed binding by post-experiment adversarial review. The corrected range is the honest number.)
+The protocol cleared every pre-registered benchmark criterion. 19 of 20 cases passed; the pre-specified lift threshold of +0.10 was exceeded by 3–4×.
+
+A note on the raw gap of +0.586: two rubric dimensions score structurally differently for the debate vs. baseline. Defense Calibration (DC) measures whether the correct verdict was reached *via a defense role* — the baseline has no Defender, so it scores 0.0 on DC by design, not because it reasoned poorly. Debate Resolution Quality (DRQ) similarly measures whether positions were resolved through exchange; a single-pass system is capped at 0.5. These aren't thumb-on-the-scale choices — they reflect real structural differences — but they do inflate the raw gap. Recomputing with DC=0.5 and DRQ uncapped for the baseline gives the honest corrected lift of **+0.335 to +0.441**, confirmed by post-experiment adversarial review. That's the number we use when comparing reasoning quality rather than structural completeness.
 
 We ran two baselines to understand where the lift actually comes from:
 
@@ -59,7 +61,9 @@ The clearest illustration is the five *false-positive critique traps* — valid 
 
 > **Statistics:** Bootstrap CIs (10,000 resamples) and paired Wilcoxon signed-rank tests. Debate vs. baseline: +0.586 [95% CI: 0.486–0.691], p < 0.0001, r = 1.0 — debate outperforms baseline on every single case. Debate vs. ensemble: +0.216 [95% CI: 0.098–0.352], p = 0.004, r = 0.758. Both effects are statistically significant. See [`stats_results.json`](self_debate_experiment_v2/stats_results.json) and [`SENSITIVITY_ANALYSIS.md`](self_debate_experiment_v2/SENSITIVITY_ANALYSIS.md).
 
-> **External validity:** A 10-case benchmark from published ML evaluation failures (Dacrema 2019, Obermeyer 2019, DeGrave 2021, and others — external ground truth, no designer involvement) confirmed debate IDR = 0.95, meeting the ≥ 0.85 pre-specified threshold. A separate external exoneration benchmark tested the defense_wins finding on 3 cases from peer-reviewed ML work (BERT/SQuAD 1.1, ResNet-152/ImageNet, clinical 5-fold CV) — debate 3/3 pass, baseline 0/3 rubric pass / 3/3 correct verdict label. Exoneration finding holds externally. ETD advantage is confirmed as a prompt design effect (not architecture) by ablation. See [`external_benchmark/`](external_benchmark/) and [`self_debate_experiment_v2/external_exoneration_results.json`](self_debate_experiment_v2/external_exoneration_results.json).
+> **External validity (two separate benchmarks, testing different things):**
+> - *Fault detection (IDR):* 10 cases drawn from published ML evaluation failures (Dacrema 2019, Obermeyer 2019, DeGrave 2021, and others) — real papers with real flaws, ground truth from the published record, no designer involvement in case construction. Tests whether the protocol finds issues it wasn't designed around. Result: debate IDR = 0.95, meeting the ≥ 0.85 pre-specified threshold. The ensemble was not re-run on these cases; this benchmark specifically validates issue detection, not the full scoring rubric. See [`external_benchmark/`](external_benchmark/).
+> - *Exoneration (defense_wins):* 3 cases from peer-reviewed ML work (BERT/SQuAD 1.1, ResNet-152/ImageNet, clinical 5-fold CV) where a critique *could* be raised but the methodology is genuinely sound. Tests whether the protocol avoids wrongly condemning valid work when external ground truth says it's correct. Result: debate 3/3 pass (mean 0.875); baseline 0/3 rubric pass (DC=0.0 structural rule) but 3/3 correct verdict label. Note: critics raised plausible-but-wrong concerns (IDP=0.5) on all 3 external cases — the "clean exoneration" tendency observed on 3/5 internal cases did not replicate. See [`self_debate_experiment_v2/external_exoneration_results.json`](self_debate_experiment_v2/external_exoneration_results.json).
 
 One case failed: a healthcare triage scenario where the Defender correctly identified all critical flaws in its analysis but then labeled the verdict "the work is valid." Correct reasoning, wrong label — a calibration failure in output structure, not a reasoning failure. Fixed by a two-pass Defender prompt (analysis before verdict selection). See [`agents/ml-defender.md`](agents/ml-defender.md).
 
@@ -69,7 +73,9 @@ Full results, per-case scores, and post-experiment analyses are in [`self_debate
 
 ## The Agent Under Test
 
-The deeper object being evaluated here is the **`ml-lab` agent** — a Claude Code subagent that runs a structured 9-step ML hypothesis investigation workflow.
+Two things are distinct here: the **self-debate protocol** (the evaluation method — Critic, Defender, Judge) and **`ml-lab`** (the agent that *uses* that protocol as one step in a broader workflow). The experiment benchmarks the debate protocol directly. ml-lab is what packages it for real use.
+
+`ml-lab` is a Claude Code subagent that runs a structured 9-step ML hypothesis investigation workflow: (1) sharpen the hypothesis into a falsifiable claim, (2) agree on metrics and pass criteria before any code runs, (3) build a minimal PoC, (4) adversarial critique, (5) point-by-point defense, (6) multi-round debate until each contested point resolves or both sides agree on an empirical test, (7) run only the agreed experiments, (8) evidence-informed re-critique if findings are surprising, (9) production re-evaluation against operational constraints.
 
 The workflow is designed for rigor over speed. Given a hypothesis, `ml-lab` first sharpens it into a falsifiable claim with agreed metrics, then builds a minimal runnable PoC. From there it branches into two adversarial subagents with distinct mandates:
 
@@ -82,6 +88,8 @@ The self-debate protocol was chosen as the domain for a specific reason: it's te
 
 The self-debate experiment is, in that sense, `ml-lab` investigating itself — the protocol is both the tool and the subject.
 
+**To use ml-lab on your own hypotheses:** install the agent definitions from [`agents/`](agents/) into your Claude Code environment. See [`agents/README.md`](agents/README.md) for installation instructions and an interaction diagram. Each debate run makes ~4–6 sequential LLM calls (Critic → Defender → Judge → optional re-critique); expect roughly the latency and cost of 4–6 standard Claude API calls per case.
+
 ---
 
 ## How the Experiment Was Built
@@ -92,7 +100,7 @@ The experiment ran in two phases.
 
 One important detail: in Phase 1, the debate transcripts were generated by Claude agents during the authoring session, then embedded as hardcoded data in the Python scripts. Re-running the script replays static text — it doesn't re-invoke the LLM. This was intentional: the point was to build and score the protocol, not to build a live inference pipeline.
 
-Phase 1 identified two open problems. First, a rubric gap: `issue_discovery_precision` was undefined for cases where the Critique's premise was intentionally false — you can't measure "fraction of valid claims" when all claims are supposed to be invalid. Second, the contaminated protocol (Defense reads Critique before responding) made genuine `defense_wins` verdicts structurally impossible.
+Phase 1 identified two open problems — which is the reason it's included rather than skipped. First, a rubric gap: `issue_discovery_precision` was undefined for cases where the Critique's premise was intentionally false — you can't measure "fraction of valid claims" when all claims are supposed to be invalid. Second, the contaminated protocol (Defense reads Critique before responding) made genuine `defense_wins` verdicts structurally impossible: the Defender was reacting to the Critic's framing rather than forming an independent view, so a "defense wins" outcome could never be a clean signal.
 
 **Phase 2** (`self_debate_experiment_v2/`) fixed both. The rubric was extended with a redefined IDP dimension for `defense_wins` cases. The Defense was fully isolated — it receives only the original scenario, never the Critic's output. And critically, Phase 2's transcripts were generated through the full `ml-lab` workflow: each agent role (Critique, Defense, Judge, Scorer, Baseline) was dispatched as an isolated subagent via Claude Code, producing genuinely independent outputs before they were embedded in the script. This directly tested whether the structured investigation process produced correct verdicts when run end-to-end. It did, and then some.
 
@@ -156,6 +164,8 @@ python self_debate_experiment2.py  # Experiment 2: isolated protocol, 15 cases
 ```
 
 Standard library only. No dependencies beyond Python 3.8+.
+
+**Model used:** All Phase 2 agent dispatches (Critic, Defender, Judge, Baseline, Scorer) used `claude-sonnet-4-6`. Results are tied to this model family — a different model or significantly different capability tier would require re-running the benchmark to confirm findings hold.
 
 **Running the full multi-agent harness from scratch:**
 
