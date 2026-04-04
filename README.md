@@ -29,9 +29,11 @@ Pass criteria were set before running anything: benchmark mean ≥ 0.65, ≥ 75%
 
 ## What We Found
 
-**Debate protocol: 0.97 out of 1.0. Single-pass baseline: 0.38. Lift: +0.59.**
+**Debate protocol: 0.97 out of 1.0. Single-pass baseline: 0.38. Reported lift: +0.59.**
 
 The threshold we set in advance to call the experiment a success was +0.10. We exceeded it by nearly 6×. 19 of 20 cases passed.
+
+> **Post-experiment adversarial review (2026-04-04):** After running `ml-critic` and `ml-defender` against the experiment's own findings, two rubric design choices were found to mechanically depress the baseline score: DC hardcoded to 0.0 and DRQ capped at 0.5 for all baseline cases. The DRQ cap was confirmed binding on all 9 affected cases — the baseline correctly identified the resolution type in every case, but received no credit. The honest lift range, accounting for these rubric effects, is **+0.335 to +0.441**. The protocol still clears the +0.10 threshold by 3–4×, and the defense_wins finding is unaffected. See [`SENSITIVITY_ANALYSIS.md`](self_debate_experiment_v2/SENSITIVITY_ANALYSIS.md) for full analysis and corrective actions taken.
 
 The most interesting result came from five cases that were *false-positive critique traps* — valid work, correctly designed, presented under adversarial framing. The baseline scored **0.000** on all five. It accepted the adversarial premise and condemned work that was actually fine. The debate protocol got all five correct.
 

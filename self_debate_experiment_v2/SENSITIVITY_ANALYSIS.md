@@ -7,16 +7,37 @@
 
 ## TL;DR
 
-We ran the ml-critic and ml-defender agents against the v2 experiment's own findings. The critic identified two rubric choices that mechanically depress the baseline score before any measurement of the baseline's outputs occurs. We confirmed both choices are hardcoded in the scoring script and ran a sensitivity analysis from the existing results JSON.
+We ran `ml-critic` and `ml-defender` against the v2 experiment's own findings — the protocol evaluating itself. Three flaws were identified, investigated, and resolved. One remains open (Issue 1: ensemble baseline).
 
-**What we found:**
-- The +0.586 reported lift includes a rubric design contribution that cannot currently be separated from genuine protocol reasoning advantage
-- At a conservative alternative (DC=0.5 instead of DC=0.0), the lift drops to **+0.480** — still 4.8× the pre-registered +0.10 threshold, still a clear win
-- The defense_wins finding (baseline scores 0.000 on all 5 exoneration cases) is **not affected** by the rubric choices — it holds under any DC assumption
-- Two of the "baseline passes" reported in the JSON are inconsistent: those cases have DC=0.0 stored, which fails the per-dimension floor check — the pass flags appear to have been set before the override was applied
-- The DRQ cap effect cannot be quantified: the raw transcript file (`self_debate_transcripts.py`) is missing
+### Flaws Found
 
-**Bottom line:** The protocol's advantage over single-pass reasoning is real and large. The precise magnitude is rubric-dependent. Five follow-on experiments are needed to establish how much of the lift is attributable to the debate structure vs. compute budget, rubric design, and benchmark construction choices.
+| # | Flaw | Where | Severity |
+|---|------|-------|----------|
+| A | DC hardcoded to 0.0 for all baseline cases regardless of output | `self_debate_poc.py` line 142 | High — affects all 20 cases |
+| B | DRQ capped at 0.5 for all baseline cases, even when baseline identified correct resolution type | `self_debate_poc.py` lines 143–144 | High — binding on all 9 DRQ=0.5 cases |
+| C | Baseline pass flags set before DC override applied — 2 reported passes are wrong | `self_debate_results.json` | Medium — cosmetic but incorrect |
+| D | Reasoning/label disconnect in ml-defender: correct analysis, wrong verdict label | `ml-defender` prompt | High — caused sole case failure |
+
+### Corrective Actions Taken
+
+| # | Action | Status |
+|---|--------|--------|
+| A | Quantified via sensitivity analysis; cannot retroactively change without rerun | Documented |
+| B | Re-scored all 9 DRQ=0.5 cases using original benchmark prompts; confirmed natural DRQ=1.0 in all 9 | Resolved |
+| C | Correction note added to `CONCLUSIONS.md`; JSON fix deferred to Issue 1 rerun | Resolved |
+| D | Two-pass structure added to `ml-defender` prompt (both reference copy and live agent) | Resolved |
+
+### Before / After: Key Numbers
+
+| Metric | Before (reported) | After (corrected) |
+|--------|-------------------|-------------------|
+| Headline lift | **+0.586** | Honest range: **+0.335 to +0.441** |
+| Baseline mean | 0.384 | 0.490–0.635 depending on rubric assumptions |
+| Baseline passes | 2/20 (10%) | 0/20 with DC=0.0; 8–9/20 with DC=0.5 |
+| real_world_framing_001 DC | 0.0 (wrong verdict label) | 1.0 (correct verdict with two-pass fix) |
+| defense_wins_003/005 DC | 0.5 (under-confident) | 1.0 (correct verdict with two-pass fix) |
+
+**What does not change:** The defense_wins finding is unaffected. Baseline scores 0.0 on all 5 exoneration cases under all rubric scenarios — that is genuine protocol failure, not a rubric artifact. The protocol's fundamental advantage is real; the precise magnitude is rubric-dependent.
 
 ---
 
