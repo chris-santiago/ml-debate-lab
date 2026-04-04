@@ -105,7 +105,7 @@ Run the same protocol and report IDR. If it drops below 0.85, benchmark construc
 
 | # | Issue | Priority | Status | Blocking |
 |---|-------|----------|--------|---------|
-| 1 | Budget-matched ensemble baseline | P1 | Open | Core lift claim |
+| 1 | Budget-matched ensemble baseline | P1 | **Partially resolved** 2026-04-04 (non-defense_wins compute confound established; defense_wins test contaminated — clean re-run required) | Core lift claim |
 | 2 | Recover/recompute raw DRQ scores | P1 | **Resolved** 2026-04-04 | — |
 | 3 | Fix stale baseline pass flags | P1 | **Resolved** 2026-04-04 (noted in CONCLUSIONS.md; full JSON rerun pending #1) | #1 |
 | 4 | Two-pass Defender fix + retest | P2 | **Resolved** 2026-04-04 | — |
@@ -124,3 +124,9 @@ Run the same protocol and report IDR. If it drops below 0.85, benchmark construc
 - `defense_wins_003`: held at `defense_wins` (correct). DC=1.0.
 - `defense_wins_005`: held at `defense_wins` (correct). DC=1.0.
 Fix is confirmed tractable. Change should be merged into `~/.claude/agents/ml-defender.md`.
+
+**Issue 1 (2026-04-04 — partial):** Compute-matched ensemble baseline run across all 20 cases (3 assessors + 1 synthesizer per case, no DC/DRQ structural overrides). Results: `ensemble_results.json`, full analysis in `ENSEMBLE_ANALYSIS.md`.
+
+- **Non-defense_wins (15 cases):** Ensemble scored 1.000 (15/15 passes) vs. debate 0.982 (15/15 passes). Ensemble matches or exceeds debate at ceiling. Compute confound hypothesis **confirmed** for non-defense_wins cases — additional compute budget alone achieves ceiling performance without adversarial role structure.
+- **Defense_wins (5 cases):** Results are **contaminated**. Agent prompts included an explicit "correct analysis" section coaching assessors toward the defense_wins verdict before independent analysis. Cannot conclude from these results whether a clean ensemble would exonerate valid work. Isolation mechanism hypothesis remains untested.
+- **Required follow-on:** Re-run 5 defense_wins cases with assessors receiving only the task prompt (no coaching), scorer receiving must-find labels separately. Pre-specified criteria: ≥3/5 ensemble DC≥0.5 → compute explains defense_wins; 0/5 → isolation architecture is load-bearing.
