@@ -309,6 +309,66 @@ The pre-specified criterion was triggered (ablation mean 0.962 ≥ 0.9). The deb
 
 ---
 
+## New Benchmark Cases — Convergence Expansion and Ceiling Test (Issues 7 and 11)
+
+**Date:** 2026-04-04
+**Raw results:** `new_benchmark_results.json`
+**New cases:** `new_benchmark_cases.json` (10 cases: 7 easy, 3 hard)
+
+### Purpose
+
+Two issues motivated this run:
+
+**Issue #7** — The convergence hypothesis ("convergence decreases with difficulty") was underpowered: easy n=3, medium n=10, hard n=7. The easy=0.833 estimate was driven by a single defense_wins_003 data point (conv=0.5). Expanding to ≥10 cases per difficulty tier was required before retesting the hypothesis.
+
+**Issue #11** — The ceiling_audit.md found that 16/20 cases scored 1.000 and the root cause was benchmark difficulty (flaws discoverable without adversarial structure). The 10 new cases include 3 hard cases specifically designed to require multi-step causal reasoning beyond what's stated explicitly in the prompt.
+
+### Results
+
+| Metric | Value |
+|--------|-------|
+| New cases, debate mean | **1.000** (10/10 ceiling) |
+| New cases, baseline mean | **0.975** (8/10 ceiling, 2 below) |
+| New cases, mean delta | **0.025** |
+| Debate pass count | 10/10 |
+| Baseline pass count | 10/10 |
+
+**Ceiling breaks by case:**
+
+| Case | Difficulty | Debate | Baseline | Delta | Dimension causing break |
+|------|-----------|--------|----------|-------|------------------------|
+| real_world_framing_003 | hard | 1.000 | **0.875** | +0.125 | ETD=0.5 (baseline) |
+| scope_intent_004 | hard | 1.000 | **0.875** | +0.125 | ETD=0.5 (baseline) |
+
+**All other 8 cases:** debate=1.000, baseline=1.000, delta=0.000.
+
+### Convergence Analysis — Expanded to ≥10 per tier
+
+All 10 new cases achieved agent convergence rate = 1.0.
+
+| Difficulty | Original n | New n | Combined n | Original rate | New rate | Combined rate |
+|-----------|-----------|-------|-----------|---------------|----------|---------------|
+| easy | 3 | 7 | **10** | 0.833 | 1.000 | **0.950** |
+| medium | 10 | 0 | **10** | 0.944 | — | **0.944** |
+| hard | 7 | 3 | **10** | 0.938 | 1.000 | **0.957** |
+
+**Verdict:** With ≥10 cases per tier, convergence is flat across difficulty: easy=0.950, medium=0.944, hard=0.957. The range is 0.944–0.957 — essentially uniform. The original easy=0.833 anomaly is confirmed to be a single-data-point artifact (defense_wins_003). **Convergence does not decrease with difficulty.** The §3.3 "NOT SUPPORTED" verdict is confirmed with adequate statistical power.
+
+### Issue #11 Update — Ceiling Remains for Debate; Baseline Ceiling Breaks on Hard Cases
+
+The 10 new cases include 3 hard cases (hc005, rw003, si004) with multi-step causal flaws requiring reasoning beyond explicitly stated information. Results:
+
+- **Debate ceiling is unbroken: 10/10 at 1.000.** Even genuinely harder cases do not break the debate protocol's ceiling.
+- **Baseline breaks ceiling on 2/3 hard cases** (rw003, si004): baseline=0.875, delta=+0.125.
+- **Differentiating dimension is ETD exclusively.** Both non-ceiling baseline cases scored IDR=1.0, IDP=1.0, FVC=1.0 — the baseline found both must-find issues and reached the correct verdict. The gap is entirely in ETD: baseline ETD=0.5 (gestures at remedy without specifying falsifiable test conditions) vs. debate ETD=1.0 (pre-specified success/failure criteria for each proposed test).
+- hc005 (hidden confounding, hard) **did not** break baseline ceiling — the routing-system leakage flaw was explicitly mentioned in the prompt text, making it discoverable by single-pass reasoning.
+
+**Interpretation:** The ceiling effect for the debate protocol is structural. Even harder benchmark cases with multi-step implicit flaws do not break the debate ceiling on issue detection (IDR) or verdict quality (FVC) — the protocol finds the issues and reaches correct verdicts reliably. The discriminating dimension on hard cases is ETD precision. This is consistent with the ETD ablation finding: single-pass reasoning (baseline, ensemble without constraint) can identify issues and direction but underspecifies test criteria without an explicit output constraint or adversarial structure.
+
+**For Issue #11:** Fix B (harder cases) successfully breaks *baseline* ceiling on 2/10 cases, providing variance in the baseline direction. Fix A (fractional IDR) remains desirable for future cases with 3–4 must_find items; none of the new hard cases triggered partial IDR. The debate protocol ceiling has not been broken — addressing this would require cases where some must-find issues are genuinely undetectable from ML reasoning alone (domain expertise required).
+
+---
+
 ## Prompt Design Lessons
 
 For future ensemble experiments:

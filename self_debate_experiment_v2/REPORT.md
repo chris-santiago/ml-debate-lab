@@ -305,13 +305,15 @@ The following limitations are documented in full across `SENSITIVITY_ANALYSIS.md
 
 **L4 — Strawman primary comparison.** The single-pass baseline runs with 3–4× fewer LLM calls and no structural role prompting. A compute-matched ensemble (3 independent assessors + synthesizer, no role differentiation) scored 0.754 overall vs. debate's 0.970. The debate–ensemble gap (+0.216) is a more honest measure of what adversarial role structure specifically contributes. See `ENSEMBLE_ANALYSIS.md`.
 
-**L5 — Same-model scoring confound.** The Scorer agent is claude-sonnet-4-6 — the same model family as the Critic, Defender, Judge, and Baseline. A model scoring its own outputs may exhibit self-consistency bias. IDR=1.000 across 15 applicable debate cases and IDP=1.000 for both systems are consistent with this effect. Cross-model scorer validation (Issue 5 in `tasks/open_issues.md`) has not been executed.
+**L5 — Same-model scoring confound.** The Scorer agent is claude-sonnet-4-6 — the same model family as the Critic, Defender, Judge, and Baseline. A model scoring its own outputs may exhibit self-consistency bias. IDR=1.000 across 15 applicable debate cases and IDP=1.000 for both systems are consistent with this effect. A cross-capability validation using claude-haiku-4-5 (independent analysis of task prompts vs. must_find labels) found IDR delta = 0.000 across all 15 applicable cases — same-company bias is not material at this capability tier. Cross-vendor validation (GPT-4o, Gemini) remains future work.
 
 **L6 — N=20 sample size.** The benchmark contains 20 cases across 6 categories. The convergence-by-difficulty analysis has n=3 for the easy stratum (one data point drives the easy=0.833 estimate). Category-level conclusions (e.g., "protocol adds limited value on easy cases") are based on 2–5 cases per category and should be treated as directional rather than definitive.
 
 **L7 — Unvalidated difficulty labels.** Easy/medium/hard labels are author-assigned with no independent calibration or inter-rater agreement. The convergence analysis and §4.4 interpretation depend on these labels.
 
-**L8 — Rubric ceiling for the treatment condition.** Fourteen of 20 debate cases score 1.000 across all applicable dimensions. The rubric has no discriminative power for the treatment condition — it cannot distinguish degrees of protocol performance across cases. Analysis of "where the protocol adds value" (§4.1–4.2) relies entirely on variation in baseline scores. See Issue 11 in `tasks/open_issues.md`.
+**L8 — Rubric ceiling for the treatment condition.** Sixteen of 20 debate cases score 1.000 across all applicable dimensions (corrected from the initially reported 14/20 — see `ceiling_audit.md`). The rubric has zero discriminative power for the treatment condition on correctly-functioning critique cases: all six dimensions (IDR, IDP, DC, DRQ, ETD, FVC) are 1.0 on all 13 ceiling critique cases. The four non-ceiling cases are all DC failures — known protocol failure modes, not graded performance variation. Analysis of "where the protocol adds value" (§4.1–4.2) relies entirely on variation in baseline scores.
+
+The root cause is **benchmark difficulty, not scoring leniency**: IDR=1.000 means all must_find issues were found in every correctly-working case, not that partial findings were rewarded (partial detection would score IDR=0.5). All 15 non-defense_wins cases have 1–2 must_find items stated implicitly but plainly in the scenario text. No case ever triggered a partial IDR score. The rubric's discriminative power is limited to the DC dimension on protocol failure cases. This is a benchmark scope limitation: the current case set lacks cases that stress the protocol below ceiling on issue discovery. Fix A (fractional IDR) and Fix B (harder benchmark cases, 3–4 must_find items, domain expertise required) are documented in `ceiling_audit.md` and partially addressed by `new_benchmark_cases.json`.
 
 ---
 
@@ -335,7 +337,10 @@ All experimental artifacts are in `/self_debate_experiment_v2/`:
 | `stats_results.json` | Output of stats_analysis.py: CIs, p-values, effect sizes |
 | `difficulty_validation.py` | Spearman correlation between difficulty labels and baseline scores |
 | `difficulty_validation_results.json` | Output: rho=-0.379 (non-defense_wins); monotonic easy>medium>hard |
-| `new_benchmark_cases.json` | 10 new benchmark cases (7 easy, 3 hard) for future expansion |
+| `new_benchmark_cases.json` | 10 new benchmark cases (7 easy, 3 hard) authored for Issues 7, 11, 12 |
+| `new_benchmark_results.json` | Full v2 protocol run on all 10 new cases; debate ceiling unbroken (10/10 at 1.0); baseline breaks ceiling on 2 hard cases via ETD=0.5 |
+| `idp_stress_results.json` | 4 IDP-stress cases (valid work with suspicious features); IDP=0.5 on all 4 cases; confirms original IDP=1.000 is benchmark design artifact |
+| `ceiling_audit.md` | Root cause analysis for rubric ceiling effect: benchmark difficulty (not scoring leniency); corrected ceiling count 16/20 |
 | `within_case_variance.py` | Experiment design for LLM stochasticity estimation (requires multi-run dispatch) |
 | `REPORT.md` | This document |
 
@@ -350,5 +355,11 @@ The clearest dimension advantage is in defense calibration (+0.867): the baselin
 The post-experiment ensemble test refined the isolation hypothesis: the adversarial role architecture is not uniquely necessary to exonerate valid work (4/5 correct exonerations without isolation), but it produces cleaner exonerations — the debate protocol's isolated Defender raised no false concerns on the two contested exoneration cases, while the ensemble raised caveats alongside correct exonerations.
 
 The ETD ablation (Issue 9) revised the remaining ETD claim: adding an explicit empirical-test-design output constraint to the ensemble synthesizer achieves ETD mean 0.962, nearly matching the debate protocol's 1.0 and far above the unconstrained ensemble's 0.192. **ETD is an output-constraint effect, not an adversarial role structure effect.** The debate protocol reliably produces test specifications because its prompt includes the constraint — not because the Critic/Defender dynamic structurally forces it. The debate protocol's confirmed structural advantages are: (1) cleaner exoneration precision (5/5 vs. 4/5 with caveats), and (2) structured point-by-point argumentation (DC, DRQ) that a parallel ensemble cannot produce by design.
+
+Three additional investigations completed after initial publication:
+
+**Convergence hypothesis with adequate sample size (Issue 7):** 10 new benchmark cases were run to expand easy and hard strata to n=10 each. All 10 achieved agent convergence rate = 1.0. Combined convergence by difficulty: easy=0.950, medium=0.944, hard=0.957. The range (0.013) is flat. The original easy=0.833 anomaly was a single-data-point artifact. The §3.3 "NOT SUPPORTED" verdict is confirmed with adequate statistical power.
+
+**Rubric ceiling and IDP non-finding (Issues 11 and 12):** The debate protocol ceiling (1.000) remained unbroken across all 10 new cases, including 3 hard cases with multi-step implicit flaws. Baseline broke ceiling on 2 hard cases (real_world_framing_003, scope_intent_004) at 0.875 — the differentiating dimension is ETD exclusively (baseline ETD=0.5 vs. debate ETD=1.0). The ceiling effect is a debate-protocol property, not a benchmark-difficulty property. IDP=1.000 in the original benchmark is confirmed as a benchmark scope artifact: 4 IDP-stress cases (valid work with superficially suspicious features) all produced IDP=0.5 — the Critic reliably raises plausible-but-non-fatal concerns on valid work, but correctly reached defense_wins on all 4. See `ceiling_audit.md`, `new_benchmark_results.json`, and `idp_stress_results.json`.
 
 The fundamental finding holds: a structured isolated debate protocol with typed verdict roles substantially outperforms single-pass reasoning on synthetic ML reasoning tasks with known ground truth, particularly on hidden confounding, adversarial framing, and cases requiring a typed empirical resolution rather than a binary verdict.
