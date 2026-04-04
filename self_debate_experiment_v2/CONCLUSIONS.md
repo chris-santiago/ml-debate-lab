@@ -398,3 +398,28 @@ After committing these results, `ml-critic` and `ml-defender` were run against t
 **Resolution applied:** For defense_wins cases (correct_position = "defense"), IDR and IDP are scored N/A. Rationale: the Critique agent structurally produces claims on every case regardless of whether the claims are valid. Scoring IDP on a defense_wins case would mechanically penalize a protocol that is working correctly by challenging valid work. The relevant signal is DRQ (correct verdict) and FVC (correct conclusion).
 
 This is consistent with the DEBATE.md resolution from the prior experiment (§4) and was applied uniformly across all 5 defense_wins cases.
+
+---
+
+## 9. Variance Estimation and External Validation (2026-04-04)
+
+**Within-case variance (E1).** The full debate protocol was run 3 independent times on 5 representative cases to estimate within-case LLM stochasticity. Results from 4 completed cases (`metric_mismatch_003`, `hidden_confounding_002`, `defense_wins_001`, `real_world_framing_002`):
+
+| Case | Debate std | Debate mean (3-run) | Baseline std | Baseline mean (3-run) | Stable |
+|------|------------|---------------------|--------------|-----------------------|--------|
+| metric_mismatch_003 | 0.0 | 1.000 | 0.0 | 0.667 | YES |
+| hidden_confounding_002 | 0.0 | 1.000 | 0.0 | 0.667 | YES |
+| defense_wins_001 | 0.0 | 0.875 | 0.0 | 0.625 | YES |
+| real_world_framing_002 | 0.0 | 1.000 | 0.0 | 0.750 | YES |
+
+All 4 cases: debate_std = 0.0. The protocol produces deterministic outputs at the 3-run level for cases with salient, unambiguous flaws. The bootstrap CIs in §3 reflect cross-case sampling variance, not within-case stochasticity. Notable: baseline means are higher in replication than original runs (elevated by rubric ceiling effects and high salience of confounds in task prompts). `broken_baseline_001` result pending. See `within_case_variance_results.json`.
+
+**External exoneration benchmark (E19).** Three defense_wins-type cases drawn from peer-reviewed ML work (ground truth from published record, not protocol designer): BERT/SQuAD 1.1 (Devlin et al. 2019), ResNet-152/ImageNet (He et al. 2016), stratified 5-fold CV on clinical readmission prediction.
+
+| Case | Debate mean | Debate pass | Baseline mean | Baseline pass | Verdict correct |
+|------|-------------|-------------|---------------|---------------|-----------------|
+| ext_defense_001 (BERT/SQuAD) | 0.875 | YES | 0.625 | NO | YES (defense_wins) |
+| ext_defense_002 (ResNet-152) | 0.875 | YES | 0.625 | NO | YES (defense_wins) |
+| ext_defense_003 (5-fold CV) | 0.875 | YES | 0.625 | NO | YES (defense_wins) |
+
+Aggregate: debate 3/3 pass (mean 0.875), baseline 0/3 pass rubric (DC=0.0 structural rule), baseline 3/3 correct verdict label. Critics raised plausible-but-wrong concerns (IDP=0.5) in all 3 cases — consistent with the pattern on internal defense_wins cases. The exoneration finding extends to cases with external ground truth. See `external_exoneration_results.json`.

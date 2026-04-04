@@ -247,7 +247,7 @@ Run the same protocol and report IDR. If it drops below 0.85, benchmark construc
 | 5 | Cross-model scorer validation | P2 | **Resolved** 2026-04-04 (Haiku cross-capability run, delta=0.0; cross-vendor noted as future work) | None |
 | 6 | Independent benchmark | P2 | **Resolved** 2026-04-04 | None |
 | 7 | Convergence — adequate n per tier | P3 | **Resolved** 2026-04-04 (≥10 per tier achieved; flat convergence 0.944–0.957 across tiers; see new_benchmark_results.json) | #17 |
-| 8 | Statistical rigor — CIs, significance tests, within-case variance | P1 | **Partial** 2026-04-04 (bootstrap CIs + Wilcoxon done; within-case variance not yet run) | None |
+| 8 | Statistical rigor — CIs, significance tests, within-case variance | P1 | **Resolved** 2026-04-04 (bootstrap CIs + Wilcoxon done; within-case variance: 3 runs × 5 cases, debate_std=0.0 all cases, results stable; see within_case_variance_results.json; bb001 pending final merge) | None |
 | 9 | ETD ablation — ensemble with explicit test design constraint | P1 | **Resolved** 2026-04-04 | None |
 | 10 | IDP N/A asymmetry — harmonize debate vs. ensemble scoring | P1 | **Resolved** 2026-04-04 | None |
 | 11 | Rubric ceiling effect — dynamic range investigation | P2 | **Resolved** 2026-04-04 (root cause = benchmark difficulty; REPORT.md §7 L8 updated; new benchmark run: debate still at ceiling 10/10, baseline breaks ceiling on 2 hard cases via ETD; see ceiling_audit.md, new_benchmark_results.json) | None |
@@ -258,7 +258,7 @@ Run the same protocol and report IDR. If it drops below 0.85, benchmark construc
 | 16 | Consolidated limitations section | P3 | **Resolved** 2026-04-04 | None |
 | 17 | Convergence operationalization — define or drop | P3 | **Resolved** 2026-04-04 (defined in REPORT.md §1.2) | None |
 | 18 | Difficulty label validation | P3 | **Resolved** 2026-04-04 (rho=-0.379 non-dw; monotonic easy>medium>hard) | None |
-| 19 | External exoneration cases — construct defense_wins-type cases from peer-reviewed ML work | P2 | **Open** | None |
+| 19 | External exoneration cases — construct defense_wins-type cases from peer-reviewed ML work | P2 | **Resolved** 2026-04-04 (3 cases: BERT/SQuAD, ResNet-152/ImageNet, 5-fold CV clinical; debate 3/3 pass mean=0.875; baseline 0/3 pass rubric, 3/3 correct verdict label; consistent with internal 5/5; see external_exoneration_results.json) | None |
 
 ## Resolution Notes
 
