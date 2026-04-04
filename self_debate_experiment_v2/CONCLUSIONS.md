@@ -403,16 +403,17 @@ This is consistent with the DEBATE.md resolution from the prior experiment (§4)
 
 ## 9. Variance Estimation and External Validation (2026-04-04)
 
-**Within-case variance (E1).** The full debate protocol was run 3 independent times on 5 representative cases to estimate within-case LLM stochasticity. Results from 4 completed cases (`metric_mismatch_003`, `hidden_confounding_002`, `defense_wins_001`, `real_world_framing_002`):
+**Within-case variance (E1).** The full debate protocol was run 3 independent times on all 5 representative cases to estimate within-case LLM stochasticity.
 
 | Case | Debate std | Debate mean (3-run) | Baseline std | Baseline mean (3-run) | Stable |
 |------|------------|---------------------|--------------|-----------------------|--------|
+| broken_baseline_001 | 0.0 | 1.000 | 0.0 | 0.750 | YES |
 | metric_mismatch_003 | 0.0 | 1.000 | 0.0 | 0.667 | YES |
 | hidden_confounding_002 | 0.0 | 1.000 | 0.0 | 0.667 | YES |
 | defense_wins_001 | 0.0 | 0.875 | 0.0 | 0.625 | YES |
 | real_world_framing_002 | 0.0 | 1.000 | 0.0 | 0.750 | YES |
 
-All 4 cases: debate_std = 0.0. The protocol produces deterministic outputs at the 3-run level for cases with salient, unambiguous flaws. The bootstrap CIs in §3 reflect cross-case sampling variance, not within-case stochasticity. Notable: baseline means are higher in replication than original runs (elevated by rubric ceiling effects and high salience of confounds in task prompts). `broken_baseline_001` result pending. See `within_case_variance_results.json`.
+All 5 cases: debate_std = 0.0. The protocol produces deterministic outputs at the 3-run level for cases with salient, unambiguous flaws. The bootstrap CIs in §3 reflect cross-case sampling variance, not within-case stochasticity. Notable: baseline means are higher in replication than original runs (elevated by rubric ceiling effects and high salience of confounds in task prompts); bb001 baseline elevated by ETD volatility (ETD=1.0 in all 3 replications vs. 0.0/0.5 in original — confirms ETD is prompt-sensitive for the baseline). See `within_case_variance_results.json`.
 
 **External exoneration benchmark (E19).** Three defense_wins-type cases drawn from peer-reviewed ML work (ground truth from published record, not protocol designer): BERT/SQuAD 1.1 (Devlin et al. 2019), ResNet-152/ImageNet (He et al. 2016), stratified 5-fold CV on clinical readmission prediction.
 
