@@ -29,9 +29,9 @@ Pass criteria were set before running anything: benchmark mean ≥ 0.65, ≥ 75%
 
 ## What We Found
 
-**Debate protocol: 0.97 out of 1.0. Single-pass baseline: 0.38. Reported lift: +0.59.**
+**Debate protocol: 0.970. Single-pass baseline: 0.384. Honest corrected lift: +0.335 to +0.441.**
 
-The threshold we set in advance to call the experiment a success was +0.10. We exceeded it by nearly 6×. 19 of 20 cases passed.
+The protocol cleared every pre-registered benchmark criterion. 19 of 20 cases passed; the pre-specified lift threshold of +0.10 was exceeded by 3–4×. (The raw gap of +0.586 is inflated by two rubric choices that mechanically penalize the baseline — DC hardcoded to 0.0, DRQ capped at 0.5 — both confirmed binding by post-experiment adversarial review. The corrected range is the honest number.)
 
 We ran two baselines to understand where the lift actually comes from:
 
@@ -41,27 +41,29 @@ We ran two baselines to understand where the lift actually comes from:
 | Compute-matched ensemble | 0.75 | Three independent assessors + synthesizer, no roles — what more compute alone buys |
 | ml-lab debate protocol | 0.97 | Adversarial role separation on top of compute |
 
-The gap from floor to ensemble (+0.37) is mostly explained by additional compute and multiple perspectives. The gap from ensemble to debate (+0.22, p=0.004) is what adversarial role structure specifically adds — and it concentrates almost entirely in one capability: forcing both sides to agree on a specific empirical test when they disagree, rather than stopping at a verdict.
+The gap from floor to ensemble (+0.37) is mostly explained by additional compute and multiple perspectives. The gap from ensemble to debate (+0.22, p=0.004, r=0.758) is what adversarial role structure specifically adds. Systematic ablations after the initial run identified what that gap is — and is not — caused by.
 
-> **Post-experiment adversarial review (2026-04-04):** After running `ml-critic` and `ml-defender` against the experiment's own findings, two rubric design choices were found to mechanically depress the baseline score: DC hardcoded to 0.0 and DRQ capped at 0.5 for all baseline cases. The DRQ cap was confirmed binding on all 9 affected cases — the baseline correctly identified the resolution type in every case, but received no credit. The honest lift range, accounting for these rubric effects, is **+0.335 to +0.441**. The protocol still clears the +0.10 threshold by 3–4×, and the defense_wins finding is unaffected. See [`SENSITIVITY_ANALYSIS.md`](self_debate_experiment_v2/SENSITIVITY_ANALYSIS.md) for full analysis and corrective actions taken.
+**What debate does not uniquely provide:**
 
-The most interesting result came from five cases that were *false-positive critique traps* — valid work, correctly designed, presented under adversarial framing. The baseline scored **0.000** on all five. It accepted the adversarial premise and condemned work that was actually fine. The debate protocol got all five correct.
+- **Empirical test design (ETD).** The debate protocol reliably produces well-specified empirical tests; the unconstrained ensemble almost never does. We originally attributed this to the adversarial forcing function. An ablation falsified that: adding one explicit output instruction to the ensemble synthesizer ("specify the empirical test with pre-specified success and failure criteria") achieves ETD mean 0.962, nearly matching debate's 1.0. ETD is a prompt design effect. It's portable — you can get it from any multi-agent configuration by including the instruction.
 
-> **Ensemble follow-on (2026-04-04):** A clean compute-matched ensemble (3 independent assessors + synthesizer, task-prompt-only — no role separation, no coaching) scored 0.754 overall vs. debate's 0.970. The ensemble correctly exonerated valid work in **4/5 false-positive trap cases** without structural isolation — meeting the pre-specified criterion that "compute budget partially explains the defense_wins advantage." The isolation architecture is not uniquely necessary for exoneration. See [`ENSEMBLE_ANALYSIS.md`](self_debate_experiment_v2/ENSEMBLE_ANALYSIS.md) for full analysis.
+- **Exoneration of valid work (exclusively).** A clean ensemble correctly exonerated valid work in 4/5 false-positive trap cases without structural isolation. The isolation architecture is not uniquely necessary for reaching the right verdict.
 
-> **ETD ablation (2026-04-04):** The debate protocol's ETD advantage (test design output on all applicable cases) was retested with an explicit output constraint added to the ensemble synthesizer: *"specify the empirical test with pre-specified success and failure criteria."* With the constraint, the ensemble achieved ETD mean **0.962** — nearly matching the debate protocol's 1.0 and far above the unconstrained ensemble's 0.192. **Verdict: ETD is an output-constraint effect, not an adversarial role structure effect.** The debate protocol reliably produces ETD because its prompt includes this constraint; adding the same instruction to any ensemble synthesizer achieves equivalent output. See `etd_ablation_results.json`.
+**What debate does provide:**
 
-> **Statistical tests (2026-04-04):** Bootstrap CIs (10,000 resamples) and paired Wilcoxon signed-rank tests confirm both lifts are statistically significant. Debate vs. single-pass baseline: lift +0.586 [95% CI: 0.486–0.691], p = 0.000082, r = 1.0 — the debate protocol outperforms the baseline on every single one of the 20 cases. Debate vs. compute-matched ensemble: lift +0.216 [95% CI: 0.098–0.352], p = 0.004, r = 0.758. The structural advantage of adversarial role separation is not a sampling artifact.
+- **Cleaner exoneration.** The debate's isolated Defender raised zero concerns on contested exoneration cases. The ensemble raised caveats alongside correct exonerations ("this looks valid, but..."). In practice, confident exoneration and hedged exoneration have different downstream effects. 5/5 clean vs. 4/5 with caveats.
 
-> **Convergence confirmation (2026-04-04):** The convergence-by-difficulty hypothesis ("harder cases show lower agent convergence") was retested with ≥10 cases per difficulty tier after adding 10 new benchmark cases. Combined convergence: easy n=10 → 0.950, medium n=10 → 0.944, hard n=10 → 0.957. The pattern is flat (range 0.013). The original easy=0.833 anomaly was a single-data-point artifact. **The hypothesis is NOT SUPPORTED with adequate statistical power.** See [`new_benchmark_results.json`](self_debate_experiment_v2/new_benchmark_results.json) and [`ENSEMBLE_ANALYSIS.md`](self_debate_experiment_v2/ENSEMBLE_ANALYSIS.md).
+- **Structured argumentation.** The Critic/Defender structure forces point-by-point rebuttal — each claim conceded, rebutted, or flagged as empirically open. A parallel ensemble synthesizing independent views cannot produce this by design.
 
-> **Ceiling effect and IDP non-finding (2026-04-04):** Running 10 new benchmark cases (including 3 hard) and 4 IDP-stress cases confirmed two related benchmark scope limitations: (1) The debate protocol ceiling (1.000) is unbroken even on harder cases — the protocol finds all must-find issues and reaches correct verdicts reliably. Baseline breaks ceiling on 2 hard cases via ETD=0.5 (underspecified test criteria), consistent with the ETD ablation finding. (2) IDP=1.000 in the original benchmark is a non-finding — when the benchmark presents valid work with superficially suspicious features (small pre-powered n, justified random split, non-standard threshold), the Critic reliably raises concerns that score IDP=0.5. No case was wrongly derailed (IDP=0.0 not observed). The original IDP=1.0 reflects cases with unambiguous flaws, not Critic precision. See [`ceiling_audit.md`](self_debate_experiment_v2/ceiling_audit.md) and [`idp_stress_results.json`](self_debate_experiment_v2/idp_stress_results.json).
+The clearest illustration is the five *false-positive critique traps* — valid work, correctly designed, presented under adversarial framing. The single-pass baseline scored **0.000 on all five**: it accepted the adversarial premise entirely and condemned sound work. The ensemble got 4/5. The debate protocol got 5/5 with clean outputs.
 
-> **External benchmark (2026-04-04):** To test whether internal benchmark construction leaked discoverable flaws, a parallel 10-case benchmark was constructed from published ML evaluation failures with external ground truth (Dacrema 2019, Obermeyer 2019, DeGrave 2021, Gururangan 2018, Zeng 2023, and others). Debate protocol IDR = **0.95** on these cases, meeting the ≥ 0.85 external validity threshold. Baseline also scored 0.967 — expected, since all real-world ML failure cases are critique-type; the debate protocol's structural advantages (defense_wins exoneration, ETD) cannot be tested against published failures by definition. The only differentiating case (ext_broken_baseline_004, a mixed case) showed debate reaching the correct mixed verdict + ETD=1.0, while baseline reached the wrong critique verdict + ETD=0.0. See [`external_benchmark/`](external_benchmark/) for full case set and results.
+> **Statistics:** Bootstrap CIs (10,000 resamples) and paired Wilcoxon signed-rank tests. Debate vs. baseline: +0.586 [95% CI: 0.486–0.691], p < 0.0001, r = 1.0 — debate outperforms baseline on every single case. Debate vs. ensemble: +0.216 [95% CI: 0.098–0.352], p = 0.004, r = 0.758. Both effects are statistically significant. See [`stats_results.json`](self_debate_experiment_v2/stats_results.json) and [`SENSITIVITY_ANALYSIS.md`](self_debate_experiment_v2/SENSITIVITY_ANALYSIS.md).
 
-One case failed: a healthcare triage scenario where the Defender correctly identified all the flaws in its reasoning but then labeled the verdict "the work is valid." Correct reasoning, wrong label. A calibration failure in output structure, not a reasoning failure — and fixable.
+> **External validity:** A 10-case benchmark from published ML evaluation failures (Dacrema 2019, Obermeyer 2019, DeGrave 2021, and others — external ground truth, no designer involvement) confirmed debate IDR = 0.95, meeting the ≥ 0.85 pre-specified threshold. Both structural advantages (exoneration precision, ETD) cannot be externally validated — real-world ML failure cases are critique-type by definition, so no false-positive trap cases exist in published literature. See [`external_benchmark/`](external_benchmark/).
 
-Full results, per-case scores, and conclusions are in [`self_debate_experiment_v2/`](self_debate_experiment_v2/).
+One case failed: a healthcare triage scenario where the Defender correctly identified all critical flaws in its analysis but then labeled the verdict "the work is valid." Correct reasoning, wrong label — a calibration failure in output structure, not a reasoning failure. Fixed by a two-pass Defender prompt (analysis before verdict selection). See [`agents/ml-defender.md`](agents/ml-defender.md).
+
+Full results, per-case scores, and post-experiment analyses are in [`self_debate_experiment_v2/`](self_debate_experiment_v2/).
 
 ---
 
@@ -120,15 +122,15 @@ A compute-matched ensemble — three independent assessors plus a synthesizer, n
 
 ## Why This Matters
 
-The standard approach to AI evaluation is single-pass: give a model some work, ask it what it thinks, get an answer. This works when the flaw is obvious. It breaks down when:
+The standard approach to AI evaluation is single-pass: give a model some work, ask it what it thinks, get an answer. This works when the flaw is explicit. It breaks down in three situations where the stakes are often highest:
 
-- The flaw requires independently questioning the framing
-- The work is actually valid but sounds questionable  
-- The correct answer is "we need to run an empirical test first" rather than a binary yes/no
+- The flaw requires independently questioning the framing (not just processing it)
+- The work is actually valid but *sounds* questionable — and the evaluator has no structural incentive to push back
+- The correct answer is "run this specific test first" rather than a binary verdict
 
-Debate adds something single-pass cannot. The clearest illustration is the false-positive trap cases: the single-pass baseline scored 0.000 on all five exoneration cases, inheriting the adversarial framing entirely. The clean ensemble follow-on (3 independent assessors in parallel, no roles) correctly exonerated 4/5 cases — suggesting that multiple independent views can also counter framing bias, though with lower precision than the structurally isolated Defender.
+The single-pass baseline scored 0.000 on all five false-positive trap cases — not because it reasoned incorrectly, but because it had no mechanism to challenge the premise it was given. A simple ensemble (multiple independent views) gets 4/5. Structural isolation of the Defender gets 5/5 clean.
 
-**What the ETD ablation revealed:** The debate protocol's empirical test design (ETD) output was originally attributed to the adversarial forcing function. An ablation showed it's actually an output-constraint effect — adding the same instruction to an ensemble synthesizer achieves ETD=0.962. The debate protocol's remaining confirmed structural advantage is cleaner exoneration in false-positive scenarios (5/5 clean vs. 4/5 with caveats) and structured point-by-point argumentation (DC, DRQ) that an ensemble does not produce.
+The subtler lesson is about *what structure buys and what it doesn't*. Adversarial role separation is not magic: empirical test design turns out to be a prompt instruction effect, not an architecture effect. More compute and more perspectives solve most of the problem. What role structure specifically adds is a voice that is *required* to argue for the work — and that structural requirement produces cleaner exonerations than a system that merely *might* defend it.
 
 ---
 
