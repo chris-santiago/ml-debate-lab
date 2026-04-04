@@ -1,7 +1,7 @@
 # claude-ml-lab — npm Plugin Plan
 
 **Package name:** `claude-ml-lab`
-**Scope:** ml-lab trio only (ml-lab, ml-critic, ml-defender)
+**Scope:** ml-lab trio (ml-lab, ml-critic, ml-defender) — `research-reviewer` and `research-reviewer-lite` live in `agents/` but are excluded from the v1 package; candidate for a separate `claude-research-reviewer` package or v2 expansion
 **Design:** self-contained agent files, memory system kept as-is
 
 ---
@@ -45,7 +45,7 @@ ml-debate-lab/
 
 The `plugin/` directory is the npm package root — `npm publish` is run from there. The agent `.md` files are referenced from `../agents/` at install time and copied into the published package via the `files` field in `package.json`.
 
-No agent file content changes. All three files are already sanitized and ready.
+**ml-lab.md has changed since the plan was written.** Step 10 (Peer Review Loop) was added, references updated from 9-step to 10-step, and `research-reviewer`/`research-reviewer-lite` added to the delegation list. This is a minor version bump: `1.0.0 → 1.1.0`. ml-critic.md and ml-defender.md are unchanged.
 
 ---
 
@@ -246,7 +246,7 @@ When agent files change (prompt updates, new modes, bug fixes):
 
 1. Update the relevant `.md` file(s) in `agents/` (the source of truth)
 2. Re-copy into `plugin/agents/`
-3. Bump version in `plugin/package.json` (semver: patch for prompt tweaks, minor for new modes, major for protocol changes)
+3. Bump version in `plugin/package.json` (semver: patch for prompt tweaks, minor for new modes or new steps, major for protocol changes — e.g., adding Step 10 = minor bump)
 4. `cd plugin && npm publish`
 
 Users update by re-running `npx claude-ml-lab install` — it overwrites the agent files in `~/.claude/agents/` with the latest version. Memory is never touched on updates.
