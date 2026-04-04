@@ -1,4 +1,4 @@
-# lab-check
+# ml-debate-lab
 
 This project asks a simple question: **when an AI evaluates a piece of work, does it actually catch real problems?**
 
