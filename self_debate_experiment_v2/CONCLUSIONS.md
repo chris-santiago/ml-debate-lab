@@ -235,12 +235,12 @@ Both independently identified sku_mix_confound and year_over_year_comparison_wit
 
 | Case | Debate | Base | Delta | Verdict | D-Pass | B-Pass | Conv |
 |------|--------|------|-------|---------|--------|--------|------|
-| broken_baseline_001 | 1.000 | 0.667 | +0.333 | emp_test_agreed | YES | YES | 1.0 |
+| broken_baseline_001 | 1.000 | 0.667 | +0.333 | emp_test_agreed | YES | NO | 1.0 |
 | broken_baseline_002 | 1.000 | 0.583 | +0.417 | emp_test_agreed | YES | NO | 1.0 |
 | broken_baseline_003 | 1.000 | 0.583 | +0.417 | emp_test_agreed | YES | NO | 1.0 |
 | broken_baseline_004 | 1.000 | 0.583 | +0.417 | emp_test_agreed | YES | NO | 1.0 |
 | metric_mismatch_001 | 1.000 | 0.600 | +0.400 | critique_wins | YES | NO | 1.0 |
-| metric_mismatch_002 | 1.000 | 0.667 | +0.333 | emp_test_agreed | YES | YES | 0.5 |
+| metric_mismatch_002 | 1.000 | 0.667 | +0.333 | emp_test_agreed | YES | NO | 0.5 |
 | metric_mismatch_003 | 1.000 | 0.417 | +0.583 | emp_test_agreed | YES | NO | 1.0 |
 | hidden_confounding_001 | 1.000 | 0.417 | +0.583 | emp_test_agreed | YES | NO | 1.0 |
 | hidden_confounding_002 | 1.000 | 0.333 | +0.667 | emp_test_agreed | YES | NO | 1.0 |
@@ -255,7 +255,7 @@ Both independently identified sku_mix_confound and year_over_year_comparison_wit
 | defense_wins_005 | 0.833 | 0.000 | +0.833 | defense_wins | YES | NO | 0.5 |
 | real_world_framing_001 | 0.833 | 0.583 | +0.250 | emp_test_agreed | **NO** | NO | 0.5 |
 | real_world_framing_002 | 1.000 | 0.417 | +0.583 | emp_test_agreed | YES | NO | 1.0 |
-| **BENCHMARK** | **0.970** | **0.384** | **+0.586** | | **19/20** | **2/20** | **0.875** |
+| **BENCHMARK** | **0.970** | **0.384** | **+0.586** | | **19/20** | **0/20** | **0.875** |
 
 ### Dimension-Level Aggregate (debate, across applicable cases)
 
@@ -277,14 +277,14 @@ Both independently identified sku_mix_confound and year_over_year_comparison_wit
 | Criterion | Threshold | Debate | Baseline |
 |-----------|-----------|--------|----------|
 | Benchmark mean | ≥ 0.65 | **0.970** ✓ | 0.384 ✗ |
-| Case pass fraction | ≥ 75% | **95% (19/20)** ✓ | 10% (2/20) ✗ |
+| Case pass fraction | ≥ 75% | **95% (19/20)** ✓ | 0% (0/20) ✗ |
 | Lift | ≥ +0.10 | **+0.586** ✓ | — |
 
 **Debate benchmark: PASSES. Baseline benchmark: FAILS.**
 
-> **Statistical significance (2026-04-04):** Bootstrap CIs (10,000 resamples, 95%) and paired Wilcoxon signed-rank tests confirm both lifts are statistically significant. Debate vs. baseline: lift +0.586 [CI: 0.486–0.691], p = 0.000082, r = 1.0 (debate outperforms baseline on every single case). Debate vs. compute-matched ensemble: lift +0.216 [CI: 0.098–0.352], p = 0.004, r = 0.758. See `stats_analysis.py` and `stats_results.json`.
+> **Statistical significance (2026-04-04):** Bootstrap CIs (10,000 resamples, 95%) and paired Wilcoxon signed-rank tests confirm both lifts are statistically significant. Debate vs. baseline: lift +0.586 [CI: 0.486–0.691], p = 0.000082, r = 1.0 (debate outperforms baseline on every single case). Debate vs. compute-matched ensemble: lift +0.216 [CI: 0.098–0.352], p = 0.004, r = 0.758. See `stats_analysis.py` and `stats_results.json`. **Note:** these statistics characterize cross-case sampling variance and do not account for within-case LLM stochasticity — individual scores may shift on re-execution.
 
-> **Correction (2026-04-04):** The `baseline_pass_count = 2` figure above is incorrect. The two cases reported as passing (`broken_baseline_001`, `metric_mismatch_002`) have DC=0.0 stored in their baseline scores, which fails the per-dimension floor check (all applicable dimensions ≥ 0.5). The pass flags appear to have been set before the DC=0.0 structural override was applied. With DC=0.0 enforced consistently, the correct baseline pass count is **0/20 (0%)**. See `SENSITIVITY_ANALYSIS.md` for full analysis.
+> **Correction (2026-04-04):** The originally reported `baseline_pass_count = 2` (`broken_baseline_001`, `metric_mismatch_002`) was incorrect. Both cases have DC=0.0 in their stored baseline scores, which fails the per-dimension floor check. The pass flags were set before the DC=0.0 structural override was applied. With DC=0.0 enforced consistently, the correct baseline pass count is **0/20 (0%)**. See `SENSITIVITY_ANALYSIS.md` for full analysis.
 
 ---
 
@@ -300,7 +300,7 @@ Debate mean = 0.970 vs. baseline mean = 0.384. Lift = **+0.586** — exceeds the
 **VERDICT: SUPPORTED (with qualification — see post-experiment follow-on below)**
 All 5 defense_wins cases reached correct `defense_wins` verdict. Baseline scored 0.000 on all 5 defense_wins cases (DRQ=0.0, FVC=0.0 across the board — baseline completely fails to exonerate valid work under false attack).
 
-> **Post-experiment qualification (2026-04-04):** A clean compute-matched ensemble (3 independent assessors + synthesizer, task-prompt-only, no role separation) correctly exonerated valid work in **4/5 defense_wins cases** without structural isolation. The pre-specified criterion for "compute budget partially explains defense_wins advantage" was triggered (DC≥0.5 on ≥3/5). The isolation architecture is **not uniquely necessary** for exoneration — multiple independent parallel views can achieve similar results, though with lower IDP (assessors raised caveats alongside correct verdicts in 2/4 exonerated cases). The debate protocol still outperforms the ensemble overall (0.970 vs. 0.754). The gap is explained by ETD and DRQ. A subsequent ETD ablation (2026-04-04) found that adding an explicit ETD output constraint to the ensemble synthesizer achieves ETD mean 0.962 — demonstrating the ETD advantage is an output-constraint effect, not a structural property of the adversarial roles. The confirmed structural advantage is exoneration precision (5/5 clean vs. 4/5 with caveats) and point-by-point argumentation (DC, DRQ). See `ENSEMBLE_ANALYSIS.md` and `etd_ablation_results.json`.
+> **Post-experiment qualification (2026-04-04):** A clean compute-matched ensemble (3 independent assessors + synthesizer, task-prompt-only, no role separation) correctly exonerated valid work in **4/5 defense_wins cases** without structural isolation. The pre-specified criterion for "compute budget partially explains defense_wins advantage" was triggered (DC≥0.5 on ≥3/5). The isolation architecture is **not uniquely necessary** for exoneration — multiple independent parallel views can achieve similar results, though with lower IDP (assessors raised caveats alongside correct verdicts in 2/4 exonerated cases). The debate protocol still outperforms the ensemble overall (0.970 vs. 0.754; harmonized: 0.970 vs. 0.767). The gap is explained by the missing ETD output constraint and the ensemble's mixed-position failure. A subsequent ETD ablation (2026-04-04) found that adding an explicit ETD output constraint to the ensemble synthesizer achieves ETD mean 0.962 — demonstrating the ETD advantage is an output-constraint effect, not a structural property of the adversarial roles. On fair-comparison dimensions with a fully-constrained ensemble, the gap is approximately +0.076. The debate protocol's directional advantages (not statistically distinguishable at n=5): cleaner exoneration tendency (raised no concerns on 3/5 cases vs. ensemble caveats on 2/4; mean-score advantage disappears under harmonized IDP scoring) and point-by-point argumentation (DC, DRQ). See `ENSEMBLE_ANALYSIS.md` and `etd_ablation_results.json`.
 
 ### Secondary hypothesis: agent_convergence_rate higher for easy/medium cases vs. hard
 **VERDICT: NOT SUPPORTED (unexpected)**

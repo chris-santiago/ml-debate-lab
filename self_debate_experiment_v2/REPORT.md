@@ -19,9 +19,9 @@ The debate protocol achieves a benchmark aggregate mean of **0.970** across thre
 | Compute-matched ensemble (3 assessors + synthesizer, no roles) | 0.754 | +0.216 |
 | **Debate protocol** (Critic + Defender + Judge, isolated) | **0.970** | — |
 
-The reported +0.586 lift vs. single-pass reflects two structural scoring choices (DC=0.0 and DRQ≤0.5 hardcoded for the baseline) that inflate the apparent advantage. With corrections applied, the honest lift range vs. single-pass is **+0.335 to +0.441**. The lift vs. the compute-matched ensemble — the more honest measure of what adversarial role structure specifically adds — is **+0.216** (p=0.004, r=0.758). Nineteen of twenty cases pass the per-case threshold. The primary hypothesis is supported under all rubric scenarios.
+The honest corrected lift vs. single-pass is **+0.335 to +0.441** (the raw +0.586 gap is inflated by DC=0.0 and DRQ≤0.5 hardcoded for the baseline; see `SENSITIVITY_ANALYSIS.md`). The more defensible measure of what adversarial role structure specifically adds — lift vs. a compute-matched ensemble with no role differentiation — is **+0.216** (p=0.004, r=0.758). Nineteen of twenty cases pass the per-case threshold. The primary hypothesis is supported under all rubric scenarios.
 
-> **Post-experiment findings (2026-04-04):** After committing these results, adversarial review by `ml-critic` and `ml-defender` identified rubric design effects that inflate the reported lift. With corrections applied, the honest lift range is **+0.335 to +0.441** (still 3–4× the pre-registered threshold). A two-pass Defender fix resolves the sole case failure. A clean compute-matched ensemble test found that the isolation architecture is not uniquely necessary for exonerating valid work. A subsequent ETD ablation showed that adding an explicit test-design output constraint to the ensemble synthesizer achieves ETD mean 0.962 — **ETD is a prompt design effect, not a structural property of adversarial roles**. The debate protocol's confirmed structural advantages are exoneration precision (5/5 clean vs. 4/5 with caveats) and point-by-point argumentation (DC, DRQ). See `SENSITIVITY_ANALYSIS.md`, `ENSEMBLE_ANALYSIS.md`, and `etd_ablation_results.json` for full post-experiment analysis.
+> **Post-experiment findings (2026-04-04):** A two-pass Defender fix resolves the sole case failure. A clean compute-matched ensemble test found that the isolation architecture is not uniquely necessary for exonerating valid work — 4/5 correct exonerations without structural isolation. A subsequent ETD ablation showed that adding an explicit test-design output constraint to the ensemble synthesizer achieves ETD mean 0.962 — **ETD is a prompt design effect, not a structural property of adversarial roles**. On fair-comparison dimensions (IDR, IDP, ETD, FVC — where both systems have equal agency), the debate protocol's advantage over a fully-constrained ensemble narrows to approximately **+0.076**, almost entirely attributable to the ensemble's catastrophic failure on one mixed-position case (`metric_mismatch_002`). The debate protocol's directional advantages (not statistically distinguishable at n=5): cleaner exoneration (raised no concerns on 3/5 exoneration cases vs. ensemble raised caveats on 2/4 correct exonerations) and point-by-point argumentation (DC, DRQ). See `SENSITIVITY_ANALYSIS.md`, `ENSEMBLE_ANALYSIS.md`, and `etd_ablation_results.json` for full post-experiment analysis.
 
 ---
 
@@ -36,6 +36,10 @@ The reported +0.586 lift vs. single-pass reflects two structural scoring choices
 **LLM-as-judge and self-evaluation pitfalls.** Zheng et al. (2023) identified systematic biases in LLM-as-judge evaluations (MT-Bench): position bias, verbosity bias, and self-enhancement bias. Our same-model scoring confound (Issue 5 in `tasks/open_issues.md`) is a direct instance of self-enhancement bias — the scorer and the evaluated protocol share the same model family. A cross-capability validation using claude-haiku-4-5 (lower-capability Anthropic model, independent analysis) found IDR delta = 0.000 across all 15 applicable cases, suggesting same-company bias is not material at this capability tier. Cross-vendor validation (GPT-4o, Gemini) remains future work.
 
 **Multi-agent evaluation frameworks.** Chan et al. (2023, ChatEval) and related work on Multi-Agent Debate (MAD) frameworks use agent disagreement to improve LLM evaluation quality. Our work differs in two ways: we introduce a typed resolution mechanism that requires explicit empirical test specification rather than synthesizing a single verdict, and we evaluate against a benchmark with known ground truth rather than relying on LLM-generated quality assessments.
+
+**Self-consistency as ensemble baseline.** Wang et al. (2023) showed that sampling multiple chain-of-thought reasoning paths and selecting the majority answer substantially improves LLM accuracy on reasoning tasks. Our clean ensemble baseline (3 independent assessors + synthesizer) is structurally related to self-consistency — parallel views without role differentiation. The ensemble's near-ceiling performance on issue detection replicates the self-consistency finding that aggregating independent samples is highly effective. Our contribution is identifying where self-consistency fails: mixed-position cases where all samples converge on the same (incorrect) direction, and cases requiring an explicit output constraint (ETD) that no single-path sample produces.
+
+**Computational argumentation quality.** Wachsmuth et al. (2017) proposed a framework for assessing argumentation quality along dimensions including logic, rhetoric, and dialectical effectiveness. Our rubric dimensions (DC, DRQ) measure analogous properties in the debate-protocol context: whether the Defender correctly calibrates concession vs. rebuttal (dialectical effectiveness) and whether the resolution is well-typed (rhetorical precision). The finding that DC and DRQ are structurally inaccessible to single-pass baselines aligns with Wachsmuth et al.'s observation that dialectical quality requires an explicit argumentation structure, not just issue identification.
 
 ---
 
@@ -121,7 +125,7 @@ The formal benchmark verdict stands under all rubric scenarios. The corrected li
 | Lift: debate vs. baseline | +0.586 | [+0.486, +0.691] | p = 0.000082 | r = 1.000 |
 | Lift: debate vs. ensemble | +0.216 | [+0.098, +0.352] | p = 0.003528 | r = 0.758 |
 
-Both lifts are statistically significant at α = 0.05. The debate vs. baseline lift has the maximum possible rank-biserial r (1.0) — the debate protocol outperforms the baseline on every one of the 20 cases. The debate vs. ensemble lift (r = 0.758) is a large effect. Bootstrap CIs were computed with 10,000 case-level resamples; Wilcoxon uses normal approximation with continuity correction.
+Both lifts are statistically significant at α = 0.05. The debate vs. baseline lift has the maximum possible rank-biserial r (1.0) — the debate protocol outperforms the baseline on every one of the 20 cases. The debate vs. ensemble lift (r = 0.758) is a large effect. Bootstrap CIs were computed with 10,000 case-level resamples; Wilcoxon uses normal approximation with continuity correction. **Caveat:** these statistics characterize cross-case sampling variance only — they do not account for within-case LLM stochasticity. Individual scores may shift on re-execution; see `within_case_variance.py` for the experimental design to estimate this variance.
 
 ### 2.2 Per-Case Results
 
@@ -171,7 +175,26 @@ The widest protocol advantage is in defense_calibration (+0.867) and final_verdi
 | Fair comparison | IDR, IDP, ETD, FVC | 1.000 | 0.683 | **+0.317** |
 | Protocol-diagnostic | DC, DRQ | 0.934 | 0.163 | +0.771 |
 
-The fair-comparison lift (+0.317) is the most defensible measure of genuine protocol reasoning advantage, uncontaminated by structural scoring choices. It still exceeds the pre-registered +0.10 threshold by 3.2×. The protocol-diagnostic lift (+0.771) is mostly a rubric artifact (DC=0.0 hardcoded for baseline) and should not be interpreted as pure reasoning quality.
+The fair-comparison lift (+0.317) is the most defensible measure of genuine protocol reasoning advantage uncontaminated by structural scoring choices. It still exceeds the pre-registered +0.10 threshold by 3.2×. The protocol-diagnostic lift (+0.771) is mostly a rubric artifact (DC=0.0 hardcoded for baseline) and should not be interpreted as pure reasoning quality.
+
+**Debate vs. ensemble on fair-comparison dimensions** (A1 — most honest comparison of role structure effect):
+
+| Group | Dimensions | Debate mean | Ensemble mean | Lift | Notes |
+|-------|-----------|-------------|---------------|------|-------|
+| Fair comparison (unconstrained) | IDR, IDP, ETD, FVC | 1.000 | 0.731 | **+0.269** | Ensemble ETD=0.192 (no output constraint) |
+| Fair comparison (ETD-constrained) | IDR, IDP, ETD, FVC | 1.000 | 0.924 | **+0.076** | Ensemble ETD=0.962 (explicit constraint applied) |
+
+With the ETD output constraint applied to the ensemble synthesizer (the apples-to-apples condition), the fair-comparison lift falls to **+0.076** — near zero. The residual gap is almost entirely explained by `metric_mismatch_002`'s catastrophic ensemble failure (all-zero scores, structural weakness on mixed-position cases), not by a systematic reasoning quality advantage of the debate protocol. On cases where both systems correctly engage, their fair-dimension scores are statistically indistinguishable.
+
+**Dimension-weighted aggregate** (A2 — equal weight per dimension rather than per case, avoids implicit overweighting of defense_wins cases which have fewer applicable dimensions):
+
+| Condition | IDR | IDP | DC | DRQ | ETD | FVC | Dim-weighted mean |
+|-----------|-----|-----|----|-----|-----|-----|-------------------|
+| Debate | 1.000 | 1.000 | 0.867 | 1.000 | 1.000 | 1.000 | **0.978** |
+| Baseline | 0.475 | 1.000 | 0.000 | 0.325 | 0.933 | 0.325 | **0.510** |
+| Ensemble | 0.900 | 0.933 | 0.900 | 0.600 | 0.192 | 0.900 | **0.738** |
+
+Dimension-weighted lift: debate vs. baseline = **+0.468**; debate vs. ensemble = **+0.240**. These are close to the case-weighted figures (0.441 corrected, 0.216), confirming that the case-weighting approach does not materially distort the aggregate comparison.
 
 ### 2.4 Convergence by Difficulty
 
@@ -199,13 +222,13 @@ Convergence does not decrease with difficulty. See §4.4 for interpretation.
 
 **SUPPORTED (with post-experiment qualification).** All 5 defense_wins cases reach the correct `defense_wins` verdict. Baseline scores 0.000 on all 5 (DC=0.0, DRQ=0.0, FVC=0.0).
 
-> **Qualification (2026-04-04):** A clean compute-matched ensemble (3 independent assessors, task-prompt-only) correctly exonerated valid work in 4/5 defense_wins cases without structural isolation, triggering the pre-specified criterion that "compute budget partially explains the defense_wins advantage." The isolation architecture is not uniquely necessary — multiple independent parallel views can achieve similar exonerations. However, the debate protocol's isolated Defender produces cleaner exonerations: 3/5 cases with no claims raised (IDP=1.0) vs. ensemble raising caveats in 2/4 correct exonerations (IDP=0.5). The debate protocol's remaining gap over the ensemble (0.970 vs. 0.754) was initially attributed to empirical test design (ETD). A subsequent ETD ablation (Issue 9) revised this: adding an explicit test-design output constraint to the ensemble synthesizer achieves ETD mean 0.962, demonstrating the ETD advantage is a prompt design effect, not a structural property of adversarial roles. The confirmed structural advantages are exoneration precision (5/5 clean vs. 4/5 with caveats) and point-by-point argumentation (DC, DRQ). See `ENSEMBLE_ANALYSIS.md` and `etd_ablation_results.json`.
+> **Qualification (2026-04-04):** A clean compute-matched ensemble (3 independent assessors, task-prompt-only) correctly exonerated valid work in 4/5 defense_wins cases without structural isolation, triggering the pre-specified criterion that "compute budget partially explains the defense_wins advantage." The isolation architecture is not uniquely necessary. The debate protocol's isolated Defender raised no concerns on 3/5 exoneration cases (IDP=N/A), while the ensemble raised minor caveats alongside 2 correct exonerations (IDP=0.5). This qualitative difference is real — *but it is a directional observation on n=5 cases, not statistically distinguishable from noise, and the mean-score advantage disappears under harmonized scoring* (IDP excluded for both conditions on defense_wins cases: harmonized ensemble mean 0.767 vs. reported 0.754 — both systems score 1.0 on DC/DRQ/FVC for the two contested cases). The ETD ablation (Issue 9) showed the remaining ensemble gap is a prompt design effect: ETD mean 0.962 with explicit output constraint vs. 0.192 without. On fair-comparison dimensions with a fully-constrained ensemble, the debate-vs-ensemble gap is approximately +0.076. The debate protocol's structural advantages that survive all ablations are point-by-point argumentation (DC, DRQ) and a qualitative tendency toward cleaner exonerations — neither is confirmed at conventional statistical thresholds given n=5 defense_wins cases. See `ENSEMBLE_ANALYSIS.md` and `etd_ablation_results.json`.
 
 ### 3.3 Secondary hypothesis: convergence decreases with difficulty
 
 > Agent convergence rate will be lower for hard cases than easy/medium cases.
 
-**NOT SUPPORTED.** Convergence is: easy=0.833, medium=0.944, hard=0.938. The pattern reverses or is flat. See §4.4.
+**NOT SUPPORTED.** Convergence is: easy=0.833, medium=0.944, hard=0.938. The pattern reverses or is flat. This finding was subsequently confirmed with ≥10 cases per tier (combined: easy=0.950, medium=0.944, hard=0.957 — range 0.013, essentially uniform). See §4.4 and §9.
 
 ---
 
@@ -239,11 +262,9 @@ Both cases still pass (0.833 mean, no floor violations). The protocol produces c
 
 ### 4.4 Convergence does not decrease with difficulty
 
-The expected finding was that hard cases would show lower convergence because secondary issues are harder to identify independently. The observed result is the opposite: convergence by difficulty is easy=0.833, medium=0.944, hard=0.938.
+This is a **null result**: convergence is flat across difficulty tiers in both the original 20-case run (easy=0.833, medium=0.944, hard=0.938) and the expanded 30-case run (easy=0.950, medium=0.944, hard=0.957, range=0.013). The original easy=0.833 was a single-data-point artifact (defense_wins_003 conv=0.5). With ≥10 cases per tier, convergence is uniform — the hypothesis is not supported with adequate statistical power.
 
-The resolution: the easy convergence decrement is entirely driven by defense_wins failures (defense_wins_003 has conv=0.5), not by issue discovery difficulty. When we examine only the non-defense_wins cases, hard cases show convergence 1.0 in all 8 instances — the planted confounds in hard cases were independently found by both agents. The difficulty categorization reflects reasoning depth required to evaluate the claim, not how easily the primary flaw is identified. The hard confounding cases have clear, identifiable flaws that both agents find independently. The easy defense_wins_003 case involves a calibration judgment about how to label an acknowledged caveat — which is subtler than identifying a flaw.
-
-**Difficulty label validation.** Difficulty labels are author-assigned. As an independent check, `difficulty_validation.py` computes Spearman rank correlation between difficulty (easy=1, medium=2, hard=3) and baseline scores (harder cases should be harder for the single-pass baseline too). Results: rho = −0.038 across all 20 cases; rho = −0.379 excluding defense_wins cases (baseline scores 0.0 by structural construction on all defense_wins cases regardless of difficulty, confounding the analysis). The non-defense_wins rho (−0.379) and monotonic pattern — easy (0.634) > medium (0.528) > hard (0.464) — provides directional validation that labels are a reasonable proxy for task difficulty. Labels should still be treated as "intended difficulty" rather than objectively calibrated; see `difficulty_validation_results.json`.
+The easy-tier decrement in the original data is entirely driven by defense_wins calibration failures, not by issue discovery difficulty. Difficulty labels are author-assigned; directional validation (Spearman rho = −0.379 excluding defense_wins cases, monotonic easy > medium > hard baseline scores) confirms labels are a reasonable proxy but should be treated as "intended difficulty." See `difficulty_validation_results.json` and `new_benchmark_results.json`.
 
 ---
 
@@ -354,7 +375,7 @@ The clearest dimension advantage is in defense calibration (+0.867): the baselin
 
 The post-experiment ensemble test refined the isolation hypothesis: the adversarial role architecture is not uniquely necessary to exonerate valid work (4/5 correct exonerations without isolation), but it produces cleaner exonerations — the debate protocol's isolated Defender raised no false concerns on the two contested exoneration cases, while the ensemble raised caveats alongside correct exonerations.
 
-The ETD ablation (Issue 9) revised the remaining ETD claim: adding an explicit empirical-test-design output constraint to the ensemble synthesizer achieves ETD mean 0.962, nearly matching the debate protocol's 1.0 and far above the unconstrained ensemble's 0.192. **ETD is an output-constraint effect, not an adversarial role structure effect.** The debate protocol reliably produces test specifications because its prompt includes the constraint — not because the Critic/Defender dynamic structurally forces it. The debate protocol's confirmed structural advantages are: (1) cleaner exoneration precision (5/5 vs. 4/5 with caveats), and (2) structured point-by-point argumentation (DC, DRQ) that a parallel ensemble cannot produce by design.
+The ETD ablation (Issue 9) revised the remaining ETD claim: adding an explicit empirical-test-design output constraint to the ensemble synthesizer achieves ETD mean 0.962, nearly matching the debate protocol's 1.0 and far above the unconstrained ensemble's 0.192. **ETD is an output-constraint effect, not an adversarial role structure effect.** The debate protocol reliably produces test specifications because its prompt includes the constraint — not because the Critic/Defender dynamic structurally forces it. On fair-comparison dimensions with a fully-constrained ensemble, the debate–ensemble gap narrows to approximately +0.076 (driven primarily by the ensemble's mixed-position failure on `metric_mismatch_002`, not a systematic reasoning quality advantage). The debate protocol's surviving directional advantages are: (1) a tendency toward cleaner exonerations (no concerns raised on 3/5 vs. caveats on 2/4 ensemble exonerations — *directional observation on n=5, mean-score advantage disappears under harmonized IDP scoring; harmonized ensemble mean 0.767 vs. 0.754 reported*), and (2) structured point-by-point argumentation (DC, DRQ) that a parallel ensemble cannot produce by design. Neither has been tested at conventional statistical thresholds.
 
 Three additional investigations completed after initial publication:
 

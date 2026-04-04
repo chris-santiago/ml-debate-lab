@@ -51,11 +51,11 @@ The gap from floor to ensemble (+0.37) is mostly explained by additional compute
 
 **What debate does provide:**
 
-- **Cleaner exoneration.** The debate's isolated Defender raised zero concerns on contested exoneration cases. The ensemble raised caveats alongside correct exonerations ("this looks valid, but..."). In practice, confident exoneration and hedged exoneration have different downstream effects. 5/5 clean vs. 4/5 with caveats.
+- **A tendency toward cleaner exoneration** *(directional, n=5).* The debate's isolated Defender raised zero concerns on 3 of 5 exoneration cases. The ensemble raised caveats alongside 2 of its 4 correct exonerations ("this looks valid, but..."). This distinction is real in the data — but n=5 is too small for a conventional statistical test, and the mean-score advantage disappears under harmonized scoring (IDP excluded for both conditions on exoneration cases). Treat this as a qualitative observation, not a confirmed structural finding.
 
 - **Structured argumentation.** The Critic/Defender structure forces point-by-point rebuttal — each claim conceded, rebutted, or flagged as empirically open. A parallel ensemble synthesizing independent views cannot produce this by design.
 
-The clearest illustration is the five *false-positive critique traps* — valid work, correctly designed, presented under adversarial framing. The single-pass baseline scored **0.000 on all five**: it accepted the adversarial premise entirely and condemned sound work. The ensemble got 4/5. The debate protocol got 5/5 with clean outputs.
+The clearest illustration is the five *false-positive critique traps* — valid work, correctly designed, presented under adversarial framing. The single-pass baseline scored **0.000 on all five**: it accepted the adversarial premise entirely and condemned sound work. The ensemble got 4/5 correct verdicts. The debate protocol got 5/5 and raised no spurious concerns on 3 of 5 cases (the ensemble raised caveats on 2 of its 4 correct exonerations). This 5/5 vs. 4/5 distinction is suggestive but not statistically confirmed at n=5.
 
 > **Statistics:** Bootstrap CIs (10,000 resamples) and paired Wilcoxon signed-rank tests. Debate vs. baseline: +0.586 [95% CI: 0.486–0.691], p < 0.0001, r = 1.0 — debate outperforms baseline on every single case. Debate vs. ensemble: +0.216 [95% CI: 0.098–0.352], p = 0.004, r = 0.758. Both effects are statistically significant. See [`stats_results.json`](self_debate_experiment_v2/stats_results.json) and [`SENSITIVITY_ANALYSIS.md`](self_debate_experiment_v2/SENSITIVITY_ANALYSIS.md).
 
@@ -108,7 +108,7 @@ A compute-matched ensemble — three independent assessors plus a synthesizer, n
 
 **ml-lab has one confirmed advantage and one replicable one:**
 
-1. **Exoneration precision.** ml-lab correctly exonerated valid work in all 5 false-positive trap cases with clean "no issues" outputs. The ensemble exonerated 4 of 5 correctly but raised caveats alongside in 2 cases — which in practice can still erode confidence in sound work.
+1. **Exoneration precision** *(directional, n=5).* ml-lab correctly exonerated valid work in all 5 false-positive trap cases; the ensemble exonerated 4 of 5 and raised caveats in 2 of those. The 5/5 vs. 4/5 gap is not statistically distinguishable at n=5, and the mean-score advantage disappears under harmonized scoring. In practice, a confident "no issues" output from the isolated Defender differs from a hedged exoneration — but treat this as a qualitative tendency, not a confirmed advantage.
 
 2. **Empirical test design** *(replicable with output constraint)*. The original ensemble produced no test designs (ETD≈0) — but an ETD ablation showed that adding an explicit output constraint ("specify the empirical test with success and failure criteria") to the synthesizer achieves ETD mean 0.962. ml-lab produces ETD because its prompt includes this constraint, not because of its adversarial role structure. You can get the same output from an ensemble by adding the same instruction. The debate protocol remains the cleanest way to get test design output reliably, but it is not uniquely necessary.
 
