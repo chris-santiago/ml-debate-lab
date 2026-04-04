@@ -10,6 +10,16 @@
 # META_EXPERIMENT_RUNNER, EVALUATOR) and orchestrates the full benchmark
 # creation, execution, and scoring workflow.
 # See README.md for full context.
+#
+# PREREQUISITES:
+# META_EXPERIMENT_RUNNER dispatches ml-critic and ml-defender via the Agent
+# tool for Steps 3-5. These agents must be installed before running:
+#
+#   npx claude-ml-lab install
+#
+# Or manually:
+#   cp agents/ml-critic.md ~/.claude/agents/
+#   cp agents/ml-defender.md ~/.claude/agents/
 
 You are the LEAD agent for a turnkey multi-agent experiment system.
 
@@ -152,9 +162,18 @@ EVALUATOR output schema:
     "did_defense_update": true,
     "was_resolution_valid": true,
     "did_final_verdict_match_ground_truth": true,
+    "failure_attribution": "agent|protocol|ambiguous|none",
     "rationale": "Short explanation"
   }
 ]
+
+# failure_attribution values:
+# "agent"    — failure is traceable to a specific agent's output (e.g., ml-critic
+#              missed a planted issue; ml-defender produced a reasoning/label disconnect)
+# "protocol" — failure is in the debate structure (e.g., correct resolution type
+#              was not reached despite both agents performing their roles)
+# "ambiguous"— cannot distinguish agent vs. protocol cause from the outputs alone
+# "none"     — case passed; no failure to attribute
 
 ==================================================
 PART 3 — TEAMMATE INSTRUCTIONS
@@ -172,11 +191,12 @@ Create a synthetic benchmark for evaluating whether a self-debate meta-experimen
 You must produce:
 - benchmark_cases.json
 
-Create exactly 12 cases:
+Create exactly 15 cases:
 - 3 broken_baseline
 - 3 metric_mismatch
 - 3 hidden_confounding
 - 3 scope_intent_misunderstanding
+- 3 defense_wins
 
 Case design rules:
 - Synthetic only.
@@ -185,7 +205,11 @@ Case design rules:
 - Include planted flaws that a strong critique should discover.
 - Include at least one case where the defense should partially win.
 - Include at least one case where the trivial baseline should be competitive.
-- Include at least one case where a false-positive critique would be tempting.
+- defense_wins cases are false-positive critique traps: the work is methodologically
+  sound, but presented in a way that makes a critique tempting. These cases must
+  have NO planted issues, correct_position must be "defense", and
+  scoring_targets.must_find_issue_ids must be empty. The goal is to test whether
+  the agents can exonerate valid work, not just detect flaws.
 
 Output requirements:
 - Output JSON only.
@@ -262,6 +286,15 @@ Scoring guidance:
 - debate_resolution_quality = whether the loop reaches the correct resolution type
 - empirical_test_diagnosticity = whether the proposed empirical test would actually distinguish critique from defense
 - final_verdict_correctness = whether the final verdict matches ground truth
+
+Scoring scale: use 0.0 / 0.5 / 1.0 only. Do not use continuous values.
+
+N/A rules (exclude dimension from case mean when N/A):
+- issue_discovery_recall = N/A on defense_wins cases (no planted issues exist)
+- issue_discovery_precision = N/A on defense_wins cases (no planted issues exist)
+- empirical_test_diagnosticity = N/A when ideal_debate_resolution.type is
+  "critique_wins" or "defense_wins" (no empirical test needed; one side is
+  conclusively correct)
 
 Rubric output format:
 {
@@ -396,40 +429,66 @@ Before changing design choices:
 
 ### 4. Step 3 — Adversarial critique
 
-Create CRITIQUE.md.
+Dispatch the `ml-critic` agent via the Agent tool in **initial critique mode (Mode 1)**.
 
-For each issue:
-1. state the claim being made by the protocol
-2. state why it might be wrong
-3. state what evidence would settle it
+Provide it with: HYPOTHESIS.md, the PoC script, and README.md.
 
-Organize by root cause, not severity.
+Instruct it to produce CRITIQUE.md structured as:
+- One numbered issue per finding
+- For each issue: the claim being made, why it might be wrong, what evidence would settle it
+- Organized by root cause, not severity
+
+Wait for CRITIQUE.md before proceeding.
 
 ### 5. Step 4 — Defense
 
-Create DEFENSE.md.
+Dispatch the `ml-defender` agent via the Agent tool in **initial defense mode (Mode 1)**.
 
-For each critique point:
-- concede if correct
-- defend if the critique is overstated
-- if unresolved, specify what evidence would support critique vs defense
+Provide it with: HYPOTHESIS.md, the PoC script, README.md, AND CRITIQUE.md.
+The Defender must receive the Critic's output — do not dispatch it with task materials only.
+
+Instruct it to use the two-pass structure:
+- Pass 1: write out full analysis for every critique point before assigning any verdicts
+- Pass 2: assign verdicts only after completing Pass 1
+
+Verdict calibration rule (include verbatim in dispatch):
+"If your Pass 1 analysis identifies multiple critical unaddressed flaws, your overall
+verdict must be empirical_test_agreed or critique_wins — not defense_wins. A defender
+who correctly analyzes that a claim is invalid but labels it defense_wins has made a
+reasoning-to-label translation error."
+
+Wait for DEFENSE.md before proceeding.
 
 ### 6. Step 5 — Debate to resolution
 
-Create DEBATE.md.
+Initialize DEBATE.md listing all contested points (points where CRITIQUE.md and
+DEFENSE.md disagree).
 
-For each contested point:
-- run multiple exchange rounds between Critique and Defense personas
-- require each side to update when the other makes a good point
-- end with one of:
-  - critique_wins
-  - defense_wins
-  - empirical_test_agreed
+Then alternate Agent tool dispatches of `ml-critic` and `ml-defender`, both in
+**debate round mode (Mode 2)**:
 
-At the end:
-- produce a final list of agreed empirical tests
-- include the trivial baseline
-- nothing goes into the experiment unless it is on this list
+1. Dispatch ml-critic with HYPOTHESIS.md, PoC script, README.md, CRITIQUE.md,
+   DEFENSE.md, DEBATE.md. Instruct: "For each unresolved point: concede, sharpen
+   your argument, or propose a specific empirical test. Append as: Critic — Round N."
+2. Dispatch ml-defender with the same files. Instruct: "For each unresolved point:
+   concede, rebut, or accept/modify the proposed empirical test. Append as:
+   Defender — Round N."
+3. After each round, check resolution status per point:
+   - critique_wins — conceded by defender; mark resolved
+   - defense_wins — conceded by critic; mark resolved
+   - empirical_test_agreed — both sides agree on test condition; mark resolved
+   - unresolved — dispatch another round
+4. Repeat until all points are resolved or 4 rounds are reached.
+5. Force-resolve any remaining unresolved points as "empirical_test_required."
+
+At the end, extract the empirical test list: every point resolved as
+empirical_test_agreed or force-resolved. Each entry must specify:
+- What result means the critique was right
+- What result means the defense was right
+- What result is ambiguous
+
+Nothing goes into the experiment unless it is on this list.
+Always include the trivial baseline.
 
 ### 7. Step 6 — Design and run the experiment
 
@@ -504,8 +563,8 @@ LEAD, do this now in order:
 5. Send META_EXPERIMENT_RUNNER its instructions and tell it to wait for verified cases plus the fixed rubric before writing a plan.
 6. When CASE_AUTHOR finishes, pass benchmark_cases.json to CASE_VERIFIER and EVALUATOR and META_EXPERIMENT_RUNNER.
 7. When CASE_VERIFIER finishes, filter to KEEP cases only.
-8. If fewer than 8 cases are KEEP, ask CASE_AUTHOR to revise the rejected/revise cases and repeat verification.
-9. Once at least 8 KEEP cases exist, ask META_EXPERIMENT_RUNNER for the execution plan.
+8. If fewer than 10 cases are KEEP, ask CASE_AUTHOR to revise the rejected/revise cases and repeat verification. Ensure at least 2 defense_wins cases survive verification — if fewer do, ask CASE_AUTHOR to revise the defense_wins cases specifically.
+9. Once at least 10 KEEP cases exist (including at least 2 defense_wins), ask META_EXPERIMENT_RUNNER for the execution plan.
 10. Review the plan against all approval rules.
 11. Approve only if:
    - synthetic-only scope is preserved
