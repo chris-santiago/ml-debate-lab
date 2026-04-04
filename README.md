@@ -1,383 +1,165 @@
-# Claude `lab.md` Multi-Agent Evaluation Harness
+# lab-check
 
-This project is a turnkey multi-agent evaluation harness for testing how effective Claude is when executing the `lab.md` research workflow on a self-debate experiment.
+This project asks a simple question: **when an AI evaluates a piece of work, does it actually catch real problems?**
 
-The core idea is simple:
+The context is ML research — model results, statistical claims, deployment decisions. These are exactly the situations where evaluation matters most and where confident-sounding-but-wrong answers are most dangerous.
 
-- We treat the `lab.md` command/process as the **method under test**.
-- We treat Claude running that method as the **agent under test**.
-- We use **synthetic benchmark cases with known ground truth** so we can measure whether the method actually works, rather than relying on subjective impressions.
-- We use a **multi-agent team** so benchmark creation, verification, execution, and scoring are separated.
-
-The result is a controlled way to answer questions like:
-
-- Does Claude actually follow the `lab.md` process faithfully?
-- Does the critique/defense/debate loop surface real weaknesses?
-- Does it propose diagnostic experiments instead of vague objections?
-- Does it beat a trivial baseline like single-pass answer plus self-critique?
-- Does it reach the correct final verdict on cases where we already know the answer?
+We built a controlled experiment to find out whether adding structure to AI evaluation — specifically, a debate between two independent agents — produces measurably better results than a single-pass assessment. Not "sounds more thorough." Measurably more correct verdicts, on cases where we already knew the right answer.
 
 ---
 
-## What this evaluates
+## The Setup
 
-This harness evaluates the effectiveness of Claude using the `lab.md` workflow, specialized to a self-debate setting.
+The system under test is a **self-debate protocol**: one agent plays Critic, one plays Defender, a Judge adjudicates. The key architectural choice is that Critic and Defender receive the same scenario with no shared context — each produces an independent assessment before either sees the other's output.
 
-In other words, it is **not just testing “Claude debate” in general**. It is specifically testing whether Claude can successfully execute the structured investigation process defined by `lab.md`, including:
+This isolation is not a technicality. It's what makes the disagreement meaningful. When both agents independently find the same flaw, you have convergent evidence. When they disagree, you have a genuinely contested claim that requires an empirical test to resolve — not a confident guess.
 
-1. Building a minimal proof of concept
-2. Clarifying intent
-3. Writing an adversarial critique
-4. Writing a calibrated defense
-5. Debating contested points to resolution
-6. Designing and running empirical tests
-7. Synthesizing conclusions
-8. Writing a self-contained report
-9. Re-evaluating under production constraints
+The comparison is a **trivial baseline**: one AI agent, one pass, no debate structure.
 
-The self-debate protocol is the domain-specific target, but the larger object being evaluated is:
+To make the comparison meaningful, we needed cases with known correct answers. We built a **benchmark of 20 synthetic ML reasoning scenarios**, each with a planted flaw (or deliberate absence of one), a ground-truth verdict, and specific issues the evaluation had to find. Examples:
 
-> **Claude using the `lab.md` command/process as a research agent**
+- A team claiming a 4-point model improvement, evaluated on 1/10th the data with no confidence intervals
+- A loyalty program reporting a 22% sales lift that launched November 1st — right before Black Friday
+- A fine-tuned model beating zero-shot, with the team concluding their architecture is superior (the real cause: training regime difference)
+- Methodologically *sound* work, presented under adversarial framing — to test whether the protocol would wrongly condemn it
+
+Pass criteria were set before running anything: benchmark mean ≥ 0.65, ≥ 75% of cases pass, lift ≥ +0.10 over baseline.
 
 ---
 
-## Why a multi-agent setup is used
+## What We Found
 
-A single agent can easily leak information across roles:
+**Debate protocol: 0.97 out of 1.0. Single-pass baseline: 0.38. Lift: +0.59.**
 
-- It can invent its own test cases
-- Then run the workflow on those cases
-- Then grade itself afterward
+The threshold we set in advance to call the experiment a success was +0.10. We exceeded it by nearly 6×. 19 of 20 cases passed.
 
-That makes it hard to know whether the method is genuinely strong or merely persuasive.
+The most interesting result came from five cases that were *false-positive critique traps* — valid work, correctly designed, presented under adversarial framing. The baseline scored **0.000** on all five. It accepted the adversarial premise and condemned work that was actually fine. The debate protocol got all five correct.
 
-This harness separates responsibilities across agents so the evaluation is more trustworthy.
+A single AI reasoning pass has no mechanism to push back on a loaded framing. It inherits the premise. An independent Defender — one that never saw the Critic's output — is the only structural way to exonerate valid work.
 
-### Team roles
+One case failed: a healthcare triage scenario where the Defender correctly identified all the flaws in its reasoning but then labeled the verdict "the work is valid." Correct reasoning, wrong label. A calibration failure in output structure, not a reasoning failure — and fixable.
 
-#### Lead
-Coordinates the whole process, enforces sequencing, approves plans, and produces the final synthesis.
-
-#### Case Author
-Creates synthetic benchmark cases with:
-- known ground truth
-- planted flaws
-- expected critique targets
-- expected defense behavior
-- expected empirical resolution tests
-
-#### Case Verifier
-Checks that the cases are:
-- coherent
-- non-ambiguous
-- diagnostic
-- aligned with the scoring rubric
-
-#### Meta-Experiment Runner
-Executes the full `lab.md`-style workflow on the verified cases and produces the main artifacts.
-
-#### Evaluator
-Scores the outputs against a fixed rubric defined **before execution**.
+Full results, per-case scores, and conclusions are in [`self_debate_experiment_v2/`](self_debate_experiment_v2/).
 
 ---
 
-## What is being benchmarked
+## The Agent Under Test
 
-The system under test is the structured reasoning loop:
+The deeper object being evaluated here is the **`ml-lab` agent** — a Claude Code subagent that runs a structured 9-step ML hypothesis investigation workflow.
 
-**critique -> defense -> debate -> experiment -> conclusion**
+The workflow is designed for rigor over speed. Given a hypothesis, `ml-lab` first sharpens it into a falsifiable claim with agreed metrics, then builds a minimal runnable PoC. From there it branches into two adversarial subagents with distinct mandates:
 
-The benchmark asks whether that loop can:
+- **`ml-critic`** — a skeptical ML engineer with an applied mathematics background. It reads the hypothesis and PoC cold and identifies every implicit claim the code makes but hasn't tested, organized by root cause. It is explicitly forbidden from critiquing code style or features the PoC declared out of scope.
+- **`ml-defender`** — the original designer, arguing that the implementation is sound. It reads the critique and responds point-by-point: concede, rebut, or mark as empirically open. Fast concession on a real problem is valued over protracted defense.
 
-- identify planted weaknesses
-- avoid false-positive critiques
-- calibrate defenses appropriately
-- propose empirical tests that actually distinguish critique from defense
-- reach the correct final verdict
-- outperform trivial baselines
+`ml-lab` then orchestrates a multi-round debate between them, alternating dispatches until each contested point resolves — either one side concedes, or both agree on an exact empirical test with pre-specified success and failure conditions. Only tests on that agreed list go into the experiment. If findings are surprising enough to falsify a debate assumption, the whole cycle reopens: `ml-critic` and `ml-defender` are dispatched again in evidence-informed mode, with experimental results in hand. The investigation closes with a self-contained report and a production re-evaluation that checks whether the experimental recommendation survives operational constraints.
 
----
+The self-debate protocol was chosen as the domain for a specific reason: it's testable. Unlike most ML research questions, we can construct scenarios with known correct answers and measure whether the agent found the right one. This makes it possible to ask not just "did `ml-lab` follow the process?" but "did following the process actually produce correct verdicts?"
 
-## Why synthetic cases are used first
-
-This first version uses **synthetic ML reasoning tasks only**.
-
-That choice is intentional.
-
-Synthetic tasks let us create cases where we know:
-
-- what the hidden flaw is
-- what a good critique should notice
-- what a good defense should concede or contest
-- what experiment would settle the disagreement
-- what the correct final verdict should be
-
-That gives us controlled evaluation.
-
-Real-world tasks can come later, but they are a worse starting point because the “correct answer” is often disputed, underspecified, or entangled with domain knowledge.
+The self-debate experiment is, in that sense, `ml-lab` investigating itself — the protocol is both the tool and the subject.
 
 ---
 
-## Benchmark case categories
+## How the Experiment Was Built
 
-The benchmark contains 16 synthetic cases across five categories (15 verified KEEP, 1 excluded):
+The experiment ran in two phases.
 
-1. **Broken baseline**
-2. **Metric mismatch**
-3. **Hidden confounding**
-4. **Scope / intent misunderstanding**
-5. **Defense wins** *(false-positive critique traps — added after Experiment 1 to test the protocol on valid work under false attack)*
+**Phase 1** (`self_debate_experiment/`) established the protocol and tested a first version of the benchmark. This phase was orchestrated entirely by a multi-agent team — a Lead coordinating four specialized agents: CASE_AUTHOR (created benchmark cases), CASE_VERIFIER (validated them), META_EXPERIMENT_RUNNER (executed the workflow and wrote all artifacts), and EVALUATOR (scored outputs against a fixed rubric defined before execution). The orchestration prompt is in [`multi-agent-prompt.md`](multi-agent-prompt.md).
 
-These categories are chosen because they stress core commitments inside `lab.md`, especially:
+One important detail: in Phase 1, the debate transcripts were generated by Claude agents during the authoring session, then embedded as hardcoded data in the Python scripts. Re-running the script replays static text — it doesn't re-invoke the LLM. This was intentional: the point was to build and score the protocol, not to build a live inference pipeline.
 
-- preserving the trivial baseline
-- distinguishing intent from implementation error
-- requiring testable critiques
-- demanding diagnostic empirical tests
-- resisting vague or persuasive-but-empty reasoning
+Phase 1 identified two open problems. First, a rubric gap: `issue_discovery_precision` was undefined for cases where the Critique's premise was intentionally false — you can't measure "fraction of valid claims" when all claims are supposed to be invalid. Second, the contaminated protocol (Defense reads Critique before responding) made genuine `defense_wins` verdicts structurally impossible.
+
+**Phase 2** (`self_debate_experiment_v2/`) fixed both. The rubric was extended with a redefined IDP dimension for `defense_wins` cases. The Defense was fully isolated — it receives only the original scenario, never the Critic's output. And critically, Phase 2's transcripts were generated through the full `ml-lab` workflow: each agent role (Critique, Defense, Judge, Scorer, Baseline) was dispatched as an isolated subagent via Claude Code, producing genuinely independent outputs before they were embedded in the script. This directly tested whether the structured investigation process produced correct verdicts when run end-to-end. It did, and then some.
+
+For the full experimental design, scoring rubric, and benchmark case descriptions, see [`self_debate_experiment_v2/README.md`](self_debate_experiment_v2/README.md).
 
 ---
 
-## How this relates to `lab.md`
+## Why This Matters
 
-The `lab.md` file remains central.
+The standard approach to AI evaluation is single-pass: give a model some work, ask it what it thinks, get an answer. This works when the flaw is obvious. It breaks down when:
 
-It is the **inner protocol**.
+- The flaw requires independently questioning the framing
+- The work is actually valid but sounds questionable  
+- The correct answer is "we need to run an empirical test first" rather than a binary yes/no
 
-This multi-agent harness is the **outer execution and evaluation wrapper**.
-
-### In practice
-
-- The **Meta-Experiment Runner** uses the `lab.md` process as its operating procedure.
-- The **Case Author** creates synthetic tasks designed to stress whether that procedure works.
-- The **Case Verifier** filters out weak or ambiguous test cases.
-- The **Evaluator** measures how well the `lab.md` procedure performed on those cases.
-- The **Lead** coordinates the entire run and writes the final synthesis.
-
-So the harness does **not replace** `lab.md`.
-
-It evaluates Claude’s ability to use `lab.md` effectively.
+Debate adds something single-pass cannot. The clearest illustration is the false-positive trap cases: the baseline had no way to recover from an adversarially framed premise. The isolated Defender did, precisely because it never received that framing.
 
 ---
 
-## The embedded master workflow
+## Running the Experiment
 
-The experiment uses a specialized “master prompt” built on top of `lab.md`.
+Both Phase 1 and Phase 2 scripts score pre-embedded transcripts — no API key or external calls required at runtime. The transcripts were generated during the investigation sessions (via Claude Code agent dispatches) and baked into the scripts. Running the scripts just scores them and writes results JSON.
 
-That master workflow adapts the original process to a self-debate setting where:
+**Phase 2:**
 
-- two instances of Claude argue opposite sides
-- a judging component evaluates the debate
-- the workflow measures whether self-debate helps uncover real issues
-- the evaluation is grounded in synthetic tasks with known answers
-
-The master workflow preserves the same artifact-driven structure as `lab.md`, while making the experiment target more specific.
-
----
-
-## Artifacts produced
-
-A successful run should produce the following files.
-
-### Benchmark control artifacts
-- `benchmark_cases.json`
-- `benchmark_verification.json`
-- `evaluation_rubric.json`
-- `evaluation_results.json`
-
-### Main workflow artifacts
-- `self_debate_poc.py`
-- `README.md`
-- `CRITIQUE.md`
-- `DEFENSE.md`
-- `DEBATE.md`
-- `self_debate_experiment2.py`
-- `CONCLUSIONS.md`
-- `REPORT.md`
-- `REPORT_ADDENDUM.md`
-
-### Final coordination artifact
-- `FINAL_SYNTHESIS.md`
-
----
-
-## Expected evaluation questions
-
-This harness is designed to answer questions such as:
-
-- Did Claude correctly identify the planted flaws?
-- Did Claude hallucinate flaws that were not actually present?
-- Did the defense calibrate correctly, rather than blindly resisting criticism?
-- Did the debate produce sharper claims and better empirical tests?
-- Did the final experiment actually resolve the disputed point?
-- Did the overall workflow beat a trivial baseline?
-- Did the final report and addendum reflect the evidence accurately?
-
----
-
-## Scoring dimensions
-
-The evaluator scores each case using a fixed rubric defined before execution.
-
-Typical scoring dimensions include:
-
-- **Issue discovery recall**  
-  Fraction of planted issues that were correctly identified.
-
-- **Issue discovery precision**  
-  Fraction of claimed issues that were actually valid.
-
-- **Defense calibration**  
-  Whether the defense conceded real flaws and resisted weak critiques appropriately.
-
-- **Debate resolution quality**  
-  Whether the debate ended in the correct type of resolution.
-
-- **Empirical test diagnosticity**  
-  Whether the proposed experiment would genuinely distinguish critique from defense.
-
-- **Final verdict correctness**  
-  Whether the final conclusion matched ground truth.
-
----
-
-## Why the trivial baseline matters
-
-A major rule inherited from `lab.md` is that the trivial baseline is non-negotiable.
-
-If a simple method can explain the result, the richer debate workflow does not deserve credit.
-
-That is why every serious run must compare the full critique/defense/debate protocol against at least:
-
-- single-pass answer
-- single-pass answer plus self-critique
-
-This protects against overestimating the value of the more elaborate workflow.
-
----
-
-## Execution flow
-
-The intended execution order is:
-
-1. Create the agent team
-2. Generate synthetic benchmark cases
-3. Verify the cases
-4. Freeze the evaluation rubric
-5. Draft the meta-experiment execution plan
-6. Approve or reject the plan
-7. Run the full `lab.md`-style workflow on verified cases
-8. Score the outputs
-9. Write a final synthesis of strengths, weaknesses, and recommendations
-
-This sequence is important because it prevents:
-- grading after the fact with a changing rubric
-- using ambiguous or low-quality test cases
-- mixing generation and evaluation in the same role
-
----
-
-## What success looks like
-
-This harness is successful if it can produce a credible answer to:
-
-> When Claude runs the `lab.md` process, does it actually discover real problems, design informative experiments, and reach correct conclusions on controlled benchmark cases?
-
-A good result is not “Claude sounded smart.”
-
-A good result is:
-
-- the planted flaws were found,
-- the defenses were calibrated,
-- the experiments were diagnostic,
-- the verdicts were correct,
-- and the method beat the trivial baseline.
-
----
-
-## Limitations
-
-This first version is deliberately narrow.
-
-### Current limitations
-- Synthetic tasks only
-- No real production hypotheses
-- No external deployment system
-- No claim that benchmark performance automatically transfers to real research work
-
-### Why that is acceptable
-The first objective is internal validity:
-- can the workflow work at all under controlled conditions?
-
-Only after that should the process be extended to real tasks.
-
----
-
-## Recommended next phases
-
-After the synthetic-only run is stable, the natural next steps are:
-
-1. Add cases that specifically stress key `lab.md` commitments:
-   - trivial baseline handling
-   - surprise handling
-   - correction handling
-   - premature reporting
-2. Expand the synthetic benchmark with hard `defense_wins` cases requiring domain knowledge or computation to rebut
-3. Fix the `issue_discovery_precision` rubric gap for `defense_wins` cases (IDP → N/A when `correct_position = "defense"`)
-4. Introduce a small number of real ML hypotheses
-5. Compare results across synthetic and real tasks
-6. Extend to true multi-model deployment to test genuine inter-model disagreement resolution
-
----
-
-## File Placement Guide
-
-### `lab.md` — the core research workflow
-
-**Location:** Project root (`/your-project/lab.md`)
-
-`lab.md` is the step-by-step investigation protocol (Steps 1–9). It is invoked via the `/lab` skill in Claude Code. Keep it in the root of any project where you want to run the full research workflow.
-
-To use it globally (accessible from any project), copy it to `~/.claude/lab.md`.
-
-**Invocation:**
+```bash
+cd self_debate_experiment_v2/
+python self_debate_poc.py
 ```
-/lab
+
+Produces `self_debate_results.json`.
+
+**Phase 1:**
+
+```bash
+cd self_debate_experiment/
+python self_debate_poc.py       # Experiment 1: contaminated protocol, 11 cases
+python self_debate_experiment2.py  # Experiment 2: isolated protocol, 15 cases
 ```
-Claude Code will prompt you for a hypothesis and primary metrics before beginning.
 
----
+Standard library only. No dependencies beyond Python 3.8+.
 
-## Summary
+**Running the full multi-agent harness from scratch:**
 
-This project is a benchmark harness for evaluating whether Claude can effectively execute the `lab.md` research process in a self-debate setting.
-
-The important distinction is:
-
-- `lab.md` defines the research method
-- the master prompt specializes that method to self-debate
-- the multi-agent harness evaluates whether Claude can actually carry out that method well
-
-That separation lets us test the process rigorously instead of relying on style, confidence, or anecdotal success.
-
-**Key finding from these experiments:** The isolated two-agent architecture (Critique and Defense with separate context windows) is the correct design when *evaluating a debate protocol as a benchmark*. For normal `/lab` runs on an ML hypothesis, the single-agent sequential workflow in `lab.md` is the correct design — the Defense reads the Critique and responds to it directly.
-
---------------------------
-
-# Bootstrap Prompt to Run Experiment
-
-Below is a single bootstrap prompt you can paste into a **lead** Claude Code session to create and run the full team-based experiment around your self-debate master workflow. Claude Code agent teams are experimental, require `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, and are designed around one lead session coordinating independent teammates with separate contexts.
-
-## Launch
-
-Start Claude Code with agent teams enabled, then paste the block below as your first message in the lead session. If you want the simplest setup, use `in-process` teammate mode first, because the lead can coordinate teammates directly without extra terminal management.
+The bootstrap prompt in [`multi-agent-prompt.md`](multi-agent-prompt.md) will recreate the entire Phase 1 experiment using a team of Claude Code agents. Requires agent teams enabled:
 
 ```bash
 export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 claude --teammate-mode in-process
 ```
 
+Then paste the contents of `multi-agent-prompt.md` as your first message.
 
-## Bootstrap prompt
+---
 
-See `multi-agent-prompt.md`.
+## An Example Run
+
+To validate that `ml-lab` correctly navigates the full iteration stack — not just the happy path — we ran it on a fraud detection hypothesis:
+
+> *"An LSTM on ordered transaction category sequences outperforms a bag-of-categories baseline because fraud exhibits characteristic temporal patterns."*
+
+The run exercised every major feature of the workflow.
+
+Steps 1–2 produced a clean PoC with AP = 0.96 against 0.05 prevalence — a strong-looking result. The critic identified four issues; the defender conceded three and marked one as empirically open. One debate round resolved the contested point into a three-condition experiment design (ordered LSTM, count-vector LR, equalized-distribution LSTM). Pre-specified verdicts were written before any experiment ran.
+
+The experiment returned mixed results: the randomized-phases test showed the critique was right (AP dropped from 0.96 to 0.68 — phase position was signal, not sequence structure). The ordered vs. bag-of-categories comparison went to the defense. Then Condition C returned AP = 1.00.
+
+The near-perfect metrics suspicion trigger fired immediately. The agent investigated, found that `sort()` was making sequences trivially detectable, and redesigned Condition C with soft-sort (Gaussian noise on ranks). The redesigned condition returned AP = 0.996 — still suspicious.
+
+This is where the spec's escalation logic was put to the test. Rather than accepting the second result or spinning into more micro-iterations, the agent correctly identified that the equalized-distribution test is *fundamentally broken for synthetic data*: any imposed ordering is trivially distinguishable from random sequences because LSTMs detect sequential structure. This isn't a fixable design flaw — it's a hypothesis-level problem.
+
+The macro-iteration Outcome C trigger fired: the experiment wasn't measuring the wrong *thing*, it was testing the wrong *question*. The hypothesis was reformulated:
+
+> *"Fraud accounts exhibit a specific temporal signature (low-value test transactions → rapid category switching → high-value extraction) that is distinguishable from both random ordering and generic monotonic trends."*
+
+The most important result from this run isn't the fraud finding — it's that the spec handled the full escalation without any additional guidance: micro-iteration (fix Condition C), second micro-iteration (still broken), escalation to macro-iteration (hypothesis needs reformulation). The distinction between a fixable experimental flaw and a hypothesis-level problem was load-bearing, and the agent navigated it correctly.
+
+Full trace and spec validation notes are in [`seq_fraud_experiment/TEST2_FINDINGS.md`](seq_fraud_experiment/TEST2_FINDINGS.md).
+
+---
+
+## Artifact Index
+
+| Location | Contents |
+|----------|----------|
+| [`multi-agent-prompt.md`](multi-agent-prompt.md) | Bootstrap prompt for the full multi-agent harness |
+| [`self_debate_experiment/`](self_debate_experiment/) | Phase 1: frozen transcripts, contaminated + isolated protocol, 11–15 cases |
+| [`self_debate_experiment_v2/`](self_debate_experiment_v2/) | Phase 2: live API, isolated protocol, 20 cases, full results |
+| [`self_debate_experiment_v2/README.md`](self_debate_experiment_v2/README.md) | Full experimental design, rubric, benchmark case breakdown |
+| [`self_debate_experiment_v2/CONCLUSIONS.md`](self_debate_experiment_v2/CONCLUSIONS.md) | Per-case scores and findings |
+| [`self_debate_experiment_v2/REPORT.md`](self_debate_experiment_v2/REPORT.md) | Full technical report |
+| [`self_debate_experiment_v2/ELEVATOR_PITCH.md`](self_debate_experiment_v2/ELEVATOR_PITCH.md) | Non-technical summary of results |
+| [`seq_fraud_experiment/HYPOTHESIS.md`](seq_fraud_experiment/HYPOTHESIS.md) | Hypothesis and metrics for the sequence fraud investigation |
+| [`seq_fraud_experiment/TEST2_FINDINGS.md`](seq_fraud_experiment/TEST2_FINDINGS.md) | Full trace and spec validation notes for the example run |

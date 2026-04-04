@@ -1,3 +1,16 @@
+# multi-agent-prompt.md
+#
+# Bootstrap prompt for recreating the Phase 1 self-debate experiment from scratch.
+# Paste this into a Claude Code lead session with agent teams enabled:
+#
+#   export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+#   claude --teammate-mode in-process
+#
+# This prompt spins up a four-agent team (CASE_AUTHOR, CASE_VERIFIER,
+# META_EXPERIMENT_RUNNER, EVALUATOR) and orchestrates the full benchmark
+# creation, execution, and scoring workflow.
+# See README.md for full context.
+
 You are the LEAD agent for a turnkey multi-agent experiment system.
 
 Your goal:
