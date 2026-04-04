@@ -52,27 +52,33 @@ DC applies to all 20 cases and is the widest-gap dimension in the aggregate (+0.
 
 ## Sensitivity Analysis Results
 
-Computed from `self_debate_results.json` without re-running API calls. Three scenarios for baseline DC:
+**Updated 2026-04-04:** DRQ cap effect has been empirically resolved. A baseline scorer agent was run on all 9 DRQ=0.5 cases using the original benchmark prompts. The cap was binding on **all 9 cases** — every baseline response naturally earned DRQ=1.0 (correct resolution type identified), suppressed to 0.5 by the cap.
+
+Five scenarios computed from confirmed scores:
 
 | Scenario | Baseline Mean | Lift vs. Debate (0.970) | Baseline Passes | Pass % |
 |---|---|---|---|---|
-| **Current** (DC=0.0 hardcoded) | 0.384 | **+0.586** | 0* | 0% |
-| **DC=0.5** (conservative: partial calibration credit) | 0.490 | **+0.480** | 8 | 40% |
-| **DC=1.0** (upper bound) | 0.596 | **+0.374** | 9 | 45% |
+| **Current** (DC=0.0, DRQ≤0.5) | 0.384 | **+0.586** | 0* | 0% |
+| **DC=0.5** | 0.490 | **+0.480** | 8 | 40% |
+| **DC=0.5 + DRQ uncapped** | 0.529 | **+0.441** | 9 | 45% |
+| **DC=1.0** | 0.596 | **+0.374** | 9 | 45% |
+| **DC=1.0 + DRQ uncapped** | 0.635 | **+0.335** | 9 | 45% |
 
-*Reported as 2 in the JSON, but those 2 cases (`broken_baseline_001`, `metric_mismatch_002`) have DC=0.0 stored, which fails the per-dimension floor check (all applicable dims ≥ 0.5). The `baseline_pass` flags in the JSON appear to have been set before the DC override was applied. This is a secondary inconsistency in the results.
+*Reported as 2 in the JSON, but those 2 cases (`broken_baseline_001`, `metric_mismatch_002`) have DC=0.0 stored, which fails the per-dimension floor check (all applicable dims ≥ 0.5). The `baseline_pass` flags were set before the DC override was applied. With DC=0.0 enforced consistently, correct baseline pass count is 0. See CONCLUSIONS.md correction note.
 
-**DRQ cap effect:** Cannot be quantified. The `self_debate_transcripts.py` file (source of raw pre-override scores) is missing. All stored baseline DRQ values are exactly 0.0 or 0.5 — indistinguishable from natural scores at those values or from values that were capped downward. Nine cases are marked with DRQ=0.5 where the cap may have been binding.
+**DRQ cap finding:** The 9 baseline cases with DRQ=0.5 earned that score because the cap suppressed natural 1.0 scores — not because the baseline arrived at the wrong resolution type. Single-pass evaluation reliably identifies the correct resolution type (empirical_test_agreed or critique_wins) across all 9 cases. The cap penalizes the baseline for not having performed a structured debate, even when the baseline's conclusion matches the ideal resolution exactly.
 
 ---
 
 ## What the Sensitivity Tells Us
 
-**The lift is real but overstated.** At DC=0.5 (a conservative assumption — baseline can express partial calibration in free-text but earns no credit for structured defense), the lift drops from +0.586 to +0.480. This is still 4.8× the pre-specified +0.10 threshold, and the benchmark still passes all three criteria. The protocol's advantage is genuine.
+**The lift is real but the headline number reflects rubric design choices, not only protocol reasoning.** At DC=0.5 with DRQ uncapped (the most empirically grounded correction), the lift drops from +0.586 to **+0.441** — still 4.4× the pre-registered +0.10 threshold. The benchmark passes all three criteria under every scenario.
 
-**The defense_wins finding is unaffected by the DC override.** On the five defense_wins cases, the baseline scores DRQ=0.0 and FVC=0.0 because it structurally accepts the adversarial premise and reaches the wrong verdict — not because DC is forced to 0.0. Removing the DC override on defense_wins cases raises the baseline mean on those cases from 0.0 to 0.167 (DC=0.5) or 0.333 (DC=1.0), but the fundamental finding — the baseline cannot exonerate valid work — remains intact.
+**The defense_wins finding is unaffected.** On the five defense_wins cases, the baseline scores DRQ=0.0 and FVC=0.0 because it structurally accepts the adversarial premise and reaches the wrong verdict — this is genuine protocol failure, not a rubric artifact. The fundamental finding holds under all scenarios.
 
-**The "5.86× threshold" framing should be qualified.** The precise multiplier depends on rubric design choices that were made before the experiment but that now appear non-neutral. Reporting the lift as "+0.586 (rubric-adjusted) / +0.480 (DC=0.5 sensitivity)" is more honest than the single number.
+**The DRQ cap is the larger contributor.** Removing the DC override (DC: 0.0→0.5) moves the baseline mean by +0.106. Removing the DRQ cap moves it by a further +0.039. Together they account for +0.145 of the headline +0.586 lift. At the upper bound (DC=1.0 + DRQ uncapped), the lift floor is +0.335 — still 3.35× the threshold.
+
+**The "5.86× threshold" framing should be retired.** The multiplier is rubric-dependent. The honest range is **+0.335 to +0.586** depending on how structural absence of a defense role is penalized. The conservative defensible figure is **+0.441**.
 
 ---
 

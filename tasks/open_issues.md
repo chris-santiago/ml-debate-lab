@@ -106,9 +106,21 @@ Run the same protocol and report IDR. If it drops below 0.85, benchmark construc
 | # | Issue | Priority | Status | Blocking |
 |---|-------|----------|--------|---------|
 | 1 | Budget-matched ensemble baseline | P1 | Open | Core lift claim |
-| 2 | Recover/recompute raw DRQ scores | P1 | Open | Accurate sensitivity |
-| 3 | Fix stale baseline pass flags | P1 | Open | #2 (rerun) |
-| 4 | Two-pass Defender fix + retest | P2 | Open | None |
+| 2 | Recover/recompute raw DRQ scores | P1 | **Resolved** 2026-04-04 | — |
+| 3 | Fix stale baseline pass flags | P1 | **Resolved** 2026-04-04 (noted in CONCLUSIONS.md; full JSON rerun pending #1) | #1 |
+| 4 | Two-pass Defender fix + retest | P2 | **Resolved** 2026-04-04 | — |
 | 5 | Cross-model scorer validation | P2 | Open | None |
 | 6 | Independent benchmark | P2 | Open | None |
 | 7 | Convergence — adequate n per tier | P3 | Open | None |
+
+## Resolution Notes
+
+**Issue 2 (2026-04-04):** DRQ cap confirmed binding on all 9 DRQ=0.5 cases. Baseline scorer agent re-run on all 9 cases using original benchmark prompts — natural DRQ=1.0 in every case. The cap suppressed correct resolution-type identification, not incorrect. Full sensitivity updated in `SENSITIVITY_ANALYSIS.md`: honest lift range is +0.335 to +0.441 (vs. headline +0.586).
+
+**Issue 3 (2026-04-04):** Correction note added to `CONCLUSIONS.md`. Correct baseline pass count is 0/20 with DC=0.0 enforced consistently (reported as 2 due to stale flags). Full JSON fix deferred until Issue 1 (ensemble baseline rerun) generates a clean results file.
+
+**Issue 4 (2026-04-04):** Two-pass defender prompt change applied to `agents/ml-defender.md`. Retested on 3 failed/partial cases:
+- `real_world_framing_001`: flipped from `defense_wins` (wrong) → `critique_wins` (correct). DC=1.0.
+- `defense_wins_003`: held at `defense_wins` (correct). DC=1.0.
+- `defense_wins_005`: held at `defense_wins` (correct). DC=1.0.
+Fix is confirmed tractable. Change should be merged into `~/.claude/agents/ml-defender.md`.
