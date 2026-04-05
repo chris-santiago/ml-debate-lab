@@ -190,13 +190,13 @@ npm is supported as a plugin *source type* within a marketplace entry (alongside
 
 - [x] `.claude-plugin/plugin.json` created with correct paths and version
 - [x] `.claude-plugin/marketplace.json` created with correct plugin entry
-- [ ] `claude plugin validate .` run from repo root — no errors
-- [ ] Smoke test via `--plugin-dir` (no install, fully isolated): `claude --plugin-dir .` — verify ml-lab is available and asks to sharpen the hypothesis
-- [ ] Verify subagent dispatch via `--plugin-dir`: confirm ml-lab can invoke ml-critic/ml-defender (Steps 3–5), research-reviewer (Step 10 R1), research-reviewer-lite (Step 10 R2–3), readme-rewriter (Step 13)
-- [ ] Install test: `/plugin marketplace add ./` then `/plugin install claude-ml-lab@ml-debate-lab` — verify all six agent files appear in `~/.claude/agents/`
+- [x] `claude plugin validate .` run from repo root — no errors
+- [x] Smoke test via `--plugin-dir` (no install, fully isolated): `claude --plugin-dir .` — verify ml-lab is available and asks to sharpen the hypothesis
+- [x] Verify subagent dispatch via `--plugin-dir`: confirm ml-lab can invoke ml-critic/ml-defender (Steps 3–5), research-reviewer (Step 10 R1), research-reviewer-lite (Step 10 R2–3), readme-rewriter (Step 13)
+- [x] Install test: `/plugin marketplace add ./` + `/reload-plugins` — agents available and ml-lab invokable (note: marketplace add loads agents dynamically from source; file copy to `~/.claude/agents/` may require `/plugin install` separately)
 - [ ] Push to GitHub
 - [ ] Test from a clean machine: `/plugin marketplace add chris-santiago/ml-debate-lab` then `/plugin install claude-ml-lab@ml-debate-lab`
-- [ ] Confirm `agents/README.md` shows plugin install as the primary path (already done)
+- [x] Confirm `agents/README.md` shows plugin install as the primary path (already done)
 
 ---
 
