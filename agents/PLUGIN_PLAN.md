@@ -151,6 +151,35 @@ No publish step. No npm. The git push is the release.
 
 ---
 
+## Testing and CI
+
+**Official support is limited.** The docs document two mechanisms:
+
+**`--plugin-dir` flag (recommended for local testing)**
+Load the plugin from a local path without installing it — nothing touches `~/.claude/agents/`, no cleanup required:
+```bash
+claude --plugin-dir /path/to/ml-debate-lab
+```
+Use `/reload-plugins` inside the session to pick up file changes without restarting. This is the safest way to run the checklist smoke tests — fully isolated, no side effects.
+
+**`claude plugin validate .` (suitable for CI)**
+Validates JSON syntax, schema, and frontmatter across all plugin files. Non-interactive, so it can run in a GitHub Actions workflow:
+```yaml
+- name: Validate plugin
+  run: claude plugin validate .
+```
+
+**What does not exist (as of April 2026):**
+- No official GitHub Action for plugin testing or validation
+- No documented isolated sandbox or container approach
+- No CI/CD workflow templates for plugins
+
+The `claude-code-action` GitHub Action (`anthropics/claude-code-action@v1`) exists but is for running Claude in PR/issue workflows — not for plugin testing.
+
+**Minimal CI recommendation:** A GitHub Actions workflow that runs `claude plugin validate .` on every push covers what is formally supported. For deeper smoke testing (agent dispatch, subagent invocation), use `--plugin-dir` locally before each release.
+
+---
+
 ## A note on npm
 
 npm is supported as a plugin *source type* within a marketplace entry (alongside `github`, `url`, `git-subdir`). It is NOT a replacement for the marketplace mechanism — the user-facing install is always `/plugin install`, regardless of the underlying source. Publishing to npm could be useful for private registries or enterprise deployments, but adds no benefit for a public GitHub-hosted plugin. The git-based approach here is simpler and gets automatic update propagation via `/plugin marketplace update`.
@@ -162,10 +191,9 @@ npm is supported as a plugin *source type* within a marketplace entry (alongside
 - [x] `.claude-plugin/plugin.json` created with correct paths and version
 - [x] `.claude-plugin/marketplace.json` created with correct plugin entry
 - [ ] `claude plugin validate .` run from repo root — no errors
-- [ ] Add marketplace locally and install to test: `/plugin marketplace add ./` then `/plugin install claude-ml-lab@ml-debate-lab`
-- [ ] Verify all six agent files appear in `~/.claude/agents/` after install: ml-lab, ml-critic, ml-defender, research-reviewer, research-reviewer-lite, readme-rewriter
-- [ ] Verify Claude Code picks up ml-lab (describe an ML hypothesis — it should ask to sharpen the claim)
-- [ ] Verify subagent dispatch: confirm ml-lab can invoke ml-critic and ml-defender (Steps 3–5), research-reviewer (Step 10 Round 1), research-reviewer-lite (Step 10 Rounds 2–3), readme-rewriter (Step 13)
+- [ ] Smoke test via `--plugin-dir` (no install, fully isolated): `claude --plugin-dir .` — verify ml-lab is available and asks to sharpen the hypothesis
+- [ ] Verify subagent dispatch via `--plugin-dir`: confirm ml-lab can invoke ml-critic/ml-defender (Steps 3–5), research-reviewer (Step 10 R1), research-reviewer-lite (Step 10 R2–3), readme-rewriter (Step 13)
+- [ ] Install test: `/plugin marketplace add ./` then `/plugin install claude-ml-lab@ml-debate-lab` — verify all six agent files appear in `~/.claude/agents/`
 - [ ] Push to GitHub
 - [ ] Test from a clean machine: `/plugin marketplace add chris-santiago/ml-debate-lab` then `/plugin install claude-ml-lab@ml-debate-lab`
 - [ ] Confirm `agents/README.md` shows plugin install as the primary path (already done)
