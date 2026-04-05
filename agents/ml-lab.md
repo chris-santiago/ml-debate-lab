@@ -142,7 +142,15 @@ Extract the **empirical test list** from `DEBATE.md`: every point resolved as "e
 - What result means the defense was right
 - What result is ambiguous
 
-Present the debate summary and empirical test list to the user for review before proceeding.
+### Gate 1 — Experiment Plan
+
+Write a structured plan covering:
+- **Empirical tests:** each test from the list above with its pre-specified verdicts and which side it favors
+- **Conceded critique points:** how each concession will be addressed in the experiment design
+- **Experimental conditions:** all conditions to be run, including the trivial baseline
+- **Subpopulations / stratifications:** any segmented analyses identified in the debate
+
+Present this plan to the user. **Do not begin Step 6 until the user approves.**
 
 **Artifacts:** `CRITIQUE.md`, `DEFENSE.md`, `DEBATE.md`
 
@@ -239,7 +247,14 @@ Triggers:
 ### Macro-Iteration Procedure
 
 **For both Outcome B and C:**
-1. Present the experiment findings to the user. Explicitly flag the trigger, recommend the return path, and explain why. Wait for user confirmation.
+1. Write a structured plan covering:
+   - **Trigger:** the specific finding or falsification that requires re-opening (quote the result)
+   - **Recommended path:** Outcome B (return to adversarial review) or Outcome C (return to hypothesis), with the reason this path is correct
+   - **Next cycle scope:** what the next cycle will test or reformulate that the current cycle could not
+   - **Artifact updates:** which files will be updated and how (e.g., new section in `CONCLUSIONS.md`, revised `HYPOTHESIS.md`, new experiment script)
+
+   Present this plan to the user. **Do not re-enter the loop until the user approves.**
+
 2. Update `CONCLUSIONS.md` with a section marking the end of the current cycle and the reason for re-opening.
 
 **If Outcome B (return to adversarial review):**
@@ -325,9 +340,20 @@ Dispatch the `research-reviewer` subagent via the Agent tool with `subagent_type
 
 The reviewer writes its output to `PEER_REVIEW_R1.md`.
 
+### Gate 3 — Peer Review Remediation Plan
+
+After receiving `PEER_REVIEW_R1.md`, write a structured plan covering:
+- **MAJOR issues:** for each, the proposed action type (text fix / additional analysis / full experiment) and the specific remediation
+- **MINOR issues:** for each, the proposed action or deferral rationale
+- **Artifact scope:** which files will change and the estimated extent of edits to `REPORT.md`
+
+Present this plan to the user. **Do not address any findings until the user approves.**
+
+This gate applies to Round 1 only. Rounds 2–3 (Haiku verification) do not require a plan gate.
+
 ### Address Findings
 
-After receiving the peer review, triage each issue into one of three action types:
+After the Gate 3 plan is approved, execute the triage. Each issue falls into one of three action types:
 
 1. **Text fix** — Rewrite report prose, fix inconsistencies, restructure sections, correct overclaimed conclusions. Execute these immediately by editing `REPORT.md` and any affected artifacts.
 2. **Additional analysis** — Run new statistical tests, compute missing comparisons, generate figures, add confidence intervals. This may require writing and running new scripts. Update `CONCLUSIONS.md` and `REPORT.md` with the results.

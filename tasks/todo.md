@@ -14,6 +14,46 @@ After completing Steps 1–9 in full-report mode, ml-lab should ask the user whe
 
 ---
 
+## ~~ml-lab: User-approved plans at key decision gates~~ ✓ DONE
+
+At three points in the investigation, ml-lab should write a plan and surface it to the user for approval before proceeding. These are the highest-stakes transitions — each one commits significant compute and shapes everything that follows.
+
+**Gate 1 — After debate phase (end of Step 5)**
+
+Before entering Step 6, write a plan covering:
+- The empirical test list extracted from `DEBATE.md` (each test, its pre-specified verdicts, and which side it favors)
+- Conceded critique points that must be addressed in experiment design
+- The proposed experimental conditions and baseline(s)
+- Any subpopulations or stratifications identified in the debate
+
+Present this as the experiment plan. Do not begin Step 6 until the user approves. This is already partially implied by the existing "present the debate summary and empirical test list to the user" instruction — this TODO formalizes it as an explicit written plan with approval required.
+
+**Gate 2 — After macro-iteration decision (Outcome B or C)**
+
+When a macro-iteration is triggered (return to adversarial review or return to hypothesis), write a plan covering:
+- What triggered the re-opening (the specific finding or falsification)
+- Which path is recommended (Outcome B or C) and why
+- What the next cycle will test that the current cycle could not
+- What artifacts will be updated and how
+
+Present and wait for user confirmation before re-entering the loop. This replaces the current "wait for user confirmation" with a structured written plan rather than an inline description.
+
+**Gate 3 — After first peer review round (Step 10, Round 1 only)**
+
+After `PEER_REVIEW_R1.md` is written, before addressing any findings, write a plan covering:
+- Each MAJOR issue: proposed action type (text fix / additional analysis / full experiment) and specific remediation
+- Each MINOR issue: proposed action or deferral rationale
+- Estimated scope of changes to `REPORT.md` and other artifacts
+
+Present and wait for user approval before executing any fixes. Rounds 2–3 (Haiku verification) do not require a plan — only the deep Opus first pass does.
+
+**Implementation notes:**
+- Plans should be written as structured markdown, not inline prose
+- Each gate plan is ephemeral — it does not need to be saved as an artifact unless the user asks
+- The three gates are independent; none requires the others to exist
+
+---
+
 ## Update "An Example Run" in README after ml-lab edits are finalized
 
 Once all changes to `agents/ml-lab.md` are complete, revisit the "An Example Run" section in the root README and update it to reflect the current workflow. Specifically check:
