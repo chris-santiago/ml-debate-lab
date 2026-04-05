@@ -344,6 +344,88 @@ Then paste the contents of `multi-agent-prompt.md` as your first message.
 
 ---
 
+## FAQ
+
+### Installation & Setup
+
+**Do I need Claude Code installed before I can use ml-lab?**
+
+Yes. ml-lab is a Claude Code agent — it requires Claude Code to be installed. The plugin copies agent definition files to `~/.claude/agents/`; Claude Code then makes them available as spawnable agents.
+
+**Are all six agent files required, or can I use a subset?**
+
+`ml-lab.md`, `ml-critic.md`, and `ml-defender.md` are required for the core workflow. `research-reviewer.md` and `research-reviewer-lite.md` are only needed if you want the Step 10 peer review loop. `readme-rewriter.md` is only needed for the optional Step 13 README rewrite. If you skip optional steps, install only the files you need — but the plugin installs all six by default.
+
+**Is manual installation equivalent to the plugin?**
+
+Yes — both copy the same six agent files to `~/.claude/agents/`. The plugin method automates the copy and surfaces updates when you run `/plugin marketplace update ml-debate-lab`. Manual install gives you direct control but requires manual updates.
+
+**If I uninstall the plugin, what happens to my investigation data?**
+
+Uninstalling removes the agent files from `~/.claude/agents/` but does **not** remove agent memory at `~/.claude/agent-memory/ml-lab/`. Your investigation history is preserved. Delete that directory manually if you want a clean slate.
+
+---
+
+### Using ml-lab
+
+**What happens when I first invoke ml-lab?**
+
+Before writing any code, ml-lab asks three questions: (1) the hypothesis sharpened into a falsifiable claim with a named mechanism and expected observable, (2) the primary evaluation metric(s), and (3) report mode — full report or conclusions only. It will not dispatch any subagents or write any code until all three are settled and `HYPOTHESIS.md` is written.
+
+**How long does a full investigation take?**
+
+Each subagent dispatch is roughly one LLM call. A minimal run (Steps 1–9, one debate round, no peer review) takes approximately 6–8 LLM calls. A full run with peer review can reach 15–20+ calls. Wall-clock time tracks API latency — expect minutes per stage. The three user-approval gates (experiment plan, macro-iteration re-opening, peer review remediation) are the primary pacing points; the investigation waits for you at each one.
+
+**Can ml-lab investigate hypotheses outside of ML?**
+
+The workflow structure — falsifiable claim → PoC → critique → debate → agreed experiment — applies to any testable hypothesis. However, the Critic and Defender prompts contain ML-specific framing (the Critic focuses on statistical validity, silent misconfigurations, and evaluation protocol flaws; the Defender is calibrated around PoC design intent). For non-ML domains you'd need to adapt those prompts. Out of the box, it's optimized for ML.
+
+**What does the production re-evaluation (Step 9) actually check?**
+
+It reviews the experimental recommendation against operational constraints: inference latency, training cost, data availability in production, monitoring requirements, and deployment complexity. It's designed to catch cases where a result that's valid in a controlled experiment doesn't survive real deployment conditions. You specify relevant constraints during Step 2 intent clarification — anything not specified is not checked.
+
+---
+
+### Workflow & Orchestration
+
+**What happens if the Critic and Defender never reach agreement?**
+
+After 4 debate rounds, ml-lab caps the loop. Any unresolved points are classified as "empirically open" and become candidates for the empirical test list. That list goes to Gate 1 for user approval before any experiment runs. Unresolved disagreements don't block the investigation — they get resolved by experiment rather than by argument.
+
+**What is the difference between Outcome B and Outcome C in macro-iteration?**
+
+Both re-open the investigation loop, but at different points. **Outcome B** triggers when experimental findings are surprising enough to invalidate a specific debate assumption — but the core hypothesis mechanism is intact. The investigation re-enters adversarial review (Steps 3–5) with results in hand. **Outcome C** triggers when findings falsify the hypothesis mechanism itself — the investigation returns to Step 1 for reformulation. The fraud detection example in the README illustrates Outcome C: AP=0.996 on soft-sort wasn't a fixable experimental flaw; it meant the hypothesis about temporal fraud patterns was wrong. The macro-iteration cap is 3 cycles regardless of outcome type.
+
+**What happens if peer review hits its 3-round maximum with MAJOR issues still open?**
+
+ml-lab halts and surfaces the unresolved issues to the user with a "human intervention required" flag. It does not attempt to continue autonomously. The assumption is that 3 rounds of remediation without convergence signals a fundamental issue that needs human judgment — not more automated iteration.
+
+---
+
+### Results & Evidence
+
+**Why does the raw lift (+0.586) differ from the "honest corrected" range (+0.335 to +0.441)?**
+
+Two rubric dimensions score structurally differently for the debate vs. baseline. Defense Calibration (DC) measures whether the correct verdict was reached *via a defense role* — the baseline has no Defender, so it scores 0.0 on DC by design, not because it reasoned poorly. Debate Resolution Quality (DRQ) measures whether positions were resolved through structured exchange; a single-pass system is capped at 0.5. These reflect real structural differences, but they inflate the raw gap. The corrected range neutralizes those structural penalties to isolate pure reasoning quality — that's the number to use when comparing evaluation approaches.
+
+**The experiment had one failed case — what happened, and has it been fixed?**
+
+A healthcare triage scenario where the Defender correctly identified all critical flaws in its analysis but then labeled the verdict "the work is valid." Correct reasoning, wrong label — a calibration failure in output structure, not a reasoning failure. Fixed by restructuring the Defender prompt into two mandatory passes: complete the full analysis before selecting any verdict labels. The fix is in [`agents/ml-defender.md`](agents/ml-defender.md).
+
+**The "clean exoneration" finding is described as "directional, internal only" — what does that mean?**
+
+On 3 of the 5 internal false-positive trap cases, the debate's Defender raised zero concerns — clean "no issues" verdicts with no hedging. The compute-matched ensemble raised caveats alongside 2 of its 4 correct exonerations ("this looks valid, but..."). This pattern was real in the internal benchmark data, but: (1) n=5 is too small to confirm statistically, (2) the mean-score advantage disappears under harmonized scoring, and (3) the pattern did not replicate in the external exoneration benchmark — critics raised plausible-but-wrong concerns on all 3 external cases (IDP=0.5). "Directional, internal only" means: observe it as a tendency, don't rely on it as a confirmed structural guarantee.
+
+**Would results change significantly with a cheaper or different model?**
+
+Possibly. All Phase 2 agent dispatches used `claude-sonnet-4-6`. A cross-capability scorer validation using Haiku showed IDR delta = 0.0 across 15 cases, suggesting the scoring rubric itself is robust to capability tier within the same model family. Running the Critic and Defender on a significantly weaker model would likely affect reasoning quality on harder cases. Cross-vendor validation (GPT-4o, Gemini) remains future work — results should be treated as specific to the claude-sonnet-4-6 capability tier until replicated elsewhere.
+
+**Could using the same model family across all roles bias the results?**
+
+Yes — this is a known limitation. All agents (Critic, Defender, Judge, Scorer, and Baseline) used Claude. Systematic patterns in how the model processes prompts could inflate agreement rates or scoring consistency in ways that wouldn't generalize to other model families. The Haiku scorer validation showed no IDR bias at a different capability tier within the same family, but cross-vendor validation is still pending. The [technical report](TECHNICAL_REPORT.md) lists this explicitly under remaining limitations.
+
+---
+
 ### Should I Use ml-lab or Just Run an Ensemble?
 
 **It depends on what output you need.**
@@ -356,13 +438,13 @@ A compute-matched ensemble — three independent assessors plus a synthesizer, n
 
 2. **Exoneration of valid work** *(5/5 correct, directional vs. ensemble 4/5).* ml-lab correctly exonerated valid work in all 5 false-positive trap cases; the ensemble exonerated 4 of 5. The 5/5 vs. 4/5 gap is below statistical threshold at n=5, and the mean-score advantage disappears under harmonized scoring. Treat the count advantage as directional, not confirmed.
 
-3. **Empirical test design** *(replicable with output constraint)*. The debate reliably produces well-specified empirical tests; an unconstrained ensemble almost never does. But an ETD ablation showed that adding one explicit instruction to the ensemble synthesizer achieves ETD mean 0.962. ml-lab produces ETD because its prompt requires it, not because of adversarial role structure. You can get the same output from an ensemble by adding the same constraint.
+3. **Empirical test design** *(replicable with output constraint).* The debate reliably produces well-specified empirical tests; an unconstrained ensemble almost never does. But an ETD ablation showed that adding one explicit instruction to the ensemble synthesizer achieves ETD mean 0.962. ml-lab produces ETD because its prompt requires it, not because of adversarial role structure. You can get the same output from an ensemble by adding the same constraint.
 
 **Use ml-lab when** the output you need is *what experiment to run next*, or when you're evaluating work that might be valid and you need a dissenting voice that argues for it, not just against it.
 
 **Use an ensemble when** you need a verdict on whether something is broken and don't need a test specification. Simpler, faster, and empirically nearly as good for straightforward fault detection.
 
-**Honest caveats:** The structural advantage evidence is primarily from synthetic benchmarks. An external exoneration benchmark was subsequently run: 3 defense_wins-type cases from peer-reviewed ML work (BERT/SQuAD 1.1, ResNet-152/ImageNet, clinical 5-fold CV), where a critique could be raised but the methodology is genuinely sound. Debate protocol passed all 3 (mean 0.875); baseline passed 0/3 on rubric (DC=0.0 structural rule) but reached correct verdict label in all 3. The exoneration pattern holds on externally grounded cases. The ETD advantage is confirmed as an output-constraint prompt effect (not an architecture effect) by ablation — adding the same instruction to an ensemble synthesizer achieves ETD mean 0.962. See [`external_exoneration_results.json`](self_debate_experiment_v2/external_exoneration_results.json).
+**Honest caveats:** The structural advantage evidence is primarily from synthetic benchmarks. An external exoneration benchmark was subsequently run: 3 defense_wins-type cases from peer-reviewed ML work (BERT/SQuAD 1.1, ResNet-152/ImageNet, clinical 5-fold CV), where a critique could be raised but the methodology is genuinely sound. Debate protocol passed all 3 (mean 0.875); baseline passed 0/3 on rubric (DC=0.0 structural rule) but reached correct verdict label in all 3. The exoneration pattern holds on externally grounded cases. The ETD advantage is confirmed as an output-constraint prompt effect (not an architecture effect) by ablation. See [`external_exoneration_results.json`](self_debate_experiment_v2/external_exoneration_results.json).
 
 ---
 
