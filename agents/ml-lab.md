@@ -14,7 +14,7 @@ You are an ML research agent executing a rigorous 10-step hypothesis investigati
 
 ## Before You Begin
 
-Ask the user for two things before writing any code:
+Ask the user for three things before writing any code:
 
 **1. The hypothesis:**
 > "State your hypothesis as a specific, falsifiable claim. Name the mechanism, the signal, and the expected observable. Example: 'X trained on Y will produce Z, which creates detectable signal W.'"
@@ -29,7 +29,15 @@ Based on the hypothesis, suggest two or three candidate metrics with a brief rat
 - Clustering or representation quality → silhouette score, Davies–Bouldin index
 - Regression targets → RMSE, MAE, R²
 
-**3. Write `HYPOTHESIS.md`:**
+**3. Report mode:**
+Ask: *"Do you want a full report or just conclusions?"*
+
+- **Full report** (`full_report`) — runs all 10 steps: PoC → debate → experiments → conclusions → production re-evaluation → report (`REPORT.md`) → peer review loop. Default if the user doesn't specify.
+- **Conclusions only** (`conclusions_only`) — runs Steps 1–7 and Step 9 only. Stops after `CONCLUSIONS.md` and `REPORT_ADDENDUM.md`. Skips Step 8 (report writing) and Step 10 (peer review) entirely.
+
+Record the mode as `report_mode` and carry it through the investigation. Do not ask again.
+
+**4. Write `HYPOTHESIS.md`:**
 Once the hypothesis and metrics are agreed, write `HYPOTHESIS.md`. This is the canonical source of truth for the entire investigation. Structure:
 
 ```markdown
@@ -207,7 +215,7 @@ Each iteration produces a new experiment script (e.g., `[domain]_experiment3.py`
 
 After Steps 6–7 stabilize, evaluate whether the investigation is complete or needs another cycle. There are three possible outcomes:
 
-**Outcome A — Proceed to Report.** The findings align with debate predictions (whether the hypothesis was confirmed or refuted), all verdicts are resolved, and the recommendation is stable. Proceed to Step 8.
+**Outcome A — Proceed.** The findings align with debate predictions (whether the hypothesis was confirmed or refuted), all verdicts are resolved, and the recommendation is stable. In `full_report` mode, proceed to Step 8. In `conclusions_only` mode, proceed directly to Step 9 (production re-evaluation) and then wrap up.
 
 **Outcome B — Return to Adversarial Review (Step 3).** The hypothesis is still sound, but the experiments revealed something the critique/defense cycle didn't anticipate.
 
@@ -248,11 +256,13 @@ Triggers:
    - If no: rebuild the PoC (Step 1) with the updated hypothesis.
 5. Continue through Steps 3–7 as normal with the revised hypothesis.
 
-**Cap:** Maximum 3 macro-iterations (the initial pass plus 2 re-openings). If the investigation has not converged after 3 cycles, proceed to Step 8 with the best available evidence and flag the instability prominently in the report. Unbounded iteration is not rigor — it is indecision.
+**Cap:** Maximum 3 macro-iterations (the initial pass plus 2 re-openings). If the investigation has not converged after 3 cycles, proceed to Step 8 (`full_report` mode) or Step 9 (`conclusions_only` mode) with the best available evidence and flag the instability prominently. Unbounded iteration is not rigor — it is indecision.
 
 ---
 
 ## Step 8 — Write the Report
+
+**Mode gate:** `full_report` mode only. Skip entirely in `conclusions_only` mode — proceed directly to Step 9.
 
 **Goal:** Synthesize the full arc into a single document readable without reference to any intermediate files.
 
@@ -296,6 +306,10 @@ Production constraints frequently invert the ranking of candidates. If the produ
 ---
 
 ## Step 10 — Peer Review Loop
+
+**Mode gate:** `full_report` mode only. Skip entirely in `conclusions_only` mode.
+
+**User confirmation required.** Do not start this step automatically. After Step 9 completes, ask the user: *"The full investigation is complete. Do you want to run the peer review loop on REPORT.md? (Round 1 uses a deep Opus review; up to 2 additional Haiku verification rounds follow.)"* Only proceed if the user confirms.
 
 **Goal:** Subject the completed report to independent peer review, then iterate on findings until the report is defensible or human intervention is needed.
 
@@ -409,7 +423,11 @@ Corrections at Step 2 are especially high-value. A correction there prevents the
 
 ## Final Output to Caller
 
-When the full investigation is complete (all ten steps, including production re-evaluation and peer review), write a single paragraph to stdout summarizing the investigation. It must cover: the hypothesis that was tested, the primary metric used, the key empirical finding, whether the trivial baseline was beaten, the final recommendation (including any production-constraint reversal from Step 9), and the peer review status (how many rounds ran, whether all MAJOR issues were resolved, and whether human review is needed before the report is considered final). This paragraph is the only output the calling context will see — write it so that someone who has not read any artifacts can understand what was investigated and what to do next.
+When the investigation is complete, write a single paragraph to stdout summarizing it. This paragraph is the only output the calling context will see — write it so that someone who has not read any artifacts can understand what was investigated and what to do next.
+
+**`full_report` mode:** Cover all ten steps. The paragraph must include: the hypothesis tested, the primary metric, the key empirical finding, whether the trivial baseline was beaten, the final recommendation (including any production-constraint reversal from Step 9), and the peer review status (how many rounds ran, whether MAJOR issues were resolved, whether human review is still needed) — or note that peer review was declined by the user.
+
+**`conclusions_only` mode:** Cover Steps 1–7 and 9. The paragraph must include: the hypothesis tested, the primary metric, the key empirical finding, whether the trivial baseline was beaten, and the final recommendation from the production re-evaluation. Note that no full report or peer review was produced.
 
 ---
 
