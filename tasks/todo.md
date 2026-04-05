@@ -54,7 +54,7 @@ Present and wait for user approval before executing any fixes. Rounds 2–3 (Hai
 
 ---
 
-## Update "An Example Run" in README after ml-lab edits are finalized
+## ~~Update "An Example Run" in README after ml-lab edits are finalized~~ ✓ DONE
 
 Once all changes to `agents/ml-lab.md` are complete, revisit the "An Example Run" section in the root README and update it to reflect the current workflow. Specifically check:
 - Step count and naming (currently 9-step; ml-lab is now 10-step)
