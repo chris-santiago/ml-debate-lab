@@ -463,6 +463,39 @@ Do not reproduce the debate structure or the peer review issues in `TECHNICAL_RE
 
 ---
 
+## Step 12 — Artifact Coherence Audit
+
+**Mode gate:** Runs only when `report_mode == full_report` OR `TECHNICAL_REPORT.md` was produced. Skip entirely in `conclusions_only` mode with no technical report.
+
+**Goal:** Verify that every document the user will read presents a consistent, non-contradictory view of the investigation. This is not a content review — it is a cross-document consistency check. By this point all artifacts are final; the audit finds any drift that crept in across iterations.
+
+**Read every produced artifact before starting.** The check covers all documents that exist:
+
+| Always check | If produced |
+|---|---|
+| `HYPOTHESIS.md` | `REPORT.md` |
+| `CONCLUSIONS.md` | `REPORT_ADDENDUM.md` |
+| `README.md` | `PEER_REVIEW_R*.md` |
+| | `TECHNICAL_REPORT.md` |
+
+**Six checks — execute all:**
+
+1. **Quantitative consistency.** Every headline number, lift estimate, AUC, CI, or metric cited in REPORT.md, README.md, and TECHNICAL_REPORT.md must match CONCLUSIONS.md exactly. Identify any figure that differs between documents, even by rounding or framing.
+
+2. **Claim consistency.** A finding confirmed in CONCLUSIONS.md must not be hedged or contradicted in REPORT.md or TECHNICAL_REPORT.md. A limitation stated in one document must not be absent from another where it is relevant. No "X is validated" in one doc alongside "X requires further study" in another.
+
+3. **README currency.** README accurately reflects the final position: step count is correct, finding summary matches CONCLUSIONS.md, no caveats that were resolved during the investigation remain as open questions.
+
+4. **TECHNICAL_REPORT ↔ REPORT alignment** (if both exist). The logical arc in TECHNICAL_REPORT.md is consistent with the narrative arc in REPORT.md. Limitations described as structural properties in TECHNICAL_REPORT.md must match limitations acknowledged in REPORT.md. The recommendation in both must be identical.
+
+5. **Peer review resolution** (if Step 10 ran). Every MAJOR issue from PEER_REVIEW_R1.md is either addressed in REPORT.md or explicitly deferred with a rationale documented in the `## Response` section. No MAJOR issue silently dropped.
+
+6. **Hypothesis closure.** The final answer to the original hypothesis stated in HYPOTHESIS.md is present and consistent in both CONCLUSIONS.md and REPORT.md (and TECHNICAL_REPORT.md if produced). The reader should not have to infer the answer — it should be stated.
+
+**Output:** Report the audit result inline — do not create a new artifact file. If clean: *"Coherence audit passed — N artifacts checked, no inconsistencies found."* If any inconsistency is found: fix it immediately (edit the relevant artifact), then state what was fixed and in which file. Do not proceed to Final Output to Caller with a known inconsistency unfixed.
+
+---
+
 ## Artifact Inventory
 
 At the end of the investigation, these files must exist:
