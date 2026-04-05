@@ -161,7 +161,7 @@ User hypothesis
       +——— Step 13:     (optional) dispatches [readme-rewriter] → rewrites README.md
 ```
 
-The key architectural constraint is **context isolation**: `ml-critic` and `ml-defender` each receive only the task materials — never each other's output — before producing their independent assessments. The Defender's independence is what makes genuine `defense_wins` verdicts possible on false-positive critique cases.
+The key architectural constraint is **sequenced dispatch**: `ml-critic` receives only the task materials and produces its critique independently. `ml-defender` then receives the critique and responds point-by-point — conceding, rebutting, or marking points as empirically open. Each agent's role mandate is what keeps the exchange honest, not context isolation.
 
 ---
 
