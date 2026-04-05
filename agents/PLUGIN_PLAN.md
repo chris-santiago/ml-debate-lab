@@ -52,9 +52,9 @@ No `plugin/` directory. No Node.js. No npm publish step. The repo itself is the 
 
 ---
 
-## Step 1 — `.claude-plugin/plugin.json`
+## ~~Step 1 — `.claude-plugin/plugin.json`~~ ✓ DONE
 
-The plugin manifest declares what gets installed.
+**File exists at `.claude-plugin/plugin.json`.** The plugin manifest declares what gets installed.
 
 ```json
 {
@@ -77,9 +77,9 @@ The `agents` paths are relative to the plugin root (the repo root, which is also
 
 ---
 
-## Step 2 — `.claude-plugin/marketplace.json`
+## ~~Step 2 — `.claude-plugin/marketplace.json`~~ ✓ DONE
 
-The marketplace catalog lists the plugin and where to find it. Since the plugin lives in the same repo as the marketplace, `source` is `"./"`.
+**File exists at `.claude-plugin/marketplace.json`.** The marketplace catalog lists the plugin and where to find it. Since the plugin lives in the same repo as the marketplace, `source` is `"./"`.
 
 ```json
 {
@@ -159,8 +159,8 @@ npm is supported as a plugin *source type* within a marketplace entry (alongside
 
 ## Pre-publish checklist
 
-- [ ] `.claude-plugin/plugin.json` created with correct paths and version
-- [ ] `.claude-plugin/marketplace.json` created with correct plugin entry
+- [x] `.claude-plugin/plugin.json` created with correct paths and version
+- [x] `.claude-plugin/marketplace.json` created with correct plugin entry
 - [ ] `claude plugin validate .` run from repo root — no errors
 - [ ] Add marketplace locally and install to test: `/plugin marketplace add ./` then `/plugin install claude-ml-lab@ml-debate-lab`
 - [ ] Verify all six agent files appear in `~/.claude/agents/` after install: ml-lab, ml-critic, ml-defender, research-reviewer, research-reviewer-lite, readme-rewriter
