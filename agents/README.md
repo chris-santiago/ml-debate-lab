@@ -15,6 +15,15 @@ This directory contains reference copies of the Claude Code agents that power th
 
 All agents except `ml-lab` are subagents. They are never invoked directly — `ml-lab` dispatches them at the appropriate steps via the Claude Code Agent tool.
 
+## Invoking
+
+Once installed, ml-lab can be started two ways:
+
+- **`/ml-lab`** — explicit slash command entry point
+- **Natural language** — describe an ML hypothesis and Claude Code routes to ml-lab automatically via its description
+
+---
+
 ## Installing
 
 **Via plugin (recommended):**
