@@ -265,7 +265,7 @@ Phase 10 ran `cross_model_scorer.py` against MiniMax-M2.7 via the Anthropic SDK 
 
 **Root cause:** MiniMax-M2.7 via the Anthropic-compatible SDK endpoint unreliably emits text blocks — on most prompts it returns only the ThinkingBlock with no final text response. This is an SDK compatibility issue: the Anthropic SDK maps MiniMax's thinking output to ThinkingBlock objects but the model does not reliably produce a subsequent TextBlock.
 
-**Fix identified (not yet applied to results):** MiniMax's OpenAI-compatible API (`https://api.minimax.io/v1`) resolves this. Without `reasoning_split=True`, the response comes back via `choices[0].message.content` with thinking embedded as `<think>...</think>` tags, which can be stripped cleanly. Probing confirmed all 4 test cases returned valid, parseable JSON. The corrected scorer is in `cross_model_scorer.py` (see code). **Phase 10 should be re-run in v4 using this approach.**
+**Fix identified (not yet applied to results):** MiniMax's OpenAI-compatible API (`https://api.minimax.io/v1`) resolves this. Without `reasoning_split=True`, the response comes back via `choices[0].message.content` with thinking embedded as `<think>...</think>` tags, which can be stripped cleanly. Probing confirmed all 4 test cases returned valid, parseable JSON. **Phase 10 should be re-run in v4 using this approach.** `cross_model_scorer.py` has not been updated — the corrected pattern is documented here only.
 
 ```python
 # Correct pattern for MiniMax via OpenAI-compatible API:
