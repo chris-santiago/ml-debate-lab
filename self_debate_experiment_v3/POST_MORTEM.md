@@ -158,6 +158,11 @@ Both cases score 1.0 on every dimension including ETD, have all planted issues f
 
 The `v3_raw_outputs/` directory is never committed to git during the experiment run. All downstream scoring, ETD evaluation, bootstrap CIs, and sensitivity analysis read directly from these files. If any file is modified after scoring — whether by a re-run, a tool call, or an accidental overwrite — there is no way to detect the change or recover the original. The isolation breach re-runs in this experiment (Issue 3) are a concrete example: the re-run outputs replaced the contaminated files with no git record of what was overwritten or when.
 
-**What to fix in v4:** Add an explicit directive to the experiment plan: once Phase 6 (all conditions, all runs) is complete and `check_isolation.py` passes clean, the orchestrator must commit `v3_raw_outputs/` immediately before any scoring begins. The commit message should record the isolation check result and run count. This creates a tamper-evident snapshot of ground truth that scoring and analysis can be traced back to.
+**What to fix in v4:** Add explicit directives to the experiment plan for two commits:
+
+1. **After Phase 6 (main benchmark):** Once all benchmark cases are complete and `check_isolation.py` passes clean, commit `v3_raw_outputs/` before any scoring begins. Commit message should record isolation check result and benchmark run count.
+2. **After Phase 6b (external cases):** Once all external cases are complete and isolation check passes, commit `v3_raw_outputs/` again to snapshot the full dataset including external cases.
+
+Each commit creates a tamper-evident checkpoint that scoring and analysis can be traced back to. The two-commit structure also makes it easy to identify which files belong to the main benchmark vs. the external benchmark by comparing the two snapshots.
 
 ---
