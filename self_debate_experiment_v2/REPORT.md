@@ -51,7 +51,7 @@ The isolated self-debate protocol is defined by three structural commitments:
 
 1. **Context isolation.** The Critic and Defender each receive only the task prompt. Neither sees the other's output before producing its own assessment.
 2. **Role separation.** Critic is instructed to identify methodological weaknesses. Defender is instructed to identify what the critique overlooks or overstates.
-3. **Adjudication.** The Judge receives both independent outputs and assigns a verdict. The verdict is typed: `critique_wins`, `defense_wins`, or `empirical_test_agreed`.
+3. **Adjudication.** The Judge receives both independent outputs and assigns a verdict. The verdict is typed: `critique_wins`, `defense_wins`, or `empirical_test_agreed`. In this benchmark, the Judge function is performed by the ml-lab orchestrating session — it is not a separate subagent invocation. The Critic and Defender are dispatched as independent subagents; the orchestrator reviews both outputs and adjudicates inline.
 
 The baseline receives the same task prompt and produces a single-pass assessment with no debate structure.
 
@@ -198,13 +198,15 @@ Dimension-weighted lift: debate vs. baseline = **+0.468**; debate vs. ensemble =
 
 ### 2.4 Convergence by Difficulty
 
-| Difficulty | Cases | Mean convergence |
-|------------|-------|-----------------|
-| easy | 3 | 0.833 |
-| medium | 10 | 0.944 |
-| hard | 7 | 0.938 |
+| Difficulty | Original n | Combined n (≥10) | Combined convergence |
+|------------|-----------|-----------------|---------------------|
+| easy | 3 | 10 | 0.950 |
+| medium | 10 | 10 | 0.944 |
+| hard | 7 | 10 | 0.957 |
 
-Convergence does not decrease with difficulty. See §4.4 for interpretation.
+*Original n=3 easy-tier estimate (0.833) was a single-data-point artifact (defense_wins_003 conv=0.5). Combined figures include 10 new cases per tier from `new_benchmark_results.json`. Range 0.944–0.957 is essentially flat across difficulty.*
+
+Convergence does not decrease with difficulty — the §3.3 NOT SUPPORTED verdict is confirmed with ≥10 cases per tier. See §4.4 for interpretation.
 
 ---
 
@@ -318,7 +320,13 @@ The primary addition in v2 is the two new case categories (real_world_framing) a
 
 The following limitations are documented in full across `SENSITIVITY_ANALYSIS.md`, `ENSEMBLE_ANALYSIS.md`, and the post-experiment sections of this report. They are consolidated here for clarity.
 
-**L1 — Closed-loop benchmark design.** The benchmark cases, ground truth labels (`must_find`, `correct_position`, `ideal_resolution`), rubric dimensions, scoring code, agent prompts, and scoring judgments all originate from the same entity. The benchmark may be unconsciously calibrated to the protocol's strengths. The 16/20 debate ceiling scores (1.000) are consistent with this effect, though they are also consistent with the tasks being genuinely tractable for the protocol. An independent external benchmark was run as a partial mitigant (10 cases from published ML evaluation failures, IDR=0.95 — see `../external_benchmark/`). A separate external exoneration benchmark constructed 3 defense_wins-type cases from peer-reviewed ML work (BERT/SQuAD 1.1, ResNet-152/ImageNet, 5-fold CV on clinical data) — published methodologies where a critique could be raised but the work is genuinely sound. Debate: 3/3 pass (mean 0.875); baseline: 0/3 pass on rubric (DC=0.0 structural), 3/3 correct verdict by label. The exoneration finding holds on externally grounded cases. See `external_exoneration_results.json`.
+**L1 — Closed-loop benchmark design.** The benchmark cases, ground truth labels (`must_find`, `correct_position`, `ideal_resolution`), rubric dimensions, scoring code, agent prompts, and scoring judgments all originate from the same entity. The benchmark may be unconsciously calibrated to the protocol's strengths. The 16/20 debate ceiling scores (1.000) are consistent with this effect, though they are also consistent with the tasks being genuinely tractable for the protocol. An independent external benchmark was run as a partial mitigant (10 cases from published ML evaluation failures, IDR=0.95 — see `../external_benchmark/`). Two methodological notes apply to the external fault-detection benchmark:
+
+**DC scoring difference:** The internal benchmark hardcodes baseline DC=0.0 as a structural override (the baseline has no defense role). The external benchmark scores DC naturally — the baseline scored DC=1.0 on 9/10 cases where it correctly identified critique-type verdicts. This makes the external baseline mean (0.967) not comparable to the internal baseline mean (0.384). The external benchmark is used specifically to validate IDR against ground-truth from the published record — not to replicate the full internal rubric comparison.
+
+**Protocol deviation:** Defenders in the external fault-detection benchmark were dispatched without receiving the Critic's output, making it a parallel two-agent assessment rather than a true adversarial debate. The Judge reconciled two independent views rather than adjudicating a genuine exchange. Verdict correctness (IDR, FVC) is unaffected — both agents independently converged on the correct issues on all critique cases — but ETD production is lower as a result (only 1/10 external cases generated an agreed empirical test). Documented in `external_benchmark/results.json` metadata.
+
+A separate external exoneration benchmark constructed 3 defense_wins-type cases from peer-reviewed ML work (BERT/SQuAD 1.1, ResNet-152/ImageNet, 5-fold CV on clinical data) — published methodologies where a critique could be raised but the work is genuinely sound. Debate: 3/3 pass (mean 0.875); baseline: 0/3 pass on rubric (DC=0.0 structural), 3/3 correct verdict by label. The exoneration finding holds on externally grounded cases. See `external_exoneration_results.json`.
 
 **L2 — Single run per case; variance estimated on subset.** Every result is a point estimate from a single execution. Bootstrap confidence intervals and a paired Wilcoxon test are documented in `stats_results.json`. Within-case LLM stochasticity was estimated by re-running the full debate protocol 3 independent times on 5 representative cases (`broken_baseline_001`, `metric_mismatch_003`, `hidden_confounding_002`, `defense_wins_001`, `real_world_framing_002`). Results: debate_std = 0.0 across all 5 cases; the protocol output is effectively deterministic at this run count for cases with salient, unambiguous flaws. The reported benchmark means are stable point estimates, not artifacts of LLM stochasticity. See `within_case_variance_results.json`.
 

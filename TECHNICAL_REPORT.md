@@ -1,5 +1,13 @@
 # Self-Debate Protocol v2: Technical Report
 
+> **Document status (2026-04-05):** This report reflects the experimental protocol as originally designed. Two sections have been superseded by post-experiment findings:
+>
+> 1. **Protocol architecture (§1.2):** The "Judge" described here is the ml-lab orchestrator acting in an adjudication role — not a dedicated fourth subagent invocation. The Critic and Defender are separate subagent calls; the Judge function is performed inline by the orchestrating session.
+>
+> 2. **Defender isolation:** Wherever this report states that the Defender receives "the task scenario only (never the Critic's output)", that is a **benchmark-specific isolation design choice**, not a property of the ml-defender agent in production use. In the standard ml-lab workflow, the Defender receives the Critic's output (CRITIQUE.md) before responding. The benchmark isolates them to make independent convergence meaningful as evidence.
+>
+> See `self_debate_experiment_v2/REPORT.md` for the current authoritative version.
+
 **Date:** 2026-04-04  
 **Experiment:** `self_debate_experiment_v2/`  
 **Model:** `claude-sonnet-4-6` (all agent roles)
