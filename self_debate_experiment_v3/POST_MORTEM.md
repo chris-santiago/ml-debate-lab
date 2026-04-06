@@ -223,5 +223,30 @@ Post-fix results show all three debate conditions at 0.975–0.993 and a 93.9% p
 
 **4. The fair-comparison lift of +0.053 is the most defensible number.** After controlling for cases where baseline was also tested, debate adds approximately 5 points over baseline. At that margin, the experiment barely supports the claim that debate outperforms baseline at all, let alone that more elaborate debate structures add incremental value.
 
-**Implication for v4 case design:** The benchmark needs cases that genuinely stress-test the conditions against each other — ambiguous scenarios where a single-pass critic misses something that a multiround exchange surfaces, or where ensemble synthesis resolves a contested point that isolated debate leaves open. High-difficulty cases with nuanced `empirical_test_agreed` resolutions are the most likely candidates. A 93.9% pass rate on a well-designed benchmark should be a warning sign, not a headline result.
+**5. Difficulty labels do not predict performance.** `difficulty_validation_results.json` shows baseline means of easy=0.698, medium=0.655, hard=0.676 — a 4-point spread with hard cases scoring *higher* than medium. Spearman rho=-0.069, p=0.68: no detectable relationship between difficulty labels and baseline scores. If the labels don't track actual difficulty, any claim that debate adds more value on hard cases than easy ones is built on unreliable ground. This reinforces the ceiling finding: the benchmark's internal structure isn't working, not just the score distribution.
 
+**Implication for v4 case design:** The benchmark needs cases that genuinely stress-test the conditions against each other — ambiguous scenarios where a single-pass critic misses something that a multiround exchange surfaces, or where ensemble synthesis resolves a contested point that isolated debate leaves open. High-difficulty cases with nuanced `empirical_test_agreed` resolutions are the most likely candidates. Difficulty labels should be validated against baseline performance before the experiment runs — if hard cases don't score lower on baseline, the labels need revision. A 93.9% pass rate on a well-designed benchmark should be a warning sign, not a headline result.
+
+---
+
+## Issue 10 — Orchestrator does not commit artifacts at phase boundaries
+
+**Scope:** Future fix  
+**Severity:** Moderate — artifacts produced during the experiment are untracked until the orchestrator or user manually commits, creating windows where work can be lost or silently overwritten
+
+Beyond the raw outputs (Issue 7), no other experiment artifacts are committed at phase boundaries. Scripts, results files, analysis outputs, and logs accumulate as untracked files throughout the run. If the experiment is interrupted, re-run, or if a later phase overwrites an earlier output, there is no git record of the intermediate state.
+
+Issue 7 addressed raw outputs specifically because they are ground truth. This issue generalizes the principle: every phase should end with a commit of all artifacts it produced.
+
+**What to fix in v4:** Add an explicit commit directive at the conclusion of each plan phase. Suggested checkpoints:
+
+- **Phase 0–2 (setup, preregistration):** Commit benchmark cases, preregistration JSON, and rubric before any agent runs begin
+- **Phase 5 (scoring engine):** Commit scorer scripts (`self_debate_poc.py`, analysis scripts) before Phase 6 begins
+- **Phase 6 (raw outputs):** Two commits as specified in Issue 7
+- **Phase 7 (scoring and stats):** Commit all results JSON files immediately after scoring completes
+- **Phase 8–9 (analysis):** Commit sensitivity, variance, and difficulty validation results
+- **Phase 10+ (reporting):** Commit report artifacts as they are produced
+
+Each commit message should identify the phase and note any anomalies flagged during that phase. This gives the experiment a complete, auditable trail and makes it possible to reconstruct the state at any point in the run.
+
+---
