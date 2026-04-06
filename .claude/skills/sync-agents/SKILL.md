@@ -1,6 +1,6 @@
 ---
 name: sync-agents
-description: Sync canonical agent files from agents/ to ~/.claude/agents/ after any agent edit in this repo
+description: [DEPRECATED]Sync canonical agent files from agents/ to ~/.claude/agents/ after any agent edit in this repo
 ---
 
 Run the following command to copy all agent definition files from the repo to the canonical install location:
