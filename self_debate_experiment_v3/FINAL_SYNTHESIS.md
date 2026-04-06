@@ -160,7 +160,7 @@ The honest summary: the protocol is a validated evaluation framework that reliab
 | `PEER_REVIEW_R1.md` | Round 1 peer review + response |
 | `PEER_REVIEW_R2.md` | Round 2 verification review |
 | `FINAL_SYNTHESIS.md` | This document |
-| `POST_MORTEM.md` | All execution issues documented (7 issues, scope: active and future) |
+| `POST_MORTEM.md` | All execution issues documented (20 issues, scope: active and future) |
 
 ### Figures
 | File | Description |

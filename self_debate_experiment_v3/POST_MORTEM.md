@@ -551,3 +551,24 @@ The v3 plan treated Phase 4 as a ceremony: run the review, check four pre-writte
 The Defender's verdict is not advisory — it is the experiment's own pre-registered quality check. A static pre-written checklist cannot substitute for reading the review output.
 
 ---
+
+## Issue 20 — Investigation logs never consolidated into INVESTIGATION_LOG.jsonl
+
+**Scope:** Active — canonical log is incomplete for a completed experiment
+**Severity:** Moderate — the audit trail exists across 9 files but is fragmented; any tool or analyst reading `INVESTIGATION_LOG.jsonl` alone sees only a fraction of the run's history
+
+The v3 experiment produced 9 separate log files rather than the single canonical `INVESTIGATION_LOG.jsonl` required by the ml-lab protocol:
+
+- `INVESTIGATION_LOG_batch1.jsonl` through `INVESTIGATION_LOG_batch7.jsonl` — per-orchestrator-session files written during Phase 6 batch execution
+- `INVESTIGATION_LOG_batch_external.jsonl` — a separate session file written during Phase 10 external case execution
+- `INVESTIGATION_LOG.jsonl` — the canonical file specified by ml-lab, present but containing only a subset of entries
+
+The batch files are per-session artifacts: each orchestrator invocation opened a new file rather than appending to the shared log. No consolidation step was ever run. As a result, `INVESTIGATION_LOG.jsonl` does not represent the full audit trail for the v3 experiment — it cannot be treated as the authoritative record of what occurred.
+
+**Relationship to Issue 1:** The root cause is an extension of the same gap identified in Issue 1. The v3 plan's logging directive covered Phase 6 only and referenced the ml-lab logging schema by pointer rather than embedding it. Orchestrators received insufficient instruction on *where* to write: the plan specified logging would happen but did not constrain it to the canonical file path. When orchestrators ran in separate sessions — each with its own context — they defaulted to session-scoped filenames rather than coordinating on a shared append target.
+
+**Relationship to Issue 4:** The batch log schema also diverged from the ml-lab spec (Issue 4). The consolidation failure compounds the schema compliance failure: not only are the entries non-conformant, they are spread across files that must be manually discovered and joined before any analysis can begin. A future analyst has two problems to solve before the log is usable, not one.
+
+**What to fix in v4:** The orchestrator must write all log entries to a single file — `INVESTIGATION_LOG.jsonl` at the experiment root — regardless of how many sessions or subagents are involved. If multi-agent parallelism requires session-local buffering, a consolidation step must be added at experiment close: before Phase 7 begins, all session-local log files must be merged into `INVESTIGATION_LOG.jsonl` in timestamp order, the session-local files deleted or archived, and a `workflow` / `log_consolidated` entry appended to the canonical file confirming the merge. The v4 plan must include an explicit directive: all log writes use `uv run log_entry.py` (per the Issue 4 fix), which writes only to `INVESTIGATION_LOG.jsonl` — no per-batch file arguments accepted.
+
+---
