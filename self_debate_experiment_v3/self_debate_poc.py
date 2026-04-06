@@ -123,11 +123,20 @@ def compute_drq(verdict, acceptable_resolutions, ideal_resolution, condition):
 def compute_etd(empirical_test, ideal_resolution):
     if ideal_resolution in ('critique_wins', 'defense_wins'):
         return None
-    if not empirical_test:
+    if not empirical_test or not isinstance(empirical_test, dict):
         return 0.0
-    has_m = bool(empirical_test.get('measure'))
-    has_s = bool(empirical_test.get('success_criterion'))
-    has_f = bool(empirical_test.get('failure_criterion'))
+    # Old schema: measure/success_criterion/failure_criterion
+    if 'measure' in empirical_test:
+        has_m = bool(empirical_test.get('measure'))
+        has_s = bool(empirical_test.get('success_criterion'))
+        has_f = bool(empirical_test.get('failure_criterion'))
+    # New schema: condition/supports_critique_if/supports_defense_if
+    elif 'condition' in empirical_test:
+        has_m = bool(empirical_test.get('condition'))
+        has_s = bool(empirical_test.get('supports_critique_if'))
+        has_f = bool(empirical_test.get('supports_defense_if'))
+    else:
+        return 0.0
     if has_m and has_s and has_f:
         return 1.0
     elif has_m and (has_s or has_f):
