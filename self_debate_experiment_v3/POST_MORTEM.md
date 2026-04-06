@@ -149,6 +149,24 @@ Both cases score 1.0 on every dimension including ETD, have all planted issues f
 
 **Fix required before v4:** Audit `case_passes()` logic and result aggregation for rwf_002 and rwf_010. Verify that re-run outputs were correctly written and read by the scorer. Re-score both cases from corrected raw outputs after the ETD schema fix is applied.
 
+### Remediation applied (v3)
+
+**Root cause confirmed:** `compute_etd()` in `self_debate_poc.py` expected keys `measure` / `success_criterion` / `failure_criterion`, but agents naturally produced `condition` / `supports_critique_if` / `supports_defense_if` / `ambiguous_if`. Every output using the agent-native schema scored ETD=0.0 regardless of content quality.
+
+**Fix:** `compute_etd()` updated to detect which schema is present (discriminating key: `measure` vs `condition`) and map both to the same three-component logic: `condition` → measure, `supports_critique_if` → success criterion, `supports_defense_if` → failure criterion. An `isinstance(empirical_test, dict)` guard was also added to handle two string-valued `empirical_test` fields in `defense_wins_009` raw outputs (no score impact — already short-circuited by the `defense_wins` early return).
+
+**Re-scoring results:** All 49 main benchmark cases and 16 external cases re-scored. Only the 8 `real_world_framing` cases were affected — the only cases that produced condition-schema outputs. 5 changed from FAIL to PASS: rwf_002, rwf_006, rwf_007, rwf_009, rwf_010. The remaining 3 still fail for legitimate reasons: rwf_003's isolated debate returned `mixed` (not in acceptable resolutions); rwf_005 and rwf_008's isolated debate returned `critique_wins` without an empirical test, so ETD=0.0 is correct (ideal resolution is `empirical_test_agreed`, making ETD applicable regardless of actual verdict). External results unchanged — no condition-schema files in external outputs.
+
+**Artifacts updated:** `v3_results.json`, `v3_results_eval.json`, `stats_results.json`, `external_stats_summary.json`, `sensitivity_analysis_results.json`, `within_case_variance_results.json`, `difficulty_validation_results.json`. No raw output files were modified — fix was entirely in the scorer.
+
+**Pattern B fully explained:** The ETD=1.0 on run1 for rwf_002 and rwf_010 was not anomalous — it was coincidental. Run1 for both cases was the isolation breach re-run (original run1 contaminated and replaced, Issue 3). The replacement agent happened to emit the old `measure`/`success_criterion`/`failure_criterion` schema, which `compute_etd()` could correctly read → ETD=1.0. Runs 2 and 3 were original batch outputs using the condition-schema → ETD=0.0. Case-level aggregation required ≥2 passes; each case had only 1, so both were marked fail. The post-mortem description of "all dims 1.0" was describing run1 in isolation, not the case aggregate — there was no scorer bug in `case_passes()` itself. After the ETD schema fix, run2 and run3 now score correctly: rwf_002 reaches 2/3 passes (run3 still fails — verdict was `critique_wins` with no empirical test, ETD=0.0 correct); rwf_010 reaches 3/3 passes.
+
+**Commit status — verify before closing:** As of the time this post-mortem was written, the scorer fix (`self_debate_poc.py`) and all re-scored artifacts (`v3_results.json`, `v3_results_eval.json`, `stats_results.json`, `external_stats_summary.json`, `sensitivity_analysis_results.json`, `within_case_variance_results.json`, `difficulty_validation_results.json`) are untracked in git. The remediation is functionally complete but not committed. The orchestrator may have its own commit plan for these files — verify that all remediation artifacts are committed before treating Issue 6 as closed.
+
+**Open items carried forward to v4:**
+- `ambiguous_if` is silently dropped in the mapping; a three-outcome test and a two-outcome test score identically — worth addressing in v4 schema design
+- The dual-schema detection approach in `compute_etd()` is v3-only technical debt; v4 should standardize on a single canonical output schema so branching logic is not needed
+
 ---
 
 ## Issue 7 — Raw outputs not committed after Phase 6 completion
