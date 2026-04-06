@@ -15,7 +15,7 @@
 /plugin install claude-ml-lab@ml-debate-lab
 ```
 
-This installs all six agent files to `~/.claude/agents/` automatically.
+This installs all seven agent files to `~/.claude/agents/` automatically.
 
 **Manual install:**
 
@@ -26,6 +26,7 @@ cp agents/ml-defender.md ~/.claude/agents/
 cp agents/research-reviewer.md ~/.claude/agents/
 cp agents/research-reviewer-lite.md ~/.claude/agents/
 cp agents/readme-rewriter.md ~/.claude/agents/
+cp agents/report-writer.md ~/.claude/agents/
 ```
 
 Once installed, Claude Code will make `ml-lab` available as a spawnable agent. Invoke it by describing an ML hypothesis — it will ask you to sharpen it into a falsifiable claim before starting the investigation.
@@ -135,6 +136,7 @@ flowchart TD
 | `ml-lab.md` | Orchestrator — runs the full 12-step investigation | User / calling agent |
 | `ml-critic.md` | Adversarial critic — finds flaws the PoC hasn't tested | `ml-lab` (Steps 3, 5) |
 | `ml-defender.md` | Design defender — argues for the implementation, concedes valid points | `ml-lab` (Steps 4, 5) |
+| `report-writer.md` | Technical report writer — Opus-class; Mode 1: full investigation report (REPORT.md); Mode 2: publication-ready results-mode synthesis (TECHNICAL_REPORT.md) | `ml-lab` (Steps 8, 11) |
 | `research-reviewer.md` | Deep peer reviewer — Opus-class structured review of REPORT.md | `ml-lab` (Step 10, Round 1) |
 | `research-reviewer-lite.md` | Verification reviewer — Haiku-class follow-up review | `ml-lab` (Step 10, Rounds 2–3) |
 | `readme-rewriter.md` | Outside-reader README rewriter — diagnoses and rewrites for external audiences | `ml-lab` (Step 13) |
@@ -159,12 +161,14 @@ User hypothesis
       +——— Macro-iteration: if results surprise, re-dispatches ml-critic and ml-defender
       |    in evidence-informed mode (Mode 3) with experimental results in hand
       |
-      +——— Steps 8-9:   writes self-contained report, re-evaluates under production constraints
+      +——— Step 8:      dispatches [report-writer] Mode 1   → REPORT.md  (Opus)
+      |
+      +——— Step 9:      re-evaluates under production constraints → REPORT_ADDENDUM.md
       |
       +——— Step 10:     dispatches [research-reviewer]      → PEER_REVIEW_R1.md  (Round 1, Opus)
       |                 dispatches [research-reviewer-lite] → PEER_REVIEW_R{N}.md (Rounds 2–3, Haiku)
       |
-      +——— Step 11:     (optional) writes TECHNICAL_REPORT.md in results mode
+      +——— Step 11:     (optional) dispatches [report-writer] Mode 2 → TECHNICAL_REPORT.md  (Opus)
       |
       +——— Step 12:     artifact coherence audit — cross-checks all documents for consistency
       |
