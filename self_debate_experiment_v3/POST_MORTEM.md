@@ -490,3 +490,46 @@ For the isolated_debate condition specifically, a secondary computable signal ex
 **What to fix in v4:** Pre-register only metrics that are verified to be computable against the actual raw output schema before the experiment runs. For convergence specifically, replace the critic/defender verdict comparison with point resolution rate derived from `DEBATE.md`. Define the field names and extraction logic in the pre-registration document itself, not as a post-hoc extraction plan.
 
 ---
+
+## Issue 19 — Phase 4 protocol self-review gate was bypassed
+
+**Scope:** Active — the pre-execution gate produced a valid conditional verdict that was not enforced before the experiment ran  
+**Severity:** High — several post-mortem issues in this document were pre-identified by the Phase 4 critique and could have been prevented
+
+### What the Phase 4 gate produced
+
+`CRITIQUE.md` and `DEFENSE.md` are the Phase 4 Protocol Self-Review artifacts from v3. The ml-critic reviewed `HYPOTHESIS.md`, `PREREGISTRATION.json`, and `evaluation_rubric.json` and identified 10 design issues before any agent runs. The ml-defender responded point-by-point and issued an overall verdict of **empirical_test_agreed** — the design was conditionally approved for execution, but only after four specific gaps were confirmed closed:
+
+| Pre-execution requirement | Outcome |
+|---|---|
+| ETD instruction text committed verbatim in EXECUTION_PLAN.md | Not locked → ETD comparison confounded (post-mortem Issue 15) |
+| `category` field confirmed stripped from agent context | Not confirmed → leakage risk unresolved |
+| DRQ filter pre-specified in scoring engine for H4 test | Not enforced → multiround DRQ comparison confounded |
+| Convergence metric added to scoring engine or locked post-processing schema | Not implemented → metric unreportable (post-mortem Issue 18) |
+
+The experiment ran without any of these being confirmed closed. The Phase 4 gate was not a blocking gate — it produced a verdict and was ignored.
+
+### What the Phase 4 critique correctly predicted
+
+The Critic pre-identified the following issues that independently appeared in this post-mortem:
+
+- **DC=0.0 for baseline is structurally unfair** (CRITIQUE Issue 5) → post-mortem Issue 13
+- **DC=FVC double-counting inflates scores** (CRITIQUE Issue 1) → post-mortem Issue 13  
+- **Convergence metric not implemented in scoring engine** (CRITIQUE Issue 10) → post-mortem Issue 18
+- **ETD constraint not operationally locked** (CRITIQUE Issue 6) → post-mortem Issue 15
+
+These were caught before execution, documented in the design review, and then not acted on. The protocol self-review worked. The enforcement mechanism did not.
+
+### What to fix in v4
+
+The Phase 4 gate must be a hard block. The v4 plan must require the orchestrator to:
+
+1. Read the Defender's overall verdict from `DEFENSE.md` before proceeding
+2. If the verdict is `empirical_test_agreed`, extract every conceded issue and every pre-execution requirement from the Defender's Pass 2 table
+3. Resolve each item with a commit or documented decision before any agent run begins
+4. Log a `gate` / `phase4_cleared` entry in `INVESTIGATION_LOG.jsonl` with the list of resolved items as `meta`
+5. Do not proceed to Phase 5 (execution) until the gate entry is written
+
+The Defender's verdict is not advisory — it is the experiment's own pre-registered quality check. Treating it as advisory defeats the purpose of running the self-review in the first place.
+
+---
