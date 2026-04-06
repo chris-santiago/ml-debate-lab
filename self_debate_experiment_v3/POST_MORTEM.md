@@ -426,3 +426,29 @@ All debate conditions scored 1.000 on external cases, identical to the main benc
 - Human evaluation of a stratified sample (e.g., 10–15 cases across difficulty tiers) would close the remaining loop; this is the only way to validate the rubric interpretation itself
 
 ---
+
+## Issue 17 — Report artifact contains prompt leakage; limitations framed as design properties
+
+**Scope:** Active — affects v3 report credibility; must be corrected in v4 plan and reporting agent  
+**Severity:** High — prompt leakage is an implementation failure; dishonest limitation framing is an intellectual integrity failure
+
+### Part 1: Prompt leakage
+
+The v3 report opens with: *"Results mode. Findings stated as facts. Limitations framed as design properties."* This is internal guidance directed at the reporting agent — it is not a methodological statement and has no place in a technical report artifact. It appeared in the final report because the agent echoed its own directive into its output rather than acting on it silently.
+
+**What to fix in v4:** The v4 plan must explicitly instruct the reporting agent not to emit internal mode declarations or prompt directives in report output. Any preamble of the form "Mode: X" or "Framing: Y" is agent-internal and must be stripped before the artifact is written. The report should begin with the executive summary, not with instructions to itself.
+
+### Part 2: Framing norm — limitations are threats to validity, not design properties
+
+Independently of the leakage, framing genuine methodological failures as "design properties" is intellectually dishonest. A design property is an intentional architectural choice with a defensible rationale (e.g., ETD=N/A for defense_wins cases — the dimension is structurally inapplicable). A limitation is a threat to validity that a reader must weigh when interpreting results.
+
+The v3 report conflates these. The ceiling problem (Issue 9), the closed-loop scoring confound (Issue 16), and the uncomputed convergence metric (Issue 8, see below) are threats to validity. Labeling them as design properties forecloses the scrutiny they deserve and misrepresents the experiment's evidentiary weight to any reader who doesn't dig into the sensitivity analysis.
+
+**What to fix in v4:** The v4 plan must include an explicit norm for the reporting agent:
+
+- **Design property:** An intentional choice with a stated rationale that does not undermine the validity of the reported results (e.g., ETD=N/A for inapplicable case types; DC=N/A for baseline).
+- **Limitation / threat to validity:** Any factor that could cause the reported results to be wrong, overstated, or non-generalizable (e.g., benchmark ceiling, closed-loop scoring, pre-registered metric not computed).
+
+Limitations must be presented with their threat-to-validity label in the report. Each limitation entry should state: what the threat is, what evidence bears on its magnitude, and what was done to mitigate it. The "design property" label is reserved for intentional choices only — it may never be applied to a failure mode.
+
+---
