@@ -103,3 +103,50 @@ This is wasteful (consumes context window) and potentially risky: if the repo co
 **Investigation needed before v4:** Audit the v3 plan for any explicit references to `agents/` file paths that might prompt reading behavior. Add a directive clarifying that agents are invoked by name only and their source files must not be read during execution. Determine whether this is plan-driven or spontaneous orchestrator behavior, as the fix differs in each case.
 
 ---
+
+## Issue 6 — Several real_world_framing cases marked failed despite issues found and verdict matching ground truth
+
+**Scope:** Active — both patterns are scorer bugs; all ETD scores are invalid and must be re-computed  
+**Severity:** Critical — the ETD dimension is entirely unreliable in the current results; any analysis that uses ETD scores or pass/fail outcomes for `empirical_test_agreed` cases must be treated as provisional until re-scored
+
+Several `real_world_framing` cases in `v3_results_eval.json` are marked `pass_fail: fail` despite having all planted issues found, valid resolution, and final verdict matching ground truth. Investigation identified two distinct scorer bugs.
+
+### Pattern A — ETD=0.0 floor failures (rwf_005, rwf_006, rwf_007, rwf_008, rwf_009) — scorer schema mismatch
+
+**This is a scorer bug, not agent failure.**
+
+These five cases each score ETD=0.0 with all other dims at 1.0 (except DRQ=0.5 on rwf_005 and rwf_008). Initial hypothesis was that ETD should be `null` — but inspection of `benchmark_cases_verified.json` confirmed all five have `ideal_debate_resolution.type: empirical_test_agreed`, making ETD fully applicable. Further investigation of the raw output files confirmed that **empirical test designs were produced** across isolated_debate, multiround, and ensemble conditions in all five cases. For example, `real_world_framing_006_isolated_debate_run1.json` contains a fully-specified empirical test with condition, success criterion, and failure criterion.
+
+The root cause is a **schema mismatch** between `compute_etd()` in `self_debate_poc.py` and the actual raw output format. The scorer checks for three keys:
+
+```python
+has_m = bool(empirical_test.get('measure'))
+has_s = bool(empirical_test.get('success_criterion'))
+has_f = bool(empirical_test.get('failure_criterion'))
+```
+
+But the raw outputs use a different schema:
+```json
+{
+  "condition": "...",
+  "supports_critique_if": "...",
+  "supports_defense_if": "...",
+  "ambiguous_if": "..."
+}
+```
+
+None of the scorer's expected keys (`measure`, `success_criterion`, `failure_criterion`) are present in any raw output. Every `empirical_test` block evaluates to `has_m=False, has_s=False, has_f=False` → ETD=0.0, regardless of content quality. The only reason rwf_002 and rwf_010 score ETD=1.0 is a separate anomaly (Pattern B below) — the ETD=1.0 there is also suspect.
+
+**This is a critical finding for experiment analysis.** All ETD scores in `v3_results_eval.json` are invalid. Cases scored ETD=0.0 may have produced high-quality empirical test designs; cases scored ETD=1.0 did not earn that score through `compute_etd()` as written. The entire ETD dimension must be re-scored after aligning the scorer schema with the actual output schema.
+
+**Fix required before v4:** Reconcile the `compute_etd()` key expectations with the output format agents actually produce. Either update the scorer to read `condition`/`supports_critique_if`/`supports_defense_if`/`ambiguous_if`, or update the agent output format to emit `measure`/`success_criterion`/`failure_criterion` — and re-score all cases for ETD from the raw outputs.
+
+### Pattern B — All dims 1.0 but still marked fail (rwf_002, rwf_010)
+
+Both cases score 1.0 on every dimension including ETD, have all planted issues found, valid resolution, verdict matching ground truth, and `failure_attribution: "none"`. By every rubric criterion these should be passing cases. Given the Pattern A finding that `compute_etd()` cannot return 1.0 from the actual output schema, the ETD=1.0 scores on rwf_002 and rwf_010 are themselves anomalous — they may reflect a hardcoded or manually overridden score rather than a valid scorer output.
+
+**This is a scorer bug.** Something in `case_passes()` or upstream result aggregation is marking these cases failed despite no failing dimension. The isolation breach on rwf_002 run1 and rwf_010 run1 (Issue 3) is a candidate cause — if the scorer aggregated pre-rerun results at the case level, it may have carried a stale failure flag that persisted even after the contaminated runs were replaced.
+
+**Fix required before v4:** Audit `case_passes()` logic and result aggregation for rwf_002 and rwf_010. Verify that re-run outputs were correctly written and read by the scorer. Re-score both cases from corrected raw outputs after the ETD schema fix is applied.
+
+---
