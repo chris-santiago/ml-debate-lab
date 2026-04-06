@@ -8,7 +8,7 @@
 
 > **Operator action before running this plan:** Run the benchmark_case_generation_prompt.md through your chosen external LLM, save the raw JSON output as `self_debate_experiment_v3/benchmark_cases.json`, then begin at Phase 0.
 - `ml-critic` and `ml-defender` installed in `~/.claude/agents/`
-- Estimated call volume: ~750–1000 agent calls for full run (4 conditions × 50 cases × 3 runs each; multiround adds ~150 calls)
+- Estimated call volume: ~950–1200 agent calls for full run (4 conditions × 50 main cases × 3 runs + 4 conditions × 16 external cases × 3 runs; multiround adds ~150 calls across both sets)
 
 > **No API key needed.** This plan runs inside an authenticated Claude Code session. `anthropic.Anthropic()` is pre-authenticated. Do NOT set `ANTHROPIC_API_KEY` anywhere in this plan or in any script it produces. The only exception is Phase 10 (cross-vendor scorer), which requires an external model API key configured by the operator and is clearly marked.
 
@@ -91,10 +91,12 @@ cp ../agents/ml-defender.md ~/.claude/agents/
 
 ```python
 # validate_cases.py — checks new schema fields match case generation prompt output
-import json
+# Usage: python3 validate_cases.py [casefile.json]  (defaults to benchmark_cases.json)
+import json, sys
 from collections import Counter
 
-with open('benchmark_cases.json') as f:
+input_file = sys.argv[1] if len(sys.argv) > 1 else 'benchmark_cases.json'
+with open(input_file) as f:
     cases = json.load(f)
 
 print(f'Total cases: {len(cases)}')
@@ -161,6 +163,8 @@ print('\nValidation passed.')
 
 ```bash
 python3 validate_cases.py
+python3 validate_cases.py external_cases_v3.json
+# Both must pass before proceeding to Phase 1
 ```
 
 ---
@@ -459,13 +463,24 @@ Key improvements over v2:
 import json
 from pathlib import Path
 
+import argparse
+
 OUTPUT_DIR = Path(__file__).parent
-RESULTS_FILE = OUTPUT_DIR / "v3_results.json"
-EVAL_RESULTS_FILE = OUTPUT_DIR / "evaluation_results.json"
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--cases', default='benchmark_cases_verified.json',
+                    help='Case file to score (default: benchmark_cases_verified.json)')
+parser.add_argument('--output', default='v3_results.json',
+                    help='Results output file (default: v3_results.json)')
+args, _ = parser.parse_known_args()
+
+CASES_FILE = OUTPUT_DIR / args.cases
+RESULTS_FILE = OUTPUT_DIR / args.output
+EVAL_RESULTS_FILE = OUTPUT_DIR / args.output.replace('.json', '_eval.json')
 
 
 def load_cases():
-    with open(OUTPUT_DIR / 'benchmark_cases_verified.json') as f:
+    with open(CASES_FILE) as f:
         return json.load(f)
 
 
@@ -874,6 +889,42 @@ python3 check_isolation.py
 
 ---
 
+## Phase 6.5 — External Benchmark Evaluation
+
+Runs all 4 conditions on `external_cases_v3.json` using the identical protocol as Phase 6. External case IDs are distinct from main benchmark case IDs — raw outputs go to the same `v3_raw_outputs/` directory without collision. Results are kept separate from the pre-registered main benchmark (not mixed into main bootstrap CIs).
+
+**Provenance note:** 13 external cases are drawn from real published papers (verified ground truth from published record); 3 are synthetic scenarios grounded in established evaluation methodology. CONCLUSIONS.md reports each stratum separately.
+
+Give Claude Code this instruction:
+
+```
+Load self_debate_experiment_v3/external_cases_v3.json.
+
+For EACH case, run 3 complete passes (run 1, run 2, run 3).
+Within each pass, run all four conditions using the identical protocol from Phase 6:
+- isolated_debate: Critic isolated, Defender isolated, orchestrator adjudicates
+- multiround: ml-lab protocol, Defender sees Critique, max 4 rounds
+- ensemble: 3 independent assessors + ETD-constrained synthesizer
+- baseline: single-pass, no structure
+
+Write outputs to v3_raw_outputs/{case_id}_{condition}_run{N}.json — same format as Phase 6.
+External case_ids (ext_*, defense_wins_00*) will not collide with main benchmark case_ids.
+
+After completing all 3 runs for each case, run isolation check on external isolated_debate outputs.
+When all 16 cases complete, score via:
+```
+
+```bash
+python3 check_isolation.py  # also scans ext_* isolated_debate outputs
+
+python3 self_debate_poc.py \
+  --cases external_cases_v3.json \
+  --output v3_external_results.json
+# Produces: v3_external_results.json, v3_external_results_eval.json
+```
+
+---
+
 ## Phase 7 — Score and Compute Statistics
 
 ```bash
@@ -993,6 +1044,40 @@ print(f"\nWilcoxon isolated vs baseline:  W={w1}, p={p1:.6f}, r={r1:.3f}")
 print(f"Wilcoxon isolated vs ensemble:  W={w2}, p={p2:.6f}, r={r2:.3f}")
 print(f"Wilcoxon multiround vs baseline: W={w3}, p={p3:.6f}, r={r3:.3f}")
 print(f"Wilcoxon multiround vs isolated: W={w4}, p={p4:.6f}, r={r4:.3f}")
+
+# External benchmark stratum (separate from main benchmark CIs)
+import os
+if os.path.exists('v3_external_results.json'):
+    with open('v3_external_results.json') as f:
+        ext_d = json.load(f)
+    ext_results = ext_d['cases']
+    # Load provenance to split published vs synthetic
+    with open('external_cases_v3.json') as f:
+        ext_cases = json.load(f)
+    provenance_map = {c['case_id']: c['provenance']['source_type'] for c in ext_cases}
+    published = [r for r in ext_results if provenance_map.get(r['case_id']) == 'published_paper']
+    synthetic = [r for r in ext_results if provenance_map.get(r['case_id']) == 'synthetic_grounded']
+    def stratum_summary(cases_list, label):
+        if not cases_list:
+            return
+        n = len(cases_list)
+        iso_m = round(np.mean([r['isolated_debate']['mean'] for r in cases_list]), 4)
+        mr_m = round(np.mean([r['multiround']['mean'] for r in cases_list]), 4)
+        ens_m = round(np.mean([r['ensemble']['mean'] for r in cases_list]), 4)
+        base_m = round(np.mean([r['baseline']['mean'] for r in cases_list]), 4)
+        passes = sum(1 for r in cases_list if r['isolated_debate']['passes'] >= 2)
+        print(f"\nExternal stratum [{label}] n={n}:")
+        print(f"  isolated={iso_m:.4f}  multiround={mr_m:.4f}  ensemble={ens_m:.4f}  baseline={base_m:.4f}")
+        print(f"  pass count (isolated, 2/3 rule): {passes}/{n}")
+    stratum_summary(published, 'published_paper')
+    stratum_summary(synthetic, 'synthetic_grounded')
+    stratum_summary(ext_results, 'all_external')
+    ext_summary = {
+        'published_paper': {'n': len(published), 'isolated_mean': float(np.mean([r['isolated_debate']['mean'] for r in published])) if published else None},
+        'synthetic_grounded': {'n': len(synthetic), 'isolated_mean': float(np.mean([r['isolated_debate']['mean'] for r in synthetic])) if synthetic else None},
+    }
+    with open('external_stats_summary.json', 'w') as f:
+        json.dump(ext_summary, f, indent=2)
 ```
 
 ```python
@@ -1247,7 +1332,18 @@ stats_results.json, evaluation_results.json.
             "ensemble_std": X, "baseline_std": X}, ...}
    Flag any case with isolated_debate_std > 0.1.
 
-5. Generate figures (save as .png files in self_debate_experiment_v3/):
+5. External Benchmark Results section in CONCLUSIONS.md (use v3_external_results.json
+   and external_stats_summary.json):
+   - Published-paper cases (n=13): per-condition means, pass rate, notable findings
+   - Synthetic-grounded cases (n=3): per-condition means, pass rate
+   - Comparison to main benchmark: do external cases score similarly to equivalent
+     categories in the main benchmark? Any systematic differences?
+   - Defense_wins external cases: do published-paper defense_wins (ext_defense_001/002/003)
+     show the same debate-vs-baseline DC gap observed in the main benchmark?
+   - Note: external results are validation stratum only — not included in primary
+     hypothesis tests or main benchmark bootstrap CIs.
+
+6. Generate figures (save as .png files in self_debate_experiment_v3/):
    - per_condition_comparison.png: bar chart comparing all 4 conditions on overall mean
      score with 95% bootstrap CI error bars
    - dimension_heatmap.png: heatmap of all 6 rubric dimensions × 4 conditions
@@ -1324,6 +1420,19 @@ if errors:
 else:
     print(f'Pre-report coherence audit passed — key numerical figures consistent across CONCLUSIONS.md and SENSITIVITY_ANALYSIS.md')
     print(f'  Note: full ml-lab Step 12 checks (claim consistency, README currency, peer review resolution) run in Phase 9.5')
+
+# Optional: check external stratum figures if external_stats_summary.json exists
+import os
+if os.path.exists('external_stats_summary.json'):
+    with open('external_stats_summary.json') as f:
+        ext_stats = json.load(f)
+    published_iso = ext_stats.get('published_paper', {}).get('isolated_mean')
+    if published_iso is not None and conclusions:
+        # Check any mention of external results in CONCLUSIONS is within range
+        ext_mentions = re.findall(r'published.paper.*?(\d+\.\d{3,4})', conclusions, re.IGNORECASE)
+        bad_ext = [v for v in [float(m) for m in ext_mentions] if abs(v - published_iso) > 0.01]
+        if bad_ext:
+            print(f'  WARN: External published_paper mean in CONCLUSIONS ({bad_ext}) differs from computed ({published_iso:.4f})')
 ```
 
 ```bash
@@ -1710,6 +1819,8 @@ required = [
     'check_isolation.py', 'coherence_audit.py', 'post_report_coherence_audit.py',
     'cross_model_scorer.py', 'cross_vendor_scores_v3.json',
     'INVESTIGATION_LOG.jsonl',
+    # External benchmark artifacts
+    'external_cases_v3.json', 'v3_external_results.json', 'external_stats_summary.json',
 ]
 
 # Check required named artifacts
@@ -1738,7 +1849,8 @@ print(f'Found {len(multiround_outputs)} multiround raw outputs.')
 git add -A
 git commit -m "Self-debate protocol v3: complete experiment
 
-- 50+ cases, CASE_VERIFIER validated before any agent run
+- 50+ main benchmark cases, CASE_VERIFIER validated before any agent run
+- 16 external validation cases (13 from published papers, 3 synthetic-grounded)
 - PREREGISTRATION.json locked before execution
 - 4 conditions: isolated_debate, multiround (ml-lab protocol), ensemble, baseline
 - Fractional IDR, must_not_claim IDP, tiered DRQ, acceptable_resolutions FVC, failure_attribution
