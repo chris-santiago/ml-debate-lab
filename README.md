@@ -219,7 +219,7 @@ The self-debate protocol was chosen as the domain for a specific reason: it's te
 
 ### The Setup
 
-The system under test is a **self-debate protocol**: one agent plays Critic, one plays Defender, a Judge adjudicates. The key architectural choice is that Critic and Defender receive the same scenario with no shared context — each produces an independent assessment before either sees the other's output.
+The system under test is a **self-debate protocol**: one agent plays Critic, one plays Defender, the orchestrating session adjudicates as Judge (inline — not a separate subagent). The key architectural choice *in this benchmark* is that Critic and Defender receive the same scenario with no shared context — each produces an independent assessment before either sees the other's output.
 
 This isolation is not a technicality. It's what makes the disagreement meaningful. When both agents independently find the same flaw, you have convergent evidence. When they disagree, you have a genuinely contested claim that requires an empirical test to resolve — not a confident guess.
 
@@ -258,7 +258,7 @@ The gap from floor to ensemble (+0.37) is mostly explained by additional compute
 
 - **Empirical test design (ETD).** The debate protocol reliably produces well-specified empirical tests; the unconstrained ensemble almost never does. We originally attributed this to the adversarial forcing function. An ablation falsified that: adding one explicit output instruction to the ensemble synthesizer ("specify the empirical test with pre-specified success and failure criteria") achieves ETD mean 0.962, nearly matching debate's 1.0. ETD is a prompt design effect. It's portable — you can get it from any multi-agent configuration by including the instruction.
 
-- **Exoneration of valid work (exclusively).** A clean ensemble correctly exonerated valid work in 4/5 false-positive trap cases without structural isolation. The isolation architecture is not uniquely necessary for reaching the right verdict.
+- **Exoneration of valid work (exclusively).** A clean ensemble correctly exonerated valid work in 4/5 false-positive trap cases without context isolation. The benchmark's isolation design is not uniquely necessary for reaching the right verdict. (Note: context isolation — Defender never seeing the Critic's output — is a benchmark-specific experimental choice, not a permanent property of the ml-defender agent in production use.)
 
 **What debate does provide:**
 
@@ -268,7 +268,7 @@ The gap from floor to ensemble (+0.37) is mostly explained by additional compute
 
 The clearest illustration is the five *false-positive critique traps* — valid work, correctly designed, presented under adversarial framing. The single-pass baseline scored **0.000 on all five**: it accepted the adversarial premise entirely and condemned sound work. The ensemble got 4/5 correct verdicts. The debate protocol got 5/5 and raised no spurious concerns on 3 of 5 cases (the ensemble raised caveats on 2 of its 4 correct exonerations). This 5/5 vs. 4/5 distinction is suggestive but not statistically confirmed at n=5.
 
-> **Statistics:** Bootstrap CIs (10,000 resamples) and paired Wilcoxon signed-rank tests. Debate vs. baseline: +0.586 [95% CI: 0.486–0.691], p < 0.0001, r = 1.0 — debate outperforms baseline on every single case. Debate vs. ensemble: +0.216 [95% CI: 0.098–0.352], p = 0.004, r = 0.758. Both effects are statistically significant. See [`stats_results.json`](self_debate_experiment_v2/stats_results.json) and [`SENSITIVITY_ANALYSIS.md`](self_debate_experiment_v2/SENSITIVITY_ANALYSIS.md).
+> **Statistics:** Bootstrap CIs (10,000 resamples) and paired Wilcoxon signed-rank tests. Debate vs. baseline: +0.586 [95% CI: 0.486–0.691], p < 0.0001, r = 1.0 — debate outperforms baseline on every single case. Debate vs. ensemble: +0.216 [95% CI: 0.098–0.352], p = 0.004, r = 0.758. Both effects are statistically significant. These CIs reflect cross-case sampling variance only. Within-case LLM stochasticity was estimated by 3-run repetition on 8 cases: debate_std=0.0 on 7/8 cases; the one exception is `metric_mismatch_002` (the mixed-position case, std=0.048 from DC variation when the Defender stochastically tips to defense_wins — Judge verdict was stable in all runs). See [`stats_results.json`](self_debate_experiment_v2/stats_results.json), [`within_case_variance_results.json`](self_debate_experiment_v2/within_case_variance_results.json), and [`within_case_variance_nonconverging.json`](self_debate_experiment_v2/within_case_variance_nonconverging.json).
 
 > **External validity (two separate benchmarks, testing different things):**
 > - *Fault detection (IDR):* 10 cases drawn from published ML evaluation failures (Dacrema 2019, Obermeyer 2019, DeGrave 2021, and others) — real papers with real flaws, ground truth from the published record, no designer involvement in case construction. Tests whether the protocol finds issues it wasn't designed around. Result: debate IDR = 0.95, meeting the ≥ 0.85 pre-specified threshold. The ensemble was not re-run on these cases; this benchmark specifically validates issue detection, not the full scoring rubric. See [`external_benchmark/`](external_benchmark/).
