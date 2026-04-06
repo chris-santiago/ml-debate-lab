@@ -253,19 +253,37 @@ Each commit message should identify the phase and note any anomalies flagged dur
 
 ## Issue 11 — MiniMax-M2.7 cross-vendor validation yielded 82% parse failures
 
-**Scope:** Active — cross-vendor Phase 10 results are inconclusive for 31/38 cases  
+**Scope:** Active — cross-vendor Phase 10 results are inconclusive for 31/38 cases; `cross_model_scorer.py` corrected for v4 re-run  
 **Severity:** Low — the partial results (7 valid cases) are directionally consistent with the main benchmark; the validation goal was to rule out same-company bias, which it partially achieved
 
 Phase 10 ran `cross_model_scorer.py` against MiniMax-M2.7 via the Anthropic SDK compatible endpoint. 31 of 38 cases (82%) failed to parse:
 
-- **25 cases:** `No text block in response; content types: ['ThinkingBlock']` — MiniMax-M2.7 returned only a ThinkingBlock with no accompanying text. The scorer's defensive fix (`next(b for b in response.content if hasattr(b, 'text'), None)`) correctly detected this, but had no text to parse.
-- **4 cases:** JSON parse errors (`Unterminated string`, `Expecting value`) — the model returned text but emitted malformed JSON.
-- **2 cases:** `Unterminated string` — truncated JSON response.
+- **25 cases:** `No text block in response; content types: ['ThinkingBlock']` — MiniMax-M2.7 returned only a ThinkingBlock with no accompanying text via the Anthropic SDK endpoint. The scorer's defensive fix (`next(b for b in response.content if hasattr(b, 'text'), None)`) correctly detected this, but had no text to parse.
+- **6 cases:** JSON parse errors (`Unterminated string`, `Expecting value`) — malformed or empty JSON in the text response.
 
-**What the 7 valid cases showed:** All 7 cases returned external_IDR=1.000, matching isolated_debate_IDR=1.000. Delta=0.000, not material. This is consistent with the main benchmark finding that IDR=1.0 across all conditions — MiniMax-M2.7 also identifies the planted issues correctly on the cases where it responds. The same-company bias concern is not supported by the available data, though the sample is too small (7/38) to be conclusive.
+**What the 7 valid cases showed:** All 7 returned external_IDR=1.000, matching isolated_debate_IDR=1.000. Delta=0.000, not material. Consistent with the main benchmark finding that IDR=1.0 across all conditions. The same-company bias concern is not supported by the available data, though the sample is too small (7/38) to be conclusive.
 
-**Root cause:** MiniMax-M2.7 has a prompt-dependent behavior where it enters extended thinking mode and sometimes emits only the thinking artifact with no final text response. This differs from Claude's extended thinking behavior (which always includes a final text block). The model's response format is not reliably compatible with the scorer's expected JSON output.
+**Root cause:** MiniMax-M2.7 via the Anthropic-compatible SDK endpoint unreliably emits text blocks — on most prompts it returns only the ThinkingBlock with no final text response. This is an SDK compatibility issue: the Anthropic SDK maps MiniMax's thinking output to ThinkingBlock objects but the model does not reliably produce a subsequent TextBlock.
 
-**What to fix in v4:** If cross-vendor validation is required, test the external model's response format before the full run with 2-3 probe cases. Add a `thinking_budget_tokens` parameter if the SDK supports it, or add a system prompt instruction to suppress extended thinking. A fallback to extract JSON from within ThinkingBlock content could recover some cases but is fragile. The most reliable fix is to select an external model that does not exhibit ThinkingBlock-only behavior on simple JSON extraction prompts.
+**Fix identified (not yet applied to results):** MiniMax's OpenAI-compatible API (`https://api.minimax.io/v1`) resolves this. Without `reasoning_split=True`, the response comes back via `choices[0].message.content` with thinking embedded as `<think>...</think>` tags, which can be stripped cleanly. Probing confirmed all 4 test cases returned valid, parseable JSON. The corrected scorer is in `cross_model_scorer.py` (see code). **Phase 10 should be re-run in v4 using this approach.**
+
+```python
+# Correct pattern for MiniMax via OpenAI-compatible API:
+import re
+from openai import OpenAI
+
+client = OpenAI(api_key=EXTERNAL_API_KEY, base_url="https://api.minimax.io/v1")
+
+response = client.chat.completions.create(
+    model=EXTERNAL_MODEL, max_tokens=500,
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": prompt}
+    ]
+)
+raw = response.choices[0].message.content or ""
+raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+# Then parse raw as JSON as before
+```
 
 ---
