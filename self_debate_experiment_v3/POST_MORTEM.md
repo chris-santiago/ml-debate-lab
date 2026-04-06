@@ -520,16 +520,34 @@ The Critic pre-identified the following issues that independently appeared in th
 
 These were caught before execution, documented in the design review, and then not acted on. The protocol self-review worked. The enforcement mechanism did not.
 
+### Root cause: two distinct failures
+
+**ml-lab structural gap:** The ml-lab protocol's Gate 1 (after Step 5) is a *user approval* gate on the experiment plan — it is not a verdict-enforcement gate. ml-lab has no instruction to read the Defender's overall verdict and treat its conditions as blocking requirements. The Defender's `empirical_test_agreed` verdict and its associated conditions are left for the orchestrator to notice and act on. The protocol trusts the user gate to catch everything; it does not close the loop from Defender output to gated conditions.
+
+**v3 plan execution failure:** The v3 plan does have a specific approval checkpoint at the end of Phase 4 with explicit conditions to verify before proceeding:
+
+- Isolation is explicit: Critic and Defender each get only task_prompt
+- ETD constraint pre-applied to ensemble synthesizer
+- Structural overrides match PREREGISTRATION.json
+- All conditions use `benchmark_cases_verified.json`
+
+These four conditions were written before the self-review ran. They were never updated after the Defender produced its Pass 2 table. The Defender conceded six issues and flagged four as pre-execution blockers — category field stripping, DRQ filter pre-specification, convergence metric implementation, and ETD instruction verbatim lock. None of those appear in the v3 plan's approval checklist. The checklist was static and pre-authored; there was no step requiring the orchestrator to read `DEFENSE.md` after the review completed and extend the checklist with the Defender's actual conditions.
+
+The v3 plan treated Phase 4 as a ceremony: run the review, check four pre-written boxes, proceed. The Defender's output was produced but not read for its gating implications.
+
 ### What to fix in v4
 
-The Phase 4 gate must be a hard block. The v4 plan must require the orchestrator to:
+**Fix 1 — ml-lab (structural):** Add an explicit instruction after the Defender dispatch: read the Defender's overall verdict from `DEFENSE.md`. If the verdict is `empirical_test_agreed`, extract every conceded item and every pre-execution requirement from the Pass 2 table and add them to the Gate 1 approval checklist. Gate 1 may not be presented to the user until this extraction is complete.
 
-1. Read the Defender's overall verdict from `DEFENSE.md` before proceeding
-2. If the verdict is `empirical_test_agreed`, extract every conceded issue and every pre-execution requirement from the Defender's Pass 2 table
-3. Resolve each item with a commit or documented decision before any agent run begins
-4. Log a `gate` / `phase4_cleared` entry in `INVESTIGATION_LOG.jsonl` with the list of resolved items as `meta`
-5. Do not proceed to Phase 5 (execution) until the gate entry is written
+**Fix 2 — v4 plan (procedural):** The Phase 4 approval checkpoint must be dynamically constructed from the Defender's actual Pass 2 output, not pre-written. The v4 plan should instruct the orchestrator to:
 
-The Defender's verdict is not advisory — it is the experiment's own pre-registered quality check. Treating it as advisory defeats the purpose of running the self-review in the first place.
+1. After receiving `DEFENSE.md`, parse the Pass 2 verdict table
+2. Extract all `Concede` and `Rebut (partial concede)` items — each conceded item is a known gap that must be addressed or documented before execution
+3. Identify any items the Defender flagged as requiring pre-execution action
+4. Write the complete resolved-items list to `EXECUTION_PLAN.md` as a pre-flight checklist
+5. Log a `gate` / `phase4_cleared` entry in `INVESTIGATION_LOG.jsonl` with the resolved items in `meta`
+6. Do not proceed to Phase 5 until the gate entry is written
+
+The Defender's verdict is not advisory — it is the experiment's own pre-registered quality check. A static pre-written checklist cannot substitute for reading the review output.
 
 ---
