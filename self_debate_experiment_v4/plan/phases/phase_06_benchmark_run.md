@@ -96,6 +96,17 @@ After completing all runs for a case, log:
 uv run log_entry.py --step 6 --cat exec --action case_complete --case_id {case_id}
   --detail "all applicable conditions, 3 runs each" --meta '{"difficulty": "..."}'
 
+**Qualitative observations (append-only — anomalous cases only):**
+For any case meeting one of these criteria, append a 1-3 sentence note to
+`PHASE6_OBSERVATIONS.md` (create file on first entry):
+- Borderline verdict assignment (adjudication call was non-obvious)
+- Protocol failure (both agents performed well but verdict was wrong)
+- Forced-multiround case where round 2 was substantively different vs hollow
+- Isolation near-miss (passed check_isolation.py but felt borderline)
+
+Skip clean cases — silence is the default. Format: `[case_id] [condition]: <note>`.
+This artifact externalizes qualitative context for Phase 10's report-writer dispatch.
+
 > **Script:** `plan/scripts/validate_raw_schema.py` — enforces the v4 raw output schema contract before scoring. For forced_multiround, validates both `debate_rounds` (int ≥ 2) and `rounds` (array ≥ 2 entries with `round`/`verdict`/`points_resolved`/`points_open`). The scoring engine (`self_debate_poc.py`) does not read these fields, so a mismatch is invisible to scoring but breaks Phase 10.5 audit checks. Run before isolation check and scoring.
 
 ```bash
@@ -124,6 +135,7 @@ uv run log_entry.py --step 6 --cat workflow --action rerun_complete \
 ```
 
 ```bash
+uv run log_entry.py --step 6 --cat write --action write_phase6_observations --detail "PHASE6_OBSERVATIONS.md written: qualitative case notes for anomalous cases" --artifact PHASE6_OBSERVATIONS.md
 uv run log_entry.py --step 6 --cat exec --action validate_raw_schema --detail "validate_raw_schema.py passed — all raw output files conform to v4 schema contract" --artifact validate_raw_schema.py
 uv run log_entry.py --step 6 --cat exec --action check_isolation --detail "check_isolation.py passed — no isolation breaches in isolated_debate runs" --artifact check_isolation.py
 uv run log_entry.py --step 6 --cat workflow --action step_end --detail "Phase 6 complete: raw outputs collected, isolation check clean"
@@ -131,7 +143,7 @@ uv run log_entry.py --step 6 --cat workflow --action step_end --detail "Phase 6 
 
 **Phase 6 commit (BEFORE scoring):**
 ```bash
-git add self_debate_experiment_v4/v4_raw_outputs/
+git add self_debate_experiment_v4/v4_raw_outputs/ self_debate_experiment_v4/PHASE6_OBSERVATIONS.md
 git commit -m "chore: snapshot v4 main benchmark raw outputs — <N> cases, isolation check <passed|failed>"
 uv run log_entry.py --step 6 --cat exec --action commit_raw_outputs --detail "committed v4_raw_outputs/ after main benchmark; <N> cases; isolation check passed"
 ```

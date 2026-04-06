@@ -1,4 +1,4 @@
-## Phase 10.5 — Post-Run Audit Agent (NEW)
+## Phase 9.5 — Post-Run Audit Agent (NEW)
 
 > **Reminders (cross-cutting rules)**
 > - All script invocations use `uv run`. Never `python` or `python3` directly.
@@ -8,7 +8,7 @@
 > Automated anomaly detection to supplement manual post-mortem. Issue 8 remediation.
 
 ```bash
-uv run log_entry.py --step 10.5 --cat workflow --action step_start --detail "Phase 10.5: post-run audit agent — anomaly detection on raw outputs and scoring"
+uv run log_entry.py --step 9.5 --cat workflow --action step_start --detail "Phase 10.5: post-run audit agent — anomaly detection on raw outputs and scoring"
 ```
 
 **Agent prompt:**
@@ -50,21 +50,21 @@ for each finding.
 
 Write the anomaly report to POST_MORTEM.md (structured — not just prose).
 Log the result:
-uv run log_entry.py --step 10.5 --cat audit --action post_run_audit_complete \
+uv run log_entry.py --step 9.5 --cat audit --action post_run_audit_complete \
   --detail "Anomaly report complete" --meta '{"anomaly_count": N, "critical_count": N}'
 
-If any `critical` anomalies are found, resolve them before Phase 11.
+If any `critical` anomalies are found, resolve them before Phase 10.
 
 ```bash
-uv run log_entry.py --step 10.5 --cat write --action write_post_mortem --detail "POST_MORTEM.md written: structured anomaly report from post-run audit agent" --artifact POST_MORTEM.md
-uv run log_entry.py --step 10.5 --cat workflow --action step_end --detail "Phase 10.5 complete"
+uv run log_entry.py --step 9.5 --cat write --action write_post_mortem --detail "POST_MORTEM.md written: structured anomaly report from post-run audit agent" --artifact POST_MORTEM.md
+uv run log_entry.py --step 9.5 --cat workflow --action step_end --detail "Phase 9.5 complete"
 ```
 
-**Phase 10.5 commit:**
+**Phase 9.5 commit:**
 ```bash
 git add self_debate_experiment_v4/POST_MORTEM.md
-git commit -m "chore: snapshot v4 phase 10.5 artifacts — post-run audit and post-mortem [none]"
-uv run log_entry.py --step 10.5 --cat exec --action commit_phase_artifacts --detail "committed phase 10.5 artifacts: POST_MORTEM.md"
+git commit -m "chore: snapshot v4 phase 9.5 artifacts — post-run audit and post-mortem [none]"
+uv run log_entry.py --step 9.5 --cat exec --action commit_phase_artifacts --detail "committed phase 9.5 artifacts: POST_MORTEM.md"
 ```
 
 ---

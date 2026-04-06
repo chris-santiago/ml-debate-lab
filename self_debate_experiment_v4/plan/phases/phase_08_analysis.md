@@ -32,6 +32,14 @@ REPORTING NORMS (apply to all artifacts in this phase):
    - Failure mode taxonomy by failure_attribution
    - Difficulty label validation result (from difficulty_validation_results.json)
    - External benchmark stratum results (separate — not mixed into primary CIs)
+   - **Key observations (required):** Synthesize PHASE6_OBSERVATIONS.md into
+     3-5 prose paragraphs covering: which failure modes appeared on which case
+     types and why; where the protocol visibly struggled vs where it was clean;
+     execution anomalies that don't surface in score tables (borderline adjudications,
+     hollow rounds, isolation near-misses). This section is the qualitative bridge
+     for Phase 10's report-writer dispatch — it must contain enough interpretive
+     context that a fresh agent reading only CONCLUSIONS.md can write the Failure
+     Mode Analysis section of REPORT.md.
 
 2. SENSITIVITY_ANALYSIS.md
    - Fair-comparison lift as primary metric (explain why DC=N/A and ETD=N/A for baseline)
