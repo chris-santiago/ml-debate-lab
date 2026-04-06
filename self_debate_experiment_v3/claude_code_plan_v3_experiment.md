@@ -1,0 +1,1753 @@
+# Claude Code Execution Plan — Self-Debate Protocol v3 (From Scratch)
+
+**Purpose:** Run the full redesigned experiment, faithful to the original multi-agent prompt with all v2 improvements incorporated. Execute inside the ml-debate-lab repo.
+
+**Prerequisites:**
+- Python 3.11+ with `anthropic`, `scipy`, `numpy` packages
+- 50–60 benchmark cases in `self_debate_experiment_v3/benchmark_cases.json` — **generated externally using the companion case generation prompt, then saved by the operator to this path**. Claude Code does not generate cases. Its role is validation, verification, and execution only.
+
+> **Operator action before running this plan:** Run the benchmark_case_generation_prompt.md through your chosen external LLM, save the raw JSON output as `self_debate_experiment_v3/benchmark_cases.json`, then begin at Phase 0.
+- `ml-critic` and `ml-defender` installed in `~/.claude/agents/`
+- Estimated call volume: ~750–1000 agent calls for full run (4 conditions × 50 cases × 3 runs each; multiround adds ~150 calls)
+
+> **No API key needed.** This plan runs inside an authenticated Claude Code session. `anthropic.Anthropic()` is pre-authenticated. Do NOT set `ANTHROPIC_API_KEY` anywhere in this plan or in any script it produces. The only exception is Phase 10 (cross-vendor scorer), which requires an external model API key configured by the operator and is clearly marked.
+
+---
+
+## Divergences from ml-lab Protocol
+
+This experiment deliberately diverges from the standard ml-lab workflow in the following ways. All divergences are intentional — this section exists so readers understand what changed and why.
+
+| Divergence | ml-lab | v3 | Rationale |
+|---|---|---|---|
+| Role separation | 4 independent agents (author, verifier, runner, evaluator) | Procedural phases in single session; case authoring externalized | Benchmark execution is deterministic; agent separation adds overhead without independence guarantees in a single session |
+| Benchmark debate | Multi-round (max 4), Defender sees Critique | Both: isolated (single-pass) + multi-round (4 conditions total) | Both architectures tested — isolation enables defense_wins; multi-round tests adversarial exchange at scale |
+| Micro/macro iteration | Steps 6-7 iterate; Outcomes A/B/C with max 3 macro-cycles | Single-pass benchmark, no iteration | Benchmark cases have fixed ground truth; iteration is for open-ended investigations |
+| TECHNICAL_REPORT.md | Optional Step 11 | Both: TECHNICAL_REPORT.md (results mode) + FINAL_SYNTHESIS.md (internal summary) | Benchmark warrants publication-ready output; FINAL_SYNTHESIS is internal, not a substitute |
+| README rewrite | Optional Step 13, readme-rewriter agent | Not included | Benchmark README generated in Phase 4; no outside-reader optimization needed for an internal experiment |
+| Peer review cap | 3 rounds (1 Opus + 2 Haiku) | 2 rounds (1 Opus + 1 Haiku) | Deterministic scoring means fewer report-level problems to iterate on |
+| Named experiment script | `[domain]_experiment{N}.py` | Scoring engine + analysis scripts distributed | Functionality split across `self_debate_poc.py`, `stats_analysis.py`, `sensitivity_analysis.py`, `difficulty_validation.py` |
+| DC metric | Rich defense quality (concession, contestation, position update) | Verdict-match check (same as FVC for non-baseline) | Isolated debate: Defender never sees Critique, so concession/contestation is inapplicable |
+
+---
+
+## Required Final Artifacts
+
+Every item below must exist before Phase 11 (git commit).
+
+| Artifact | Phase produced |
+|----------|---------------|
+| `benchmark_cases.json` | Input — provided by operator from external LLM generation |
+| `benchmark_cases_verified.json` | Phase 1 |
+| `benchmark_verification.json` | Phase 1 |
+| `BENCHMARK_PROMPTS.md` | Phase 2 |
+| `HYPOTHESIS.md` | Phase 2 |
+| `PREREGISTRATION.json` | Phase 3 |
+| `evaluation_rubric.json` | Phase 3 |
+| `CRITIQUE.md` | Phase 4 |
+| `DEFENSE.md` | Phase 4 |
+| `DEBATE.md` | Phase 4 |
+| `EXECUTION_PLAN.md` | Phase 4 |
+| `README.md` | Phase 4 |
+| `self_debate_poc.py` | Phase 5 |
+| `v3_raw_outputs/` | Phase 6 (per-case outputs for all 4 conditions) |
+| `v3_results.json` | Phase 7 |
+| `evaluation_results.json` | Phase 7 |
+| `CONCLUSIONS.md` | Phase 8 |
+| `SENSITIVITY_ANALYSIS.md` | Phase 8 |
+| `ENSEMBLE_ANALYSIS.md` | Phase 8 |
+| `*.png` (analysis figures) | Phase 8 |
+| `stats_analysis.py` | Phase 8 |
+| `stats_results.json` | Phase 8 |
+| `sensitivity_analysis.py` | Phase 8 |
+| `sensitivity_analysis_results.json` | Phase 8 |
+| `difficulty_validation.py` | Phase 8 |
+| `difficulty_validation_results.json` | Phase 8 |
+| `within_case_variance_results.json` | Phase 8 |
+| `REPORT.md` | Phase 9 |
+| `REPORT_ADDENDUM.md` | Phase 9 |
+| `PEER_REVIEW.md` | Phase 9 (Round 1; R2 present if MAJOR issues found) |
+| `FINAL_SYNTHESIS.md` | Phase 9 |
+| `TECHNICAL_REPORT.md` | Phase 9.75 |
+| `check_isolation.py` | Phase 6 |
+| `coherence_audit.py` | Phase 8.5 |
+| `post_report_coherence_audit.py` | Phase 9.5 |
+| `INVESTIGATION_LOG.jsonl` | Phase 6 onward (append-only audit trail) |
+| `cross_model_scorer.py` | Phase 10 |
+| `cross_vendor_scores_v3.json` | Phase 10 |
+
+---
+
+## Phase 0 — Setup and Case Validation
+
+```bash
+mkdir -p self_debate_experiment_v3
+cd self_debate_experiment_v3
+
+# Install agents if not already present
+cp ../agents/ml-critic.md ~/.claude/agents/
+cp ../agents/ml-defender.md ~/.claude/agents/
+```
+
+```python
+# validate_cases.py — checks new schema fields match case generation prompt output
+import json
+from collections import Counter
+
+with open('benchmark_cases.json') as f:
+    cases = json.load(f)
+
+print(f'Total cases: {len(cases)}')
+cats = Counter(c['category'] for c in cases)
+print('By category:', dict(cats))
+
+# New schema: correct_position is inside ground_truth
+positions = Counter(c['ground_truth']['correct_position'] for c in cases)
+print('By correct_position:', dict(positions))
+mixed = sum(1 for c in cases if c['ground_truth']['correct_position'] == 'mixed')
+print(f'Mixed-position: {mixed} (target >= 12)')
+
+# must_find_issue_ids is inside scoring_targets
+mf_sizes = Counter(len(c['scoring_targets']['must_find_issue_ids']) for c in cases)
+print('Must-find sizes:', dict(mf_sizes))
+large_mf = sum(1 for c in cases if len(c['scoring_targets']['must_find_issue_ids']) >= 3)
+print(f'Cases with 3+ must_find: {large_mf} (target >= 20)')
+
+has_mnc = sum(1 for c in cases if c['scoring_targets'].get('must_not_claim'))
+print(f'Cases with must_not_claim: {has_mnc} (target >= 20)')
+
+multi_accept = sum(1 for c in cases if len(c['scoring_targets'].get('acceptable_resolutions', [])) > 1)
+print(f'Cases with multiple acceptable_resolutions: {multi_accept} (target >= 10)')
+
+diff = Counter(c['difficulty'] for c in cases)
+print('By difficulty:', dict(diff))
+
+required = ['case_id', 'category', 'difficulty', 'task_prompt', 'ground_truth',
+            'planted_issues', 'ideal_critique', 'ideal_defense',
+            'ideal_debate_resolution', 'scoring_targets', 'verifier_status', 'notes']
+for case in cases:
+    missing = [f for f in required if f not in case]
+    if missing:
+        print(f"WARNING {case['case_id']}: missing {missing}")
+    # Check ground_truth subfields
+    gt = case.get('ground_truth', {})
+    if not gt.get('final_verdict'):
+        print(f"WARNING {case['case_id']}: missing or empty ground_truth.final_verdict")
+    idr = case.get('ideal_debate_resolution', {})
+    if idr.get('type') == 'empirical_test_agreed' and not gt.get('required_empirical_test'):
+        print(f"WARNING {case['case_id']}: empirical_test_agreed case missing ground_truth.required_empirical_test")
+
+# Check red herring coverage (gen prompt requires >= 15 non-defense_wins cases)
+non_dw = [c for c in cases if c['ground_truth']['correct_position'] != 'defense']
+has_red_herring = sum(1 for c in non_dw if c['scoring_targets'].get('must_not_claim'))
+print(f'Non-defense_wins cases with must_not_claim (proxy for red herring): {has_red_herring}/{len(non_dw)} (target: all)')
+
+# Check domain expertise hard cases (gen prompt requires >= 8 hard cases needing non-ML expertise)
+# Check notes field for "domain expertise" or "domain knowledge" signals
+hard_cases = [c for c in cases if c['difficulty'] == 'hard' and c['ground_truth']['correct_position'] != 'defense']
+domain_expert_hard = sum(1 for c in hard_cases
+                         if any(kw in (c.get('notes', '') + ' '.join(c.get('ideal_critique', []))).lower()
+                                for kw in ['domain expertise', 'domain knowledge', 'clinical', 'epv', 'regulatory',
+                                          'financial audit', 'inter-annotator', 'iaa', 'offline-online']))
+print(f'Hard critique cases with domain expertise signals: {domain_expert_hard}/{len(hard_cases)} (target >= 8)')
+if domain_expert_hard < 8:
+    print('  WARNING: May not have enough domain-expertise hard cases to break debate ceiling')
+
+assert len(cases) >= 50, 'Need at least 50 cases'
+assert mixed >= 12, 'Need at least 12 mixed-position cases'
+assert large_mf >= 20, 'Need at least 20 cases with 3+ must_find items'
+print('\nValidation passed.')
+```
+
+```bash
+python3 validate_cases.py
+```
+
+---
+
+## Phase 1 — CASE_VERIFIER
+
+**Mandatory before any experiment agent sees a case. Cases come from an external source. Claude Code's role here is validation only — it does not author or revise cases.**
+
+Give Claude Code this instruction:
+
+```
+You are CASE_VERIFIER for the v3 benchmark.
+
+IMPORTANT: These cases were generated externally. You are validating them,
+not authoring them. You cannot revise cases yourself. Your REVISE decisions are
+instructions back to the operator to return specific cases to the external LLM for re-generation
+with the specific fixes you describe.
+
+Read all cases in self_debate_experiment_v3/benchmark_cases.json.
+
+For each case validate:
+1. No target leakage — correct verdict not inferrable from case_id or first task_prompt sentence
+2. Ground truth unambiguous — ideal_debate_resolution.type clearly correct; experts would agree
+3. Must-find items findable — each scoring_targets.must_find_issue_ids item identifiable from task_prompt
+4. Scenario realistic — plausible as something a real ML team would do
+5. Empirical test diagnostic — for empirical_test_agreed cases, supports_critique_if and
+   supports_defense_if specify distinct falsifiable outcomes
+6. Schema complete — planted_issues has severity, acceptable_resolutions non-empty,
+   verifier_status is "pending", notes field present
+7. Defense_wins justification in prompt — for defense cases, justification explicitly stated
+8. Mixed-position genuinely two-sided — both positions defensible from task_prompt alone
+9. Hard cases require genuine domain expertise — for hard non-defense_wins cases, verify the
+   must-find flaw requires knowledge beyond general ML intuition (clinical standards, financial
+   audit rules, domain-specific evaluation norms, regulatory requirements). If a hard case's
+   flaw is discoverable by standard ML reasoning alone, mark for REVISE with note.
+10. Critique cases have red herring features — for non-defense_wins cases, check whether the
+    scenario contains at least one feature that looks methodologically suspicious but is actually
+    valid or irrelevant (small-but-powered n, high-but-appropriate performance, non-standard-but-
+    justified choice). Cases with must_not_claim populated but no suspicious scenario features
+    are weaker — note this in the verification output.
+11. Defense_wins external grounding — at least 3 defense_wins cases should be grounded in
+    externally verifiable ML methodology (published benchmark designs, known-good evaluation
+    protocols, peer-reviewed practices). Flag if fewer than 3 defense_wins cases meet this
+    criterion. This is not a REJECT condition — it is a benchmark quality flag.
+
+Assign keep | revise | reject. Write benchmark_verification.json:
+[
+  {
+    "case_id": "...",
+    "decision": "keep | revise | reject",
+    "reasons": ["..."],
+    "ambiguity_risk": "low | medium | high",
+    "ground_truth_quality": "low | medium | high",
+    "empirical_test_quality": "low | medium | high",
+    "leakage_detected": true | false,
+    "notes": "..."
+  }
+]
+
+Do not run the experiment. Do not score outputs. Validate only.
+```
+
+```python
+# filter_verified_cases.py
+import json
+
+with open('benchmark_cases.json') as f:
+    cases = json.load(f)
+with open('benchmark_verification.json') as f:
+    verifications = json.load(f)
+
+ver = {v['case_id']: v for v in verifications}
+keep = [c for c in cases if ver.get(c['case_id'], {}).get('decision') == 'keep']
+
+mixed = sum(1 for c in keep if c['ground_truth']['correct_position'] == 'mixed')
+dw = sum(1 for c in keep if c['ground_truth']['correct_position'] == 'defense')
+
+print(f'Keep: {len(keep)} | Mixed: {mixed} | Defense_wins: {dw}')
+
+if len(keep) < 40:
+    print(f'\nERROR: Only {len(keep)} cases passed verification (need >= 40).')
+    print('ACTION REQUIRED: Return to the external LLM with the case generation prompt.')
+    print('Review benchmark_verification.json for REJECT reasons before re-generating.')
+    print('Consider: adjusting category quotas, relaxing difficulty constraints, or')
+    print('requesting REVISE cases be re-generated with specific fixes noted in verification.')
+    raise SystemExit('Insufficient cases — operator must re-run external LLM generation before proceeding')
+
+if mixed < 10:
+    print(f'\nERROR: Only {mixed} mixed-position cases passed (need >= 10).')
+    print('ACTION REQUIRED: Return to the external LLM and request additional mixed-position cases.')
+    print('Instruct: generate 15+ additional mixed-position cases in metric_mismatch,')
+    print('scope_intent_misunderstanding, and real_world_framing categories.')
+    raise SystemExit('Insufficient mixed-position cases — operator must request more from the external LLM')
+
+if dw < 8:
+    print(f'\nERROR: Only {dw} defense_wins cases passed (need >= 8).')
+    print('ACTION REQUIRED: Return to the external LLM and request additional defense_wins cases.')
+    raise SystemExit('Insufficient defense_wins cases — operator must request more from the external LLM')
+
+with open('benchmark_cases_verified.json', 'w') as f:
+    json.dump(keep, f, indent=2)
+print(f'benchmark_cases_verified.json written: {len(keep)} cases')
+```
+
+```bash
+python3 filter_verified_cases.py
+```
+
+> **If filter_verified_cases.py raises a SystemExit:** The operator must return to the external LLM with the case generation prompt. Share `benchmark_verification.json` and instruct it to: (1) generate replacement cases for all REJECT decisions, (2) re-generate with specific fixes for all REVISE decisions per the notes field. Save the new cases, merge with the passing KEEP cases, and re-run from Phase 0. Do not proceed to Phase 2 until filter_verified_cases.py completes without error.
+
+---
+
+## Phase 2 — HYPOTHESIS.md and BENCHMARK_PROMPTS.md
+
+Give Claude Code this instruction:
+
+```
+Write two files in self_debate_experiment_v3/:
+
+1. HYPOTHESIS.md — formal hypothesis:
+   Claim: the isolated self-debate protocol (ml-critic + ml-defender each receiving only
+   the task prompt, orchestrator adjudicates) will achieve a benchmark aggregate score
+   at least +0.10 higher than a single-pass baseline on synthetic ML reasoning tasks
+   with known ground-truth verdicts.
+   Mechanism: adversarial role separation forces engagement with both sides, producing
+   better-typed verdicts and catching false positives that correlated parallel assessors miss.
+   Primary metrics: IDR (fractional), IDP (with must_not_claim), DC, DRQ, ETD, FVC.
+   Secondary hypotheses:
+   (1) Debate outperforms compute-matched ETD-constrained ensemble on mixed-position cases.
+   (2) Ensemble compute budget partially explains defense_wins advantage — pre-specified
+       criterion: ensemble DC >= 0.5 on >= 60% of defense_wins cases.
+
+2. BENCHMARK_PROMPTS.md — all task_prompt fields from benchmark_cases_verified.json,
+   verbatim, one section per case. Header: case_id, category, difficulty, correct_position.
+   Do NOT include ground_truth, planted_issues, scoring_targets, or any answer-key fields.
+```
+
+---
+
+## Phase 3 — Pre-Register and Lock Rubric
+
+```python
+# write_preregistration.py
+import json
+from datetime import datetime
+
+preregistration = {
+    "date": datetime.now().isoformat(),
+    "experiment": "self_debate_experiment_v3",
+    "model": "claude-sonnet-4-6",
+    "hypotheses": {
+        "primary": {"claim": "Debate benchmark mean >= 0.65", "threshold": 0.65},
+        "primary_passrate": {"claim": "Debate case pass rate >= 75%", "threshold": 0.75},
+        "primary_lift": {"claim": "Debate corrected lift over baseline >= +0.10", "threshold": 0.10},
+        "secondary_ensemble_mixed": {
+            "claim": "Debate outperforms ETD-constrained ensemble on mixed-position cases",
+            "criterion": "Debate mean on mixed cases > ensemble mean on same cases"
+        },
+        "secondary_defense_wins": {
+            "claim": "Compute budget partially explains defense_wins advantage",
+            "criterion": "Ensemble DC >= 0.5 on >= 60% of defense_wins cases -> compute partially explains"
+        },
+        "secondary_multiround_debate": {
+            "claim": "Multi-round debate (ml-lab protocol) outperforms single-pass isolated debate on DC and DRQ dimensions",
+            "criterion": "multiround_mean(DC + DRQ) > isolated_debate_mean(DC + DRQ) across non-defense_wins cases"
+        }
+    },
+    "rubric": {
+        "IDR": "issues_found / total_must_find_issue_ids (fractional 0.0-1.0); N/A on defense_wins",
+        "IDP": "fraction of valid raised issues; must_not_claim items count as false positives (0.0/0.5/1.0); N/A on defense_wins",
+        "DC": "correct verdict via defense function (0.0/0.5/1.0); baseline hardcoded 0.0",
+        "DRQ": "typed verdict matches ideal (1.0); matches other acceptable_resolution (0.5); adjacent to ideal but not in list (0.5); wrong (0.0); baseline capped at 0.5",
+        "ETD": "empirical test has measure + success_criterion + failure_criterion (0.0/0.5/1.0); N/A when ideal is critique_wins or defense_wins",
+        "FVC": "verdict in acceptable_resolutions list (1.0); adjacent to ideal not in list (0.5); wrong (0.0)"
+    },
+    "dc_note": "DC in this experiment measures verdict-match, not defense agent behavior quality (v1's rich concession/contestation metric). The single-pass isolation design makes concession/contestation scoring inapplicable — the Defender never sees the Critique to concede or contest. In isolated_debate and ensemble conditions, DC is structurally identical to FVC for non-baseline. In multiround condition, DC reflects the final verdict after adversarial exchange.",
+    "convergence_metric": {
+        "definition": "1.0 if critic_verdict == defender_verdict; 0.5 if they diverge",
+        "source_fields": "critic_raw verdict vs defender_raw verdict extracted from v3_raw_outputs/",
+        "note": "Diagnostic only — not used in pass/fail determination. Reported in CONCLUSIONS.md for isolated_debate condition."
+    },
+    "structural_overrides": {
+        "baseline_DC": 0.0,
+        "baseline_DC_rationale": "Baseline has no defense role. Structural, not a reasoning penalty.",
+        "baseline_DRQ_cap": 0.5,
+        "baseline_DRQ_cap_rationale": "Baseline cannot produce typed resolution from structured exchange.",
+        "honest_lift": "Corrected lift uses DC=0.5 and DRQ uncapped for baseline. Report both raw and corrected."
+    },
+    "failure_attribution_values": {
+        "agent": "Traceable to specific agent output (Critic missed issue; Defender reasoning/label disconnect)",
+        "protocol": "In debate structure (correct resolution not reached despite agents performing roles)",
+        "ambiguous": "Cannot distinguish agent vs protocol from outputs alone",
+        "none": "Case passed — no failure to attribute"
+    },
+    "per_case_pass_criterion": "mean(non-null dimensions) >= 0.65 AND all applicable dimensions >= 0.5",
+    "n_runs_per_case": 3
+}
+
+with open('PREREGISTRATION.json', 'w') as f:
+    json.dump(preregistration, f, indent=2)
+
+rubric = {
+    "scoring_dimensions": {
+        "IDR": "Fraction of scoring_targets.must_find_issue_ids correctly identified (fractional). N/A on defense_wins.",
+        "IDP": "Fraction of claimed issues that are valid; must_not_claim items are explicit false positives (0.0/0.5/1.0). N/A on defense_wins.",
+        "DC": "Whether defense correctly reached verdict type (0.0/0.5/1.0). Baseline hardcoded 0.0.",
+        "DRQ": "Whether typed verdict matches expected resolution (0.0/0.5/1.0). Baseline capped 0.5.",
+        "ETD": "Empirical test has pre-specified measure, success criterion, failure criterion (0.0/0.5/1.0). N/A when ideal is critique_wins or defense_wins.",
+        "FVC": "Verdict in scoring_targets.acceptable_resolutions (1.0); adjacent to ideal (0.5); wrong (0.0)."
+    },
+    "pass_fail_rule": "mean(non-null dimensions) >= 0.65 AND all applicable dimensions >= 0.5",
+    "notes": "Rubric fixed before any agent run. Do not modify after execution begins."
+}
+
+with open('evaluation_rubric.json', 'w') as f:
+    json.dump(rubric, f, indent=2)
+
+print("Pre-registration and rubric written and locked.")
+```
+
+```bash
+python3 write_preregistration.py
+git add PREREGISTRATION.json evaluation_rubric.json HYPOTHESIS.md BENCHMARK_PROMPTS.md \
+        benchmark_verification.json benchmark_cases_verified.json
+git commit -m "Pre-register v3: rubric, hypotheses, verified cases locked before any agent run"
+```
+
+---
+
+## Phase 4 — Protocol Self-Review: CRITIQUE + DEFENSE + DEBATE + EXECUTION_PLAN
+
+Before running the benchmark, run the debate protocol against its own design.
+
+Give Claude Code this instruction:
+
+```
+Run the self-debate protocol against the v3 experimental design.
+
+Step 1 — Dispatch ml-critic (Mode 1, initial critique):
+Provide: HYPOTHESIS.md, PREREGISTRATION.json, evaluation_rubric.json
+Produce: CRITIQUE.md — numbered issues, each with: the claim being made /
+why it might be wrong / what evidence would settle it. Organized by root cause.
+
+Step 2 — Dispatch ml-defender (Mode 1, initial defense):
+Provide: HYPOTHESIS.md, PREREGISTRATION.json, evaluation_rubric.json, AND CRITIQUE.md
+The Defender receives the Critique in this standard workflow step (not isolated).
+Use two-pass structure: Pass 1 full analysis, Pass 2 verdict selection.
+Produce: DEFENSE.md
+
+Step 3 — Initialize DEBATE.md with all contested points from CRITIQUE.md vs DEFENSE.md.
+
+Step 4 — Alternate ml-critic (Mode 2) and ml-defender (Mode 2) on DEBATE.md until all
+points resolve. Maximum 4 rounds. Force-resolve remaining as empirical_test_required.
+
+Step 5 — Write EXECUTION_PLAN.md:
+- Verified cases selected (from benchmark_cases_verified.json)
+- Three conditions and their configurations
+- Pre-specified verdict criteria for all hypotheses
+- Complete artifact plan (every item in the required artifact list above)
+- Failure handling
+- Iteration policy
+
+Step 6 — Write README.md:
+- One-paragraph hypothesis statement
+- Quickstart: python3 self_debate_poc.py
+- Pipeline description: cases -> agents -> raw outputs -> scoring -> statistics -> report
+- Expected outputs
+- Scope exclusions
+
+Wait for LEAD approval of EXECUTION_PLAN.md before proceeding.
+```
+
+**Approval checkpoint:** Approve only if:
+- Isolation is explicit: Critic and Defender each get only task_prompt (benchmark condition)
+- ETD constraint pre-applied to ensemble synthesizer (same instruction as debate)
+- Structural overrides match PREREGISTRATION.json
+- All three conditions use `benchmark_cases_verified.json`
+
+---
+
+## Phase 5 — Build the Scoring Engine
+
+```python
+# self_debate_poc.py
+"""
+Self-Debate Protocol v3 — Scoring Engine
+
+Key improvements over v2:
+- IDR is fractional (issues_found / total_must_find_issue_ids)
+- FVC uses scoring_targets.acceptable_resolutions (list), not just ideal_resolution
+- IDP uses scoring_targets.must_not_claim for explicit false-positive detection
+- failure_attribution on every scored case
+- Within-case variance: 3 runs per case per condition
+"""
+
+import json
+from pathlib import Path
+
+OUTPUT_DIR = Path(__file__).parent
+RESULTS_FILE = OUTPUT_DIR / "v3_results.json"
+EVAL_RESULTS_FILE = OUTPUT_DIR / "evaluation_results.json"
+
+
+def load_cases():
+    with open(OUTPUT_DIR / 'benchmark_cases_verified.json') as f:
+        return json.load(f)
+
+
+def compute_idr(must_find_ids, issues_found):
+    if not must_find_ids:
+        return None
+    found = [i for i in must_find_ids if i in issues_found]
+    return round(len(found) / len(must_find_ids), 4)
+
+
+def compute_idp(all_issues_raised, must_find_ids, must_not_claim):
+    """
+    IDP uses must_not_claim for explicit false-positive detection.
+    - Issues in must_not_claim: explicit false positives
+    - Issues in must_find_ids: valid
+    - Other issues: neutral (don't affect precision)
+    """
+    if not all_issues_raised:
+        return 1.0
+    invalid = [i for i in all_issues_raised if i in must_not_claim]
+    valid = [i for i in all_issues_raised if i in must_find_ids]
+    denominator = len(valid) + len(invalid)
+    if denominator == 0:
+        return 1.0  # Only neutral issues raised
+    frac = len(valid) / denominator
+    if frac >= 0.9:
+        return 1.0
+    elif frac >= 0.5:
+        return 0.5
+    return 0.0
+
+
+def compute_fvc(verdict, acceptable_resolutions, ideal_resolution):
+    """FVC uses acceptable_resolutions list — multiple correct answers allowed."""
+    if verdict in acceptable_resolutions:
+        return 1.0
+    adjacents = {
+        ('critique_wins', 'empirical_test_agreed'),
+        ('empirical_test_agreed', 'critique_wins'),
+        ('defense_wins', 'empirical_test_agreed'),
+        ('empirical_test_agreed', 'defense_wins'),
+    }
+    if (verdict, ideal_resolution) in adjacents:
+        return 0.5
+    return 0.0
+
+
+def compute_dc(verdict, acceptable_resolutions, ideal_resolution, condition):
+    """
+    DC measures verdict correctness via defense function.
+    NOTE: In isolated_debate and ensemble conditions, DC is structurally identical
+    to FVC — the Defender never sees the Critique, so v1's rich concession/contestation
+    metric is inapplicable. In multiround condition, DC reflects the verdict after
+    adversarial exchange. See dc_note in PREREGISTRATION.json.
+    Baseline hardcoded 0.0 — structural, pre-registered.
+    """
+    if condition == 'baseline':
+        return 0.0  # Structural override — pre-registered
+    return compute_fvc(verdict, acceptable_resolutions, ideal_resolution)
+
+
+def compute_drq(verdict, acceptable_resolutions, ideal_resolution, condition):
+    """
+    DRQ distinguishes ideal match (1.0) from other acceptable matches (0.5).
+    Preserves v1 tiered scoring: ideal=1.0 > other-acceptable=0.5 > adjacent=0.5 > wrong=0.0.
+    Baseline capped at 0.5 — structural, pre-registered.
+    """
+    adjacents = {
+        ('critique_wins', 'empirical_test_agreed'),
+        ('empirical_test_agreed', 'critique_wins'),
+        ('defense_wins', 'empirical_test_agreed'),
+        ('empirical_test_agreed', 'defense_wins'),
+    }
+    if verdict == ideal_resolution:
+        score = 1.0
+    elif verdict in acceptable_resolutions:
+        score = 0.5
+    elif (verdict, ideal_resolution) in adjacents:
+        score = 0.5
+    else:
+        score = 0.0
+    if condition == 'baseline':
+        return min(score, 0.5)  # Cap at 0.5 — pre-registered
+    return score
+
+
+def compute_etd(empirical_test, ideal_resolution):
+    if ideal_resolution in ('critique_wins', 'defense_wins'):
+        return None
+    if not empirical_test:
+        return 0.0
+    has_m = bool(empirical_test.get('measure'))
+    has_s = bool(empirical_test.get('success_criterion'))
+    has_f = bool(empirical_test.get('failure_criterion'))
+    if has_m and has_s and has_f:
+        return 1.0
+    elif has_m and (has_s or has_f):
+        return 0.5
+    return 0.0
+
+
+def attribute_failure(scores, condition, passes):
+    if passes:
+        return 'none'
+    if condition == 'baseline':
+        return 'protocol'
+    failed = [k for k, v in scores.items() if v is not None and v < 0.5]
+    if 'DC' in failed:
+        return 'agent'  # Defender reasoning/label disconnect
+    if 'IDR' in failed:
+        return 'agent'  # Critic missed must-find issues
+    if 'DRQ' in failed or 'FVC' in failed:
+        return 'protocol'
+    return 'ambiguous'
+
+
+def score_run(case, output, condition):
+    gt = case['ground_truth']
+    st = case['scoring_targets']
+    idr_obj = case['ideal_debate_resolution']
+
+    correct_position = gt['correct_position']
+    ideal_resolution = idr_obj['type']
+    acceptable_resolutions = st.get('acceptable_resolutions', [ideal_resolution])
+    must_find_ids = st.get('must_find_issue_ids', [])
+    must_not_claim = st.get('must_not_claim', [])
+
+    verdict = output.get('verdict')
+    issues_found = output.get('issues_found', [])
+    all_issues_raised = output.get('all_issues_raised', [])
+    empirical_test = output.get('empirical_test')
+
+    scores = {}
+    if correct_position == 'defense':
+        scores['IDR'] = None
+        scores['IDP'] = None
+    else:
+        scores['IDR'] = compute_idr(must_find_ids, issues_found)
+        scores['IDP'] = compute_idp(all_issues_raised, must_find_ids, must_not_claim)
+
+    scores['DC'] = compute_dc(verdict, acceptable_resolutions, ideal_resolution, condition)
+    scores['DRQ'] = compute_drq(verdict, acceptable_resolutions, ideal_resolution, condition)
+    scores['ETD'] = compute_etd(empirical_test, ideal_resolution)
+    scores['FVC'] = compute_fvc(verdict, acceptable_resolutions, ideal_resolution)
+
+    non_null = [v for v in scores.values() if v is not None]
+    mean = round(sum(non_null) / len(non_null), 4) if non_null else 0.0
+    passes = mean >= 0.65 and all(v >= 0.5 for v in non_null)
+
+    return {
+        'scores': scores,
+        'mean': mean,
+        'passes': passes,
+        'verdict': verdict,
+        'failure_attribution': attribute_failure(scores, condition, passes),
+        'issues_found': issues_found,
+        'missed_issues': [i for i in must_find_ids if i not in issues_found],
+        'false_positive_issues': [i for i in all_issues_raised if i in must_not_claim],
+    }
+
+
+def aggregate_runs(run_results):
+    means = [r['mean'] for r in run_results]
+    avg = round(sum(means) / len(means), 4) if means else 0.0
+    std = round((sum((m - avg)**2 for m in means) / len(means))**0.5, 4) if means else 0.0
+    return {'mean': avg, 'std': std, 'passes': sum(1 for r in run_results if r['passes']), 'runs': run_results}
+
+
+def main():
+    cases = load_cases()
+    raw_dir = OUTPUT_DIR / 'v3_raw_outputs'
+    all_results = []
+    eval_results = []
+
+    for case in cases:
+        cid = case['case_id']
+        ideal = case['ideal_debate_resolution']['type']
+        acceptable = case['scoring_targets'].get('acceptable_resolutions', [ideal])
+
+        case_result = {
+            'case_id': cid,
+            'category': case['category'],
+            'difficulty': case['difficulty'],
+            'correct_position': case['ground_truth']['correct_position'],
+            'ideal_resolution': ideal,
+            'acceptable_resolutions': acceptable,
+            'must_find': case['scoring_targets'].get('must_find_issue_ids', []),
+        }
+
+        for condition in ['isolated_debate', 'multiround', 'ensemble', 'baseline']:
+            run_results = []
+            for run_idx in range(1, 4):
+                path = raw_dir / f"{cid}_{condition}_run{run_idx}.json"
+                if not path.exists():
+                    print(f"WARNING: Missing {path}")
+                    continue
+                with open(path) as f:
+                    output = json.load(f)
+                run_results.append(score_run(case, output, condition))
+            case_result[condition] = aggregate_runs(run_results)
+
+        all_results.append(case_result)
+
+        first = case_result['isolated_debate']['runs'][0] if case_result['isolated_debate']['runs'] else {}
+        eval_results.append({
+            'case_id': cid,
+            'scores': first.get('scores', {}),
+            'pass_fail': 'pass' if case_result['isolated_debate']['passes'] >= 2 else 'fail',
+            'found_planted_issues': first.get('issues_found', []),
+            'missed_planted_issues': first.get('missed_issues', []),
+            'false_positive_issues': first.get('false_positive_issues', []),
+            'was_resolution_valid': first.get('verdict') in acceptable if first else False,
+            'did_final_verdict_match_ground_truth': first.get('verdict') in acceptable if first else False,
+            'failure_attribution': first.get('failure_attribution', 'none'),
+        })
+
+    n = len(all_results)
+    isolated_means = [r['isolated_debate']['mean'] for r in all_results]
+    multiround_means = [r['multiround']['mean'] for r in all_results]
+    ensemble_means = [r['ensemble']['mean'] for r in all_results]
+    baseline_means = [r['baseline']['mean'] for r in all_results]
+    bm_isolated = round(sum(isolated_means) / n, 4)
+    bm_multiround = round(sum(multiround_means) / n, 4)
+    bm_ensemble = round(sum(ensemble_means) / n, 4)
+    bm_baseline = round(sum(baseline_means) / n, 4)
+    lift = round(bm_isolated - bm_baseline, 4)
+    d_pass_count = sum(1 for r in all_results if r['isolated_debate']['passes'] >= 2)
+    d_pass_frac = round(d_pass_count / n, 4)
+    benchmark_passes = bm_isolated >= 0.65 and d_pass_frac >= 0.75 and lift >= 0.10
+
+    summary = {
+        'benchmark_isolated_debate_mean': bm_isolated,
+        'benchmark_multiround_mean': bm_multiround,
+        'benchmark_ensemble_mean': bm_ensemble,
+        'benchmark_baseline_mean': bm_baseline,
+        'lift_isolated_vs_baseline': lift,
+        'lift_multiround_vs_isolated': round(bm_multiround - bm_isolated, 4),
+        'debate_pass_count': d_pass_count,
+        'debate_pass_fraction': d_pass_frac,
+        'benchmark_passes': benchmark_passes,
+        'protocol': 'v3_four_conditions',
+        'cases': all_results
+    }
+
+    with open(RESULTS_FILE, 'w') as f:
+        json.dump(summary, f, indent=2)
+    with open(EVAL_RESULTS_FILE, 'w') as f:
+        json.dump(eval_results, f, indent=2)
+
+    print("=" * 80)
+    print("V3 BENCHMARK SUMMARY")
+    print("=" * 80)
+    print(f"{'Case':<32} {'Iso':>5} {'MR':>5} {'Ens':>5} {'Base':>5} {'Delta':>6} Pass")
+    print("-" * 80)
+    for r in all_results:
+        delta = r['isolated_debate']['mean'] - r['baseline']['mean']
+        passed = 'YES' if r['isolated_debate']['passes'] >= 2 else 'NO'
+        print(f"{r['case_id']:<32} {r['isolated_debate']['mean']:>5.3f} {r['multiround']['mean']:>5.3f} {r['ensemble']['mean']:>5.3f} {r['baseline']['mean']:>5.3f} {delta:>+6.3f} {passed}")
+    print("-" * 80)
+    print(f"{'BENCHMARK':<32} {bm_isolated:>5.3f} {bm_multiround:>5.3f} {bm_ensemble:>5.3f} {bm_baseline:>5.3f} {lift:>+6.3f} {'PASS' if benchmark_passes else 'FAIL'}")
+    print(f"\nIsolated debate pass rate: {d_pass_count}/{n} ({d_pass_frac:.1%})")
+    print(f"Benchmark mean >= 0.65:    {'PASS' if bm_isolated >= 0.65 else 'FAIL'}")
+    print(f"Case pass rate >= 75%:     {'PASS' if d_pass_frac >= 0.75 else 'FAIL'}")
+    print(f"Lift >= +0.10:             {'PASS' if lift >= 0.10 else 'FAIL'}")
+    print(f"Multiround vs isolated:    {bm_multiround - bm_isolated:+.4f}")
+    print(f"\nBENCHMARK OVERALL: {'PASSES' if benchmark_passes else 'FAILS'}")
+
+
+if __name__ == '__main__':
+    main()
+```
+
+---
+
+## Phase 6 — Run the Benchmark (Claude Code Orchestration)
+
+**Uses existing ml-critic and ml-defender agents directly — not inline prompts.**
+
+**Design note on debate architectures:** This benchmark runs two distinct debate architectures side-by-side to measure what structural isolation vs. adversarial exchange actually contributes. The `isolated_debate` condition (single-pass, both agents isolated) is NOT a standard ml-lab debate — it is a benchmark-specific design where the Defender never sees the Critique, enabling genuine defense_wins verdicts through clean exoneration. The `multiround` condition follows the standard ml-lab protocol where the Defender sees the Critique and both agents iterate. Running both directly tests the hypothesis that multi-round adversarial exchange improves DC and DRQ outcomes.
+
+**INVESTIGATION_LOG directive:** Throughout execution, append entries to `INVESTIGATION_LOG.jsonl` at each case boundary, agent dispatch, run completion, and any error or retry. Use the schema from the ml-lab agent `## Investigation Log` section. Minimum entries per case: one `exec` entry per agent dispatch, one `write` entry per output file written, one `decision` entry for each adjudication. Append-only — never overwrite or truncate.
+
+```bash
+mkdir -p v3_raw_outputs
+```
+
+Give Claude Code this instruction:
+
+```
+Load self_debate_experiment_v3/benchmark_cases_verified.json.
+
+For EACH case, run 3 complete passes (run 1, run 2, run 3).
+Within each pass, run all four conditions:
+
+--- ISOLATED DEBATE CONDITION (single-pass, isolation required) ---
+Dispatch ml-critic with ONLY the case task_prompt. No other context.
+
+Dispatch ml-defender with ONLY the case task_prompt.
+Do NOT pass Critic output to Defender — benchmark isolation is deliberate and essential.
+This is NOT the standard ml-lab debate protocol. Isolation enables genuine defense_wins
+verdicts and directly tests whether role separation alone (without adversarial exchange)
+improves ML review quality.
+
+As orchestrator, review both outputs and adjudicate:
+- Assign typed verdict: critique_wins | defense_wins | empirical_test_agreed
+- If empirical_test_agreed, specify:
+    measure: [what to measure]
+    success_criterion: [pre-specified result confirming critique]
+    failure_criterion: [pre-specified result exonerating work]
+- Extract issues_found: which scoring_targets.must_find_issue_ids appear in Critic output
+- Extract all_issues_raised: all numbered issues in Critic output (including non-must-find)
+
+Write v3_raw_outputs/{case_id}_isolated_debate_run{N}.json:
+{
+  "case_id": "...", "run": N, "condition": "isolated_debate",
+  "critic_raw": "...", "defender_raw": "...", "adjudication_raw": "...",
+  "verdict": "critique_wins | defense_wins | empirical_test_agreed",
+  "issues_found": ["issue_id matching must_find_issue_ids", ...],
+  "all_issues_raised": ["all numbered issues including non-must-find", ...],
+  "empirical_test": {"measure": "...", "success_criterion": "...", "failure_criterion": "..."} or null
+}
+
+--- MULTI-ROUND DEBATE CONDITION (ml-lab protocol) ---
+Dispatch ml-critic with ONLY the case task_prompt. No other context.
+
+Dispatch ml-defender with the case task_prompt AND the Critic's output.
+The Defender sees the Critique — this is the standard ml-lab protocol.
+
+Alternate ml-critic (Mode 2) and ml-defender (Mode 2) on contested points.
+Maximum 4 rounds. Force-resolve any remaining contested points as empirical_test_required.
+
+As orchestrator, extract final verdict from the converged debate.
+Write v3_raw_outputs/{case_id}_multiround_run{N}.json in same format as above,
+plus these additional fields:
+  "debate_rounds": <integer — total rounds run>,
+  "points_resolved": <integer — points resolved through debate>,
+  "points_force_resolved": <integer — points force-resolved at max rounds>
+Note: multiround should also run on defense_wins cases. The Defender seeing the Critique
+may bias toward Critic framing — measuring whether the protocol correctly exonerates valid
+work under adversarial exposure is an important secondary finding.
+
+--- ENSEMBLE CONDITION ---
+Dispatch three independent assessors with ONLY the task_prompt. No role identity.
+CRITICAL: Do NOT pass must_find_issue_ids, scoring_targets, ground_truth, planted_issues,
+or any answer-key fields to ensemble assessors. The v2 experiment was contaminated when
+assessors saw must_find labels — that run scored 1.0 on all 20 cases entirely as artifact.
+Only the task_prompt field from the case goes to each assessor.
+Synthesize with ETD output constraint:
+"If issues are genuine but empirically resolvable, specify the empirical test:
+measure / success_criterion / failure_criterion — all three required."
+Write v3_raw_outputs/{case_id}_ensemble_run{N}.json in same format.
+
+--- BASELINE CONDITION ---
+Single call with task_prompt only. No structure, no role.
+Write v3_raw_outputs/{case_id}_baseline_run{N}.json in same format.
+
+After completing all 3 runs for a case (all 4 conditions), report progress.
+Continue to next case. When all 50 cases complete, run: python3 self_debate_poc.py
+```
+
+```python
+# check_isolation.py
+# Scans all defender_raw outputs from isolated_debate runs to detect isolation breaches.
+# A breach means the Defender saw Critic content before forming its position.
+# Note: multiround runs are NOT checked — the Defender intentionally sees the Critique there.
+import json
+from pathlib import Path
+
+raw_dir = Path('v3_raw_outputs')
+breaches = []
+
+for path in sorted(raw_dir.glob('*_isolated_debate_run*.json')):
+    with open(path) as f:
+        run = json.load(f)
+    defender_raw = run.get('defender_raw', '')
+    critic_raw = run.get('critic_raw', '')
+
+    # Extract first substantive Critic claim (first numbered issue or first sentence after "Issue")
+    # and check if it appears verbatim in Defender output
+    import re
+    critic_claims = re.findall(r'(?:Issue \d+|^\d+\.)[^\n]+', critic_raw, re.MULTILINE)
+    for claim in critic_claims[:3]:  # check first 3 critic claims
+        snippet = claim.strip()[:60]
+        if len(snippet) > 20 and snippet.lower() in defender_raw.lower():
+            breaches.append({
+                'file': str(path),
+                'case_id': run['case_id'],
+                'run': run['run'],
+                'matched_snippet': snippet
+            })
+            break  # one breach per file is enough
+
+if breaches:
+    print(f'ISOLATION BREACHES DETECTED: {len(breaches)}')
+    for b in breaches:
+        print(f'  {b["file"]}: matched "{b["matched_snippet"]}"')
+    raise SystemExit('Fix isolation breaches before scoring — results are contaminated')
+else:
+    print(f'Isolation check passed — {len(list(raw_dir.glob("*_isolated_debate_run*.json")))} isolated debate runs clean')
+```
+
+```bash
+python3 check_isolation.py
+# Must pass before running self_debate_poc.py
+```
+
+---
+
+## Phase 7 — Score and Compute Statistics
+
+```bash
+python3 self_debate_poc.py
+# Produces: v3_results.json, evaluation_results.json
+```
+
+```python
+# stats_analysis.py
+import json
+import numpy as np
+from scipy import stats as scipy_stats
+
+with open('v3_results.json') as f:
+    d = json.load(f)
+results = d['cases']
+
+isolated_means = [r['isolated_debate']['mean'] for r in results]
+multiround_means = [r['multiround']['mean'] for r in results]
+ensemble_means = [r['ensemble']['mean'] for r in results]
+baseline_means = [r['baseline']['mean'] for r in results]
+
+def bootstrap_ci(data, n=10000, ci=0.95):
+    rng = np.random.default_rng(42)
+    boot = [np.mean(rng.choice(data, len(data))) for _ in range(n)]
+    alpha = (1 - ci) / 2
+    return list(np.percentile(boot, [alpha * 100, (1 - alpha) * 100]))
+
+ivb = [i - b for i, b in zip(isolated_means, baseline_means)]
+ive = [i - e for i, e in zip(isolated_means, ensemble_means)]
+mvb = [m - b for m, b in zip(multiround_means, baseline_means)]
+mvi = [m - i for m, i in zip(multiround_means, isolated_means)]
+
+def wilcoxon_test(diffs):
+    w, p = scipy_stats.wilcoxon(diffs, alternative='greater', correction=True)
+    n = len([x for x in diffs if x != 0])
+    r = float(1 - (2 * w) / (n * (n + 1))) if n > 0 else 0.0
+    return float(w), float(p), r
+
+w1, p1, r1 = wilcoxon_test(ivb)
+w2, p2, r2 = wilcoxon_test(ive)
+w3, p3, r3 = wilcoxon_test(mvb)
+w4, p4, r4 = wilcoxon_test(mvi)
+
+mixed = [r for r in results if r['correct_position'] == 'mixed']
+dw_cases = [r for r in results if r['correct_position'] == 'defense']
+
+dims = ['IDR', 'IDP', 'DC', 'DRQ', 'ETD', 'FVC']
+dim_agg = {}
+for cond in ['isolated_debate', 'multiround', 'ensemble', 'baseline']:
+    dim_agg[cond] = {}
+    for dim in dims:
+        vals = [run['scores'].get(dim) for r in results for run in r[cond]['runs']
+                if run['scores'].get(dim) is not None]
+        dim_agg[cond][dim] = round(sum(vals) / len(vals), 4) if vals else None
+
+failure_counts = {}
+for r in results:
+    for run in r['isolated_debate']['runs']:
+        fa = run.get('failure_attribution', 'none')
+        failure_counts[fa] = failure_counts.get(fa, 0) + 1
+
+output = {
+    'bootstrap_cis': {
+        'isolated_debate_mean': {'point': float(np.mean(isolated_means)), 'ci': bootstrap_ci(isolated_means)},
+        'multiround_mean': {'point': float(np.mean(multiround_means)), 'ci': bootstrap_ci(multiround_means)},
+        'ensemble_mean': {'point': float(np.mean(ensemble_means)), 'ci': bootstrap_ci(ensemble_means)},
+        'baseline_mean': {'point': float(np.mean(baseline_means)), 'ci': bootstrap_ci(baseline_means)},
+        'lift_isolated_vs_baseline': {'point': float(np.mean(ivb)), 'ci': bootstrap_ci(ivb)},
+        'lift_isolated_vs_ensemble': {'point': float(np.mean(ive)), 'ci': bootstrap_ci(ive)},
+        'lift_multiround_vs_baseline': {'point': float(np.mean(mvb)), 'ci': bootstrap_ci(mvb)},
+        'lift_multiround_vs_isolated': {'point': float(np.mean(mvi)), 'ci': bootstrap_ci(mvi)},
+    },
+    'wilcoxon': {
+        'isolated_vs_baseline': {'W': w1, 'p': p1, 'r': r1},
+        'isolated_vs_ensemble': {'W': w2, 'p': p2, 'r': r2},
+        'multiround_vs_baseline': {'W': w3, 'p': p3, 'r': r3},
+        'multiround_vs_isolated': {'W': w4, 'p': p4, 'r': r4},
+    },
+    'mixed_position': {
+        'n': len(mixed),
+        'isolated_debate_mean': float(np.mean([r['isolated_debate']['mean'] for r in mixed])) if mixed else None,
+        'multiround_mean': float(np.mean([r['multiround']['mean'] for r in mixed])) if mixed else None,
+        'ensemble_mean': float(np.mean([r['ensemble']['mean'] for r in mixed])) if mixed else None,
+    },
+    'defense_wins': {
+        'n': len(dw_cases),
+        'ensemble_dc_mean': float(np.mean([r['ensemble']['runs'][0]['scores'].get('DC', 0)
+                                           for r in dw_cases if r['ensemble']['runs']])) if dw_cases else None,
+        'multiround_dc_mean': float(np.mean([r['multiround']['runs'][0]['scores'].get('DC', 0)
+                                             for r in dw_cases if r['multiround']['runs']])) if dw_cases else None,
+        'pre_specified_criterion_met': None,  # fill after computing
+    },
+    'dimension_aggregates': dim_agg,
+    'within_case_variance': {
+        'isolated_debate_std_mean': float(np.mean([r['isolated_debate']['std'] for r in results])),
+        'multiround_std_mean': float(np.mean([r['multiround']['std'] for r in results])),
+        'ensemble_std_mean': float(np.mean([r['ensemble']['std'] for r in results])),
+        'baseline_std_mean': float(np.mean([r['baseline']['std'] for r in results])),
+    },
+    'failure_attribution': failure_counts,
+}
+
+# Pre-specified defense_wins criterion
+if dw_cases:
+    dc_pass = sum(1 for r in dw_cases
+                  if r['ensemble']['runs'] and r['ensemble']['runs'][0]['scores'].get('DC', 0) >= 0.5)
+    output['defense_wins']['pre_specified_criterion_met'] = dc_pass >= 0.6 * len(dw_cases)
+
+with open('stats_results.json', 'w') as f:
+    json.dump(output, f, indent=2)
+
+print("Stats written.")
+for k, v in output['bootstrap_cis'].items():
+    print(f"  {k}: {v['point']:.4f} CI={v['ci']}")
+print(f"\nWilcoxon isolated vs baseline:  W={w1}, p={p1:.6f}, r={r1:.3f}")
+print(f"Wilcoxon isolated vs ensemble:  W={w2}, p={p2:.6f}, r={r2:.3f}")
+print(f"Wilcoxon multiround vs baseline: W={w3}, p={p3:.6f}, r={r3:.3f}")
+print(f"Wilcoxon multiround vs isolated: W={w4}, p={p4:.6f}, r={r4:.3f}")
+```
+
+```python
+# sensitivity_analysis.py
+# Computes corrected lift (DC=0.5, DRQ uncapped) and dimension-stratified analysis.
+# These address v2 peer review major issues L3 and L4.
+import json
+import numpy as np
+
+with open('v3_results.json') as f:
+    d = json.load(f)
+results = d['cases']
+
+# --- Corrected lift (L3 fix) ---
+# Recompute baseline means with DC=0.5 (partial credit) and DRQ uncapped
+def corrected_baseline_mean(case_result):
+    """Recompute baseline mean with structural overrides removed."""
+    runs = case_result['baseline']['runs']
+    if not runs:
+        return None
+    corrected_run_means = []
+    for run in runs:
+        scores = dict(run['scores'])
+        # Override DC: give baseline 0.5 instead of 0.0
+        if scores.get('DC') == 0.0:
+            scores['DC'] = 0.5
+        # DRQ: use natural score (uncapped) — but we only have the capped value stored
+        # Uncapping requires re-reading natural DRQ from raw outputs
+        # Approximation: if DRQ was capped at 0.5, natural DRQ is 1.0 if FVC=1.0
+        if scores.get('DRQ') == 0.5 and scores.get('FVC') == 1.0:
+            scores['DRQ'] = 1.0
+        non_null = [v for v in scores.values() if v is not None]
+        corrected_run_means.append(sum(non_null) / len(non_null) if non_null else 0.0)
+    return round(sum(corrected_run_means) / len(corrected_run_means), 4)
+
+raw_baseline_means = [r['baseline']['mean'] for r in results]
+corrected_baseline_means = [corrected_baseline_mean(r) for r in results]
+isolated_means = [r['isolated_debate']['mean'] for r in results]
+multiround_means = [r['multiround']['mean'] for r in results]
+
+raw_lift_isolated = round(np.mean(isolated_means) - np.mean(raw_baseline_means), 4)
+corrected_lift_isolated = round(np.mean(isolated_means) - np.mean([m for m in corrected_baseline_means if m is not None]), 4)
+raw_lift_multiround = round(np.mean(multiround_means) - np.mean(raw_baseline_means), 4)
+corrected_lift_multiround = round(np.mean(multiround_means) - np.mean([m for m in corrected_baseline_means if m is not None]), 4)
+
+# --- Dimension-stratified analysis (L4 fix) ---
+# Fair-comparison: IDR, IDP, ETD, FVC (both systems have agency)
+# Protocol-diagnostic: DC, DRQ (baseline structurally penalized)
+fair_dims = ['IDR', 'IDP', 'ETD', 'FVC']
+protocol_dims = ['DC', 'DRQ']
+
+def dim_mean(results_list, condition, dims):
+    vals = []
+    for r in results_list:
+        for run in r[condition]['runs']:
+            for dim in dims:
+                v = run['scores'].get(dim)
+                if v is not None:
+                    vals.append(v)
+    return round(sum(vals) / len(vals), 4) if vals else None
+
+sensitivity_output = {
+    'corrected_lift': {
+        'raw_lift_isolated_vs_baseline': raw_lift_isolated,
+        'corrected_lift_isolated_DC05_DRQ_uncapped': corrected_lift_isolated,
+        'raw_lift_multiround_vs_baseline': raw_lift_multiround,
+        'corrected_lift_multiround_DC05_DRQ_uncapped': corrected_lift_multiround,
+        'note': 'Corrected lift gives baseline DC=0.5 and uncaps DRQ. Raw lift inflated by structural overrides.',
+        'raw_baseline_mean': round(float(np.mean(raw_baseline_means)), 4),
+        'corrected_baseline_mean': round(float(np.mean([m for m in corrected_baseline_means if m is not None])), 4),
+    },
+    'dimension_stratified': {
+        'fair_comparison_dims': fair_dims,
+        'protocol_diagnostic_dims': protocol_dims,
+        'note': 'Fair-comparison: both systems have equal agency. Protocol-diagnostic: baseline structurally penalized.',
+        'isolated_debate': {
+            'fair_comparison_mean': dim_mean(results, 'isolated_debate', fair_dims),
+            'protocol_diagnostic_mean': dim_mean(results, 'isolated_debate', protocol_dims),
+        },
+        'multiround': {
+            'fair_comparison_mean': dim_mean(results, 'multiround', fair_dims),
+            'protocol_diagnostic_mean': dim_mean(results, 'multiround', protocol_dims),
+        },
+        'ensemble': {
+            'fair_comparison_mean': dim_mean(results, 'ensemble', fair_dims),
+            'protocol_diagnostic_mean': dim_mean(results, 'ensemble', protocol_dims),
+        },
+        'baseline': {
+            'fair_comparison_mean': dim_mean(results, 'baseline', fair_dims),
+            'protocol_diagnostic_mean': dim_mean(results, 'baseline', protocol_dims),
+        },
+        'lift_on_fair_dims': {
+            'isolated_vs_baseline': round((dim_mean(results, 'isolated_debate', fair_dims) or 0) - (dim_mean(results, 'baseline', fair_dims) or 0), 4),
+            'isolated_vs_ensemble': round((dim_mean(results, 'isolated_debate', fair_dims) or 0) - (dim_mean(results, 'ensemble', fair_dims) or 0), 4),
+            'multiround_vs_baseline': round((dim_mean(results, 'multiround', fair_dims) or 0) - (dim_mean(results, 'baseline', fair_dims) or 0), 4),
+            'multiround_vs_isolated': round((dim_mean(results, 'multiround', fair_dims) or 0) - (dim_mean(results, 'isolated_debate', fair_dims) or 0), 4),
+        }
+    },
+    'cases_changing_pass_fail_under_correction': [
+        r['case_id'] for r in results
+        if r['baseline']['passes'] == 0 and corrected_baseline_mean(r) is not None
+        and corrected_baseline_mean(r) >= 0.65
+    ]
+}
+
+with open('sensitivity_analysis_results.json', 'w') as f:
+    json.dump(sensitivity_output, f, indent=2)
+
+print(f"Raw lift isolated vs baseline:   {raw_lift_isolated:+.4f}")
+print(f"Corrected lift isolated:         {corrected_lift_isolated:+.4f}")
+print(f"Raw lift multiround vs baseline: {raw_lift_multiround:+.4f}")
+print(f"Corrected lift multiround:       {corrected_lift_multiround:+.4f}")
+print(f"Fair-comparison lift isolated vs baseline:  {sensitivity_output['dimension_stratified']['lift_on_fair_dims']['isolated_vs_baseline']:+.4f}")
+print(f"Fair-comparison lift multiround vs isolated: {sensitivity_output['dimension_stratified']['lift_on_fair_dims']['multiround_vs_isolated']:+.4f}")
+```
+
+```python
+# extract_within_case_variance.py
+# Extracts within-case variance from v3_results.json into the required format.
+import json
+
+with open('v3_results.json') as f:
+    d = json.load(f)
+
+variance_output = {
+    'experiment': 'within_case_variance_v3',
+    'n_runs_per_case': 3,
+    'cases': {}
+}
+
+high_variance = []
+for r in d['cases']:
+    cid = r['case_id']
+    isolated_std = r['isolated_debate']['std']
+    multiround_std = r['multiround']['std']
+    ensemble_std = r['ensemble']['std']
+    baseline_std = r['baseline']['std']
+    variance_output['cases'][cid] = {
+        'isolated_debate_std': isolated_std,
+        'multiround_std': multiround_std,
+        'ensemble_std': ensemble_std,
+        'baseline_std': baseline_std,
+        'isolated_debate_mean': r['isolated_debate']['mean'],
+        'multiround_mean': r['multiround']['mean'],
+        'converging': r.get('convergence_rate', None)
+    }
+    if isolated_std > 0.1:
+        high_variance.append({'case_id': cid, 'isolated_debate_std': isolated_std})
+
+variance_output['high_variance_cases'] = high_variance
+variance_output['summary'] = {
+    'isolated_debate_std_mean': round(sum(r['isolated_debate']['std'] for r in d['cases']) / len(d['cases']), 4),
+    'multiround_std_mean': round(sum(r['multiround']['std'] for r in d['cases']) / len(d['cases']), 4),
+    'ensemble_std_mean': round(sum(r['ensemble']['std'] for r in d['cases']) / len(d['cases']), 4),
+    'baseline_std_mean': round(sum(r['baseline']['std'] for r in d['cases']) / len(d['cases']), 4),
+    'cases_with_high_isolated_variance': len(high_variance),
+}
+
+with open('within_case_variance_results.json', 'w') as f:
+    json.dump(variance_output, f, indent=2)
+
+print(f"Within-case variance written.")
+print(f"Isolated debate std mean: {variance_output['summary']['isolated_debate_std_mean']}")
+print(f"Multiround std mean: {variance_output['summary']['multiround_std_mean']}")
+print(f"High variance cases (isolated_debate_std > 0.1): {len(high_variance)}")
+if high_variance:
+    for c in high_variance:
+        print(f"  {c['case_id']}: std={c['isolated_debate_std']}")
+```
+```
+
+```python
+# difficulty_validation.py
+import json, numpy as np
+from scipy import stats as scipy_stats
+
+with open('v3_results.json') as f:
+    d = json.load(f)
+results = d['cases']
+
+diff_map = {'easy': 0, 'medium': 1, 'hard': 2}
+non_dw = [r for r in results if r['correct_position'] != 'defense']
+diffs = [diff_map[r['difficulty']] for r in non_dw]
+baselines = [r['baseline']['mean'] for r in non_dw]
+rho, pval = scipy_stats.spearmanr(diffs, baselines)
+
+output = {
+    'non_defense_wins_n': len(non_dw),
+    'spearman_rho': float(rho), 'p_value': float(pval),
+    'interpretation': 'Negative rho = harder labels -> lower baseline scores (correct direction)',
+    'means_by_difficulty': {
+        diff: round(float(np.mean([r['baseline']['mean'] for r in non_dw if r['difficulty'] == diff])), 4)
+        for diff in ['easy', 'medium', 'hard']
+    }
+}
+with open('difficulty_validation_results.json', 'w') as f:
+    json.dump(output, f, indent=2)
+print(f"Difficulty validation: rho={rho:.3f}, p={pval:.4f}")
+```
+
+```bash
+python3 stats_analysis.py
+python3 sensitivity_analysis.py   # produces sensitivity_analysis_results.json
+python3 difficulty_validation.py
+python3 extract_within_case_variance.py  # produces within_case_variance_results.json
+```
+
+---
+
+## Phase 8 — Analytical Artifacts
+
+Give Claude Code this instruction:
+
+```
+Generate these artifacts for self_debate_experiment_v3/ using v3_results.json,
+stats_results.json, evaluation_results.json.
+
+1. CONCLUSIONS.md
+   - Per-case scoring table: all four conditions (isolated_debate, multiround, ensemble,
+     baseline), plus pass/fail per case
+   - Dimension-level aggregate table (IDR/IDP/DC/DRQ/ETD/FVC per condition)
+   - Benchmark pass/fail criteria table with results
+   - Hypothesis verdicts: primary and all secondary (isolated vs. baseline, isolated
+     vs. ensemble, multiround vs. isolated), with evidence
+   - Multiround vs. isolated comparison: which condition wins on DC, DRQ dimensions
+     specifically? Is multiround outperformance consistent or case-dependent?
+   - Failure mode taxonomy by failure_attribution:
+     * 'agent' failures: list case_id and which dimension failed
+     * 'protocol' failures: list case_id and diagnosis
+     * 'ambiguous' failures: note
+   - Convergence analysis: for each case, did Critic and Defender independently
+     reach the same verdict? (from v3_raw_outputs/ critic_raw vs defender_raw verdicts)
+     For multiround: report debate_rounds mean and points_force_resolved counts.
+
+2. SENSITIVITY_ANALYSIS.md
+   - Effect of DC=0.0 structural override on raw vs. corrected lift (for both
+     isolated_debate and multiround conditions)
+   - Effect of DRQ cap on baseline scores (natural vs. capped)
+   - Honest corrected lift range (DC=0.5, DRQ uncapped for baseline)
+   - Cases that change pass/fail status under corrected rubric
+
+3. ENSEMBLE_ANALYSIS.md
+   - Clean ensemble results vs. isolated_debate and multiround on all cases
+   - Pre-specified defense_wins criterion result: triggered or not triggered
+   - Mixed-position catastrophic failures: any ensemble 0.000 scores? Diagnose each
+   - ETD gap: is it prompt-constraint effect? Document ETD scores by condition
+   - IDP asymmetry: harmonized scoring for defense_wins cases (IDP excluded for both)
+
+4. within_case_variance_results.json
+   Compile from v3_raw_outputs/: for each case and condition, std across 3 runs.
+   Format: {"case_id": {"isolated_debate_std": X, "multiround_std": X,
+            "ensemble_std": X, "baseline_std": X}, ...}
+   Flag any case with isolated_debate_std > 0.1.
+
+5. Generate figures (save as .png files in self_debate_experiment_v3/):
+   - per_condition_comparison.png: bar chart comparing all 4 conditions on overall mean
+     score with 95% bootstrap CI error bars
+   - dimension_heatmap.png: heatmap of all 6 rubric dimensions × 4 conditions
+   - sensitivity_analysis_chart.png: side-by-side comparison of raw vs. corrected
+     lift for isolated_debate and multiround conditions
+   - difficulty_scatter.png: scatter plot of difficulty label vs. baseline mean score
+     (from difficulty_validation_results.json), with Spearman rho annotation
+```
+
+---
+
+## Phase 8.5 — Pre-report Numerical Consistency Check (subset of ml-lab Step 12)
+
+Runs after all Phase 8 analytical artifacts are written, before REPORT.md is drafted. Catches quantitative drift between CONCLUSIONS.md and SENSITIVITY_ANALYSIS.md before it gets baked into the report. This covers only the numerical consistency subset of ml-lab Step 12 checks — the remaining 5 checks (claim consistency, README currency, peer review resolution, hypothesis closure, cross-document quantitative re-check) run in Phase 9.5 after REPORT.md is complete.
+
+```python
+# coherence_audit.py
+import json, re, sys
+
+errors = []
+
+# Load computed numbers from scripts (authoritative)
+with open('sensitivity_analysis_results.json') as f:
+    sens = json.load(f)
+with open('stats_results.json') as f:
+    stats = json.load(f)
+with open('v3_results.json') as f:
+    v3 = json.load(f)
+
+computed_corrected_lift = sens['corrected_lift']['corrected_lift_isolated_DC05_DRQ_uncapped']
+computed_raw_lift = sens['corrected_lift']['raw_lift_isolated_vs_baseline']
+computed_isolated_mean = stats['bootstrap_cis']['isolated_debate_mean']['point']
+computed_multiround_mean = stats['bootstrap_cis']['multiround_mean']['point']
+computed_ensemble_mean = stats['bootstrap_cis']['ensemble_mean']['point']
+computed_baseline_mean = stats['bootstrap_cis']['baseline_mean']['point']
+
+def extract_floats(text, pattern):
+    """Find all floats matching a labeled pattern in prose."""
+    return [float(m) for m in re.findall(pattern, text)]
+
+# Check CONCLUSIONS.md
+with open('CONCLUSIONS.md') as f:
+    conclusions = f.read()
+
+# Check that isolated_debate mean in CONCLUSIONS matches stats_results
+isolated_mentions = extract_floats(conclusions, r'isolated.*?(\d+\.\d{3,4})')
+if isolated_mentions:
+    mismatch = [v for v in isolated_mentions if abs(v - computed_isolated_mean) > 0.005]
+    if mismatch:
+        errors.append(f'CONCLUSIONS.md isolated_debate mean mismatch: found {mismatch}, expected ~{computed_isolated_mean}')
+
+# Check SENSITIVITY_ANALYSIS.md
+with open('SENSITIVITY_ANALYSIS.md') as f:
+    sensitivity = f.read()
+
+corrected_mentions = extract_floats(sensitivity, r'corrected.*?([+-]?\d+\.\d{3,4})')
+if corrected_mentions:
+    mismatch = [v for v in corrected_mentions if abs(abs(v) - abs(computed_corrected_lift)) > 0.01]
+    if mismatch:
+        errors.append(f'SENSITIVITY_ANALYSIS.md corrected lift mismatch: found {mismatch}, expected ~{computed_corrected_lift}')
+
+# Check pass count consistency (isolated_debate pass count is the primary benchmark criterion)
+v3_pass_count = v3['debate_pass_count']
+conclusions_pass = extract_floats(conclusions, r'(\d+)/\d+.*?pass')
+if conclusions_pass and int(conclusions_pass[0]) != v3_pass_count:
+    errors.append(f'Pass count mismatch: CONCLUSIONS says {int(conclusions_pass[0])}, v3_results says {v3_pass_count}')
+
+if errors:
+    print('COHERENCE AUDIT FAILED:')
+    for e in errors:
+        print(f'  {e}')
+    print('\nFix these before drafting REPORT.md.')
+    sys.exit(1)
+else:
+    print(f'Pre-report coherence audit passed — key numerical figures consistent across CONCLUSIONS.md and SENSITIVITY_ANALYSIS.md')
+    print(f'  Note: full ml-lab Step 12 checks (claim consistency, README currency, peer review resolution) run in Phase 9.5')
+```
+
+```bash
+python3 coherence_audit.py
+# Must pass before proceeding to Phase 9
+```
+
+---
+
+## Phase 9 — Final Report, Peer Review, and Synthesis
+
+**Peer review cap:** Two rounds (1 Opus + 1 Haiku verification). This differs from ml-lab's standard 3-round cap. Rationale: this is a benchmark with deterministic scoring — the report is generated from computed JSON, not iterative qualitative analysis. Systematic quantitative errors should be caught by Phase 8.5 and 9.5 coherence audits before the report is drafted, leaving fewer report-level issues to iterate on.
+
+Give Claude Code this instruction:
+
+```
+Generate the final artifacts:
+
+1. REPORT.md — complete technical report:
+   - Abstract (lead with corrected lift range, not raw lift; include ensemble gap
+     and multiround vs. isolated comparison)
+   - Related work (Irving 2018, Du 2023, Liang 2023, Khan 2024, Zheng 2023,
+     ChatEval, Wang 2023 self-consistency)
+   - Experimental design: protocol, rubric (with must_not_claim and acceptable_resolutions
+     explained), benchmark construction, pre-registration
+   - Results: per-case table (all 4 conditions), dimension aggregates, statistical tests
+     with CIs for all four conditions including multiround vs. isolated Wilcoxon
+   - Hypothesis verdicts: primary and all secondary
+   - Failure mode analysis using failure_attribution taxonomy
+   - Limitations: closed-loop design, scorer independence, n=50 subgroup power,
+     difficulty label validation, model version binding
+   - Artifacts section
+
+2. REPORT_ADDENDUM.md — production re-evaluation:
+   - What changes if deployed in a real ML review workflow?
+   - Update latency: how quickly can postmortem fixes be applied?
+   - Operational complexity: cost, latency, sequential vs. parallel
+   - Production failure modes that differ from benchmark failure modes
+
+3. PEER_REVIEW.md — Round 1 (research-reviewer, Opus depth)
+   Dispatch research-reviewer agent on REPORT.md.
+   Evaluate as a workshop paper reviewer:
+   - Major issues (validity threats, missing comparisons, overclaims)
+   - Minor issues (presentation, framing, missing citations)
+   - Recommendation: accept / revise / reject with rationale
+   Write output to PEER_REVIEW_R1.md.
+
+   After receiving PEER_REVIEW_R1.md, write a remediation plan covering every MAJOR
+   issue: proposed action (text fix / additional analysis) and specific change.
+   Present plan to LEAD for approval before addressing any findings.
+
+   Address all approved findings — text fixes immediately, additional analysis
+   by updating stats and re-running relevant scripts. Update REPORT.md.
+   Append a ## Response section to PEER_REVIEW_R1.md documenting what was done
+   and what (if anything) was deferred with rationale.
+
+   Round 2 (research-reviewer-lite, verification) — only if Round 1 found MAJOR issues:
+   Dispatch research-reviewer-lite on updated REPORT.md, also providing PEER_REVIEW_R1.md
+   so it can verify prior findings were addressed. Write to PEER_REVIEW_R2.md.
+   Address any new MAJOR issues found. Append ## Response to PEER_REVIEW_R2.md.
+
+   Early exit: if a round contains no MAJOR issues, peer review is complete.
+   Maximum 2 rounds (1 Opus + 1 Haiku verification). Cap is firm.
+   Rationale: deterministic scoring means quantitative errors are caught by coherence
+   audits before the report is drafted — the third round has diminishing returns here.
+
+   After final round, append ## Peer Review Summary to REPORT.md:
+   - Rounds conducted
+   - Key issues resolved
+   - Any MAJOR issues still open (flag for human review if so)
+
+   Rename PEER_REVIEW_R1.md to PEER_REVIEW.md if only one round ran,
+   or keep both files and note both in artifact inventory.
+
+4. FINAL_SYNTHESIS.md — Lead agent synthesis:
+   - What the benchmark tested
+   - Whether the protocol worked (with evidence from failure_attribution)
+   - Where it failed and why
+   - Whether it beat both the baseline AND the compute-matched ensemble
+   - Multi-round vs. isolated: which architecture produced better outcomes and on which dimensions?
+   - What changes for v4
+   - Concrete recommendation: when to trust / distrust the protocol
+   - Complete artifact inventory
+```
+
+---
+
+## Phase 9.5 — Post-report Coherence Audit (Full ml-lab Step 12)
+
+Runs after REPORT.md and PEER_REVIEW are written. Covers the remaining 5 ml-lab Step 12 checks not covered in Phase 8.5. Together, Phases 8.5 and 9.5 implement the complete ml-lab Step 12 coherence audit.
+
+```python
+# post_report_coherence_audit.py
+# Full ml-lab Step 12 coherence audit — runs after REPORT.md and peer review are complete.
+# Covers 5 checks not covered by Phase 8.5's numerical pre-report audit.
+import json, re, sys
+from pathlib import Path
+
+errors = []
+warnings = []
+
+# --- Check 1: Claim consistency across CONCLUSIONS, REPORT, ENSEMBLE_ANALYSIS ---
+docs = {}
+for fname in ['CONCLUSIONS.md', 'REPORT.md', 'ENSEMBLE_ANALYSIS.md']:
+    p = Path(fname)
+    if p.exists():
+        docs[fname] = p.read_text()
+    else:
+        errors.append(f'Missing required document: {fname}')
+
+if len(docs) == 3:
+    # Extract headline lift figures from each document
+    def extract_lifts(text):
+        return [float(m) for m in re.findall(r'(?:lift|improvement).*?([+-]?\d+\.\d{3,4})', text, re.IGNORECASE)]
+
+    lifts_c = extract_lifts(docs.get('CONCLUSIONS.md', ''))
+    lifts_r = extract_lifts(docs.get('REPORT.md', ''))
+    if lifts_c and lifts_r:
+        # Check that the primary lift figure is consistent across documents (within 0.01)
+        max_c = max(abs(x) for x in lifts_c)
+        max_r = max(abs(x) for x in lifts_r)
+        if abs(max_c - max_r) > 0.01:
+            errors.append(f'Headline lift inconsistency: CONCLUSIONS max={max_c:.4f}, REPORT max={max_r:.4f}')
+
+# --- Check 2: README currency ---
+readme = Path('README.md')
+if readme.exists():
+    readme_text = readme.read_text()
+    # README should mention v3 experiment and have current artifact references
+    if 'v3' not in readme_text.lower() and 'version 3' not in readme_text.lower():
+        warnings.append('README.md does not mention v3 experiment — may be stale')
+    if 'CONCLUSIONS' not in readme_text and 'REPORT' not in readme_text:
+        warnings.append('README.md does not reference CONCLUSIONS.md or REPORT.md — artifact links may be missing')
+else:
+    errors.append('README.md missing — required artifact')
+
+# --- Check 3: Peer review resolution ---
+for pr_file in ['PEER_REVIEW.md', 'PEER_REVIEW_R1.md']:
+    pr = Path(pr_file)
+    if pr.exists():
+        pr_text = pr.read_text()
+        # Check that a ## Response section exists
+        if '## Response' not in pr_text:
+            errors.append(f'{pr_file}: missing ## Response section — peer review findings not addressed')
+        # Check for unresolved MAJOR issues
+        major_unresolved = re.findall(r'(?:MAJOR|major issue).*?(?:unresolved|not addressed|still open)', pr_text, re.IGNORECASE)
+        if major_unresolved:
+            errors.append(f'{pr_file}: {len(major_unresolved)} potentially unresolved MAJOR issues — review manually')
+        break  # check whichever peer review file exists
+
+# --- Check 4: Hypothesis closure ---
+# CONCLUSIONS, REPORT, and FINAL_SYNTHESIS must all contain an explicit hypothesis verdict
+for fname in ['CONCLUSIONS.md', 'REPORT.md', 'FINAL_SYNTHESIS.md']:
+    doc = Path(fname)
+    if not doc.exists():
+        errors.append(f'{fname} missing — cannot verify hypothesis closure')
+        continue
+    text = doc.read_text()
+    # Look for hypothesis verdict language
+    has_verdict = any(kw in text.lower() for kw in [
+        'hypothesis', 'primary hypothesis', 'verdict', 'supported', 'rejected',
+        'confirmed', 'not supported'
+    ])
+    if not has_verdict:
+        errors.append(f'{fname}: no hypothesis verdict found — hypothesis closure incomplete')
+
+# --- Check 5: Full quantitative re-check across REPORT.md ---
+# Load authoritative values
+with open('stats_results.json') as f:
+    stats = json.load(f)
+with open('v3_results.json') as f:
+    v3 = json.load(f)
+
+report_text = docs.get('REPORT.md', '')
+if report_text:
+    # Check isolated_debate mean
+    iso_mean = stats['bootstrap_cis']['isolated_debate_mean']['point']
+    iso_mentions = [float(m) for m in re.findall(r'isolated.*?(\d+\.\d{3,4})', report_text)]
+    bad_iso = [v for v in iso_mentions if abs(v - iso_mean) > 0.005]
+    if bad_iso:
+        errors.append(f'REPORT.md: isolated_debate mean mismatch — found {bad_iso}, authoritative={iso_mean:.4f}')
+
+    # Check pass count
+    pass_count = v3.get('debate_pass_count', 0)
+    pass_mentions = re.findall(r'(\d+)/50.*?pass', report_text)
+    if pass_mentions:
+        reported = int(pass_mentions[0])
+        if reported != pass_count:
+            errors.append(f'REPORT.md: pass count mismatch — says {reported}/50, v3_results says {pass_count}/50')
+
+# --- Output ---
+if errors or warnings:
+    if errors:
+        print('POST-REPORT COHERENCE AUDIT FAILED:')
+        for e in errors:
+            print(f'  ERROR: {e}')
+    if warnings:
+        print('Warnings (non-blocking):')
+        for w in warnings:
+            print(f'  WARN: {w}')
+    if errors:
+        print('\nFix all errors before proceeding to Phase 9.75.')
+        sys.exit(1)
+else:
+    print('Post-report coherence audit passed — all 5 cross-document checks clean.')
+    print('Combined with Phase 8.5, full ml-lab Step 12 coherence audit complete.')
+```
+
+```bash
+python3 post_report_coherence_audit.py
+# Must pass before proceeding to Phase 9.75
+```
+
+---
+
+## Phase 9.75 — Technical Report (ml-lab Step 11 — Results Mode)
+
+Generates a publication-ready TECHNICAL_REPORT.md distinct from REPORT.md. REPORT.md is the internal working document (hypothesis-driven, with failure analysis and "what to change for v4"). TECHNICAL_REPORT.md is written in results mode: findings stated as facts, limitations framed as design properties, no forward-looking speculation.
+
+Give Claude Code this instruction:
+
+```
+Write TECHNICAL_REPORT.md in results mode (ml-lab Step 11 style):
+
+Rules for results mode:
+- State findings as facts, not conclusions ("The isolated debate condition achieved a
+  mean score of X" not "we conclude that debate is better")
+- Frame limitations as design properties ("This benchmark uses a closed-loop design
+  where..." not "a limitation is that we didn't...")
+- Do not speculate about what a larger study would show
+- Do not include forward-looking "what to change for v4" content — that belongs in
+  FINAL_SYNTHESIS.md
+- Include all quantitative results with confidence intervals from stats_results.json
+- Include all four conditions in every comparison table
+
+Required sections:
+1. Abstract — 150 words max, leading with the primary quantitative result
+2. Method — benchmark construction, case types, rubric dimensions, pre-registration
+3. Results — per-condition means, CIs, Wilcoxon tests, dimension aggregates,
+   isolated vs. multiround comparison on DC and DRQ specifically
+4. Production Re-evaluation — from REPORT_ADDENDUM.md, condensed
+5. Limitations — design properties stated factually
+6. Conclusion — one paragraph, quantitative, no speculation
+
+Do not duplicate REPORT.md. TECHNICAL_REPORT.md is the publication-ready extract.
+REPORT.md remains the internal working document.
+```
+
+---
+
+## Phase 10 — Cross-Vendor Scorer (External Model Family)
+
+**Purpose:** Score all non-defense_wins cases using an external model family to rule out same-company scoring bias. The model must be from a different company than Anthropic. The operator configures which model to use by setting environment variables before running.
+
+**Only step requiring an external API key. Configure before running:**
+
+```bash
+# Set these to match your chosen external model provider:
+export CROSS_VENDOR_API_KEY="your_key_here"
+export CROSS_VENDOR_BASE_URL="https://api.your-provider.com/v1"
+export CROSS_VENDOR_MODEL="your-model-name"
+```
+
+The script uses the Anthropic SDK with a configurable base URL — any provider that implements the Anthropic messages API format will work. Confirm your provider's base URL and model string before running.
+
+```python
+# cross_model_scorer.py
+# Cross-vendor IDR validation using an external model family.
+# Requires CROSS_VENDOR_API_KEY, CROSS_VENDOR_BASE_URL, CROSS_VENDOR_MODEL env vars.
+# All other calls in this plan use session auth — this is the ONLY exception.
+# The external model must be from a different company than Anthropic.
+
+import anthropic, json, os
+
+EXTERNAL_API_KEY = os.environ["CROSS_VENDOR_API_KEY"]
+EXTERNAL_BASE_URL = os.environ["CROSS_VENDOR_BASE_URL"]
+EXTERNAL_MODEL = os.environ["CROSS_VENDOR_MODEL"]
+
+external_client = anthropic.Anthropic(
+    api_key=EXTERNAL_API_KEY,
+    base_url=EXTERNAL_BASE_URL,
+)
+
+with open('benchmark_cases_verified.json') as f:
+    cases = json.load(f)
+with open('v3_results.json') as f:
+    v3 = json.load(f)
+
+isolated_debate_idr_by_case = {
+    r['case_id']: round(sum(
+        run['scores']['IDR'] for run in r['isolated_debate']['runs']
+        if run['scores'].get('IDR') is not None
+    ) / max(1, sum(1 for run in r['isolated_debate']['runs'] if run['scores'].get('IDR') is not None)), 4)
+    for r in v3['cases']
+}
+
+results = []
+for case in cases:
+    if case['ground_truth']['correct_position'] == 'defense':
+        continue
+    must_find = case['scoring_targets']['must_find_issue_ids']
+    if not must_find:
+        continue
+
+    prompt = f"""You are independently evaluating an ML scenario. Determine which listed methodological issues are identifiable from the scenario description.
+
+SCENARIO:
+{case['task_prompt']}
+
+ISSUES TO IDENTIFY:
+{json.dumps(must_find, indent=2)}
+
+For each issue ID: is this present and identifiable by a competent ML practitioner reading only the scenario above?
+
+Respond ONLY with a JSON object: {{"issue_id": true/false, ...}}
+No preamble, no explanation, no markdown fences."""
+
+    try:
+        response = external_client.messages.create(
+            model=EXTERNAL_MODEL, max_tokens=500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = response.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1].lstrip("json").strip()
+        found = json.loads(raw)
+        idr = round(sum(1 for v in found.values() if v) / len(must_find), 4)
+        error = None
+    except Exception as e:
+        found = None; idr = None; error = str(e)
+
+    isolated_idr = isolated_debate_idr_by_case.get(case['case_id'])
+    results.append({
+        'case_id': case['case_id'], 'category': case['category'],
+        'difficulty': case['difficulty'],
+        'external_IDR': idr, 'isolated_debate_IDR': isolated_idr,
+        'model': EXTERNAL_MODEL, 'error': error
+    })
+    print(f"{case['case_id']}: external={idr} isolated_debate={isolated_idr}" + (f" ERR:{error}" if error else ""))
+
+with open('cross_vendor_scores_v3.json', 'w') as f:
+    json.dump(results, f, indent=2)
+
+valid = [r for r in results if r['external_IDR'] is not None and r['isolated_debate_IDR'] is not None]
+if valid:
+    ext_idr = sum(r['external_IDR'] for r in valid) / len(valid)
+    iso_idr = sum(r['isolated_debate_IDR'] for r in valid) / len(valid)
+    delta = abs(ext_idr - iso_idr)
+    print(f"\nExternal ({EXTERNAL_MODEL}) IDR: {ext_idr:.3f}")
+    print(f"Isolated debate IDR: {iso_idr:.3f}")
+    print(f"Delta: {delta:.3f} — {'MATERIAL (>0.1): same-company bias may be a factor' if delta > 0.1 else 'not material'}")
+```
+
+```bash
+CROSS_VENDOR_API_KEY=your_key \
+CROSS_VENDOR_BASE_URL=https://api.your-provider.com/v1 \
+CROSS_VENDOR_MODEL=your-model-name \
+python3 cross_model_scorer.py
+```
+
+---
+
+## Phase 11 — Verify All Artifacts and Commit
+
+```bash
+# Run artifact sync before verifying — updates all artifacts and checks for staleness
+/artifact-sync
+
+python3 -c "
+import os, glob
+
+required = [
+    'benchmark_cases.json', 'benchmark_cases_verified.json', 'benchmark_verification.json',
+    'BENCHMARK_PROMPTS.md', 'HYPOTHESIS.md', 'PREREGISTRATION.json', 'evaluation_rubric.json',
+    'CRITIQUE.md', 'DEFENSE.md', 'DEBATE.md', 'EXECUTION_PLAN.md', 'README.md',
+    'self_debate_poc.py', 'v3_results.json', 'evaluation_results.json',
+    'CONCLUSIONS.md', 'SENSITIVITY_ANALYSIS.md', 'ENSEMBLE_ANALYSIS.md',
+    'stats_analysis.py', 'stats_results.json',
+    'sensitivity_analysis.py', 'sensitivity_analysis_results.json',
+    'difficulty_validation.py', 'difficulty_validation_results.json',
+    'within_case_variance_results.json',
+    'REPORT.md', 'REPORT_ADDENDUM.md', 'PEER_REVIEW.md', 'FINAL_SYNTHESIS.md',
+    'TECHNICAL_REPORT.md',
+    'check_isolation.py', 'coherence_audit.py', 'post_report_coherence_audit.py',
+    'cross_model_scorer.py', 'cross_vendor_scores_v3.json',
+    'INVESTIGATION_LOG.jsonl',
+]
+
+# Check required named artifacts
+missing = [f for f in required if not os.path.exists(f)]
+if missing:
+    print('MISSING:', missing)
+    raise SystemExit(1)
+
+# Check at least one PNG figure was generated
+pngs = glob.glob('*.png')
+if not pngs:
+    print('MISSING: no .png figures found — Phase 8 figure generation may have been skipped')
+    raise SystemExit(1)
+
+# Check at least some multiround raw outputs were generated
+multiround_outputs = glob.glob('v3_raw_outputs/*_multiround_run*.json')
+if not multiround_outputs:
+    print('MISSING: no multiround run outputs in v3_raw_outputs/ — Phase 6 multiround condition may not have run')
+    raise SystemExit(1)
+
+print(f'All {len(required)} required named artifacts present.')
+print(f'Found {len(pngs)} .png figures: {pngs}')
+print(f'Found {len(multiround_outputs)} multiround raw outputs.')
+"
+
+git add -A
+git commit -m "Self-debate protocol v3: complete experiment
+
+- 50+ cases, CASE_VERIFIER validated before any agent run
+- PREREGISTRATION.json locked before execution
+- 4 conditions: isolated_debate, multiround (ml-lab protocol), ensemble, baseline
+- Fractional IDR, must_not_claim IDP, tiered DRQ, acceptable_resolutions FVC, failure_attribution
+- 3 runs per case per condition (within-case variance)
+- Uses existing ml-critic and ml-defender agents via Claude Code orchestration
+- INVESTIGATION_LOG.jsonl append-only audit trail throughout execution
+- Cross-vendor scorer: configurable external model family (operator-specified)
+- Full ml-lab Step 12 coherence audit (Phases 8.5 and 9.5)
+- TECHNICAL_REPORT.md in results mode (ml-lab Step 11)
+- All artifacts from original multi-agent prompt and v2 present
+"
+```
