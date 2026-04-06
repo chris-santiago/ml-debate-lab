@@ -36,11 +36,13 @@ Does adversarial role structure — assigning one agent to critique and one to d
 
 **Debate protocol.** Four sequential agents per case:
 1. **Critic** — receives the task scenario only. Produces a structured critique: a list of identified issues with IDs, severity, and root cause.
-2. **Defender** — receives the task scenario only (never the Critic's output). Responds point-by-point to each issue ID: concede, rebut, or mark empirically open.
-3. **Judge** — receives both the Critic's output and the Defender's response. Adjudicates contested points and assigns a typed verdict: `critique_wins`, `defense_wins`, or `empirical_test_agreed`. For `empirical_test_agreed` cases, the Judge specifies the empirical test with pre-specified success and failure criteria.
+2. **Defender** — receives the task scenario only *(benchmark isolation — see note below)*. Responds point-by-point to each issue ID: concede, rebut, or mark empirically open.
+3. **Judge** — receives both the Critic's output and the Defender's response. Adjudicates contested points and assigns a typed verdict: `critique_wins`, `defense_wins`, or `empirical_test_agreed`. For `empirical_test_agreed` cases, the Judge specifies the empirical test with pre-specified success and failure criteria. The Judge function is performed inline by the orchestrating session — it is not a separate subagent invocation.
 4. **Scorer** — receives the Judge's synthesized output and must-find labels in a separate invocation. Applies the rubric.
 
-Critical design choice: Critic and Defender receive **identical task prompts with no shared context**. The Defender never sees the Critique before forming its position. This isolation is what makes disagreement meaningful: when both agents independently identify the same flaw, that is convergent evidence; when they disagree, the contested point requires empirical resolution rather than synthesis of correlated views.
+Critical design choice for this benchmark: Critic and Defender receive **identical task prompts with no shared context**. This isolation is what makes disagreement meaningful: when both agents independently identify the same flaw, that is convergent evidence; when they disagree, the contested point requires empirical resolution rather than synthesis of correlated views.
+
+> **Note on Defender isolation:** In this benchmark, the Defender receives the task scenario only and never sees the Critic's output before forming its position. This is a deliberate experimental design choice to enable genuine independent convergence as evidence. In the standard ml-lab production workflow, the Defender receives the Critic's output (CRITIQUE.md) and responds point-by-point. The isolation here is a benchmark property, not an architectural property of the ml-defender agent.
 
 **Compute-matched ensemble.** Three independent assessors each receive only the task prompt. A synthesizer reviews all three outputs and produces a unified verdict. A scorer applies the rubric in a separate invocation. Same total agent calls as the debate protocol; no role differentiation.
 
