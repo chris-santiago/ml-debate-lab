@@ -167,6 +167,36 @@ The key architectural constraint is **sequenced dispatch**: `ml-critic` receives
 
 ---
 
+### Investigation Logging
+
+Every action taken during an `ml-lab` investigation is recorded to `INVESTIGATION_LOG.jsonl` — an append-only JSONL file written throughout all steps, from hypothesis agreement to final output. The log is designed for post-hoc audit and jq-friendly querying.
+
+**What gets logged:**
+
+| Category | Covers |
+|----------|--------|
+| `workflow` | Step transitions, macro-iterations, corrections, investigation start/end |
+| `gate` | User prompts, approvals, and declines |
+| `subagent` | Dispatches to ml-critic, ml-defender, and reviewer agents (before and after) |
+| `debate` | Round starts, point resolutions, and convergence |
+| `exec` | Script runs and output summaries |
+| `decision` | Routing choices, verdicts, resolution classifications |
+| `write` | File creation and modification |
+| `read` | File reads for analysis |
+| `review` | Peer review triage, remediation, and convergence |
+| `audit` | Coherence audit checks and corrections |
+
+**Schema** (key fields): `ts` (ISO 8601), `step` (e.g. `"5"`, `"5.R2"`, `"pre"`), `seq` (monotonic integer), `cat`, `action`, `detail`. Optional fields: `artifact`, `duration_s`, `meta` (structured counts and metrics).
+
+**Example entry:**
+```json
+{"ts":"2026-04-05T15:12:44Z","step":"5","seq":28,"cat":"gate","action":"gate_experiment_plan_approved","detail":"User approved experiment plan with 4 empirical tests","artifact":null,"duration_s":null,"meta":{"empirical_tests":4,"conceded_points":2}}
+```
+
+The full schema, rhythm rules, and sequence recovery instructions are in [`agents/ml-lab.md`](agents/ml-lab.md).
+
+---
+
 ### An Example Run
 
 To validate that `ml-lab` correctly navigates the full iteration stack — not just the happy path — we ran it on a fraud detection hypothesis:
@@ -491,5 +521,6 @@ A compute-matched ensemble — three independent assessors plus a synthesizer, n
 | [`external_benchmark/`](external_benchmark/) | 10-case external validity benchmark from published ML evaluation failures |
 | [`external_benchmark/cases.json`](external_benchmark/cases.json) | Case metadata, task prompts, verifier rewrites, and must-find labels |
 | [`external_benchmark/results.json`](external_benchmark/results.json) | Per-case debate and baseline scores; aggregate IDR=0.95; protocol deviation note |
+| `INVESTIGATION_LOG.jsonl` | Append-only audit trail of every action taken during an ml-lab investigation (written to the working directory at runtime) |
 
 </details>
