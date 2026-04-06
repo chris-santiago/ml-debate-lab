@@ -252,11 +252,19 @@ We ran two baselines to understand where the lift actually comes from:
 | Compute-matched ensemble | 0.75 | Three independent assessors + synthesizer, no roles — what more compute alone buys |
 | ml-lab debate protocol | 0.97 | Adversarial role separation on top of compute |
 
-The gap from floor to ensemble (+0.37) is mostly explained by additional compute and multiple perspectives. The gap from ensemble to debate (+0.22, p=0.004, r=0.758) is what adversarial role structure specifically adds. Systematic ablations after the initial run identified what that gap is — and is not — caused by.
+The gap from floor to ensemble (+0.37) is mostly explained by additional compute and multiple perspectives. The gap from ensemble to debate (+0.22, p=0.004, r=0.758) is real and statistically significant — but it is not cleanly attributable to adversarial role structure. Ablations decomposed it into three components:
+
+- **ETD (empirical test design):** The unconstrained ensemble scored ETD=0.0 on 9 of 20 cases because the synthesizer wasn't instructed to specify empirical tests. Adding one explicit output instruction closes this nearly entirely (ensemble ETD mean 0.962 vs. debate 1.0). ETD is a prompt-constraint effect, not an architecture effect — it's portable to any multi-agent configuration.
+- **DRQ (debate resolution quality):** The ensemble cannot produce typed point-by-point resolutions from a parallel assessment. This is structural, but it reflects how the debate *works* rather than whether it finds the right answer.
+- **Mixed-position case handling:** The ensemble failed catastrophically on `metric_mismatch_002` (the one genuinely two-sided case), scoring near zero. Parallel assessors tend to independently converge on one side of a two-sided question; the adversarial structure forces engagement with both sides.
+
+On the detection-quality dimensions where both systems have equal agency — IDR (issue detection rate), IDP (issue detection precision), and FVC (final verdict correctness) — the ensemble matches or approaches the debate protocol on nearly every case. The genuine role-structure advantage is narrower than the headline +0.22 suggests: it lives in contested cases and in structured argumentation, which matter most when the correct answer is ambiguous rather than salient.
+
+Systematic ablations after the initial run confirmed what is and is not uniquely provided by role separation:
 
 **What debate does not uniquely provide:**
 
-- **Empirical test design (ETD).** The debate protocol reliably produces well-specified empirical tests; the unconstrained ensemble almost never does. We originally attributed this to the adversarial forcing function. An ablation falsified that: adding one explicit output instruction to the ensemble synthesizer ("specify the empirical test with pre-specified success and failure criteria") achieves ETD mean 0.962, nearly matching debate's 1.0. ETD is a prompt design effect. It's portable — you can get it from any multi-agent configuration by including the instruction.
+- **Empirical test design (ETD).** Explained above — a prompt-constraint effect, not a role-structure effect. The instruction is portable.
 
 - **Exoneration of valid work (exclusively).** A clean ensemble correctly exonerated valid work in 4/5 false-positive trap cases without context isolation. The benchmark's isolation design is not uniquely necessary for reaching the right verdict. (Note: context isolation — Defender never seeing the Critic's output — is a benchmark-specific experimental choice, not a permanent property of the ml-defender agent in production use.)
 
