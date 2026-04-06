@@ -169,6 +169,28 @@ Both cases score 1.0 on every dimension including ETD, have all planted issues f
 
 ---
 
+## Issue 8 — Post-mortem process is entirely manual; consider automation
+
+**Scope:** Future improvement — implement after v3 experiment is fully complete  
+**Severity:** Low — process works, but does not scale and requires concurrent human attention during experiment execution
+
+The v3 post-mortem was produced by manually cross-referencing logs, raw outputs, scorer source, benchmark case metadata, and git history in real time alongside the running experiment. Most items required synthesizing evidence across multiple artifacts (e.g. Issue 6 Pattern B required connecting the isolation breach, the re-run's coincidental output schema, run-level aggregation logic, and scorer source). This is high-effort and easy to miss things.
+
+Three automation options to evaluate and implement in combination after the experiment is complete:
+
+**Option 1 — Post-run audit agent**
+After all phases complete, spawn a general-purpose agent with the raw outputs, scorer source, results eval JSON, and a checklist of known failure modes (schema mismatches, isolation flags, pass/fail anomalies). The agent produces a structured anomaly report — not a finished post-mortem, but a set of flagged items for human review and promotion. Lower bar than full automation, high signal.
+
+**Option 2 — Inline orchestrator anomaly logging**
+The orchestrator already notices unexpected events (isolation breaches, re-runs, non-zero scorer exits). A plan directive to log `decision` / `anomaly_detected` entries whenever something unexpected occurs would make the orchestrator self-documenting during the run. These entries could feed a post-run summarizer. Builds directly on the `log_entry.py` improvement from Issue 4 and is the highest-leverage near-term change.
+
+**Option 3 — Dedicated post-mortem skill**
+A skill that knows the experiment structure: reads a post-mortem template, runs structured checks (ETD validity, isolation status, schema consistency, pass/fail vs. ground-truth agreement), and drafts post-mortem items for each anomaly. Human reviews and edits rather than discovers and writes. Highest leverage long-term but requires the most upfront design and should wait until the experiment protocol is stable — a skill built on v3 assumptions would need rework for v4.
+
+**Recommendation:** Options 1 and 2 are complementary and low-risk; implement both for v4. Option 3 is worth building after v4 when the protocol has stabilized. Priority for v4 is Option 2 — getting orchestrators to log anomalies inline is where the diagnostic signal already lives.
+
+---
+
 ## Issue 7 — Raw outputs not committed after Phase 6 completion
 
 **Scope:** Future fix  
