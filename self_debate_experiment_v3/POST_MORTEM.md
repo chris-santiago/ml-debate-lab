@@ -29,3 +29,21 @@ Several agents and subagents called scripts with `python` (or `python3`) directl
 **What to fix in v4:** Add an explicit enforcement note to the experiment plan and to any agent prompt that invokes scripts: "Always invoke Python scripts with `uv run`. Never use `python` or `python3` directly."
 
 ---
+
+## Issue 3 — Isolation breaches not logged in INVESTIGATION_LOG
+
+**Scope:** Active — confirmed gap in audit trail for this run  
+**Severity:** Moderate — breach detection worked, but the event is absent from the log
+
+`check_isolation.py` detected 2 isolation breaches at scoring time:
+
+- `v3_raw_outputs/real_world_framing_002_isolated_debate_run1.json` — Defender output contained verbatim Critic issue text
+- `v3_raw_outputs/real_world_framing_010_isolated_debate_run1.json` — same pattern
+
+The orchestrator surface these in the console and re-ran the affected runs. However, inspection of all 7 batch INVESTIGATION_LOGs confirms neither the breach detection nor the re-run were logged. The batch7 entry for `real_world_framing_002` records normal completion and notes verdict variation as a "labeling" difference — no breach flag. The batch6 summary explicitly records `"isolation_violations": 0`.
+
+This is a direct instance of the Issue 1 gap: because the plan has no explicit logging directive for breach detection or corrective re-runs, the orchestrator handled both silently. From the log alone, there is no record that two runs were contaminated and replaced.
+
+**What to fix in v4:** Add explicit logging directives to the isolation check step: log a `decision` / `isolation_breach_detected` entry for each flagged file (with `meta` capturing the matched string and file path), and log a `workflow` / `rerun_triggered` entry before each corrective re-run and `workflow` / `rerun_complete` after. The re-run outputs must overwrite the contaminated files atomically, and the log must record which files were replaced.
+
+---
