@@ -452,3 +452,41 @@ The v3 report conflates these. The ceiling problem (Issue 9), the closed-loop sc
 Limitations must be presented with their threat-to-validity label in the report. Each limitation entry should state: what the threat is, what evidence bears on its magnitude, and what was done to mitigate it. The "design property" label is reserved for intentional choices only — it may never be applied to a failure mode.
 
 ---
+
+## Issue 18 — Pre-registered convergence metric misconceived relative to the ml-lab protocol
+
+**Scope:** Active — metric was never computable; reported as N/A in v3 conclusions  
+**Severity:** Moderate — the metric gap is a pre-registration failure, but the underlying concept it was meant to capture can be replaced with a computable analog in v4
+
+### What was pre-registered
+
+```json
+"convergence_metric": {
+    "definition": "1.0 if critic_verdict == defender_verdict; 0.5 if they diverge",
+    "source_fields": "critic_raw verdict vs defender_raw verdict extracted from v3_raw_outputs/"
+}
+```
+
+The metric was intended to measure whether the Critic and Defender independently converged on the same overall verdict per isolated_debate run.
+
+### Root cause: doubly wrong
+
+The metric was not merely missing fields — it was misconceived relative to the ml-lab protocol it was designed to measure.
+
+**Problem 1 — Neither agent produces a verdict field.** The Critic produces `CRITIQUE.md`: a list of critique points. No `critic_verdict` field exists anywhere in the protocol or the raw output schema. The Defender produces `DEFENSE.md`: per-point labels (`concede` / `rebut` / `empirically_open`). No global `defender_verdict` field exists. The raw output confirms this — `critic_raw` and `defender_raw` are full prose text; `verdict` is the Judge's synthesized output only. There was never going to be a `critic_verdict` or `defender_verdict` field to compare.
+
+**Problem 2 — The metric concept doesn't match how ml-lab defines convergence.** The ml-lab protocol uses "convergence" to mean *debate convergence*: whether contested points in `DEBATE.md` reach resolution (concession or empirical agreement) across rounds. This is a per-point resolution concept tracked at the debate level, not a global agent-vs-agent verdict comparison. The pre-registered metric conflated two different things: whether two agents independently agree (a coincidence measure) vs. whether the debate process successfully resolves contested territory (a protocol quality measure). The former is not a natural output of the ml-lab protocol; the latter is.
+
+### Consequence
+
+The metric was reported as N/A with no further analysis. Under Issue 17's framing norm, this should have been reported as a pre-registration failure — a metric committed to before the experiment that could not be computed. Instead it was categorized alongside inapplicable dimensions (ETD on defense_wins cases), which implied it was a design choice rather than a failure.
+
+### What a computable analog looks like in v4
+
+Point resolution rate from `DEBATE.md` is a natural, protocol-aligned convergence measure: what fraction of contested points reached concession or empirical agreement vs. remained open after the final debate round? This is already tracked implicitly in the debate structure and requires no new output fields from the agents.
+
+For the isolated_debate condition specifically, a secondary computable signal exists: does the Judge's final `verdict` field match the Critic's implied position (`critique_wins`) or the Defender's implied position (`defense_wins`)? This requires inferring each agent's implied position from prose, which is error-prone — but it is at least grounded in fields that exist. If pursued, it should be extracted by a dedicated scorer pass, not by hand.
+
+**What to fix in v4:** Pre-register only metrics that are verified to be computable against the actual raw output schema before the experiment runs. For convergence specifically, replace the critic/defender verdict comparison with point resolution rate derived from `DEBATE.md`. Define the field names and extraction logic in the pre-registration document itself, not as a post-hoc extraction plan.
+
+---
