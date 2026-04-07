@@ -262,3 +262,27 @@ Cross-paragraph inference structure:
 - **IDR < 1.0** — Flaws require cross-referencing details across paragraphs; a reader who processes each section independently will miss inter-section inconsistencies
 - **IDP < 1.0** — Red herrings embedded as natural memo details make false-positive critiques more likely
 - **DRQ failure on mixed cases** — Strong positive evidence in opening paragraphs makes critique_wins feel too aggressive, but buried flaws make defense_wins wrong
+
+---
+
+## Issue 7 — Phase 5.5 Gate Re-Run 3 (Haiku, v2 Cases): Gate Fails Again
+
+**Scope:** Active — gate waived per LEAD decision in Issue 6; experiment proceeds with documented caveat
+**Severity:** Moderate — expected outcome given Issue 6 root cause; confirms the gate is not calibrable by evaluator-switching on v2 cases
+**Related:** Issue 5 (initial gate failure), Issue 6 (root cause: self-annotating cases + closed-loop limitation)
+
+### What Happened
+
+After replacing the 10 hard cases with v2 rewrites (GPT-5.4, cross-paragraph flaw structure per Issue 6 fix guidance), Phase 5.5 was re-run a third time using `claude-haiku-4-5` as a weaker proxy evaluator. Haiku scored 1.0 on all cases. Note: `eval_scenario_056` is a defense_wins case with 0 must_find items, making IDR trivially 1.0 — the meaningful gate test was on the 9 critique/mixed cases, all of which also scored 1.0.
+
+### Root Cause
+
+Same as Issue 6. The v2 redesign improved information architecture (cross-paragraph flaw distribution, embedded red herrings, confident memo tone) but the cases remain tractable for any Claude-family model. The closed-loop limitation is now confirmed across two independent case revisions and two evaluator tiers (Sonnet and Haiku).
+
+### Impact
+
+The difficulty gate cannot serve as a quality signal when the evaluator is any Claude-family model. Gate waived by LEAD; experiment proceeds with the caveat that "hard" difficulty labels are calibrated for human analysts, not Claude-family models. Difficulty-stratified lift results must be interpreted accordingly.
+
+### What to Fix
+
+For v5, the gate evaluator must be a non-Anthropic model, or the difficulty criterion must be validated against human annotators rather than a model pilot. Case generation must also be validated by the non-Claude evaluator before committing to a full benchmark run. The gate mechanism itself is sound — the failure is in using a same-family model as the evaluator.
