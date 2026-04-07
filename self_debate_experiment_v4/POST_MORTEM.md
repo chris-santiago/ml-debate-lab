@@ -409,3 +409,14 @@ uv run self_debate_experiment_v4/log_entry.py --step 9.5 --cat audit \
 Reads JSON from a file rather than inline. Preserves structured meta logging without triggering the heuristic. Requires adding `--meta-file` flag to `log_entry.py`.
 
 Use Option 1 for the current experiment run. Implement Option 2 in v5.
+
+**Option 3 — Skip all permissions for the session, scoped to repo directory:**
+
+```json
+{
+  "dangerouslySkipPermissions": true,
+  "allowedPaths": ["/Users/chrissantiago/Dropbox/GitHub/ml-debate-lab"]
+}
+```
+
+Add to `.claude/settings.json` before starting the Phase 6 session (remove after). Bypasses all approval prompts — including hard-coded security heuristics that allow rules cannot suppress — while restricting file operations to the repo. Bash commands are not path-restricted, but all experiment outputs land inside the repo anyway. Most aggressive option; appropriate for a known, bounded phase running locally.
