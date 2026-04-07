@@ -448,3 +448,44 @@ Before drafting any v5 plan, the orchestrator must read and synthesize these art
 4. **`POST_MORTEM.md`** — execution issues and their v5 fix recommendations (this file)
 
 The v5 hypothesis should be derived from the open questions v4 left unresolved. The v5 protocol should preserve confirmed v4 design properties and replace all conceded v4 design flaws. Neither of these decisions can be made correctly without reading DEBATE.md first.
+
+---
+
+## Issue 12 — Phase 6 Batch 1 Produced Zero Valid Outputs: All 108 Runs Failed with Authentication Error
+
+**Scope:** Active — all batch 1 data is invalid; batch must be fully re-run
+**Severity:** Critical — entire batch 1 is lost; `phase6_batch1_summary.json` shows 108 authentication failures across 9 cases × 3 replicates × 4 conditions
+**Related:** Issue 8 (agents attempting direct Anthropic API calls)
+
+### What Happened
+
+`phase6_batch1_summary.json` shows 9 cases (eval_scenario_004, 005, 015, 022, 024, 029, 030, 033, 048), each with 3 runs of 4 conditions (isolated, multiround, ensemble, baseline). All 108 runs failed identically:
+
+```
+ERROR "Could not resolve authentication method. Expected either api_key or
+auth_token to be set. Or for one of the `X-Api-Key` or `Authorization` headers
+to be explicitly omitted"
+```
+
+All `runs` entries are empty `{}`. No debate outputs were produced.
+
+### Root Cause
+
+Issue 8 manifesting at batch scale. The debate agents dispatched during Phase 6 attempted to call the Anthropic API directly to run the critic/defender protocol, rather than operating as subagents within the authenticated Claude Code session. The Issue 8 Reminders block fix was not yet applied to the running experiment's phase files when batch 1 executed.
+
+### Impact
+
+All of Phase 6 batch 1 must be discarded and re-run. No raw outputs exist for any of the 9 cases. The `v4_raw_outputs/` directory must be checked for corrupted partial outputs before re-running.
+
+### What to Fix
+
+Before re-running batch 1:
+
+1. Verify `v4_raw_outputs/` contains no partial or corrupted outputs from the 9 batch 1 cases — delete any that exist
+2. Add the subagent context reminder (Issue 8 fix) to the Phase 6 agent dispatch prompt before re-launching:
+   ```
+   You are running as a subagent inside an authenticated Claude Code session.
+   Do not attempt to call the Anthropic API directly or locate API keys.
+   Your inference is handled by the session.
+   ```
+3. Confirm agents are running correctly via Agent tool (not CLI) on a single test case before re-launching the full batch
