@@ -199,23 +199,166 @@ Each entry provides the flaw mechanism for use in case construction. **Do not re
 
 ---
 
+### Source 13 — Informative Censoring in Survival Analysis (Biostatistics Pitfall)
+
+**Domain:** Clinical ML, time-to-event modeling
+
+**Methodology:** Trained a Cox proportional hazards model or survival random forest on patient follow-up data to predict time to a clinical event (e.g., disease progression, readmission). Censored observations (patients who left the study without experiencing the event) were handled using standard right-censoring methods. Model performance was reported as concordance index on an internal holdout.
+
+**Core flaw:** Censoring was informative — patients who were doing poorly were more likely to drop out of the study (lost to follow-up, transferred to palliative care) before experiencing the formally-recorded event. The standard right-censoring assumption (censoring is independent of the event) is violated: the censoring mechanism is correlated with the outcome. The concordance index on the holdout is optimistic because the holdout also contains informatively censored observations; the most difficult-to-predict patients are systematically underrepresented in both training and evaluation.
+
+**Flaw type:** `assumption_violation` — the non-informative censoring assumption is violated by a clinical dropout mechanism correlated with disease severity
+
+**Transpose to:** Equipment lifetime prediction where units that are failing subtly show different sensor patterns and are taken offline (informative removal before failure event); employee attrition models where the highest-risk employees are given retention packages and leave through a different mechanism than the modeled "unplanned departure"; subscription churn models where users who are about to cancel stop logging events days before cancellation (informative dropout before observed churn event).
+
+---
+
+### Source 14 — Aggregated Performance Masking Stratum-Specific Degradation
+
+**Domain:** Multi-population ML deployment, clinical risk scoring
+
+**Methodology:** A model was evaluated using a population-weighted aggregate metric (weighted AUC, macro-average F1, or pooled accuracy) across multiple sites or demographic groups. The aggregate metric was used to justify deployment "across all populations." Individual stratum metrics were computed but reported only in an appendix.
+
+**Core flaw:** The aggregate metric is dominated by the majority stratum. The model achieves substantially lower performance on minority strata (lower-volume sites, smaller demographic subgroups, or rare clinical presentations). The deployment claim — that the model works "across all populations" — requires adequate performance on each stratum, but the reported metric does not surface stratum-level failures. The majority stratum inflates the aggregate to an acceptable level even when minority strata fall below any reasonable clinical or operational threshold.
+
+**Flaw type:** `metric_mismatch` — the reported metric is not aligned with the deployment claim; a claim of "works across all populations" requires per-stratum evaluation, not population-weighted aggregation
+
+**Transpose to:** Multi-warehouse demand forecasting reported as a single MAPE while small-volume SKUs have catastrophic MAPE; content moderation across language communities where high-resource languages inflate aggregate precision while low-resource languages fail; fraud detection across merchant categories where rare-category fraud is swamped by common-category volume in the aggregate.
+
+---
+
+### Source 15 — Calibration Circularity in Model Validation
+
+**Domain:** Probabilistic prediction, clinical risk scoring, insurance pricing
+
+**Methodology:** Trained a probabilistic classifier and assessed calibration using a dedicated calibration validation set. Observed poor initial calibration and applied Platt scaling or isotonic regression to recalibrate. Reported final calibration on the same validation set used to fit the recalibration, along with a calibration plot showing excellent agreement between predicted probabilities and observed rates.
+
+**Core flaw:** The recalibration method (and its hyperparameters) was selected because it produced the best-looking calibration on the validation set. The final calibration evaluation uses the same set on which the recalibration was fit. This is circular: the validation set both guided recalibration selection and now serves as the evaluation. The reported calibration is optimistic — it cannot detect whether the recalibration procedure has overfit the validation fold. An independent test set would show worse calibration than reported.
+
+**Flaw type:** `wrong_justification` — the calibration procedure is described as validated by the calibration set, but the calibration set was used to fit the recalibration, making the evaluation circular
+
+**Transpose to:** Any post-hoc adjustment fitted and evaluated on the same held-out set — threshold selection evaluated on the threshold-selection set, rank-order normalization of scores evaluated on the same sample used to set percentile bins, temperature scaling evaluated on the validation fold used to select the temperature parameter.
+
+---
+
+### Source 16 — Instance-Filtering Bias from Quality-Based Data Curation
+
+**Domain:** Dataset curation, model training on structured data
+
+**Methodology:** Training data was filtered for "high-quality" or "high-confidence" instances using an automated quality score (model confidence, annotation agreement score, or rule-based heuristic). The model was trained and evaluated on the filtered distribution. Performance was reported as strong on the curated test set.
+
+**Core flaw:** The quality filter correlates with instance difficulty — easy, unambiguous cases receive high quality scores and are retained; hard, ambiguous, or distributional-tail cases are removed from both training and evaluation. The model is trained on the easy subset and evaluated on the same easy subset. The deployment distribution includes all incoming instances, including the difficult cases excluded by the filter. The model appears to generalize well within the filtered distribution but has unknown (likely poor) performance on the excluded tail — which comprises exactly the cases where accurate prediction matters most.
+
+**Flaw type:** `assumption_violation` — the evaluation distribution is assumed to represent the deployment distribution; the curation step creates a systematic gap between the evaluated distribution and the actual deployment setting
+
+**Transpose to:** NLP models trained on high-agreement annotation subsets evaluated on high-agreement test sets; medical imaging models trained on high-quality scans with no motion artifact evaluated on clinical-workflow images; sensor anomaly detection trained on "confirmed" anomaly labels (ignoring ambiguous cases) and evaluated on the same confirmed set while ambiguous borderline anomalies constitute the majority of production traffic.
+
+---
+
+## Defense_Wins Source Patterns (Sound Methods That Look Suspicious)
+
+These patterns are used exclusively for `defense_wins` cases. Unlike the flawed-methodology sources above, these describe **correct methodology that is commonly misread as problematic**. The case is hard because the surface appearance is suspicious; the correct verdict requires positive domain knowledge to reach.
+
+Use these patterns as design seeds. Each entry names the sound practice, describes why it looks suspicious to pattern-matching critics, and identifies the external knowledge required for exoneration.
+
+---
+
+### Defense Pattern A — Spatially Independent Validation (already used)
+
+**Sound practice:** Using spatial-block or geographic holdouts that yield lower headline metrics than random splitting.
+
+**Why it looks suspicious:** The headline score is worse than a simpler approach. Critics conflate "lower score" with "weaker methodology." The team appears to have chosen a method that makes their results look bad.
+
+**External knowledge for exoneration:** Random tile or parcel splits within a spatially autocorrelated dataset inflate performance by violating train-test independence. Spatial blocking is the methodologically correct choice when the deployment claim involves generalization to new geographic locations. Lower score under correct validation is evidence of better calibration, not weakness.
+
+**Difficulty mechanism:** The reviewer must distinguish a disclosed, design-appropriate limitation from an invalidating flaw. Pattern-matchers who stop at "lower F1" will assert a false critique.
+
+---
+
+### Defense Pattern B — Pre-Measurement Constrained Randomization with Optimization (already used)
+
+**Sound practice:** Generating many candidate layouts and selecting the one that minimizes batch-phenotype correlation before any measurement occurs.
+
+**Why it looks suspicious:** The process "searched until favorable" — multiple layouts were evaluated and the best one chosen. This structurally resembles p-hacking or outcome-seeking design, which are genuine methodological failures.
+
+**External knowledge for exoneration:** Pre-measurement optimization on design variables (not on outcome data) is an established approach in multi-constraint experimental design (e.g., constrained randomization, covariate-adaptive allocation). The key distinction: the optimization objective was correlation between batch and design variables, not observed outcomes. No outcome data existed at optimization time. This approach reduces exactly the batch-phenotype confounds that undermine reproducibility.
+
+**Difficulty mechanism:** Critics must distinguish layout optimization (prospective, on design metadata) from outcome-seeking tuning (retrospective, on results). This requires knowing the concept of constrained randomization — it cannot be resolved by reading the prompt more carefully.
+
+---
+
+### Defense Pattern C — Reference-Anchored Relative Quantification (already used)
+
+**Sound practice:** Transforming absolute measurements into ratios relative to a concurrent common reference, rather than using raw cross-lab values directly.
+
+**Why it looks suspicious:** Raw values differ visibly across labs when plotted. Critics treat raw disagreement as evidence of failure and demand absolute scale agreement before trusting the model.
+
+**External knowledge for exoneration:** In multi-site omics programs, absolute values drift for technical reasons (instrument calibration, reagent lots, handling variation). Concurrent common references convert drifting absolute measurements into comparable relative quantities anchored to the same material. This is the correct approach for prospective multi-site data and is standard in validated multi-lab workflows (e.g., NIST reference material protocols).
+
+**Difficulty mechanism:** The obvious finding — raw values differ — is a deliberate red herring. Exoneration requires knowing that the ratio design was built to accommodate exactly this property.
+
+---
+
+### Defense Pattern D — Conservative Evaluation That Produces Lower Headline Metrics
+
+**Sound practice:** Using a more demanding evaluation protocol (stricter split, more challenging test set, harder baseline comparison) that intentionally yields lower scores than the easier alternative.
+
+**Why it looks suspicious:** The published number is lower than what the team could have reported. Critics interpret this as underperformance, a methodological problem with the approach, or a sign that the model was unable to meet a more standard benchmark.
+
+**External knowledge for exoneration:** Harder evaluation protocols are a mark of rigor, not weakness, when the claim is calibrated to match the evaluation scope. A model that scores 0.72 on a geographic holdout while the standard approach yields 0.89 is not underperforming — it is reporting honest performance. The correct verdict is to defend the evaluation design as appropriate for the deployment claim, while noting the disclosed gap between the conservative and naive estimates.
+
+**New transposition targets:** Any setting where a team voluntarily chose the harder test: leaving out one full site from a multi-site study (lower score but honest generalization claim), using a strictly prospective temporal holdout rather than random split on a time-ordered dataset, reporting worst-case subgroup performance as the headline rather than pooled average.
+
+---
+
+### Defense Pattern E — Nested Cross-Validation Yielding Lower Performance Than Simple CV
+
+**Sound practice:** Using nested CV (inner loop for hyperparameter selection, outer loop for performance estimation) which produces a lower, less biased estimate than single-loop CV used for both tuning and reporting.
+
+**Why it looks suspicious:** The reported performance is lower than a simpler approach would produce. The team appears to have found a worse model, or to have used an unnecessarily complex validation scheme that penalizes them for no apparent reason.
+
+**External knowledge for exoneration:** Nested CV is the methodologically correct approach when the same dataset is used for both model selection and performance reporting. Single-loop CV — using the same folds for both hyperparameter tuning and final evaluation — produces an optimistic estimate because the selected model was chosen for performing well on those specific folds. The lower nested CV score is a more honest estimate of out-of-sample performance. This is not a limitation; it is the design working correctly.
+
+**Difficulty mechanism:** The critic must know that nested CV is not a more pessimistic version of simple CV — it is the correct version, and simple CV is the biased one. Most practitioners have used simple CV and may not immediately recognize nested CV's advantage.
+
+---
+
+### Defense Pattern F — Acknowledged Limitation Properly Scoped to a Narrow Claim
+
+**Sound practice:** A methodology section that explicitly identifies a constraint on generalizability and correctly limits the deployment claim to within the validated scope.
+
+**Why it looks suspicious:** The team acknowledges a limitation — external validity, sample representativeness, distributional scope. Critics treat disclosed limitations as admissions of fatal flaws. The team appears to be defending a weak result by narrowing the goalposts post-hoc.
+
+**External knowledge for exoneration:** In rigorous applied science and regulatory work, explicitly scoped claims are stronger, not weaker, than vague claims of generalizability. A model validated for use in one hospital's patient population that is deployed only at that hospital is correctly scoped. A team that acknowledges "we do not claim generalizability to other institutions" is being honest; the correct critique is to assess whether the claim matches the evidence, not to penalize them for not claiming more than they validated. The debate resolution is defense_wins when the claim is genuinely narrow and the limitation is genuinely disclosed.
+
+**Difficulty mechanism:** The critic has to resist the reflex that a limitation + a defense = weakness. The correct reading is that the limitation is honest and the claim was never broader.
+
+---
+
 ## Transformation Instructions
 
-For each case, select one source paper and perform the following transformation:
+For each case, select one source and perform the following transformation. For flawed-methodology sources (Sources 1–12), extract the flaw and transpose it. For defense_wins cases, select a Defense Pattern (A–F) or derive a novel sound-methodology pattern and transpose it to a new domain.
 
-### Step 1: Extract the flaw mechanism
+### Step 1: Extract the flaw mechanism (critique cases) or sound-practice mechanism (defense_wins cases)
 
-Write a one-sentence description of the flaw at the level of **abstract mechanism**, not domain-specific instance. Examples:
+**Critique cases:** Write a one-sentence description of the flaw at the level of **abstract mechanism**, not domain-specific instance.
 - NOT "cost is used as proxy for health need, which is biased for Black patients"
 - YES "a proxy variable is used to measure an unobservable target quantity, under the assumption that the proxy-target correlation is uniform across subgroups; the assumption fails because a systemic factor affects the proxy but not the target differently across subgroups"
+
+**Defense_wins cases:** Write a one-sentence description of the sound practice being misread, and separately, the surface appearance that generates the false concern.
+- Sound practice: "Constrained randomization selects the layout that minimizes batch-phenotype correlation before measurement"
+- False concern surface: "The team searched over many candidate layouts and selected the one that looked best"
 
 ### Step 2: Select a target domain
 
 Choose a domain that:
-- Preserves the abstract flaw mechanism
+- Preserves the abstract mechanism
 - Is structurally analogous but surficially different from the source
 - Does not share key vocabulary with the source paper (different disease, different model type, different industry)
 - Belongs to a domain not used by more than 2 other cases in the batch
+- Includes at least one **domain-specific detail** — a regulatory constraint, measurement protocol, data collection convention, or field-specific norm — that affects how the flaw manifests in that domain
+
+Generic industry labels without domain-specific texture are insufficient. "Fraud detection" is not a domain — "real-time card transaction fraud scoring under PCI-DSS reporting requirements with a 3-second SLA" is a domain. The domain-specific detail must be embedded in the task_prompt and must be necessary context for understanding (or for missing) the flaw.
 
 Suggested transpositions by source:
 
@@ -232,18 +375,19 @@ Suggested transpositions by source:
 Write a 500–800 word internal memo, evaluation report, or launch proposal. Requirements:
 - Opens with a positive result or deployment recommendation — no problem statements
 - Every stated fact must be consistent with every other stated fact (the flaw is not a factual inconsistency)
-- The flaw is present as an assumption violation, critical omission, or wrong justification — NOT as an explicit statement of a problem
+- For critique cases: the flaw is present as an assumption violation, critical omission, or wrong justification — NOT as an explicit statement of a problem. Additionally follow all 4 requirements in **Critique Case Design Requirements** below.
+- For defense_wins cases: the false concern must be supported by **≥2 independent signals** in the prompt — converging circumstantial evidence, a plausible narrative, and at least one detail that looks like confirmation (see Defense_Wins Case Design Requirements below)
 - Apply all v5 trigger phrase prohibitions: no contrast signals, no compensation language, no parallel before/after structure
-- Include at least one plausible concern with a defensible but incomplete justification (the `must_not_claim` item)
+- Include at least one plausible concern with a defensible but incomplete justification (the `must_not_claim` item); for critique cases this must appear in the **first 2 paragraphs** with explicit supporting detail (see Critique Requirement 2)
 - Include realistic operational detail: team names, timelines, infrastructure, deployment numbers
 
-### Step 4: Verify the flaw is not source-recognizable
+### Step 4: Verify the mechanism is not source-recognizable
 
 A reviewer who knows the source paper must not be able to identify it from the task_prompt. Check:
 - Domain is different from source paper domain
 - Model type / algorithm type is different
 - No shared vocabulary with the source paper title or abstract
-- The flaw is present at the mechanism level, not the surface level
+- The mechanism is present at the abstract level, not the surface level
 
 ### Step 5: Complete the schema
 
@@ -251,28 +395,112 @@ Populate all required fields. The `source_paper` field is operator-only metadata
 
 ---
 
+## Defense_Wins Case Design Requirements
+
+Defense_wins cases are not simply cases where the model is correct. They are hard because the prompt contains **plausible evidence that the methodology is flawed, even though it is not**. These requirements are mandatory in addition to the general Transformation Instructions above.
+
+### Requirement 1: Multi-evidence false concern
+
+The false concern must be supported by **at least two independent superficial signals** in the prompt. A single red flag is too easy to dismiss. Required structure:
+
+1. **A surface observation** that looks problematic at face value (e.g., lower score than alternative, non-standard design choice, visible cross-site variation)
+2. **A framing or narrative** in the memo that makes the concern seem deliberate or motivated (e.g., the team appears to have chosen the approach that makes their result look better, or avoided a stricter test for unstated reasons)
+3. **At least one supporting detail** that appears to confirm the concern (e.g., an appendix showing the alternative approach yielded a higher number, or a methods note that could be read as acknowledging the weakness)
+
+The defender must address all three threads, not just the top-level complaint. Cases where the false concern rests on a single misread are too easy and must be redesigned.
+
+### Requirement 2: External knowledge required for exoneration
+
+The exoneration must require **domain-specific positive knowledge**, not just a careful re-read of the prompt. The reviewer who reads the prompt twice and still cannot confirm the methodology is sound has not been given sufficient internal evidence — this is the design working correctly. What is needed is knowledge from outside the prompt: a domain convention, a methodological literature result, a regulatory standard, or a field-specific best practice.
+
+The `requires_external_knowledge` field in `planted_issues` must name this knowledge explicitly.
+
+### Requirement 3: Diversified flaw types across the defense_wins batch
+
+Defense_wins planted issues should cover at least two distinct flaw types across the full set of defense_wins cases generated:
+- `wrong_justification` — the sound practice is misread as a suspicious optimization or incorrect procedure
+- `assumption_violation` (false positive) — the reviewer assumes a confound or proxy failure exists that was actually controlled
+- `critical_omission` (false positive) — the reviewer claims something was omitted that was present and addressed, just not prominently flagged
+
+Using only `wrong_justification` across all defense_wins cases creates a predictable pattern that reduces difficulty.
+
+### Requirement 4: Calibrated ideal_defense
+
+The `ideal_defense` field must contain the specific argument that rebuts each of the ≥2 false concern signals. Vague defenses ("the methodology is sound") are not sufficient. Each signal named in `planted_issues` must have a corresponding rebuttal in `ideal_defense`.
+
+---
+
+## Critique Case Design Requirements
+
+These requirements are mandatory for all critique/mixed cases (correct_position ≠ defense_wins). They exist to prevent single-pass pattern-matching from reliably surfacing all must_find issues. Failing these requirements produces cases that score IDR=1 with Haiku — which the smoke-test evidence confirms is the default outcome without these constraints.
+
+### Requirement 1: Addressed-but-incorrectly pattern (at least 1 must_find per case)
+
+At least one must_find issue must be a flaw the team **explicitly discussed** in the memo and **provided a justification for**. The justification must be subtly wrong — not obviously wrong, not absent. Requirements for the justification:
+- Uses correct-sounding methodology language that reads as competent
+- The logical or empirical error is not visible without domain knowledge or careful reasoning
+- The team presents the issue as resolved ("we addressed this by...", "to control for X, we Y")
+
+Mark this issue in planted_issues as the primary `addressed_but_incorrectly` issue. The `requires_external_knowledge` field must state what knowledge is needed to evaluate whether the justification is actually correct.
+
+**Why this is necessary:** When all must_find issues are silently present (no stated justification), pattern-matching is sufficient to score IDR=1 and IDP=1. The addressed-but-incorrectly pattern forces the evaluator to assess justification *quality*, not just *presence*. A model that reads the justification and accepts it fails IDR (missed the issue). A model that flags the concern without explaining why the justification is wrong fails IDP.
+
+### Requirement 2: Decoy dominance
+
+The must_not_claim concern must:
+- Appear in the **first 2 paragraphs** of the task_prompt
+- Be supported by **at least one explicit detail** (a number, a comparison, a team acknowledgment, or a disclosed limitation)
+- Be framed in a way that reads as the team's honest acknowledgment of a potential weakness
+
+The first must_find flaw may not appear before paragraph 3. It should be embedded in technical or operational detail without an explicit red-flag framing — never introduced with language that signals "this is the problem."
+
+**Why this is necessary:** If the must_not_claim concern is buried and must_find flaws are prominent, models find all must_find issues in a single pass and never evaluate the decoy. Foregrounding the decoy forces the model to resist its first reading and reason about which concern is genuine.
+
+### Requirement 3: At least one compound issue per case
+
+At least one must_find issue must be visible only when **two separate pieces of information** from the memo are combined. Neither piece alone is suspicious; the flaw only surfaces when the model reasons across both. 
+
+In planted_issues, document this as: `"compound": true` and include a `"requires_combination_of"` note naming the two pieces. Neither piece should appear in the same paragraph as the other.
+
+**Why this is necessary:** If every must_find issue is independently locatable to a single paragraph, IDR=1 requires only single-paragraph pattern-matching. Compound issues require maintaining two pieces of information across the memo and recognizing their interaction — a reasoning step that single-pass assessors frequently skip.
+
+### Requirement 4: Domain-knowledge-gated issues (at least 2 cases per batch)
+
+For at least 2 cases in the batch, at least one must_find issue per case must require **domain-specific knowledge** to identify correctly — not general ML pattern-matching. "Domain-specific" means the relevant knowledge comes from a specialized field convention, regulatory standard, measurement protocol, or field-specific literature that a pure ML practitioner without domain training would not have.
+
+The `requires_external_knowledge` field must name this knowledge explicitly and specifically (e.g., "ICH E9(R1) guidance on estimands — the estimand framework distinguishes treatment policy estimand from principal stratum estimand; this case requires understanding which estimand applies to a censored subgroup"). Entries like "knowledge of data leakage" do not qualify.
+
+---
+
 ## Constraints
 
 ### Category distribution (across all 12–15 generated cases)
+
 | Category | Target n |
 |---|---|
 | broken_baseline | 2–3 |
 | metric_mismatch | 2–3 |
-| hidden_confounding | 3–4 |
+| hidden_confounding | 2–3 |
 | scope_intent_misunderstanding | 2–3 |
-| defense_wins | 2 |
+| **defense_wins** | **5–6** |
 | real_world_framing | 1–2 |
 
+> **Rationale for defense_wins increase:** Evaluation shows that critique/mixed cases are near-ceiling for single-pass strong models. Defense_wins cases are where the debate protocol generates the clearest fair-comparison lift signal: the baseline has no defender (false positive stands), isolated debate has a Defender responding without seeing the specific false concern, and multiround has a Defender who can address each false-concern thread explicitly. A 35–40% defense_wins proportion is required to measure this signal reliably.
+
 ### Position and must-find
-- At least 5 cases must have `correct_position: "mixed"` with `empirical_test_agreed` resolution
+- At least 4 cases must have `correct_position: "mixed"` with `empirical_test_agreed` resolution
 - Non-defense_wins cases: 3–5 `must_find_issue_ids` each
-- Defense_wins cases: 0 `must_find`; `planted_issues` documents the false concern trap
+- Defense_wins cases: 0 `must_find`; `planted_issues` documents the false concern trap with ≥1 entry per false-concern signal (minimum 2 entries total per case)
 - Every case: 2–4 `must_not_claim` items, each grounded in a plausible prompt-internal concern with incomplete justification
+- Critique/mixed cases: at least 1 must_find per case must be marked `"addressed_but_incorrectly": true` in planted_issues (see Critique Requirement 1)
+- Critique/mixed cases: at least 1 must_find per case must be marked `"compound": true` in planted_issues (see Critique Requirement 3)
+- Across the batch: at least 2 critique/mixed cases must include a domain-knowledge-gated must_find whose `requires_external_knowledge` names specific field literature or standards (see Critique Requirement 4)
 
 ### Source paper diversity
-- No source paper may be used more than twice
-- At least 8 different source papers must be represented across the batch
-- The same abstract flaw mechanism may appear in at most 2 cases (even from different sources)
+- No source paper or defense pattern may be used more than twice
+- At least 8 different sources must be represented across the batch
+- The same abstract mechanism may appear in at most 2 cases (even from different sources)
+- Defense Patterns A, B, C (already used in existing real-paper supplement) may be reused at most once in a new batch; prefer Patterns D, E, F or novel patterns
 
 ### Domain diversity
 - No domain (clinical, recommendation, fraud, NLP, etc.) may be used more than 3 times
@@ -291,7 +519,7 @@ Each case object uses the v5 schema with one additional field:
   "case_id": "eval_scenario_NNN",
   "category": "broken_baseline | metric_mismatch | hidden_confounding | scope_intent_misunderstanding | defense_wins | real_world_framing",
   "difficulty": "hard",
-  "task_prompt": "500–800 word memo/report. Internally consistent. Opens with positive result. Flaw is camouflaged real-paper flaw, transposed to target domain.",
+  "task_prompt": "500–800 word memo/report. Internally consistent. Opens with positive result. For defense_wins: contains ≥2 independent false-concern signals.",
   "ground_truth": {
     "correct_position": "critique | defense | mixed",
     "final_verdict": "One sentence stating the correct conclusion.",
@@ -300,14 +528,14 @@ Each case object uses the v5 schema with one additional field:
   "planted_issues": [
     {
       "issue_id": "opaque_snake_case_id",
-      "description": "What the issue is and why it matters. For defense_wins: the false concern trap.",
+      "description": "What the issue is and why it matters. For defense_wins: one entry per false-concern signal (minimum 2 entries).",
       "severity": "low | medium | high",
       "flaw_type": "assumption_violation | quantitative_error | critical_omission | wrong_justification",
-      "requires_external_knowledge": "One sentence: what domain knowledge is needed to find this flaw."
+      "requires_external_knowledge": "One sentence: what domain knowledge is needed to identify this as a false concern (defense_wins) or genuine flaw (critique)."
     }
   ],
   "ideal_critique": ["What a well-calibrated critique should find."],
-  "ideal_defense": ["What a well-calibrated defense should concede or contest."],
+  "ideal_defense": ["For defense_wins: one rebuttal per planted_issue signal. For critique cases: what a well-calibrated defense should concede or contest."],
   "ideal_debate_resolution": {
     "type": "critique_wins | defense_wins | empirical_test_agreed",
     "supports_critique_if": "Specific, falsifiable result pattern.",
@@ -319,10 +547,10 @@ Each case object uses the v5 schema with one additional field:
     "must_not_claim": ["plausible_but_wrong_concern_1"],
     "acceptable_resolutions": ["critique_wins"]
   },
-  "suspicious_but_valid_features": "For defense_wins cases only: a plain-English list of the features that make the work *look* methodologically problematic to a pattern-matching critic but are actually justified (e.g., 'Small n=47 justified by pre-specified power analysis', 'Non-standard 0.22 threshold derived analytically from cost matrix'). This is a human-readable summary for the CASE_VERIFIER — it supplements `planted_issues` and `must_not_claim`. For non-defense_wins cases: null.",
+  "suspicious_but_valid_features": "For defense_wins cases only: a plain-English list of the features that make the work *look* methodologically problematic to a pattern-matching critic but are actually justified. Minimum 2 entries corresponding to the ≥2 false-concern signals. For non-defense_wins cases: null.",
   "ground_truth_rationale": "2-3 sentences. Answer key only.",
-  "difficulty_justification": "Which v5 principles make this case hard. Which specific rubric dimensions (IDR, IDP, DC, DRQ, ETD, FVC) a single-pass assessor should fail on and why.",
-  "source_paper": "Author (year), Venue — operator provenance only, never shown to agents.",
+  "difficulty_justification": "Which v5 principles make this case hard. Which specific rubric dimensions (IDR, IDP, DC, DRQ, ETD, FVC) a single-pass assessor should fail on and why. For defense_wins: which false-concern signals will trip pattern-matching models, and what external knowledge is required to dismiss each one.",
+  "source_paper": "Author (year), Venue — or Defense Pattern letter — operator provenance only, never shown to agents.",
   "verifier_status": "pending",
   "notes": "Which v5 self-evaluation tests each case passes."
 }
@@ -332,39 +560,51 @@ Each case object uses the v5 schema with one additional field:
 
 ## Self-Evaluation (Required Before Output)
 
-Run all five tests on every case. Discard or redesign any case that fails two or more. Record pass/fail for each test in `notes`.
+Run all seven tests on every case. Discard or redesign any case that fails two or more. Record pass/fail for each test in `notes`.
 
-**The Internal Consistency Test:** Read only the `task_prompt`. Can you find ALL must_find issues by checking whether any stated facts contradict each other? If YES — the flaw is a factual inconsistency detectable by pattern-matching. The source paper flaw mechanism should prevent this; if not, the transposition was incomplete. Redesign.
+**The Internal Consistency Test:** Read only the `task_prompt`. Can you find ALL must_find issues (critique cases) or identify the false concern as definitively false (defense_wins cases) by checking whether any stated facts contradict each other? If YES for critique — the flaw is a factual inconsistency detectable by pattern-matching. Redesign. If YES for defense_wins — the false concern can be dismissed purely from internal evidence, meaning the case is too easy. Redesign.
 
-**The Checklist Test:** For the case's category, apply the standard review checklist. Does the checklist mechanically find the flaw? If YES — the flaw type is predictable from the category. Change the category assignment or change the flaw's surface presentation (Principle 6: decouple scenario type from flaw type).
+**The Checklist Test:** For the case's category, apply the standard review checklist. Does the checklist mechanically find the flaw (critique) or mechanically dismiss the false concern (defense_wins)? If YES — the mechanism is predictable from the category. Change the category assignment or change the surface presentation.
 
 **The Skimming Test:** Read only the first and last paragraphs. Can you determine the correct verdict? If YES — verdict leakage is present. Restructure so the conclusion is not front-loaded or back-loaded.
 
-**The Justification Test:** Does the document acknowledge any concern and provide a justification? For each justification: is it clearly correct, clearly wrong, or subtly wrong? At least one justification per case must be subtly wrong (for Type D flaws) OR the document must contain a must_not_claim item with a justification that is mostly correct but leaves a plausible gap.
+**The Justification Test:** Does the document acknowledge any concern and provide a justification? For each justification: is it clearly correct, clearly wrong, or subtly wrong? Critique cases: at least one justification must be subtly wrong. Defense_wins cases: at least one justification must be subtly right but look suspicious on surface.
 
-**The Run-to-Run Variation Test (proxy difficulty check):** Mentally simulate submitting this task_prompt to a single-pass evaluator twice with temperature > 0. Would both runs produce the same findings, in the same order? If YES — the case has a deterministic single reading. The real-paper sourcing should prevent this (genuine flaws generate genuine uncertainty). If the case still produces deterministic outputs, the transposition has made the flaw too obvious. Redesign.
+**The Run-to-Run Variation Test (proxy difficulty check):** Mentally simulate submitting this task_prompt to a single-pass evaluator twice with temperature > 0. Would both runs produce the same findings, in the same order? If YES — the case has a deterministic single reading. Redesign to introduce genuine ambiguity.
 
-**The Source Recognition Test (new — required for real-paper cases):** Mentally simulate a reviewer who has read the source paper. Can they identify the source from the task_prompt? If YES — the transposition is insufficient. Change the domain, model type, or core vocabulary until the source is no longer recognizable. The abstract flaw mechanism must be preserved; the surface presentation must not point back to the source.
+**The Source Recognition Test:** Mentally simulate a reviewer who has read the source paper or knows the defense pattern. Can they identify the source from the task_prompt? If YES — the transposition is insufficient. Change the domain, model type, or core vocabulary.
+
+**The Domain Expert False Positive Test (defense_wins cases only):** Mentally simulate a competent ML practitioner who knows the general area but has not read the specific methodology literature relevant to this case. Would they raise the false concern on a first pass? If NO — the false concern is not plausible enough; redesign. If YES — proceed. Now check: would the same practitioner, if they had read the relevant methodology paper or domain standard, be able to definitively dismiss the concern? If NO — the exoneration requires knowledge that doesn't exist; redesign. If YES — the case is working correctly.
+
+**The Decoy Prominence Test (critique cases only):** Read only the first two paragraphs of the task_prompt. Is the must_not_claim concern present with explicit supporting detail (a number, a comparison, or a team acknowledgment)? If NO — add it before proceeding. Now simulate: a model that identifies only the must_not_claim concern (and nothing in must_find) but reaches the correct overall verdict (critique_wins or mixed) — is this possible? If YES — the verdict is accessible without finding any genuine flaw; redesign the case so that correct FVC requires identifying at least one must_find issue.
+
+**The Addressed-But-Incorrectly Test (critique cases only):** Identify every must_find issue. For each one: is there a stated justification in the task_prompt? If **none** of the must_find issues has a stated justification — convert at least one to the addressed-but-incorrectly pattern before proceeding. A case where every flaw is silently present with no stated rationale is detectable by pattern-matching alone; adding a subtly-wrong justification forces reasoning about justification quality.
 
 ---
 
 ## Difficulty Acceptance Criteria
 
-A case passes the gate if a `claude-haiku-4-5` single-pass assessor scores **mean < 0.55** — meaning Haiku misses ≥ 1 must_find issue, OR asserts a must_not_claim item, OR reaches the wrong verdict.
+A case passes the gate if a `claude-haiku-4-5` single-pass assessor scores **mean < 0.55** — meaning Haiku misses ≥1 must_find issue (critique cases), OR asserts a must_not_claim item, OR reaches the wrong verdict (including falsely critiquing a defense_wins case).
 
-Additionally, the case should produce **run-to-run variation** when evaluated at nonzero temperature. Verbatim-identical outputs across runs indicate the flaw is too deterministically findable.
+Additionally, the case should produce **run-to-run variation** when evaluated at nonzero temperature. Verbatim-identical outputs across runs indicate the flaw or false concern is too deterministically findable.
 
-Cases that score 1.0 with Haiku, or that produce verbatim-identical outputs, must be redesigned — typically by making the transposition deeper (more domain-specific operational noise, more distance from source paper vocabulary).
+Cases that score 1.0 with Haiku, or that produce verbatim-identical outputs, must be redesigned — typically by:
+- Critique cases: making the transposition deeper (more domain-specific operational noise, more distance from source paper vocabulary)
+- Defense_wins cases: adding a second or third false-concern signal, or replacing the false concern with one that requires harder external knowledge to dismiss
 
 ---
 
 ## Quality Standard
 
-The gold standard for a real-paper case: a senior ML engineer who has NOT read the source paper reads the task_prompt and says "this looks fine" on first pass, then on second pass with specific probing identifies "wait — there's a problem with [the mechanism]." A senior ML engineer who HAS read the source paper should not immediately recognize it.
+**Critique cases:** A senior ML engineer who has NOT read the source paper reads the task_prompt and says "this looks fine" on first pass, then on second pass with specific probing identifies "wait — there's a problem with [the mechanism]."
 
-Cases where the transposition is superficial (same disease, same model type, renamed institution) are rejected. Cases where the flaw mechanism has been distorted in the transposition are also rejected — the flaw must be structurally identical to the source, even if the surface domain is different.
+**Defense_wins cases:** A senior ML engineer reads the task_prompt and says "this looks suspicious" on first pass — there are 2–3 things that feel like red flags. On second pass, with deliberate probing, they confirm the methodology is sound. A senior ML engineer who has read the relevant methodology literature dismisses the concern quickly; one who has not may remain uncertain even after a careful read.
 
-Begin generation now. Generate all 12–15 cases, run the self-evaluation including the Source Recognition Test, then output the final set.
+The quality bar for defense_wins is: the false concern must be plausible enough that a competent reviewer would raise it in a real review, and hard enough to dismiss that they would need to either consult the literature or have prior domain knowledge. Cases where the false concern is obviously dismissible (e.g., "they disclosed the limitation so it's fine") are too easy and must be redesigned.
+
+Cases where the transposition is superficial are rejected. Cases where the mechanism has been distorted are also rejected — the mechanism must be structurally identical to the source.
+
+Begin generation now. Generate all 12–15 cases with 5–6 defense_wins cases using Defense Patterns D, E, F (and at most one reuse each of Patterns A, B, C), and prefer Sources 13–16 for at least 4 of the critique/mixed cases. Apply all 4 Critique Case Design Requirements and all 4 Defense_Wins Case Design Requirements. Run all nine self-evaluation tests, then output the final set.
 
 ---
 
