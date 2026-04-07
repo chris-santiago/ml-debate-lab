@@ -86,6 +86,25 @@ Execution is not blocked — the operator can approve each prompt and the comman
 
 **There is no allow rule that suppresses this warning.** The check is a hard-coded pre-permission security heuristic in Claude Code that runs before `permissions.allow` is evaluated — no `settings.json` pattern can bypass it.
 
+The primary trigger in v4 is heredoc-style commit messages used in every phase commit block:
+
+```bash
+# Triggers the warning:
+git commit -m "$(cat <<'EOF'
+chore: snapshot artifacts [none]
+EOF
+)"
+```
+
+**Workaround:** Replace all heredoc commit blocks in the phase files with plain single-line `-m` arguments. Most v4 commit messages are already single-line; wrapping them in a heredoc adds no value and is the sole cause of the warning:
+
+```bash
+# No warning:
+git commit -m "chore: snapshot artifacts [none]"
+```
+
+This applies to all `git commit` blocks in `plan/phases/phase_0*.md` through `plan/phases/phase_11_final.md`. The `log_entry.py` `--detail` arguments that cross the newline-`#` threshold are a secondary trigger and can be addressed by keeping detail strings on a single line.
+
 ---
 
 ## Issue 4 — `log_entry.py` Not Found During Phase 5.5 — CWD Is Repo Root, Not Experiment Root
@@ -173,23 +192,3 @@ Three options were available per the plan:
 - **IDP < 1.0** — Red herrings embedded naturally as scenario features make false-positive critiques more likely
 - **DRQ failure on mixed cases** — Genuine defense evidence makes critique_wins feel too strong, but the flaws make defense_wins wrong; correct empirical_test_agreed requires recognizing both sides
 
----
-
-The primary trigger in v4 is heredoc-style commit messages used in every phase commit block:
-
-```bash
-# Triggers the warning:
-git commit -m "$(cat <<'EOF'
-chore: snapshot artifacts [none]
-EOF
-)"
-```
-
-**Workaround:** Replace all heredoc commit blocks in the phase files with plain single-line `-m` arguments. Most v4 commit messages are already single-line; wrapping them in a heredoc adds no value and is the sole cause of the warning:
-
-```bash
-# No warning:
-git commit -m "chore: snapshot artifacts [none]"
-```
-
-This applies to all `git commit` blocks in `plan/phases/phase_0*.md` through `plan/phases/phase_11_final.md`. The `log_entry.py` `--detail` arguments that cross the newline-`#` threshold are a secondary trigger and can be addressed by keeping detail strings on a single line.
