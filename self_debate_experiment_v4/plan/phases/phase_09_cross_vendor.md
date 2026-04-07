@@ -18,7 +18,7 @@ export CROSS_VENDOR_MODEL="MiniMax-M1"                      # or your chosen mod
 > **Script:** `plan/scripts/cross_model_scorer.py` — cross-vendor per-dimension validation using an external OpenAI-compatible API. Scores IDR, IDP, and FVC on ALL cases. Strips `<think>` tags from responses. Computes per-dimension deltas between Claude and external model scores. Flags bias if any delta > 0.1. Writes `cross_vendor_scores_v4.json`. Requires `CROSS_VENDOR_API_KEY` and `CROSS_VENDOR_BASE_URL` env vars. Dep: openai>=1.0.
 
 ```bash
-uv run log_entry.py --step 9 --cat workflow --action step_start --detail "Phase 10: cross-vendor scoring — external model validation of all dimensions"
+uv run log_entry.py --step 9 --cat workflow --action step_start --detail "Phase 9: cross-vendor scoring — external model validation of all dimensions"
 CROSS_VENDOR_API_KEY=your_key \
 CROSS_VENDOR_BASE_URL=https://api.minimax.io/v1 \
 CROSS_VENDOR_MODEL=MiniMax-M1 \
