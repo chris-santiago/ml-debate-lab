@@ -43,7 +43,7 @@ The isolated self-debate protocol (ml-critic + ml-defender each receiving only t
 ## Secondary Hypotheses
 
 1. Debate outperforms compute-matched ensemble on IDR/IDP/DRQ/FVC (fair-comparison dimensions).
-2. Ensemble DC >= 0.5 on >= 60% of defense_wins cases (compute budget partially explains defense_wins advantage).
+2. Ensemble FVC >= 0.5 on >= 60% of defense_wins cases (compute budget partially explains defense_wins advantage; FVC used in place of DC, which is N/A for all defense cases by pre-registered rubric rule — reframed after Phase 4 defender review).
 3. Forced multiround outperforms natural multiround on hard cases (additional exchange surfaces real signal when cases have genuine complexity).
 
 ---
