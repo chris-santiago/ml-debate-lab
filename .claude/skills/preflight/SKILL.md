@@ -138,17 +138,61 @@ The pattern `` `[a-z][a-z-]*` `` matches only lowercase-letter agent names in ba
 
 ---
 
-### Check 8 — Script syntax (WARN)
+### Check 8 — Script syntax + log_entry.py smoke test (WARN / BLOCKER)
 
-For each `.py` file in `plan/scripts/`: run:
+**8a — Syntax check (WARN):** For each `.py` file in `plan/scripts/`: run:
 ```bash
 uv run python -c "import ast; ast.parse(open('<path>').read()); print('OK')"
 ```
-
 - PASS if all scripts parse without errors.
 - WARN for each file with a syntax error. Give the filename and error message.
 
 Note: syntax errors in scripts not used until later phases won't block Phase 0, but will cause failures when those phases run.
+
+**8b — log_entry.py smoke test (BLOCKER):** `log_entry.py` is used in every phase — a runtime failure blocks the entire experiment. Verify it actually executes (not just parses) and then clean up the test entry.
+
+Run this sequence:
+```bash
+# 1. Record pre-test log state
+LOG="<experiment-root>/INVESTIGATION_LOG.jsonl"
+existed_before=false
+lines_before=0
+[ -f "$LOG" ] && existed_before=true && lines_before=$(wc -l < "$LOG")
+
+# 2. Run the smoke test
+# log_entry.py is only copied to the experiment root by Phase 0.
+# Before Phase 0, use plan/scripts/log_entry.py directly.
+LOGENTRY="plan/scripts/log_entry.py"
+[ -f "<experiment-root>/log_entry.py" ] && LOGENTRY="log_entry.py"
+cd <experiment-root>
+uv run $LOGENTRY --step 0 --cat workflow --action preflight_smoke_test \
+  --detail "preflight skill smoke test — will be removed"
+
+# 3. Verify entry was written
+lines_after=$(wc -l < "$LOG")
+if [ "$lines_after" -gt "$lines_before" ]; then
+  echo "SMOKE_OK: log_entry.py wrote an entry"
+else
+  echo "SMOKE_FAIL: no entry written"
+fi
+
+# 4. Clean up: remove the test entry
+if [ "$existed_before" = false ]; then
+  rm "$LOG"
+  echo "CLEANUP: removed INVESTIGATION_LOG.jsonl (did not exist before)"
+else
+  # Remove only the last line (the smoke test entry)
+  if [ "$(uname)" = "Darwin" ]; then
+    sed -i '' -e '$ d' "$LOG"
+  else
+    sed -i '$ d' "$LOG"
+  fi
+  echo "CLEANUP: removed smoke test entry; log restored to $lines_before entries"
+fi
+```
+
+- PASS if `SMOKE_OK` and cleanup succeeds.
+- FAIL if `SMOKE_FAIL`. The log_entry.py script has a runtime error — inspect the output above and fix before Phase 0.
 
 ---
 
