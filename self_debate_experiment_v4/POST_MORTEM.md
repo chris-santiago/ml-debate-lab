@@ -117,6 +117,37 @@ uv run self_debate_experiment_v4/log_entry.py --step 5.5 --cat workflow --action
 
 ---
 
+---
+
+## Issue 5 — Phase 5.5 Difficulty Gate Failed: Hard Cases Score 1.0 Across All Dimensions
+
+**Scope:** Active — Phase 6 cannot proceed; operator re-sourcing cases via external LLM
+**Severity:** Critical
+
+### What Happened
+
+The Phase 5.5 pre-benchmark difficulty gate sampled up to 10 hard cases and ran a single-pass baseline evaluation on each. Every case scored 1.0/1.0/1.0 (IDR/IDP/FVC) — all must_find issues surfaced, no must_not_claim items triggered, and the correct verdict reached in every case. The gate threshold requires that at least 4 of 10 hard cases produce a mean score ≤ 0.55; the results were far above this bar, causing the gate to halt execution before Phase 6.
+
+### Root Cause
+
+Closed-loop evaluation. The pilot agent running the difficulty check is the same model family (Claude) that generated the scoring rubric and that will execute all benchmark conditions. Cases that are appropriately difficult for a human analyst or average model are straightforward for the model that has implicitly internalized the rubric structure and flaw-detection patterns used during case generation.
+
+### Impact
+
+Phase 6 is blocked. The current benchmark_cases.json cannot proceed to full experimental evaluation without revision or replacement. The gate functioned correctly — it caught a validity problem before any debate protocol resources were committed.
+
+### What to Fix
+
+Three options were available per the plan:
+
+1. **Revise cases** — strengthen planted flaws so they require more domain expertise to surface; add more plausible-but-false red herrings
+2. **Re-source cases** — have the external LLM (non-Anthropic) generate harder cases using a more adversarial generation prompt
+3. **Revise gate threshold** — if cases are genuinely hard for the intended population and the gate is miscalibrated for the model doing the pilot
+
+**Resolution chosen: Option 2** — re-source cases via external LLM with a revised generation prompt targeting stronger difficulty calibration. New cases must pass Phase 1 (CASE_VERIFIER) and Phase 5.5 (difficulty gate) before Phase 6 can proceed.
+
+---
+
 The primary trigger in v4 is heredoc-style commit messages used in every phase commit block:
 
 ```bash
