@@ -86,6 +86,37 @@ Execution is not blocked — the operator can approve each prompt and the comman
 
 **There is no allow rule that suppresses this warning.** The check is a hard-coded pre-permission security heuristic in Claude Code that runs before `permissions.allow` is evaluated — no `settings.json` pattern can bypass it.
 
+---
+
+## Issue 4 — `log_entry.py` Not Found During Phase 5.5 — CWD Is Repo Root, Not Experiment Root
+
+**Scope:** Active — error fired during Phase 5.5 of the running experiment
+**Severity:** High
+
+### What Happened
+
+Phase 5.5 invoked `uv run log_entry.py` and received `error: Failed to spawn: log_entry.py — No such file or directory (os error 2)`. Phase 0 copies `log_entry.py` to `self_debate_experiment_v4/`, but the Bash tool's CWD is `ml-debate-lab/` (the repo root), so `uv run log_entry.py` cannot find the script.
+
+### Root Cause
+
+Same underlying cause as Issue 1 — phase files assume the Bash tool's CWD is the experiment root; it is always the repo root. This is the runtime manifestation of that assumption applied to `log_entry.py` invocations, which appear at every phase boundary across all phases.
+
+### Impact
+
+Any phase that calls `uv run log_entry.py` without a path prefix fails with exit code 2. The phase step itself may continue, but the log entry is not written, leaving a gap in `INVESTIGATION_LOG.jsonl` for that action. Gaps accumulate across phases and undermine the audit trail the logging system is designed to provide.
+
+### What to Fix
+
+**Immediate workaround (running experiment):** Prefix each `log_entry.py` call with the experiment-root path:
+
+```bash
+uv run self_debate_experiment_v4/log_entry.py --step 5.5 --cat workflow --action step_start --detail "Phase 5.5: ..."
+```
+
+**Permanent fix:** All `log_entry.py` invocations in phase files should be updated to use a repo-root-relative path (`self_debate_experiment_v4/log_entry.py`) or be preceded by `cd self_debate_experiment_v4 &&`. This is the same fix direction as Issue 1 — a single pass updating all phase files to use absolute or repo-root-relative paths would resolve both issues simultaneously.
+
+---
+
 The primary trigger in v4 is heredoc-style commit messages used in every phase commit block:
 
 ```bash
