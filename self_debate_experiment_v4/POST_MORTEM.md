@@ -727,3 +727,31 @@ Hard cases should score mean < 0.55 on `claude-haiku-4-5` single-pass assessment
 3. Enforce Phase 5.5 as a mandatory gate: no hard case with `claude-haiku-4-5` single-pass mean ≥ 0.55 or with identical outputs across two independent runs proceeds to Phase 6.
 4. Add the Spearman anti-correlation check to Phase 5.5 (per Issue 15): rho between difficulty labels and baseline scores must be negative before the hard-case batch is accepted.
 5. Cap `"mixed"` correct-position cases at ≤ 30% of the hard stratum (per Issue 14) to ensure DRQ is informative.
+
+---
+
+## Issue 18 — Batch 1 Dispatched with Incorrect Hardcoded Task Prompts: 7 Cases Evaluated on Wrong Case Text
+
+**Scope:** Active — 7 cases (eval_scenario_005, 015, 022, 024, 029, 030, 033) have invalid raw outputs; Phase 7 pass rate of 84.4% is artificially low
+**Severity:** High
+**Related:** Issue 15 (inverted Spearman rho), Issue 6 (closed-loop evaluation label)
+
+### What Happened
+
+When Phase 6 Batch 1 was dispatched in the resumed session, task prompts were hardcoded manually into the agent prompt string rather than read from `benchmark_cases_verified.json` at dispatch time. The hardcoded prompts for 7 of the 8 cases were incorrect — they described a different version of each case than what exists in any source file. For example, eval_scenario_022 was dispatched with a precision/recall version ("In a pilot across twelve stores over eight weeks, the vendor reports a precision of 0.89 and a recall of 0.76...") while `benchmark_cases_verified.json` has contained a before/after comparison version since the first Phase 1 commit.
+
+### Root Cause
+
+Task prompts were not read from `benchmark_cases_verified.json` at dispatch time. The source of the incorrect prompts is unclear — likely reconstruction from prior session context after context compaction — but the structural cause is that the batch agent prompt was written manually rather than populated programmatically from the source JSON.
+
+### Confirmation
+
+Git log shows `benchmark_cases_verified.json` has had the Aug/Sept version of eval_scenario_022 since commit `569ea5f` (original Phase 1). No revision of this case exists in any committed source file. The raw output for `eval_scenario_022_baseline_run1.json` references "twelve pilot stores chosen from high-traffic flagship locations" — text that appears nowhere in the repo.
+
+### Impact
+
+All 7 affected cases score IDR=0 because the must_find issues (seasonality, planogram refresh, no control stores) were absent from the wrong prompt text the agents saw. This is a dispatch error, not model failure. The Phase 7 pass rate (84.4%) and fc_lift are understated as a result. Also partially invalidates Issue 6's "closed-loop evaluation" framing — the cases were ChatGPT-generated, so model-family contamination does not apply; the IDR=0 here is a prompt-dispatch error.
+
+### What to Fix
+
+Never hardcode task prompts into agent dispatch strings. At Phase 6 dispatch, read each task prompt directly from `benchmark_cases_verified.json` using `case['task_prompt']` at the moment of agent invocation. Add a pre-dispatch hash or substring check that the agent-facing prompt matches the source file.
