@@ -342,4 +342,104 @@ The decoy concern must be:
 
 ---
 
-*Document is ongoing — sections will be added as analysis continues.*
+## 11. Resolution — Options D and E: Gate Reporting and Pre-Registration
+
+### Option D — Stratum-specific gate
+
+**Original motivation:** Global gate was failing because critique cases ceiling at 1.0 while defense_wins cases sat below 0.55. A stratum-specific gate would pass defense_wins while flagging the critique ceiling separately.
+
+**Status after Sections 7–8:** With IDJ + Lever A + Lever B implemented, projected gate scores are ~13/14 below 0.55. Global gate passes comfortably. **A stratum-specific blocking gate is no longer needed.**
+
+**What remains useful:** Stratum-level reporting in Phase 5.5 as a non-blocking diagnostic. If something goes wrong in re-generation, a global FAIL gives no information about which stratum broke. A stratum table makes the gate diagnostic actionable.
+
+**Resolution:** Add a non-blocking stratum breakdown table to Phase 5.5 output. No new gate logic. One additional logging step.
+
+#### Implementation Step
+
+**`plan/phases/phase_05_5_difficulty_gate.md`** — after the hard-case ceiling check, add:
+
+> **Stratum diagnostic (non-blocking — informational only):**
+> Report mean scores broken down by stratum:
+>
+> | Stratum | N cases | N below 0.55 | Mean score |
+> |---|---|---|---|
+> | Pure critique | N | N | X.XX |
+> | Mixed | N | N | X.XX |
+> | Defense_wins | N | N | X.XX |
+>
+> This table does not affect the gate decision. It identifies which stratum drives any gate failure and informs Phase 8 analysis planning.
+
+Log the stratum breakdown alongside the existing gate outcome entry:
+```bash
+cd self_debate_experiment_v5 && uv run log_entry.py --step 5.5 --cat gate \
+  --action stratum_diagnostic \
+  --detail "Stratum breakdown: critique mean=X.XX (N/N below 0.55); mixed mean=X.XX (N/N); defense_wins mean=X.XX (N/N)"
+```
+
+---
+
+### Option E — Pre-register stratum separation
+
+**Status:** Still needed and now enhanced. The original motivation (critique ceiling → rely on defense_wins) is partially addressed by the rubric + generation changes, but stratum pre-registration remains valuable for three independent reasons:
+
+1. **Different fc_lift mechanisms by stratum.** Critique/mixed lift comes from IDJ improvement (justification evaluation) + DRQ/FVC improvement (reaching empirical_test_agreed instead of overclaiming). Defense_wins lift comes from FVC/DRQ improvement (preventing false condemnation). Collapsing these into one aggregate obscures the mechanism.
+
+2. **Expected magnitude differs.** Defense_wins baseline: 0.0 → ceiling +1.0 per case. Critique/mixed baseline: ~0.5 → ceiling +0.5. Without stratum-level pre-registration, a large defense_wins effect could swamp a small critique effect or mask a zero result in one stratum.
+
+3. **Prevents post-hoc rationalization.** Pre-registering expected directional patterns before Phase 6 means the stratum interpretation is committed before seeing data.
+
+**Resolution:** Add stratum fc_lift analysis to Phase 2 hypothesis file and `write_preregistration.py` as a pre-registered secondary analysis — not a new primary hypothesis, but a committed interpretive structure.
+
+#### Implementation Steps
+
+**`plan/phases/phase_02_hypothesis.md`** — add after the existing secondary hypotheses:
+
+> **Pre-registered stratum analysis (Phase 8):**
+> fc_lift will be reported separately for three strata: pure critique, mixed, and defense_wins.
+> Expected directional patterns:
+> - Defense_wins stratum: primary driver of DRQ/FVC lift (isolated debate Defender prevents false condemnation)
+> - Critique/mixed stratum: primary driver of IDJ lift (debate forces justification quality evaluation)
+> - Mixed stratum: additional DRQ lift from reaching `empirical_test_agreed` verdict + ETD quality improvement
+>
+> Global fc_lift (H1 primary criterion) remains the hypothesis test. Stratum breakdown is the interpretive structure for understanding mechanism, pre-registered to prevent post-hoc selection of favorable stratum framing.
+
+**`plan/scripts/write_preregistration.py`** — add to the hypotheses dict:
+
+```python
+"stratum_fc_lift": {
+    "claim": "Pre-registered stratum breakdown for Phase 8 interpretation",
+    "strata": ["pure_critique", "mixed", "defense_wins"],
+    "expected_primary_lift_driver": "defense_wins (DRQ/FVC); critique/mixed (IDJ)",
+    "note": "Not a hypothesis test — a pre-committed interpretive structure. Prevents post-hoc stratum selection."
+}
+```
+
+---
+
+## 12. Complete Implementation Checklist
+
+All changes from Sections 7–11, sequenced by dependency:
+
+### Before Phase 0 (no generation round required)
+
+- [ ] **`plan/scripts/self_debate_poc.py`** — add `compute_idj()`, add `'IDJ'` to `FAIR_COMPARISON_DIMS` and `PRIMARY_SCORING_DIMS`, update `score_run()` to extract `addressed_but_incorrectly_ids` and `justifications_challenged`
+- [ ] **`plan/phases/phase_06_benchmark_run.md`** — add `justifications_challenged` to output schema, add extraction instruction, add to POST-WRITE VALIDATION keys
+- [ ] **`plan/phases/phase_05_5_difficulty_gate.md`** — add IDJ as 4th inline proxy dimension, update per-case mean formula, add non-blocking stratum diagnostic table + logging step
+- [ ] **`plan/phases/phase_02_hypothesis.md`** — add stratum fc_lift pre-registration block, add IDJ to fair-comparison dimensions list
+- [ ] **`plan/scripts/write_preregistration.py`** — add IDJ to dimensions and rubric dict, add `stratum_fc_lift` entry to hypotheses dict
+
+### Before Phase 0 (generation round required first)
+
+- [ ] **`synthetic-candidates/benchmark_case_generation_prompt.md`** — add Lever A constraint (`acceptable_resolutions: ['empirical_test_agreed']` for hard critique/mixed) and Lever B guidance (domain-specific false-alarm decoys) to Critique Case Design Requirements and Case Format sections; update Phase 4 tracking table
+- [ ] **`synthetic-candidates/REAL_PAPER_CASE_GENERATION_PROMPT.md`** — parallel Lever A + B updates
+- [ ] **Re-generate `synthetic-candidates/openai_benchmark_cases.json`** via non-Anthropic LLM using revised prompt
+- [ ] **Re-generate `synthetic-candidates/real_paper_cases.json`** via non-Anthropic LLM using revised prompt
+- [ ] **Re-run Haiku smoke test** on new real-paper cases using updated proxy rubric (4-dim including IDJ); verify gate passes (≥6/10 hard cases < 0.55)
+
+### After generation round validates
+
+- [ ] Proceed to Phase 0: merge sources, validate, log
+
+---
+
+*Document complete as of 2026-04-07.*
