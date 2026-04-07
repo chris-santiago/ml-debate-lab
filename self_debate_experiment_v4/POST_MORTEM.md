@@ -222,3 +222,15 @@ The case generation prompt must be redesigned from scratch to produce cases wher
 - Confident opening narrative that makes the evaluation appear sound
 
 The gate evaluator model is secondary — if the cases are correctly designed, even a strong model will miss flaws. If the cases are self-annotating, no weaker model will reliably fail them.
+
+### How to Use CASE_GENERATION_PROMPT_V2.md
+
+This prompt is for **hard cases only** — easy and medium cases from v1 are not affected by the self-annotating issue.
+
+**Steps:**
+1. Open your external LLM (non-Anthropic, e.g. OpenAI GPT-4o or similar)
+2. Paste the full contents of `synthetic-candidates/CASE_GENERATION_PROMPT_V2.md` as the system/instruction prompt
+3. Provide `hard_cases_for_revision.json` as input — either ask for revisions to these 10 cases, or ask for N new hard cases from scratch using the same domains/categories
+4. Request output as a JSON array matching the schema in the prompt
+5. Run Phase 1 (CASE_VERIFIER) on the new cases to verify schema and check 12 (difficulty label)
+6. Run Phase 5.5 with `claude-haiku-4-5` as evaluator — acceptance criterion is ≤ 4 of 10 hard cases score mean ≥ 0.55

@@ -1,5 +1,14 @@
 # Case Generation Prompt v2 — Hard Case Design Guide
 
+**Scope:** Hard cases only. Easy and medium cases from v1 are unaffected and do not need to be regenerated.
+
+**How to use with an external LLM (non-Anthropic):**
+1. Paste this entire document as the system/instruction prompt
+2. Provide `hard_cases_for_revision.json` as input — request revisions to those 10 cases, or ask for N new hard cases from scratch in the same domains/categories
+3. Request output as a JSON array matching the schema in the Output Format section below
+4. Run Phase 1 (CASE_VERIFIER) on the new cases — check 12 (difficulty label) must pass
+5. Run Phase 5.5 with `claude-haiku-4-5` as evaluator — gate passes if ≤ 4 of 10 hard cases score mean ≥ 0.55
+
 **Purpose:** Generate benchmark cases that are genuinely hard for a capable LLM single-pass reviewer — not just for human domain experts. Cases generated with v1 prompts failed a Claude-family difficulty gate because flaws were directly named or strongly implied in the prompt text.
 
 ---
