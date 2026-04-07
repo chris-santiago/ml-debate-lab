@@ -137,7 +137,7 @@ The following phrases and structural patterns caused immediate flaw detection in
 
 **must_not_claim requirements for hard cases:** Each hard case must have 2–4 `must_not_claim` items. Each item must appear as a plausible concern IN the task_prompt text, with a defensible but incomplete justification — a reviewer who does not carefully evaluate the justification should be tempted to flag it. This is stronger than the general requirement.
 
-**Hard cases must require genuine domain expertise beyond standard ML methodology:** At least 8 of the 20 hard cases must involve flaws that a competent ML generalist would not catch without specific domain knowledge — for example, knowledge of clinical trial EPV rules, recommendation system offline-online correlation standards, financial audit requirements, NLP inter-annotator agreement norms, or regulatory validation standards. The flaw must be genuinely non-obvious to someone who knows ML but does not know the specific domain. These domain-expertise cases are the most likely to produce IDR < 1.0 on the debate protocol.
+**Hard cases must require genuine domain expertise beyond standard ML methodology:** At least 8 of the 20 hard cases must involve flaws that a competent ML generalist would not catch without specific domain knowledge — for example, knowledge of clinical trial EPV rules, recommendation system offline-online correlation standards, financial audit requirements, NLP inter-annotator agreement norms, or regulatory validation standards. The flaw must be genuinely non-obvious to someone who knows ML but does not know the specific domain. These domain-expertise cases are the most likely to produce IDR < 1.0 on the debate protocol. Of these 8 cases, at least 2 must satisfy Critique Case Design Requirement 4 (domain-knowledge-gated must_find) — meaning the `requires_external_knowledge` field names a specific discipline's literature, guideline, or measurement protocol (e.g., "ICH E9(R1) estimand framework", "CLSI EP09-A3 method comparison guidelines"), not a general ML concept like "knowledge of data leakage."
 
 **Critique cases must contain red herring features:** At least 15 non-defense_wins cases must include one or more scenario features that look methodologically suspicious but are actually valid or irrelevant — for example: a small sample size that is adequately powered by a pre-specified power analysis, a high performance metric that is appropriate for the narrow task, a non-standard split justified by an empirical pre-analysis, or a metric choice that is unusual but correct for the stated claim. These features provide fodder for spurious critiques and allow IDP to be tested on critique cases, not only on defense_wins cases. The prior benchmark had no such features — the Critic never raised a false positive on any critique case (IDP=1.000) because the scenarios contained only genuine flaws with no plausible decoys.
 
@@ -146,6 +146,85 @@ The following phrases and structural patterns caused immediate flaw detection in
 **No target leakage:** The correct answer must NEVER be visible in the case_id, the scenario introduction, or any reviewer framing.
 
 **Realistic scenarios:** Each case must be plausible as something a real ML team would actually do and present.
+
+### Critique Case Design Requirements (hard cases only)
+
+These requirements are mandatory for all hard critique/mixed cases (`correct_position != "defense"`). They exist to prevent single-pass pattern-matching from reliably surfacing all must_find issues. Smoke-test evidence confirms that without these constraints, Haiku-class models score IDR=1.00 on critique cases — making the benchmark uninformative for measuring debate lift.
+
+**Requirement 1: Addressed-but-incorrectly pattern (at least 1 must_find per hard critique case)**
+
+At least one must_find issue must be a flaw the team **explicitly discussed** in the task_prompt and **provided a justification for**. The justification must be subtly wrong — not obviously wrong, not absent. Requirements for the justification:
+- Uses correct-sounding methodology language that reads as competent
+- The logical or empirical error is not visible without domain knowledge or careful reasoning
+- The team presents the issue as resolved ("we addressed this by...", "to control for X we applied Y")
+
+Mark this issue in `planted_issues` with `"addressed_but_incorrectly": true`. The `requires_external_knowledge` field must state what knowledge is needed to evaluate whether the justification is actually valid.
+
+**Why this is necessary:** When all must_find issues are silently present with no stated justification, pattern-matching alone is sufficient to score IDR=1 and IDP=1. The addressed-but-incorrectly pattern forces the evaluator to assess justification *quality*, not just *presence*. A model that reads the justification and accepts it fails IDR. A model that flags the concern without explaining why the justification is wrong fails IDP.
+
+Note: Design Principle 4 ("Justifications must be subtly wrong") is a weaker version — it requires some justification to be wrong. This Requirement goes further: the team must have **explicitly addressed the flaw mechanism itself** in the text, not just provided wrong justifications elsewhere.
+
+**Requirement 2: Decoy dominance**
+
+The must_not_claim concern must:
+- Appear in the **first 2 paragraphs** of the task_prompt
+- Be supported by **at least one explicit detail** (a number, a comparison, a team acknowledgment, or a disclosed limitation)
+- Be framed in a way that reads as the team's honest acknowledgment of a potential weakness
+
+The first must_find flaw may not appear before paragraph 3. It should be embedded in technical or operational detail without an explicit red-flag framing — never introduced with language that signals "this is the problem."
+
+**Why this is necessary:** If must_not_claim concerns are buried and must_find flaws are prominent, models find all must_find issues in a single pass without ever evaluating the decoy. Foregrounding the decoy forces the model to resist its first reading and reason about which concern is genuine.
+
+**Requirement 3: At least one compound issue per hard critique case**
+
+At least one must_find issue must be visible only when **two separate pieces of information** from the task_prompt are combined. Neither piece alone is suspicious; the flaw only surfaces when the model reasons across both.
+
+In `planted_issues`, document this as `"compound": true` and include a `"requires_combination_of"` note naming the two pieces. Neither piece may appear in the same paragraph as the other.
+
+**Why this is necessary:** If every must_find issue is independently locatable to a single paragraph, IDR=1 requires only single-paragraph pattern-matching. Compound issues require maintaining two pieces of information across the memo and recognizing their interaction — a reasoning step that single-pass assessors frequently miss.
+
+**Requirement 4: Domain-knowledge-gated issues (at least 2 hard cases per batch of 20)**
+
+For at least 2 of the 20 hard cases, at least one must_find issue per case must require **domain-specific knowledge** to identify correctly — not general ML pattern-matching. "Domain-specific" means the relevant knowledge comes from a specialized field convention, regulatory standard, measurement protocol, or field-specific literature that an ML practitioner without domain training would not have.
+
+The `requires_external_knowledge` field must name this knowledge explicitly and specifically (e.g., "ICH E9(R1) guidance on estimands — the estimand framework distinguishes treatment policy estimand from principal stratum estimand; this case requires knowing which estimand applies to a censored subgroup"). Entries like "knowledge of data leakage" do not qualify.
+
+---
+
+### Defense_Wins Case Design Requirements (hard cases only)
+
+Hard defense_wins cases are not simply cases where the model is correct. They are hard because the task_prompt contains **plausible evidence that the methodology is flawed, even though it is not**. These requirements are mandatory for all hard defense_wins cases (3–4 per the hard case sub-distribution).
+
+**Requirement 1: Multi-evidence false concern**
+
+The false concern must be supported by **at least two independent superficial signals** in the task_prompt. A single red flag is too easy to dismiss. Required structure:
+
+1. **A surface observation** that looks problematic at face value (e.g., lower score than alternative, non-standard design choice, visible cross-site variation)
+2. **A framing or narrative** in the memo that makes the concern seem deliberate or motivated (e.g., the team appears to have chosen the approach that makes their result look better, or avoided a stricter test for unstated reasons)
+3. **At least one supporting detail** that appears to confirm the concern (e.g., an appendix showing the alternative approach yielded a higher number, or a methods note that could be read as acknowledging the weakness)
+
+The defender must address all threads, not just the top-level complaint. Cases where the false concern rests on a single misread are too easy and must be redesigned.
+
+**Requirement 2: External knowledge required for exoneration**
+
+The exoneration must require **domain-specific positive knowledge**, not just a careful re-read of the task_prompt. A reviewer who reads the prompt twice and still cannot confirm the methodology is sound has not been given sufficient internal evidence — this is the design working correctly. What is needed is knowledge from outside the prompt: a domain convention, a methodological literature result, a regulatory standard, or a field-specific best practice.
+
+The `requires_external_knowledge` field in `planted_issues` must name this knowledge explicitly.
+
+**Requirement 3: Diversified flaw types across the defense_wins batch**
+
+Defense_wins planted_issues should cover at least two distinct flaw types across the full set of hard defense_wins cases:
+- `wrong_justification` — the sound practice is misread as a suspicious optimization or incorrect procedure
+- `assumption_violation` (false positive) — the reviewer assumes a confound or proxy failure exists that was actually controlled
+- `critical_omission` (false positive) — the reviewer claims something was omitted that was present and addressed, just not prominently flagged
+
+Using only `wrong_justification` across all defense_wins cases creates a predictable pattern that reduces difficulty.
+
+**Requirement 4: Calibrated ideal_defense**
+
+The `ideal_defense` field must contain the specific argument that rebuts each of the ≥2 false concern signals. Vague defenses ("the methodology is sound") are not sufficient. Each signal named in `planted_issues` must have a corresponding rebuttal in `ideal_defense`.
+
+---
 
 ### Case Format
 
@@ -168,7 +247,10 @@ Generate each case as a JSON object with this exact structure. Every field is re
       "description": "One sentence: what the issue is and why it matters methodologically.",
       "severity": "low | medium | high",
       "flaw_type": "assumption_violation | quantitative_error | critical_omission | wrong_justification | (null for easy/medium cases)",
-      "requires_external_knowledge": "One sentence: what domain knowledge is needed to find this flaw. (null for easy/medium cases)"
+      "requires_external_knowledge": "One sentence: what domain knowledge is needed to find this flaw. (null for easy/medium cases)",
+      "addressed_but_incorrectly": "true if this issue is explicitly discussed in task_prompt with a subtly wrong justification (hard critique cases: at least 1 required). Omit or false otherwise.",
+      "compound": "true if this issue is only visible when combining information from 2+ paragraphs (hard critique cases: at least 1 required). Omit or false otherwise.",
+      "requires_combination_of": "For compound issues only: name the two pieces of information that must be combined. null otherwise."
     }
   ],
   "ideal_critique": [
@@ -188,9 +270,9 @@ Generate each case as a JSON object with this exact structure. Every field is re
     "must_not_claim": ["unsupported_issue_x"],
     "acceptable_resolutions": ["critique_wins", "empirical_test_agreed"]
   },
-  "suspicious_but_valid_features": "For defense_wins cases only: a plain-English list of the features that make the work *look* methodologically problematic to a pattern-matching critic but are actually justified (e.g., 'Small n=47 justified by pre-specified power analysis', 'Non-standard 0.22 threshold derived analytically from cost matrix'). This is a human-readable summary for the CASE_VERIFIER — it supplements `planted_issues` and `must_not_claim`. For non-defense_wins cases: null.",
+  "suspicious_but_valid_features": "For defense_wins cases only: a plain-English list of the features that make the work *look* methodologically problematic to a pattern-matching critic but are actually justified (e.g., 'Small n=47 justified by pre-specified power analysis', 'Non-standard 0.22 threshold derived analytically from cost matrix'). This is a human-readable summary for the CASE_VERIFIER — it supplements `planted_issues` and `must_not_claim`. **Hard defense_wins: minimum 2 entries** corresponding to the ≥2 false-concern signals required by Defense_Wins Requirement 1. For non-defense_wins cases: null.",
   "ground_truth_rationale": "2-3 sentences explaining why ideal_resolution is correct. Answer key only — do not include in task_prompt.",
-  "difficulty_justification": "For hard cases only: which of the 7 v5 design principles and which flaw type (A/B/C/D) make this case hard. Which specific rubric dimensions (IDR, IDP, DC, DRQ, ETD, FVC) a single-pass assessor should fail on and why. For easy/medium cases: null.",
+  "difficulty_justification": "For hard cases only: which of the 8 v5 design principles and which flaw type (A/B/C/D) make this case hard. Which specific rubric dimensions (IDR, IDP, DC, DRQ, ETD, FVC) a single-pass assessor should fail on and why. For hard critique cases: which Critique Case Design Requirement(s) are satisfied (addressed-but-incorrectly, decoy dominance, compound issue, domain-knowledge-gated) and how. For hard defense_wins cases: which Defense_Wins Requirement(s) are satisfied (multi-evidence false concern, external knowledge exoneration, diversified flaw types, calibrated ideal_defense) and how. For easy/medium cases: null.",
   "verifier_status": "pending",
   "notes": "Any design intent, edge cases, or disambiguation for the scorer. Not shown to agents."
 }
@@ -200,7 +282,7 @@ Generate each case as a JSON object with this exact structure. Every field is re
 
 - `planted_issues` is the source of truth for IDR/IDP scoring. Every issue in `scoring_targets.must_find_issue_ids` must appear here with a matching `issue_id`. Severity values: `high` = fatal to the claim, `medium` = significantly weakens it, `low` = real but not disqualifying.
 
-  **For defense_wins cases specifically:** `scoring_targets.must_find_issue_ids` is always `[]` — there are no issues to find. Instead, `planted_issues` must contain exactly ONE entry documenting the PRIMARY false concern a miscalibrated critic would raise. The `issue_id` should describe the false concern (e.g., `false_overfitting_concern`, `spurious_significance_challenge`), the `description` should explain why a critic might raise this concern and why it is actually invalid given the methodology, and the `severity` should be `low` (since it is not a real issue). This entry is what the scoring engine uses to characterize the false-positive trap — it is NOT something the agents should find.
+  **For defense_wins cases specifically:** `scoring_targets.must_find_issue_ids` is always `[]` — there are no issues to find. Instead, `planted_issues` must contain entries documenting the false concern(s) a miscalibrated critic would raise. **For hard defense_wins cases: at least two entries — one per false-concern signal** (per Defense_Wins Requirement 1). Each entry's `issue_id` should describe the specific signal (e.g., `false_lower_score_concern`, `false_motivated_design_framing`), the `description` should explain why a critic might raise this concern and why it is actually invalid, and the `severity` should be `low` (since it is not a real issue). The `requires_external_knowledge` field must name what domain knowledge is needed for exoneration. For easy/medium defense_wins cases, a single entry is acceptable. These entries are what the scoring engine uses to characterize the false-positive trap — they are NOT something the agents should find.
 
 - `scoring_targets.must_not_claim` lists issue IDs that are **plausible but wrong** — things the Critic might raise that are NOT valid concerns given this specific methodology. This is how IDP is properly scored: a Critic that raises a `must_not_claim` issue has produced a false positive.
 
@@ -239,6 +321,8 @@ Generate each case as a JSON object with this exact structure. Every field is re
 - Include at least 3 cases where the justification is a pre-specified analysis choice (power analysis, cost matrix, pre-registered threshold)
 - Include at least 2 cases where a non-standard choice is justified by an empirical pre-analysis (e.g., i.i.d. test justifies random split)
 - Hard defense_wins cases: the correct exoneration requires distinguishing "limitation that warrants disclosure" from "limitation that invalidates the claim"
+- **Hard defense_wins cases must satisfy all 4 Defense_Wins Case Design Requirements** — multi-evidence false concern (≥2 planted_issues signals), external knowledge for exoneration, diversified flaw types across the hard defense_wins batch, calibrated ideal_defense with per-signal rebuttals
+- **Sound-methodology inspiration patterns for hard defense_wins:** Build cases around methodologies that are correct but look suspicious to pattern-matching reviewers: (a) conservative evaluation that produces lower headline metrics (spatial block holdout, nested CV, prospective-only temporal split), (b) pre-measurement constrained optimization that resembles outcome-seeking (layout search before measurement, randomization-constrained design), (c) reference-anchored relative quantification where raw values disagree but ratios are valid by design, (d) acknowledged limitation properly scoped to a narrow claim (not "we didn't test on X" as fatal — "we are only claiming Y"), (e) nested cross-validation yielding lower but less biased estimates than simple CV. Each of these generates surface signals that look like flaws but are methodologically correct.
 
 **real_world_framing cases:**
 - Must involve a deployment decision, not just a research claim
@@ -299,6 +383,8 @@ After evaluation, rank all surviving cases by quality (1 = highest). Select the 
 - **All non-defense_wins cases have non-empty `must_not_claim`** — cases without this field are incomplete and must be revised before inclusion
 - **At least 8 hard cases require non-ML domain expertise** — cases where a general ML practitioner could not find the flaw without specific domain knowledge. If fewer than 8 survive, flag and note in the summary.
 - **At least 15 non-defense_wins cases contain red herring features** — scenario features that look suspicious but are actually valid. If fewer than 15 survive, flag and note in the summary.
+- **All hard critique cases satisfy the 4 Critique Case Design Requirements** — addressed-but-incorrectly (≥1 must_find per case), decoy dominance (must_not_claim in first 2 paragraphs), compound issue (≥1 must_find per case), domain-knowledge-gated (≥2 cases across the batch). Hard critique cases that fail any of these must be revised before inclusion.
+- **All hard defense_wins cases satisfy the 4 Defense_Wins Case Design Requirements** — multi-evidence false concern (≥2 planted_issues entries), external knowledge for exoneration (named in requires_external_knowledge), diversified flaw types across the hard defense_wins batch, calibrated ideal_defense with per-signal rebuttals. Hard defense_wins cases that fail any of these must be revised before inclusion.
 
 ---
 
@@ -324,7 +410,7 @@ If after the self-test fewer than 15 cases remain classified as hard, revise cas
 
 ### v5 Hard Case Self-Evaluation (required for every case labeled hard)
 
-After the rubric self-test, run all four of these checks. Discard or redesign any hard case that fails two or more. Record which tests each hard case passes in the `notes` field.
+After the rubric self-test, run all eight of these checks. Discard or redesign any hard case that fails two or more. Record which tests each hard case passes in the `notes` field.
 
 **The Internal Consistency Test:** Read only the `task_prompt`. Can you find ALL must_find issues by checking whether any stated facts contradict each other? If YES — the case is too easy. The flaw is a factual inconsistency detectable by pattern-matching, not an assumption violation. Redesign it using a Type A, B, C, or D flaw.
 
@@ -335,6 +421,12 @@ After the rubric self-test, run all four of these checks. Discard or redesign an
 **The Justification Test:** Does the document acknowledge potential concerns and provide justifications? For each justification: is it clearly correct (reviewer stops investigating), clearly wrong (reviewer flags immediately), or subtly wrong (reviewer must evaluate carefully)? At least one justification per hard case must be "subtly wrong" — a justification a careful reader must evaluate before concluding it is invalid.
 
 **The Run-to-Run Variation Test (proxy difficulty check):** Mentally simulate submitting this task_prompt to a single-pass evaluator twice with temperature > 0. Would both runs produce the same findings, in the same order, at the same confidence level? If YES — the case has a deterministic single correct reading. A hard case should generate **meaningfully different runs**: different issues found, different ordering, different uncertainty level, or different verdict. Verbatim-identical outputs across runs are a direct measure of a case being too easy — they indicate the document has a single obvious reading that every reviewer converges to without deliberation. Discard or redesign any case that would produce two identical outputs.
+
+**The Decoy Prominence Test (hard critique cases only):** Read only the first two paragraphs of the task_prompt. Is the must_not_claim concern present with explicit supporting detail (a number, a comparison, or a team acknowledgment)? If NO — add it before proceeding (per Critique Case Design Requirement 2). Now simulate: a model that identifies only the must_not_claim concern (and nothing in must_find) but reaches the correct overall verdict (e.g., critique_wins). Is this possible? If YES — the verdict is accessible without finding any genuine flaw; redesign the case so that correct FVC requires identifying at least one must_find issue.
+
+**The Addressed-But-Incorrectly Test (hard critique cases only):** Identify every must_find issue. For each one: is there a stated justification for it in the task_prompt? If **none** of the must_find issues has a stated justification — convert at least one to the addressed-but-incorrectly pattern before proceeding (per Critique Case Design Requirement 1). A case where every flaw is silently present with no stated rationale is detectable by pattern-matching alone; adding a subtly-wrong justification forces reasoning about justification quality.
+
+**The Domain Expert False Positive Test (hard defense_wins cases only):** Mentally simulate a competent ML practitioner who knows the general area but has not read the specific methodology literature relevant to this case. Would they raise the false concern on a first pass? If NO — the false concern is not plausible enough; redesign. If YES — proceed. Now check: would the same practitioner, having read the relevant methodology paper or domain standard named in `requires_external_knowledge`, be able to definitively dismiss the concern? If NO — the exoneration requires knowledge that doesn't exist; redesign. If YES — the case is working correctly.
 
 ### Hard Case Acceptance Criteria
 
@@ -367,6 +459,11 @@ Hard cases requiring non-ML domain expertise: N (target >= 8)
 Hard cases with mixed + empirical_test_agreed: N (target >= 8)
 Hard cases with 2+ interacting high-severity issues: N (target >= 5)
 Hard cases with domain-plausible must_not_claim: N (target >= 4)
+Hard critique cases with addressed-but-incorrectly must_find: N (target: all hard critique cases)
+Hard critique cases with compound must_find: N (target: all hard critique cases)
+Hard critique cases with decoy in first 2 paragraphs: N (target: all hard critique cases)
+Hard defense_wins cases with >=2 planted_issues entries: N (target: all hard defense_wins cases)
+Hard defense_wins cases with named external-knowledge exoneration: N (target: all hard defense_wins cases)
 Cases with multiple acceptable_resolutions: N
 Cases disqualified (list reason): N
 Cases flagged (list flags): N
@@ -415,9 +512,11 @@ The benchmark will be used in a paper submission. Cases that would embarrass the
 
 The gold standard for a good case: a senior ML engineer reading the task_prompt would say "yes, this is a real problem I've seen teams make" (for critique cases) or "yes, this is a real methodology people challenge unfairly" (for defense cases).
 
-**Hard case gold standard (v5):** A senior ML engineer reading the task_prompt says "I read this carefully and it seems fine" on first pass, then on second pass with specific probing says "wait — actually, there's a problem with [specific assumption/number/omission]." The case must survive the first pass to be hard. Cases where the flaw is obvious to a careful first-time reader — regardless of how it is structured — are medium difficulty, not hard. Cases where the flaw is found by checking internal consistency are easy.
+**Hard critique case gold standard (v5):** A senior ML engineer reading the task_prompt says "I read this carefully and it seems fine" on first pass, then on second pass with specific probing says "wait — actually, there's a problem with [specific assumption/number/omission]." The case must survive the first pass to be hard. Cases where the flaw is obvious to a careful first-time reader — regardless of how it is structured — are medium difficulty, not hard. Cases where the flaw is found by checking internal consistency are easy.
 
-Begin Phase 1 now. Generate all 60 cases before proceeding to Phase 2.
+**Hard defense_wins gold standard (v5):** A senior ML engineer reading the task_prompt says "this looks suspicious — there are 2–3 things here that feel like red flags" on first pass. On deliberate second pass, with access to the relevant domain literature or methodology standard, they confirm the methodology is sound and the flags are artifacts of pattern-matching rather than genuine flaws. The case fails if the false concern is dismissible without domain knowledge, or if a careful reviewer would not raise it in a real review.
+
+Begin Phase 1 now. Generate all 60 cases before proceeding to Phase 2. For all hard critique/mixed cases, apply the 4 Critique Case Design Requirements (addressed-but-incorrectly, decoy dominance, compound issue, domain-knowledge-gated). For all hard defense_wins cases, apply the 4 Defense_Wins Case Design Requirements (multi-evidence false concern, external knowledge exoneration, diversified flaw types, calibrated ideal_defense). Run all 8 self-evaluation tests on hard cases during Phase 3.
 
 ---
 
