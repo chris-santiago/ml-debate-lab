@@ -489,3 +489,29 @@ Before re-running batch 1:
    Your inference is handled by the session.
    ```
 3. Confirm agents are running correctly via Agent tool (not CLI) on a single test case before re-launching the full batch
+
+---
+
+## Issue 13 — Phase 6 Validation Step Found Malformed JSON in Benchmark Output Files
+
+**Scope:** Active — affects current Phase 6 results; any output file from Phase 6 benchmark runs is suspect until re-validated
+**Severity:** High — malformed output files cannot be parsed by downstream scoring and analysis scripts; affected runs must be identified, triaged, and re-run before Phase 7 can proceed
+
+### What Happened
+
+During Phase 6, the validation step that parses benchmark output files raised JSON decode errors on one or more files produced by benchmark runs. The files were written by agents executing the debate protocol conditions (isolated, multiround, ensemble, baseline) and are the primary raw artifact for all downstream scoring. The validation step could not parse the affected files, meaning their run data is inaccessible in its current form.
+
+### Root Cause
+
+Output files produced by Phase 6 agents are written as free-text or structured agent responses and then saved to disk without a parse-then-reserialize step. If an agent outputs malformed JSON — truncated content due to a context-length limit, escaped characters that break JSON syntax, prose mixed into a JSON block, or a missing closing delimiter — the file is written as-is. No write-time validation guards against this. The validation step is the first point in the pipeline that attempts `json.loads()` on the output, so malformed files are only discovered after the fact.
+
+### Impact
+
+Any output file that fails JSON parsing cannot contribute data to Phase 7 scoring or analysis. The number of affected runs, and which cases and conditions they cover, must be determined by inspecting the validation step's error output before any further work proceeds. If the affected runs are concentrated in a single condition or case subset, the experimental results for that slice are incomplete. If they are distributed across conditions, lift estimates derived from the Phase 6 data will be biased by unequal sample sizes.
+
+**What to fix in v5:**
+1. **Immediate triage (running experiment):** Run the validation step with verbose error output to collect the exact file paths and case/condition/replicate coordinates of every malformed file. Log these to `INVESTIGATION_LOG.jsonl` before taking any remediation action.
+2. **Re-run affected cases:** For each affected run coordinate, delete the malformed output file and re-dispatch the corresponding agent with the same inputs. Confirm the replacement file parses cleanly before moving to Phase 7.
+3. **Add write-time JSON validation to the Phase 6 output writer:** After each agent completes and its output is written to `v4_raw_outputs/`, immediately attempt `json.loads()` on the file. If it fails, log the error to `INVESTIGATION_LOG.jsonl` with action `write_validation_fail` and flag the run for immediate re-execution — do not proceed to the next case in the batch.
+4. **Add a schema check to write-time validation:** Confirm the parsed object has the required top-level keys before accepting the file as valid. A file that parses as `{}` or as a bare string should be treated the same as one that raises a `JSONDecodeError`.
+5. **Add `--validate-output` flag to the batch runner script:** Parse and schema-check each output immediately after write; abort the run and surface a clear error rather than silently writing a corrupt file and continuing.
