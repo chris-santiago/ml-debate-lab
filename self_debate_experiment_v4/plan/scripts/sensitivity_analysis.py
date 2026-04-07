@@ -19,7 +19,7 @@ debate_only_dims = ['DC', 'ETD']
 
 def dim_mean(results_list, condition, dims):
     vals = [run['scores'].get(dim) for r in results_list for run in r[condition]['runs']
-            if run['scores'].get(dim) is not None for dim in dims]
+            for dim in dims if run['scores'].get(dim) is not None]
     return round(sum(vals) / len(vals), 4) if vals else None
 
 # Fair-comparison analysis

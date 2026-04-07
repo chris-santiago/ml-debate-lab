@@ -25,7 +25,7 @@ debate_dims = ['IDR', 'IDP', 'DC', 'DRQ', 'ETD', 'FVC']
 
 def dim_mean_for_runs(results_list, condition, dims):
     vals = [run['scores'].get(d) for r in results_list for run in r[condition]['runs']
-            if run['scores'].get(d) is not None for d in dims]
+            for d in dims if run['scores'].get(d) is not None]
     return round(sum(vals) / len(vals), 4) if vals else None
 
 def bootstrap_ci(data, n=10000, ci=0.95):
@@ -38,9 +38,9 @@ def fair_diffs(results_list, cond_a, cond_b, dims):
     diffs = []
     for r in results_list:
         a_vals = [run['scores'].get(d) for run in r[cond_a]['runs']
-                  if run['scores'].get(d) is not None for d in dims]
+                  for d in dims if run['scores'].get(d) is not None]
         b_vals = [run['scores'].get(d) for run in r[cond_b]['runs']
-                  if run['scores'].get(d) is not None for d in dims]
+                  for d in dims if run['scores'].get(d) is not None]
         if a_vals and b_vals:
             diffs.append(np.mean(a_vals) - np.mean(b_vals))
     return diffs
@@ -136,7 +136,7 @@ output = {
 # Defense_wins criterion
 if dw_cases:
     dc_pass = sum(1 for r in dw_cases
-                  if r['ensemble']['runs'] and r['ensemble']['runs'][0]['scores'].get('DC', 0) >= 0.5)
+                  if r['ensemble']['runs'] and (r['ensemble']['runs'][0]['scores'].get('DC') or 0) >= 0.5)
     output['defense_wins']['pre_specified_criterion_met'] = dc_pass >= 0.6 * len(dw_cases)
 
 # Failure attribution
