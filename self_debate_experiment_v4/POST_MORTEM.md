@@ -602,3 +602,50 @@ Difficulty-stratified analysis in Phase 7 is invalid. Apparent lift compression 
 2. Revise hard-case `acceptable_resolutions` to require more specific framing
 3. Add Spearman anti-correlation check (rho must be < 0) to Phase 5.5 before gate acceptance
 4. Cap `empirical_test_agreed` as `ideal_resolution` for hard cases at ≤30% of the hard stratum
+
+---
+
+## Issue 16 — List Comprehension Scope Bug and None Comparison Error in Phase 7 Analysis Scripts
+
+**Scope:** Future fix — scripts have been patched in-place; Phase 7 results are correct
+**Severity:** Moderate — blocked Phase 7 execution but was straightforward to fix once identified
+
+### What Happened
+
+Two bugs in the Phase 7 analysis scripts (`stats_analysis.py`, `sensitivity_analysis.py`) prevented Phase 7 from executing without manual intervention.
+
+**Bug 1 — List comprehension variable scope:** Both scripts contained nested list comprehensions of the form:
+
+```python
+[expr for run in runs if run['scores'].get(d) for d in dims]
+```
+
+This raises `UnboundLocalError: free variable 'd' referenced before assignment in enclosing scope` at runtime. Python evaluates comprehension clauses strictly left-to-right, so the `if` clause referencing `d` is reached before the `for d in dims` clause that defines it.
+
+**Bug 2 — None comparison in `stats_analysis.py`:** A scoring threshold check used `.get('DC', 0) >= 0.5` to test whether the DC dimension score met the acceptance threshold. When the key is present in the dict but its value is explicitly `None`, `.get('DC', 0)` returns `None` — the default `0` only applies when the key is absent. Comparing `None >= 0.5` raises `TypeError: '>=' not supported between instances of 'NoneType' and 'float'`.
+
+### Root Cause
+
+**Bug 1:** The comprehension clause order inverted the required left-to-right evaluation sequence. The correct form is:
+
+```python
+[expr for run in runs for d in dims if run['scores'].get(d)]
+```
+
+The `for d in dims` binding must precede any `if` clause that references `d`.
+
+**Bug 2:** `dict.get(key, default)` only returns the default when the key is absent. If the key is present with value `None`, the stored `None` is returned directly. Fix:
+
+```python
+(r['ensemble']['runs'][0]['scores'].get('DC') or 0) >= 0.5
+```
+
+### Impact
+
+Both bugs raised exceptions before any output was written. Manual in-place fixes were required before Phase 7 could complete. No output artifacts were affected — all Phase 7 results are valid.
+
+### What to Fix
+
+1. Enforce `for d in dims` before `if cond(d)` in all comprehensions — binding clauses always precede filter clauses
+2. Audit all `.get(key, default)` arithmetic/comparison calls in scoring paths; replace with `(d.get(key) or default)` pattern
+3. Add a Phase 6 output normalization step that replaces `None`-valued score fields with `0` before Phase 7 scripts read them
