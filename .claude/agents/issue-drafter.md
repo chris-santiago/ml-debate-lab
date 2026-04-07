@@ -65,3 +65,9 @@ Present the complete draft as a markdown code block. Then write one sentence sta
 - Any related prior issues identified
 
 Do not append to the file. Present the draft and wait for confirmation. The parent agent or user will confirm before writing.
+
+When the parent confirms and directs you to append: always write at the **end of the file**. Never use content within an existing issue body as an Edit tool anchor — issue bodies contain non-unique prose that can match in the wrong location. The safe pattern is to read the file, identify its last line, and use that as the `old_string` anchor with the separator + new issue appended as `new_string`. Alternatively:
+
+```bash
+printf '\n---\n\n%s' "$(cat draft.md)" >> POST_MORTEM.md
+```
