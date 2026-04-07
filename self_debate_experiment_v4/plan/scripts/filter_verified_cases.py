@@ -7,10 +7,10 @@ import json
 with open('benchmark_cases.json') as f:
     cases = json.load(f)
 with open('benchmark_verification.json') as f:
-    verifications = json.load(f)
+    verifications = json.load(f)['cases']
 
 ver = {v['case_id']: v for v in verifications}
-keep = [c for c in cases if ver.get(c['case_id'], {}).get('decision') == 'keep']
+keep = [c for c in cases if ver.get(c['case_id'], {}).get('verdict') == 'keep']
 
 mixed = sum(1 for c in keep if c['ground_truth']['correct_position'] == 'mixed')
 dw = sum(1 for c in keep if c['ground_truth']['correct_position'] == 'defense')
