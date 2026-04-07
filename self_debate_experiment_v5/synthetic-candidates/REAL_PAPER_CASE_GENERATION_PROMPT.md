@@ -456,6 +456,11 @@ The first must_find flaw may not appear before paragraph 3. It should be embedde
 
 **Why this is necessary:** If the must_not_claim concern is buried and must_find flaws are prominent, models find all must_find issues in a single pass and never evaluate the decoy. Foregrounding the decoy forces the model to resist its first reading and reason about which concern is genuine.
 
+**Lever B — Domain-specific false alarm (at least 1 must_not_claim per critique/mixed case):**
+At least one `must_not_claim` concern per critique/mixed case must be a **domain-specific false alarm**: a concern that matches a well-known general ML pitfall but does not apply in this domain because of a field-specific convention, standard, or norm. The memo must NOT contain the information needed to dismiss this concern — dismissal requires field-specific knowledge from outside the prompt. The `requires_external_knowledge` field on the corresponding `planted_issues` entry must name the specific domain knowledge that exonerates it.
+
+Examples of the pattern: "Using MAPE for intermittent demand is invalid" — wrong when the domain uses the industry-standard modified-MAPE variant; "Reporting AUC-ROC on imbalanced classes overstates performance" — wrong when the domain uses threshold-independent reporting per regulatory guidance; "Single-institution validation is insufficient" — wrong when the regulatory scope is explicitly institution-specific.
+
 ### Requirement 3: At least one compound issue per case
 
 At least one must_find issue must be visible only when **two separate pieces of information** from the memo are combined. Neither piece alone is suspicious; the flaw only surfaces when the model reasons across both. 
@@ -495,6 +500,8 @@ The `requires_external_knowledge` field must name this knowledge explicitly and 
 - Critique/mixed cases: at least 1 must_find per case must be marked `"addressed_but_incorrectly": true` in planted_issues (see Critique Requirement 1)
 - Critique/mixed cases: at least 1 must_find per case must be marked `"compound": true` in planted_issues (see Critique Requirement 3)
 - Across the batch: at least 2 critique/mixed cases must include a domain-knowledge-gated must_find whose `requires_external_knowledge` names specific field literature or standards (see Critique Requirement 4)
+- **Hard critique/mixed cases must use `acceptable_resolutions: ["empirical_test_agreed"]` only.** Do not include `critique_wins` as an acceptable resolution. Task prompts must be designed so the correct verdict is "the evidence is suggestive but an empirical test is needed." The `ideal_debate_resolution.type` must be `empirical_test_agreed` with meaningful `supports_critique_if`, `supports_defense_if`, and `ambiguous_if` conditions.
+- Every critique/mixed case must have at least 1 domain-specific false-alarm `must_not_claim` item (see Critique Requirement 2, Lever B)
 
 ### Source paper diversity
 - No source paper or defense pattern may be used more than twice
@@ -545,7 +552,7 @@ Each case object uses the v5 schema with one additional field:
   "scoring_targets": {
     "must_find_issue_ids": ["issue_id_1"],
     "must_not_claim": ["plausible_but_wrong_concern_1"],
-    "acceptable_resolutions": ["critique_wins"]
+    "acceptable_resolutions": ["empirical_test_agreed"]
   },
   "suspicious_but_valid_features": "For defense_wins cases only: a plain-English list of the features that make the work *look* methodologically problematic to a pattern-matching critic but are actually justified. Minimum 2 entries corresponding to the ≥2 false-concern signals. For non-defense_wins cases: null.",
   "ground_truth_rationale": "2-3 sentences. Answer key only.",
@@ -560,7 +567,7 @@ Each case object uses the v5 schema with one additional field:
 
 ## Self-Evaluation (Required Before Output)
 
-Run all seven tests on every case. Discard or redesign any case that fails two or more. Record pass/fail for each test in `notes`.
+Run all nine tests on every case. Discard or redesign any case that fails two or more. Record pass/fail for each test in `notes`.
 
 **The Internal Consistency Test:** Read only the `task_prompt`. Can you find ALL must_find issues (critique cases) or identify the false concern as definitively false (defense_wins cases) by checking whether any stated facts contradict each other? If YES for critique — the flaw is a factual inconsistency detectable by pattern-matching. Redesign. If YES for defense_wins — the false concern can be dismissed purely from internal evidence, meaning the case is too easy. Redesign.
 

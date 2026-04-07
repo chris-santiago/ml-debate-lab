@@ -175,6 +175,11 @@ The first must_find flaw may not appear before paragraph 3. It should be embedde
 
 **Why this is necessary:** If must_not_claim concerns are buried and must_find flaws are prominent, models find all must_find issues in a single pass without ever evaluating the decoy. Foregrounding the decoy forces the model to resist its first reading and reason about which concern is genuine.
 
+**Lever B — Domain-specific false alarm (at least 1 must_not_claim per hard critique case):**
+At least one `must_not_claim` concern per hard critique case must be a **domain-specific false alarm**: a concern that matches a well-known general ML pitfall but does not apply in this domain because of a field-specific convention, standard, or norm. The memo must NOT contain the information needed to dismiss this concern — dismissal requires field-specific knowledge from outside the prompt. The `requires_external_knowledge` field on the corresponding `planted_issues` entry must name the specific domain knowledge that exonerates it.
+
+Examples of the pattern: "Using MAPE for intermittent demand is invalid" — wrong when the domain uses the industry-standard modified-MAPE variant; "Reporting AUC-ROC on imbalanced classes overstates performance" — wrong when the domain uses threshold-independent reporting per regulatory guidance; "Single-institution validation is insufficient" — wrong when the regulatory scope is explicitly institution-specific.
+
 **Requirement 3: At least one compound issue per hard critique case**
 
 At least one must_find issue must be visible only when **two separate pieces of information** from the task_prompt are combined. Neither piece alone is suspicious; the flaw only surfaces when the model reasons across both.
@@ -287,6 +292,8 @@ Generate each case as a JSON object with this exact structure. Every field is re
 - `scoring_targets.must_not_claim` lists issue IDs that are **plausible but wrong** — things the Critic might raise that are NOT valid concerns given this specific methodology. This is how IDP is properly scored: a Critic that raises a `must_not_claim` issue has produced a false positive.
 
 - `scoring_targets.acceptable_resolutions` is a **list**, not a single value. Some cases genuinely accept multiple resolutions (e.g., both `critique_wins` and `empirical_test_agreed` are correct if the flaw is disqualifying but an empirical test would confirm it). Always include at least `ideal_resolution` in this list.
+
+  **Hard critique/mixed cases must use `acceptable_resolutions: ["empirical_test_agreed"]` only.** Do not include `critique_wins` as an acceptable resolution for hard cases. Task prompts must be designed so the correct verdict is "the evidence is suggestive but an empirical test is needed" rather than "this is definitively broken." Flaw severity or mechanism should be ambiguous enough that a strong methodologist would want a confirmatory test before rejecting the work. The `ideal_debate_resolution.type` must be `empirical_test_agreed` with meaningful `supports_critique_if`, `supports_defense_if`, and `ambiguous_if` conditions. (Easy/medium critique cases may still use `critique_wins` as acceptable.)
 
 - `ideal_debate_resolution.supports_critique_if` and `supports_defense_if` must be specific and falsifiable. "If the model performs worse on the held-out set" is acceptable. "If further analysis shows problems" is not.
 
@@ -464,6 +471,8 @@ Hard critique cases with compound must_find: N (target: all hard critique cases)
 Hard critique cases with decoy in first 2 paragraphs: N (target: all hard critique cases)
 Hard defense_wins cases with >=2 planted_issues entries: N (target: all hard defense_wins cases)
 Hard defense_wins cases with named external-knowledge exoneration: N (target: all hard defense_wins cases)
+Hard critique/mixed cases with acceptable_resolutions = ['empirical_test_agreed'] only: N (target: all hard critique/mixed)
+Hard critique cases with >=1 domain-specific false-alarm must_not_claim (Lever B): N (target: all hard critique)
 Cases with multiple acceptable_resolutions: N
 Cases disqualified (list reason): N
 Cases flagged (list flags): N
