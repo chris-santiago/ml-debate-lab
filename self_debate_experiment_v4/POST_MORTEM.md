@@ -234,3 +234,31 @@ This prompt is for **hard cases only** — easy and medium cases from v1 are not
 4. Request output as a JSON array matching the schema in the prompt
 5. Run Phase 1 (CASE_VERIFIER) on the new cases to verify schema and check 12 (difficulty label)
 6. Run Phase 5.5 with `claude-haiku-4-5` as evaluator — acceptance criterion is ≤ 4 of 10 hard cases score mean ≥ 0.55
+
+**External LLM output — 10 v2 hard cases (generated with GPT-5.4, written from scratch following v2 design guide):**
+
+**Key changes from v1:** v1 cases failed because flaws were directly named or strongly implied within individual paragraphs. v2 enforces a fundamentally different information architecture — every must_find issue requires connecting details from two separate paragraphs; neither paragraph alone reveals the flaw.
+
+Cross-paragraph inference structure:
+
+| Case | Flaw | Paragraph A | Paragraph B | What reader must infer |
+|------|------|-------------|-------------|------------------------|
+| 007 | Endpoint changed | P2: "24-hour deterioration prediction" | P3: "vasopressor initiation within 12-hour window" | Different clinical targets being compared |
+| 007 | Timestamp mismatch | P2: "EHR-charted lab timestamps" | P4: "indexed to specimen collection time" | Different timestamping = different feature values |
+| 007 | Patient overlap | P2: "recurring admissions" | P4: "random at encounter level" | Encounter-level split + recurring patients = leakage |
+| 009 | Label exclusion | P2: "including pending and settled disputes" | P3: "restricted to settled dispute outcomes" | Removing hard cases flatters the challenger |
+| 027 | Model-influenced labels | P4: "reviewed 100% of model-flagged entries" | P5: "sampling a smaller subset of non-flagged" | Circular validation — model selects its own eval set |
+
+**Active red herrings embedded in text (appear naturally, are actually valid):**
+- 007: Lactate/vasopressor features (temporal cutoff correctly implemented), Hospital B n=1,126 (adequately powered per pre-specified plan)
+- 009: PR-AUC as metric (correct for extreme imbalance), merchant alias consolidation (validated by manual audit)
+- 025: Weather forecasts as inputs (actual operational practice), outage-day exclusion (NERC standard)
+- 027: Quarter-end volume spikes (normal accounting), year-end adjustments (routine close activity)
+- 032: 15-day gap in time split (best practice for fraud), IP geolocation (standard CNP signal)
+
+**Memo tone:** Every case reads as a confident recommendation. Opening paragraph leads with strong positive numbers — a reader skimming should think "this sounds solid."
+
+**Expected difficulty profile:**
+- **IDR < 1.0** — Flaws require cross-referencing details across paragraphs; a reader who processes each section independently will miss inter-section inconsistencies
+- **IDP < 1.0** — Red herrings embedded as natural memo details make false-positive critiques more likely
+- **DRQ failure on mixed cases** — Strong positive evidence in opening paragraphs makes critique_wins feel too aggressive, but buried flaws make defense_wins wrong
