@@ -220,7 +220,7 @@ def run_stage1(config: dict, client: OpenAI) -> list[dict]:
 
         console.print(
             f"[Stage 1] {len(assignments_bm)} benchmark slots → "
-            f"{config['models']['stage1']} (concurrent ≤{MAX_WORKERS})"
+            f"{config['models']['stage1']} (concurrent ≤{config['concurrency']})"
         )
         for a in assignments_bm:
             ft_label = a["flaw_type"] or "null"
@@ -253,7 +253,7 @@ def run_stage1(config: dict, client: OpenAI) -> list[dict]:
             return raw
 
         bm_blueprints: list[dict | None] = [None] * len(assignments_bm)
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        with ThreadPoolExecutor(max_workers=config["concurrency"]) as executor:
             future_to_idx = {
                 executor.submit(generate_benchmark, a): i
                 for i, a in enumerate(assignments_bm)
@@ -291,7 +291,7 @@ def run_stage1(config: dict, client: OpenAI) -> list[dict]:
 
     console.print(
         f"[Stage 1] {len(assignments)} sources selected → "
-        f"{config['models']['stage1']} (concurrent ≤{MAX_WORKERS})"
+        f"{config['models']['stage1']} (concurrent ≤{config['concurrency']})"
     )
     for a in assignments:
         console.print(
@@ -317,7 +317,7 @@ def run_stage1(config: dict, client: OpenAI) -> list[dict]:
         return raw
 
     blueprints: list[dict | None] = [None] * len(assignments)
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=config["concurrency"]) as executor:
         future_to_idx = {executor.submit(generate_one, a): i for i, a in enumerate(assignments)}
         for future in as_completed(future_to_idx):
             idx = future_to_idx[future]
@@ -895,6 +895,8 @@ def parse_args() -> argparse.Namespace:
                    help="Skip Stage 6 smoke test")
     p.add_argument("--resume", action="store_true",
                    help="Skip cases that already have a completed Stage 4 output")
+    p.add_argument("--concurrency", type=int, default=MAX_WORKERS,
+                   help=f"Max concurrent API calls per stage (default: {MAX_WORKERS})")
     p.add_argument("--models", default=None,
                    help='JSON dict of model overrides, e.g. \'{"stage1": "x-ai/grok-4"}\'')
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage5", "smoke", "scorer"]:
@@ -922,6 +924,7 @@ def build_config(args: argparse.Namespace) -> dict:
         "dry_run": args.dry_run,
         "no_smoke": args.no_smoke,
         "resume": args.resume,
+        "concurrency": args.concurrency,
         "models": models,
     }
 
@@ -936,6 +939,7 @@ def main() -> None:
     console.print(f"  Extractor : {config['extractor_source']}")
     console.print(f"  Cases     : {config['batch_size']} cases, IDs {start}–{end}  →  cases_{start}-{end}.json")
     console.print(f"  Recycles  : max {config['max_recycles']} per case")
+    console.print(f"  Concurrency: {config['concurrency']} workers")
     console.print(f"  Smoke test: {'[dim]OFF (--no-smoke)[/dim]' if config['no_smoke'] else '[green]ON[/green]'}")
     console.print("  Models:")
     for stage, model in config["models"].items():
@@ -1013,7 +1017,7 @@ def main() -> None:
                 progress.update(case_task, visible=False)
                 progress.advance(batch_task)
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        with ThreadPoolExecutor(max_workers=config["concurrency"]) as executor:
             list(executor.map(process_case, cases_to_run))
 
     # Assemble
