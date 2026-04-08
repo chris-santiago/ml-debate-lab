@@ -7,10 +7,10 @@
 
 ## Status at Last Update
 
-- Smoke tests run: V1 (1xx) → V2 (2xx) → V3 (2xx + IDJ) → V4 (batch3, Lever A+B) → V5 (batch3, paragraphs removed)
-- Gate result across all runs: **FAIL** — critique/mixed ceiling at 1.000 in every run
+- Smoke tests run: V1 (1xx) → V2 (2xx) → V3 (2xx + IDJ) → V4 (batch3, Lever A+B) → V5 (batch3, paragraphs removed) → **Pipeline batches 313–342 (pre-fix), 343–357 (post-fix)**
+- Gate result: **PARTIAL IMPROVEMENT** — batch 343–357 achieved 3/9 critique/mixed IDR=0.0 (first non-zero result); 6/9 still IDR=1.0
 - Infrastructure (scripts, phases, agents): **READY** — all preflight checks pass
-- Only blocker: case difficulty calibration
+- Active blocker: famous-paper ceiling (OPEN-14) — mechanisms from Obermeyer, DeGrave, Lazer, Zech remain IDR=1.0 regardless of transposition depth
 
 ---
 
@@ -199,6 +199,8 @@ Swapping Stage 3 from GPT-5.4 to DeepSeek v3.2 did not improve IDR — confirmin
 
 **Fix applied (2026-04-08):** Stage 1 prompt (`stage1_mechanism_extractor.md`) updated with explicit transposition depth requirement: ≥2 layers of domain-specific context, flaw detectable only via regulatory/field-specific knowledge, and explicit prohibition on shallow transpositions to adjacent ML application domains. Stage 1 recycle path (OPEN-10 fix) provides a retry mechanism when this requirement isn't met.
 
+**Empirical result (batch 343–357, 2026-04-08):** Fix partially effective. 3/9 critique/mixed cases achieved IDR=0.0 (mech_004/Ziegler, mech_007/Dacrema, mech_014/Caruana). 6/9 still IDR=1.0, all from the most famous papers (Obermeyer, DeGrave, Lazer, Zech, plus two pattern sources). Pattern is source-dependent, not stage-dependent — see OPEN-14.
+
 ---
 
 ## OPEN-12 — Stage 2 fact placement has no positional constraints; flaw facts can surface early
@@ -209,6 +211,39 @@ Swapping Stage 3 from GPT-5.4 to DeepSeek v3.2 did not improve IDR — confirmin
 The Stage 2 prompt said "distribute facts across paragraphs" and "don't cluster all facts in one paragraph" — but imposed no hard positional constraint. The scenario architect frequently assigned methodologically significant facts (where flaws live) to paragraph 2 (the "addressing concerns" paragraph), which the memo writer then featured prominently. A fact described at the top of the memo is trivially findable; IDR=1.0 follows mechanically.
 
 **Fix applied (2026-04-08):** Stage 2 prompt (`stage2_scenario_architect.md`) updated with hard placement constraints: at most 2 facts in paragraphs 1–2 combined; at least 2 facts assigned to paragraph 4; model architecture / validation design / data preprocessing facts restricted to paragraphs 3–4 only; no two methodologically significant facts may be consecutive in the same paragraph.
+
+---
+
+## OPEN-14 — Famous-paper ceiling: canonical ML papers remain IDR=1.0 regardless of transposition depth
+
+**Severity:** High — limits effectiveness of transposition depth fix (OPEN-11) for the most well-known sources  
+**Source:** Batch 343–357 comparative analysis (2026-04-08)
+
+Batch 343–357 was the first run with all three IDR fixes applied (OPEN-10, OPEN-11, OPEN-12). Result: 3/9 critique/mixed at IDR=0.0, 6/9 still IDR=1.0. Analysis of which cases fell into which group reveals a clean source-level split:
+
+**IDR=0.0 (fixes worked):**
+- mech_004: Source 12 — Ziegler et al. (RLHF Reward Model Overoptimization)
+- mech_007: Source 1 — Dacrema et al. (2019), RecSys
+- mech_014: Source 9 — Caruana et al. (2015), KDD (required Stage 1 recycle)
+
+**IDR=1.0 (fixes did not help):**
+- mech_001: Source 2 — Obermeyer et al. (2019), Science
+- mech_008: Source 3 — DeGrave et al. (2021), Nature Machine Intelligence
+- mech_012: Source 4 — Lazer et al. (2014), Science (Google Flu Trends)
+- mech_015: Source 5 — Zech et al. (2018), PLOS Medicine
+- mech_002: Source 14 — Aggregated Performance Masking (pattern)
+- mech_005: Source 16 — Instance-Filtering Bias (pattern)
+
+The four persistently failing sources (Obermeyer, DeGrave, Lazer, Zech) are canonical ML failure case studies with thousands of citations, covered extensively in ML curricula, survey papers, and blog posts. Haiku almost certainly has these mechanisms encoded as named cautionary tales in its training data. No amount of domain transposition can obscure a mechanism that the model recognizes by its abstract form — the transposition fix changes the surface vocabulary but not the underlying inferential pattern that makes it recognizable.
+
+The three sources that achieved IDR=0.0 (Ziegler, Dacrema, Caruana) are technically well-known but less culturally prominent as named failure modes. Their mechanisms require more domain-specific inference to connect to the source paper.
+
+**Options:**
+1. **Retire the four famous sources** — remove Obermeyer, DeGrave, Lazer, Zech from the source catalog. They've contributed their design patterns; continued use only wastes recycle budget. Replace with less-cited sources or new patterns.
+2. **Require compound transposition for famous sources** — the mechanism must be split across two interacting causal steps, neither of which alone resembles the source paper's abstract mechanism.
+3. **Accept the split and use selectively** — use famous-source cases for defense_wins scenarios (where IDR=1.0 doesn't fail the gate) and reserve critique/mixed slots for less-famous sources.
+
+**Next step:** User decision required. Option 1 (retire famous sources) is lowest risk and cleanest. Option 3 is a viable workaround without catalog changes.
 
 ---
 
