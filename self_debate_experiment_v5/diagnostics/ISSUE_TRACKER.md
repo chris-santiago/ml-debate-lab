@@ -1,6 +1,6 @@
 # V5 Calibration Issue Tracker
 
-**Last updated:** 2026-04-07
+**Last updated:** 2026-04-08
 **Purpose:** Canonical summary of all issues flagged during v5 pre-experiment calibration. Use this as the re-entry point when continuing work.
 
 ---
@@ -209,3 +209,16 @@ Swapping Stage 3 from GPT-5.4 to DeepSeek v3.2 did not improve IDR — confirmin
 The Stage 2 prompt said "distribute facts across paragraphs" and "don't cluster all facts in one paragraph" — but imposed no hard positional constraint. The scenario architect frequently assigned methodologically significant facts (where flaws live) to paragraph 2 (the "addressing concerns" paragraph), which the memo writer then featured prominently. A fact described at the top of the memo is trivially findable; IDR=1.0 follows mechanically.
 
 **Fix applied (2026-04-08):** Stage 2 prompt (`stage2_scenario_architect.md`) updated with hard placement constraints: at most 2 facts in paragraphs 1–2 combined; at least 2 facts assigned to paragraph 4; model architecture / validation design / data preprocessing facts restricted to paragraphs 3–4 only; no two methodologically significant facts may be consecutive in the same paragraph.
+
+---
+
+## OPEN-13 — `--resume` across different batches silently loads stale cases
+
+**Severity:** Moderate — operator error risk; no current results corrupted  
+**Source:** Cross-batch file lifecycle analysis (2026-04-08)  
+
+`pipeline/run/cases/` is not cleared between runs. `mech_001.json` through `mech_015.json` from a prior batch persist. If `--resume` is passed when starting a new batch with a different `--start-case-id`, the orchestrator finds the prior batch's case files and skips those mechanisms entirely — producing a partial output file with mixed case IDs. No error is raised.
+
+**Workaround:** Use `--resume` only when re-entering an interrupted run of the same batch (same `--start-case-id`). Never use it to start a new batch. Clear or archive `pipeline/run/` before starting a fresh batch if in doubt.
+
+**Fix needed:** Guard `--resume` skip logic with a case_id check: if the existing `mech_NNN.json` has a `case_id` that doesn't match the expected range for this batch, do not skip — treat as a miss and re-run.
