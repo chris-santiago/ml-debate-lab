@@ -39,10 +39,11 @@ Run all stages end-to-end with a single command:
 
 ```bash
 cd self_debate_experiment_v5/synthetic-candidates
-OPENROUTER_API_KEY=your_key uv run pipeline/orchestrator.py \
-  --extractor-source real_paper \
-  --batch-size 15 \
-  --start-case-id 310
+uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+    pipeline/orchestrator.py \
+    --extractor-source real_paper \
+    --batch-size 15 \
+    --start-case-id 313
 ```
 
 Output file is named automatically by case ID range: `cases_310-324.json`.
@@ -60,12 +61,12 @@ The orchestrator runs Stages 1–6 automatically, including:
 | `--no-smoke` | off | Skip Stage 6 smoke test |
 | `--resume` | off | Skip cases with existing Stage 4 output |
 | `--dry-run` | off | Print prompts without API calls |
-| `--stage1-model MODEL` | `google/gemini-2.5-pro` | Override Stage 1 model |
+| `--stage1-model MODEL` | `deepseek/deepseek-v3.2` | Override Stage 1 model |
 | `--stage5-model MODEL` | `anthropic/claude-sonnet-4.6` | Override Stage 5 model |
 | `--smoke-model MODEL` | `anthropic/claude-haiku-4.5` | Override smoke test model |
 | `--models JSON` | — | Batch-override multiple models |
 
-All models are OpenRouter model strings. Use different models for Stage 1 and Stage 5 to avoid circular bias (generator and auditor sharing the same priors).
+All models are OpenRouter model strings. The default lineup uses three families across the generative pipeline to avoid circular bias: DeepSeek (Stage 1), Qwen (Stages 2/4), OpenAI (Stage 3), Anthropic (Stage 5/smoke). Stage 1 and Stage 5 must always be different families.
 
 ---
 

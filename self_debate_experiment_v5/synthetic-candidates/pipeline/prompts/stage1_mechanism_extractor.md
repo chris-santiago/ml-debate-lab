@@ -150,6 +150,21 @@ For each flaw fact, produce:
 
 ---
 
+## Hard Requirements — Validation Will Reject Blueprints That Miss These
+
+For every **critique** or **mixed** case, these fields are mandatory and have minimum counts. Blueprints that fail are discarded and regenerated from scratch.
+
+| Field | Minimum | Notes |
+|-------|---------|-------|
+| `flaw_facts` | ≥ 2 entries | Each needs `neutralized_phrasing` and `domain_context` |
+| `decoy_facts` | ≥ 2 entries | `flaw_facts + decoy_facts` must total **≥ 4** |
+| `addressed_but_incorrectly_fact_id` | required | Must match one of the `flaw_facts` `fact_id` values |
+| `compound_fact_ids` | ≥ 2 entries | Typically both flaw fact IDs |
+
+For **defense_wins** cases: `flaw_facts`, `addressed_but_incorrectly_fact_id`, and `compound_fact_ids` are omitted; `defense_wins_false_concern_signals` is required with ≥ 2 signals.
+
+---
+
 ## Output Format
 
 Return a JSON array. Each element represents one case blueprint.

@@ -64,13 +64,13 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # ---------------------------------------------------------------------------
 
 DEFAULT_MODELS: dict[str, str] = {
-    "stage1": "google/gemini-2.5-pro",        # Non-GPT/Claude — breaks circular generation bias
-    "stage2": "openai/gpt-5.4-mini",          # Scenario architect — structured output, cost-sensitive
-    "stage3": "openai/gpt-5.4",               # Memo writer — critical quality stage; don't cut corners
-    "stage4": "openai/gpt-5.4-mini",          # Metadata assembler — structured JSON, mini is sufficient
-    "stage5": "anthropic/claude-sonnet-4.6",  # Leakage auditor — must be Claude family
-    "smoke":  "anthropic/claude-haiku-4.5",   # Smoke test — backward compat with prior calibration runs
-    "scorer": "openai/gpt-5.4-mini",          # Binary score mapper — low-stakes JSON parsing
+    "stage1": "deepseek/deepseek-v3.2",              # Mechanism extractor — DeepSeek; strong JSON compliance, different from Stage 5
+    "stage2": "qwen/qwen3-235b-a22b-2507",           # Scenario architect — Qwen3; structured output, cost-effective
+    "stage3": "openai/gpt-5.4",                      # Memo writer — OpenAI; critical quality stage; don't cut corners
+    "stage4": "qwen/qwen3-235b-a22b-2507",           # Metadata assembler — Qwen3; structured JSON, cost-effective
+    "stage5": "anthropic/claude-sonnet-4.6",         # Leakage auditor — Claude; must match debate agent family
+    "smoke":  "anthropic/claude-haiku-4.5",          # Smoke test — Claude; backward compat with prior calibration runs
+    "scorer": "openai/gpt-5.4-mini",                 # Binary score mapper — low-stakes JSON parsing
 }
 
 # ---------------------------------------------------------------------------
@@ -180,29 +180,48 @@ def run_stage1(config: dict, client: OpenAI) -> list[dict]:
         else "stage1_benchmark_extractor.md"
     )
     template = read_prompt(extractor_file)
-    prompt = fill_placeholders(template, {
-        "BATCH_SIZE": str(config["batch_size"]),
-        "PREVIOUS_BATCH_USAGE": json.dumps(config["previous_batch_usage"]),
-    })
-
-    print(f"[Stage 1] {extractor_file} → {config['models']['stage1']}")
+    out = RUN_DIR / "stage1_blueprints.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
 
     if config["dry_run"]:
         result = [{"mechanism_id": f"mech_{i+1:03d}", "dry_run": True} for i in range(config["batch_size"])]
         console.print(f"[Stage 1] [DRY RUN] Synthetic {config['batch_size']} blueprints")
-    else:
-        result = call_llm_json(prompt, config["models"]["stage1"], client, dry_run=False)
-        if not isinstance(result, list):
-            raise ValueError(f"Stage 1 must return a JSON array, got {type(result).__name__}")
-        # Inject pipeline_source — LLMs sometimes omit this field despite instructions
-        for bp in result:
-            bp.setdefault("pipeline_source", config["extractor_source"])
+        out.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        return result
 
-    out = RUN_DIR / "stage1_blueprints.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(result, indent=2), encoding="utf-8")
-    console.print(f"[Stage 1] {len(result)} blueprints saved → {out}")
-    return result
+    blueprints: list[dict] = []
+    for i in range(config["batch_size"]):
+        mechanism_id = f"mech_{i+1:03d}"
+        # Pass already-generated blueprints as diversity context for this call
+        used = {
+            "previous_batches": config["previous_batch_usage"],
+            "this_batch": [
+                {"mechanism_id": bp["mechanism_id"],
+                 "category": bp.get("category"),
+                 "source_reference": bp.get("source_reference"),
+                 "case_type": bp.get("case_type"),
+                 "target_domain": bp.get("target_domain")}
+                for bp in blueprints
+            ],
+        }
+        prompt = fill_placeholders(template, {
+            "BATCH_SIZE": "1",
+            "PREVIOUS_BATCH_USAGE": json.dumps(used),
+        })
+        console.print(f"[Stage 1] {mechanism_id} ({i+1}/{config['batch_size']}) → {config['models']['stage1']}")
+        raw = call_llm_json(prompt, config["models"]["stage1"], client, dry_run=False)
+        # Accept single object or single-element array
+        if isinstance(raw, list):
+            raw = raw[0] if raw else {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"Stage 1 {mechanism_id}: expected JSON object, got {type(raw).__name__}")
+        raw.setdefault("pipeline_source", config["extractor_source"])
+        raw["mechanism_id"] = mechanism_id  # enforce canonical ID
+        blueprints.append(raw)
+        out.write_text(json.dumps(blueprints, indent=2), encoding="utf-8")  # save incrementally
+
+    console.print(f"[Stage 1] {len(blueprints)} blueprints saved → {out}")
+    return blueprints
 
 
 # ---------------------------------------------------------------------------
