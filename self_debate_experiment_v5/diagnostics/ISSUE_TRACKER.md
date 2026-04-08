@@ -243,7 +243,7 @@ The three sources that achieved IDR=0.0 (Ziegler, Dacrema, Caruana) are technica
 2. **Require compound transposition for famous sources** — the mechanism must be split across two interacting causal steps, neither of which alone resembles the source paper's abstract mechanism.
 3. **Accept the split and use selectively** — use famous-source cases for defense_wins scenarios (where IDR=1.0 doesn't fail the gate) and reserve critique/mixed slots for less-famous sources.
 
-**Next step:** User decision required. Option 1 (retire famous sources) is lowest risk and cleanest. Option 3 is a viable workaround without catalog changes.
+**Resolution (2026-04-08):** Option 1 applied — Obermeyer, DeGrave, Lazer, Zech removed from `CRITIQUE_SOURCES` in `source_catalog.py`. Moved to `RETIRED_SOURCES` list for reference. Active catalog is now 12 critique + 3 defense = 15 sources.
 
 ---
 

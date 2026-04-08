@@ -4,8 +4,11 @@
 """
 Source catalog for Stage 1 mechanism extraction.
 
-Defines all 19 source references (16 critique sources + 3 defense patterns)
+Defines active source references (12 critique sources + 3 defense patterns = 15 active)
 and the selection algorithm that assigns sources to batch slots.
+
+4 sources retired 2026-04-08 (Obermeyer, DeGrave, Lazer, Zech) — IDR=1.0 wall
+regardless of transposition depth. Moved to RETIRED_SOURCES at bottom of file.
 
 Code — not the prompt — controls which sources are used and in what quantity.
 """
@@ -82,69 +85,6 @@ CRITIQUE_SOURCES: list[SourceEntry] = [
             "**Flaw type:** `critical_omission`\n"
             "**Transpose to:** Any model comparison domain where a new complex method is compared to a "
             "legacy baseline — churn prediction, fraud scoring, clinical risk stratification, document classification"
-        ),
-    },
-    {
-        "id": "source_02",
-        "label": "Source 2 — Obermeyer et al. (2019), Science",
-        "source_type": "critique",
-        "flaw_type": "assumption_violation",
-        "text": (
-            "### Source 2 — Obermeyer et al. (2019), Science\n"
-            "**Abstract mechanism:** A proxy variable is used to measure an unobservable target quantity, "
-            "under the assumption that the proxy-target correlation is uniform across subgroups. The assumption "
-            "fails because a systemic factor affects the proxy but not the target differently across subgroups.\n"
-            "**Flaw type:** `assumption_violation`\n"
-            "**Transpose to:** Any domain using an observable quantity as proxy for an unobservable target "
-            "where the proxy relationship may differ across subgroups — maintenance cost as proxy for equipment "
-            "condition, service frequency as proxy for customer need"
-        ),
-    },
-    {
-        "id": "source_03",
-        "label": "Source 3 — DeGrave et al. (2021), Nature Machine Intelligence",
-        "source_type": "critique",
-        "flaw_type": "critical_omission",
-        "text": (
-            "### Source 3 — DeGrave et al. (2021), Nature Machine Intelligence\n"
-            "**Abstract mechanism:** A model is trained on multi-site data where site membership is confounded "
-            "with label prevalence. No cross-site validation is performed. The model learns site-specific "
-            "artifacts as shortcuts to the label.\n"
-            "**Flaw type:** `critical_omission`\n"
-            "**Transpose to:** Multi-site models — enterprise network monitoring across business units, "
-            "manufacturing defect detection across factories, retail fraud trained on merchant-category data"
-        ),
-    },
-    {
-        "id": "source_04",
-        "label": "Source 4 — Lazer et al. (2014), Science",
-        "source_type": "critique",
-        "flaw_type": "assumption_violation",
-        "text": (
-            "### Source 4 — Lazer et al. (2014), Science\n"
-            "**Abstract mechanism:** A model assumes that the relationship between behavioral signals and the "
-            "target variable is stationary. The signal-generating process changes independently of the target "
-            "variable, violating stationarity and producing systematic bias.\n"
-            "**Flaw type:** `assumption_violation`\n"
-            "**Transpose to:** Any model trained on user-generated behavioral signals — app usage as proxy for "
-            "customer health, click-through as proxy for content quality, support ticket volume as proxy for "
-            "product defect rate"
-        ),
-    },
-    {
-        "id": "source_05",
-        "label": "Source 5 — Zech et al. (2018), PLOS Medicine",
-        "source_type": "critique",
-        "flaw_type": "assumption_violation",
-        "text": (
-            "### Source 5 — Zech et al. (2018), PLOS Medicine\n"
-            "**Abstract mechanism:** A model trained and evaluated within a single organization is presented "
-            "as demonstrating generalization. Site-level confounders invisible to internal validation appear "
-            "when the model is deployed externally.\n"
-            "**Flaw type:** `assumption_violation`\n"
-            "**Transpose to:** Single-organization models presented as generalizable — HR attrition on one "
-            "company's employees, credit default on one lender's portfolio, product failure on one factory's "
-            "production line"
         ),
     },
     {
@@ -582,6 +522,81 @@ def select_benchmark_assignments(
         )
         for i, (cat, ft, ct) in enumerate(triples)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Retired sources — do NOT add to CRITIQUE_SOURCES or DEFENSE_PATTERNS.
+# These are canonical ML papers whose mechanisms are too recognizable to
+# Haiku regardless of domain transposition depth (all produced IDR=1.0 in
+# batch 343-357 after transposition depth fix was applied). Preserved here
+# for reference only. Retired 2026-04-08 per OPEN-14.
+# ---------------------------------------------------------------------------
+
+RETIRED_SOURCES: list[SourceEntry] = [
+    {
+        "id": "source_02",
+        "label": "Source 2 — Obermeyer et al. (2019), Science",
+        "source_type": "critique",
+        "flaw_type": "assumption_violation",
+        "text": (
+            "### Source 2 — Obermeyer et al. (2019), Science\n"
+            "**Abstract mechanism:** A proxy variable is used to measure an unobservable target quantity, "
+            "under the assumption that the proxy-target correlation is uniform across subgroups. The assumption "
+            "fails because a systemic factor affects the proxy but not the target differently across subgroups.\n"
+            "**Flaw type:** `assumption_violation`\n"
+            "**Transpose to:** Any domain using an observable quantity as proxy for an unobservable target "
+            "where the proxy relationship may differ across subgroups — maintenance cost as proxy for equipment "
+            "condition, service frequency as proxy for customer need"
+        ),
+    },
+    {
+        "id": "source_03",
+        "label": "Source 3 — DeGrave et al. (2021), Nature Machine Intelligence",
+        "source_type": "critique",
+        "flaw_type": "critical_omission",
+        "text": (
+            "### Source 3 — DeGrave et al. (2021), Nature Machine Intelligence\n"
+            "**Abstract mechanism:** A model is trained on multi-site data where site membership is confounded "
+            "with label prevalence. No cross-site validation is performed. The model learns site-specific "
+            "artifacts as shortcuts to the label.\n"
+            "**Flaw type:** `critical_omission`\n"
+            "**Transpose to:** Multi-site models — enterprise network monitoring across business units, "
+            "manufacturing defect detection across factories, retail fraud trained on merchant-category data"
+        ),
+    },
+    {
+        "id": "source_04",
+        "label": "Source 4 — Lazer et al. (2014), Science",
+        "source_type": "critique",
+        "flaw_type": "assumption_violation",
+        "text": (
+            "### Source 4 — Lazer et al. (2014), Science\n"
+            "**Abstract mechanism:** A model assumes that the relationship between behavioral signals and the "
+            "target variable is stationary. The signal-generating process changes independently of the target "
+            "variable, violating stationarity and producing systematic bias.\n"
+            "**Flaw type:** `assumption_violation`\n"
+            "**Transpose to:** Any model trained on user-generated behavioral signals — app usage as proxy for "
+            "customer health, click-through as proxy for content quality, support ticket volume as proxy for "
+            "product defect rate"
+        ),
+    },
+    {
+        "id": "source_05",
+        "label": "Source 5 — Zech et al. (2018), PLOS Medicine",
+        "source_type": "critique",
+        "flaw_type": "assumption_violation",
+        "text": (
+            "### Source 5 — Zech et al. (2018), PLOS Medicine\n"
+            "**Abstract mechanism:** A model trained and evaluated within a single organization is presented "
+            "as demonstrating generalization. Site-level confounders invisible to internal validation appear "
+            "when the model is deployed externally.\n"
+            "**Flaw type:** `assumption_violation`\n"
+            "**Transpose to:** Single-organization models presented as generalizable — HR attrition on one "
+            "company's employees, credit default on one lender's portfolio, product failure on one factory's "
+            "production line"
+        ),
+    },
+]
 
 
 def usage_from_benchmark_blueprints(blueprints: list[dict]) -> dict:
