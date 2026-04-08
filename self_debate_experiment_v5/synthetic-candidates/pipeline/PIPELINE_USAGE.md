@@ -60,10 +60,10 @@ uv run pipeline/fact_mixer.py \
   --input pipeline/run/stage1_blueprints.json \
   --output-dir pipeline/run/stage1.5/ \
   --seed 42 \
-  --expected-source real_paper   # or: benchmark
+  --expected-source {{EXTRACTOR_SOURCE}}
 ```
 
-`--expected-source` is optional but recommended — it catches the case where the wrong Stage 1 prompt was used before you invest time in Stages 2–5.
+Set `{{EXTRACTOR_SOURCE}}` to `real_paper` or `benchmark` to match the Stage 1 prompt you used. `--expected-source` is optional but recommended — it catches the case where the wrong extractor was run before you invest time in Stages 2–5.
 
 Produces per-case `writer_view` (no role labels) and `metadata_view` (with role labels) files.
 
