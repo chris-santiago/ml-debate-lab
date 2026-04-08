@@ -18,7 +18,7 @@
 - External LLM calls use **OpenRouter** via the OpenAI SDK (`OPENROUTER_API_KEY` env var required)
 - Currently used in the synthetic case generation pipeline; will expand to parts of the main experiment pipeline
 - Main experiment scripts that run inside Claude Code agents do not call external APIs directly
-- Set API keys in `.claude/settings.local.json` (gitignored) — not in environment or committed files
+- Set API keys in `.claude/settings.local.json` (gitignored) or in `UV.env` (gitignored) — `UV.env` is loaded automatically by `uv run` to inject env vars into the uv runtime
 - Cross-vendor scoring (Phase 9) additionally requires: `CROSS_VENDOR_API_KEY`, `CROSS_VENDOR_BASE_URL`, `CROSS_VENDOR_MODEL`
 
 ## Key Patterns
