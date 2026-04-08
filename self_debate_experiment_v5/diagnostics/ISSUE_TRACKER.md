@@ -131,3 +131,23 @@ Use a weaker model (e.g., a smaller open-source model) as the gate criterion mod
 **Residual:** The pipeline instructions (flaw taxonomy, decoy requirements, stage logic) were written by Claude, so Claude's fingerprint is on the scaffold even if not the output. This is a weaker bias and arguably unavoidable — someone has to design the benchmark methodology. The execution is cross-model; the meta-design is not.
 
 **Empirical check:** Whether GPT transpositions are genuinely harder for Claude than Claude's own transpositions would be is an open empirical question — the smoke test will answer it.
+
+---
+
+## OPEN-8 — DEFAULT_MODELS diversity refactor solves assumed bias not supported by evidence
+
+**Severity:** Moderate — the v5 pipeline design rests on an assumption (family-level circular bias) that empirical recycling data contradicts; no current results are invalidated but the refactor may be unnecessary complexity  
+**Source:** orchestrator.py DEFAULT_MODELS; Stage-2/3 recycle observations
+
+The DEFAULT_MODELS refactor switched from an all-GPT-5.4 lineup to a multi-family configuration (DeepSeek Stage 1, Qwen Stages 2/4, OpenAI Stage 3, Anthropic Stages 5/smoke) on the grounds that 14/15 smoke test failures implied family-level circular bias — same-family models unable to catch their own generation artifacts.
+
+Empirical evidence now contradicts the circular-bias framing. Recycling Stage-3 failures back through Stage 3 with the same model fixed 10 of the 14 failing cases. The remaining 4 are being resolved by recycling through Stage 2. If circular bias were the operative mechanism, re-running the identical model at the same stage would not fix the cases — the bias would reproduce the same failure. The observed pattern is consistent with stage-level quality variance (stochastic generation failures at a specific pipeline stage), not a structural family-bias problem.
+
+This means:
+
+1. The multi-family lineup may be solving a non-existent problem. The diversity adds coordination risk (cross-family formatting inconsistencies, different refusal patterns per vendor) without demonstrated benefit.
+2. The actual fix is a robust recycle/retry path at Stages 2 and 3. The orchestrator currently has no built-in recycle logic — failures at smoke test require manual re-entry at the correct stage. That manual path is what produced the 10/14 recovery.
+
+The refactor is not harmful per se, but it should not be treated as the primary mitigation for smoke test failures. The absence of an automated recycle path is the higher-priority gap.
+
+**Next step:** Add an automated recycle path at Stages 2 and 3 in `orchestrator.py` before the main v5 run. Separately, evaluate whether the multi-family DEFAULT_MODELS lineup is warranted once the recycle path is in place — if failures drop to near-zero under retry, revert to a homogeneous lineup and close the diversity question empirically. Reframe DEFAULT_MODELS comments in `orchestrator.py` — current comments imply circular bias is confirmed; change to reflect that diversity is a precaution, not a proven fix.
