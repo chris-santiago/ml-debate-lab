@@ -35,9 +35,9 @@ def mix_facts(blueprint: dict, seed: int | None = None) -> tuple[dict, dict]:
     rng = random.Random(seed)
 
     mechanism_id = blueprint["mechanism_id"]
-    flaw_facts = blueprint.get("flaw_facts", [])
-    decoy_facts = blueprint.get("decoy_facts", [])
-    neutral_facts = blueprint.get("neutral_facts", [])
+    flaw_facts = blueprint.get("flaw_facts") or []
+    decoy_facts = blueprint.get("decoy_facts") or []
+    neutral_facts = blueprint.get("neutral_facts") or []
 
     # Build unified fact list with role codes (metadata view)
     all_facts_with_roles = []
@@ -50,8 +50,8 @@ def mix_facts(blueprint: dict, seed: int | None = None) -> tuple[dict, dict]:
             "domain_context": fact.get("domain_context", ""),
             # Role-specific metadata (not visible in writer view)
             "_addressed_but_incorrectly": fact["fact_id"] == blueprint.get("addressed_but_incorrectly_fact_id"),
-            "_compound": fact["fact_id"] in blueprint.get("compound_fact_ids", []),
-            "_compound_note": blueprint.get("compound_note") if fact["fact_id"] in blueprint.get("compound_fact_ids", []) else None,
+            "_compound": fact["fact_id"] in blueprint.get("compound_fact_ids") or [],
+            "_compound_note": blueprint.get("compound_note") if fact["fact_id"] in blueprint.get("compound_fact_ids") or [] else None,
         })
 
     for fact in decoy_facts:
@@ -104,7 +104,7 @@ def mix_facts(blueprint: dict, seed: int | None = None) -> tuple[dict, dict]:
         "ideal_resolution_type": blueprint.get("ideal_resolution_type", ""),
         "addressed_but_incorrectly_fact_id": blueprint.get("addressed_but_incorrectly_fact_id"),
         "addressed_but_incorrectly_justification": blueprint.get("addressed_but_incorrectly_justification"),
-        "compound_fact_ids": blueprint.get("compound_fact_ids", []),
+        "compound_fact_ids": blueprint.get("compound_fact_ids") or [],
         "compound_note": blueprint.get("compound_note"),
         "defense_wins_false_concern_signals": blueprint.get("defense_wins_false_concern_signals"),
         "facts": all_facts_with_roles,
