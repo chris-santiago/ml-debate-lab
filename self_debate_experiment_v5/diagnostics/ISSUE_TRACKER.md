@@ -151,3 +151,24 @@ This means:
 The refactor is not harmful per se, but it should not be treated as the primary mitigation for smoke test failures. The absence of an automated recycle path is the higher-priority gap.
 
 **Next step:** Add an automated recycle path at Stages 2 and 3 in `orchestrator.py` before the main v5 run. Separately, evaluate whether the multi-family DEFAULT_MODELS lineup is warranted once the recycle path is in place — if failures drop to near-zero under retry, revert to a homogeneous lineup and close the diversity question empirically. Reframe DEFAULT_MODELS comments in `orchestrator.py` — current comments imply circular bias is confirmed; change to reflect that diversity is a precaution, not a proven fix.
+
+---
+
+## OPEN-9 — Technical report on synthetic case generation methodology not yet written
+
+**Severity:** Minor — documentation debt; no current results affected; only actionable if pipeline is validated  
+**Source:** Multi-stage orchestrator design process; GPT-5.4 all-stages baseline failure (14/15 smoke test failures); smoke test threshold change
+
+**Condition:** This issue should be actioned only if the v5 benchmark run confirms the multi-stage orchestrator produces a sufficient number of cases passing the smoke test gate.
+
+The synthetic case generation pipeline evolved through a non-trivial architectural redesign. The initial implementation used GPT-5.4 and GPT-5.4-mini at every stage, producing 14/15 smoke test failures. The root causes — stage-level quality variance, absence of a recycle path, insufficient separation of concerns — were not obvious from the initial failure signal and required iterative diagnosis. The current multi-stage orchestrator (Stages 1–6) with recycle paths at Stages 2 and 3 represents a substantially different design whose principles are not documented anywhere in the project artifacts.
+
+If the pipeline is validated, a technical report should be written covering:
+
+1. **GPT-5.4 all-stages baseline** — what each stage produced, where failures occurred, and what the smoke test results showed
+2. **Architectural evolution** — which stages were added or restructured and what specific problem each change addresses
+3. **Current working design** — stage-by-stage breakdown of Stages 1–6
+4. **Design principles** — separation of concerns, recycle path as the primary reliability mechanism, smoke test as quality gate, model diversity as a precaution (with OPEN-8 caveat that circular bias remains unconfirmed)
+5. **Threshold comparability caveat** — the smoke test acceptance threshold was raised from 0.4 to 0.55 in the refactored orchestrator; pass rates are not directly comparable to prior methods or versions without adjusting for this change; any cross-version comparison must account for the threshold delta
+
+**Next step:** If and only if the v5 benchmark run validates the pipeline, write the report to `self_debate_experiment_v5/diagnostics/CASE_GENERATION_METHODOLOGY.md`. All pass rate comparisons to previous pipeline versions must explicitly note the 0.4 → 0.55 threshold change.
