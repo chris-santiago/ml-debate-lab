@@ -51,13 +51,13 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # ---------------------------------------------------------------------------
 
 DEFAULT_MODELS: dict[str, str] = {
-    "stage1": "google/gemini-2.5-pro",       # Non-GPT — breaks circular generation bias
-    "stage2": "openai/gpt-4.5-preview",      # Scenario architect
-    "stage3": "openai/gpt-4.5-preview",      # Memo writer
-    "stage4": "openai/gpt-4.5-preview",      # Metadata assembler
-    "stage5": "anthropic/claude-sonnet-4-6", # Leakage auditor (same family as debate agents)
-    "smoke":  "anthropic/claude-haiku-4-5",  # Smoke test evaluator
-    "scorer": "openai/gpt-4.5-preview",      # Maps smoke response → binary scores
+    "stage1": "google/gemini-2.5-pro",        # Non-GPT/Claude — breaks circular generation bias
+    "stage2": "openai/gpt-5.4-mini",          # Scenario architect — structured output, cost-sensitive
+    "stage3": "openai/gpt-5.4",               # Memo writer — critical quality stage; don't cut corners
+    "stage4": "openai/gpt-5.4-mini",          # Metadata assembler — structured JSON, mini is sufficient
+    "stage5": "anthropic/claude-sonnet-4.6",  # Leakage auditor — must be Claude family
+    "smoke":  "anthropic/claude-haiku-4.5",   # Smoke test — backward compat with prior calibration runs
+    "scorer": "openai/gpt-5.4-mini",          # Binary score mapper — low-stakes JSON parsing
 }
 
 # ---------------------------------------------------------------------------
