@@ -4,11 +4,12 @@
 """
 Source catalog for Stage 1 mechanism extraction.
 
-Defines active source references (12 critique sources + 3 defense patterns = 15 active)
+Defines active source references (11 critique sources + 3 defense patterns = 14 active)
 and the selection algorithm that assigns sources to batch slots.
 
-4 sources retired 2026-04-08 (Obermeyer, DeGrave, Lazer, Zech) — IDR=1.0 wall
-regardless of transposition depth. Moved to RETIRED_SOURCES at bottom of file.
+5 sources retired (see RETIRED_SOURCES at bottom of file):
+- 2026-04-08: Obermeyer, DeGrave, Lazer, Zech — IDR=1.0 wall, canonical famous papers
+- 2026-04-08: Source 16 (Instance-Filtering Bias) — IDR=1.0 confirmed in batches 343-357 and 358-372
 
 Code — not the prompt — controls which sources are used and in what quantity.
 """
@@ -245,22 +246,6 @@ CRITIQUE_SOURCES: list[SourceEntry] = [
             "**Flaw type:** `wrong_justification`\n"
             "**Transpose to:** Any post-hoc adjustment fitted and evaluated on the same set — threshold "
             "selection evaluated on the threshold-selection set, normalization evaluated on the normalization sample"
-        ),
-    },
-    {
-        "id": "source_16",
-        "label": "Source 16 — Instance-Filtering Bias from Quality-Based Data Curation",
-        "source_type": "critique",
-        "flaw_type": "assumption_violation",
-        "text": (
-            "### Source 16 — Instance-Filtering Bias from Quality-Based Data Curation\n"
-            "**Abstract mechanism:** Training data is filtered for high-confidence instances using a quality "
-            "score. The model is trained and evaluated on the filtered distribution. The deployment distribution "
-            "includes all incoming instances (including those filtered out), and performance on the excluded "
-            "tail is unknown.\n"
-            "**Flaw type:** `assumption_violation`\n"
-            "**Transpose to:** NLP models trained on high-agreement annotations; medical imaging trained on "
-            "high-quality scans; anomaly detection trained on confirmed labels ignoring ambiguous cases"
         ),
     },
 ]
@@ -578,6 +563,22 @@ RETIRED_SOURCES: list[SourceEntry] = [
             "**Transpose to:** Any model trained on user-generated behavioral signals — app usage as proxy for "
             "customer health, click-through as proxy for content quality, support ticket volume as proxy for "
             "product defect rate"
+        ),
+    },
+    {
+        "id": "source_16",
+        "label": "Source 16 — Instance-Filtering Bias from Quality-Based Data Curation",
+        "source_type": "critique",
+        "flaw_type": "assumption_violation",
+        "text": (
+            "### Source 16 — Instance-Filtering Bias from Quality-Based Data Curation\n"
+            "**Abstract mechanism:** Training data is filtered for high-confidence instances using a quality "
+            "score. The model is trained and evaluated on the filtered distribution. The deployment distribution "
+            "includes all incoming instances (including those filtered out), and performance on the excluded "
+            "tail is unknown.\n"
+            "**Flaw type:** `assumption_violation`\n"
+            "**Transpose to:** NLP models trained on high-agreement annotations; medical imaging trained on "
+            "high-quality scans; anomaly detection trained on confirmed labels ignoring ambiguous cases"
         ),
     },
     {

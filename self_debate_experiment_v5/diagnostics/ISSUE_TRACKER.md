@@ -7,10 +7,10 @@
 
 ## Status at Last Update
 
-- Smoke tests run: V1 (1xx) → V2 (2xx) → V3 (2xx + IDJ) → V4 (batch3, Lever A+B) → V5 (batch3, paragraphs removed) → **Pipeline batches 313–342 (pre-fix), 343–357 (post-fix)**
-- Gate result: **PARTIAL IMPROVEMENT** — batch 343–357 achieved 3/9 critique/mixed IDR=0.0 (first non-zero result); 6/9 still IDR=1.0
+- Smoke tests run: V1 (1xx) → V2 (2xx) → V3 (2xx + IDJ) → V4 (batch3, Lever A+B) → V5 (batch3, paragraphs removed) → **Pipeline batches 313–342 (pre-fix), 343–357 (post-fix), 358–372 (famous sources retired)**
+- Gate result: **IMPROVING** — IDR=0.0 trend: 0/8 → 3/9 → 4/9 across last three batches; wall persists but recycles working
 - Infrastructure (scripts, phases, agents): **READY** — all preflight checks pass
-- Active blocker: famous-paper ceiling (OPEN-14) — mechanisms from Obermeyer, DeGrave, Lazer, Zech remain IDR=1.0 regardless of transposition depth
+- Active blocker: residual IDR=1.0 wall on pattern-level sources (14, 16) and moderately well-known papers (Recht, SMOTE, offline-online gap) — famous-paper retirement helped but wall is broader than those four sources
 
 ---
 
@@ -214,6 +214,26 @@ The Stage 2 prompt said "distribute facts across paragraphs" and "don't cluster 
 
 ---
 
+## OPEN-15 — Smoke test gate model (Haiku) is weaker than experiment baseline (Sonnet)
+
+**Severity:** High — gate may be passing cases that are too easy for the actual experiment participants  
+**Source:** Calibration analysis 2026-04-08
+
+The smoke test uses Haiku to gate cases (reject if proxy ≥ 0.75). The main experiment debate agents run on Sonnet. Since Haiku ≪ Sonnet, cases that stumps Haiku (IDR=0.0, proxy=0.25) may still be trivially solved by a single Sonnet pass — meaning debate vs. single-pass Sonnet shows no lift, not because debate fails, but because the baseline already aces the case.
+
+The gate currently filters "too easy for Haiku" but the experiment needs "hard enough for single Sonnet." Those are different bars. The second row of the risk matrix is unguarded:
+
+| Haiku | Sonnet single-pass | Usable? |
+|---|---|---|
+| IDR=1.0 | — | No — filtered by gate |
+| IDR=0.0 | IDR=1.0 | **No — but currently passes gate** |
+| IDR=0.0 | partial | Yes — debate adds lift |
+| IDR=0.0 | IDR=0.0 | No — too hard, noise |
+
+**Next step:** Run a single-pass Sonnet evaluation on a sample of IDR=0.0 Haiku cases before committing to the full experiment. If Sonnet aces them, either swap the smoke test model to Sonnet or add a second gate pass. If Sonnet also struggles, current calibration is appropriate.
+
+---
+
 ## OPEN-14 — Famous-paper ceiling: canonical ML papers remain IDR=1.0 regardless of transposition depth
 
 **Severity:** High — limits effectiveness of transposition depth fix (OPEN-11) for the most well-known sources  
@@ -243,7 +263,11 @@ The three sources that achieved IDR=0.0 (Ziegler, Dacrema, Caruana) are technica
 2. **Require compound transposition for famous sources** — the mechanism must be split across two interacting causal steps, neither of which alone resembles the source paper's abstract mechanism.
 3. **Accept the split and use selectively** — use famous-source cases for defense_wins scenarios (where IDR=1.0 doesn't fail the gate) and reserve critique/mixed slots for less-famous sources.
 
-**Resolution (2026-04-08):** Option 1 applied — Obermeyer, DeGrave, Lazer, Zech removed from `CRITIQUE_SOURCES` in `source_catalog.py`. Moved to `RETIRED_SOURCES` list for reference. Active catalog is now 12 critique + 3 defense = 15 sources.
+**Resolution (2026-04-08):** Option 1 applied — Obermeyer, DeGrave, Lazer, Zech removed from `CRITIQUE_SOURCES` in `source_catalog.py`. Moved to `RETIRED_SOURCES` list for reference. Active catalog reduced to 12 critique + 3 defense = 15 sources.
+
+**Cross-batch analysis (2026-04-08):** Source 16 (Instance-Filtering Bias) confirmed consistent IDR=1.0 wall in both batches 343-357 and 358-372. Retired. Active catalog now 11 critique + 3 defense = 14 sources. All other sources with IDR=1.0 appearances had only single-batch data — insufficient to retire; monitoring continues.
+
+**Empirical result (batch 358–372, 2026-04-08):** Retirement helped but wall persists. 4/9 IDR=0.0 (mech_001/Source 14 via S1 recycle, mech_004, mech_005/Source 8 via S1 recycle, mech_012). 5/9 still IDR=1.0 — Sources 14, 16, 6, 8, 11. Wall is not limited to canonical famous papers; pattern-level and moderately-known sources also ceiling. Trend: 0/8 → 3/9 → 4/9. Runtime dropped from ~20 min to ~10 min with concurrency=10. 15/15 accepted, 0 exhausted.
 
 ---
 
