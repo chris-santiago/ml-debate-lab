@@ -1,6 +1,6 @@
 # Case Generation Pipeline — Usage Guide
 
-This pipeline replaces the monolithic `REAL_PAPER_CASE_GENERATION_PROMPT.md` with a 7-stage context-isolated workflow. The pipeline handles **generation only** — scoring and difficulty calibration use the existing smoke test process in `diagnostics/HAIKU_SMOKE_TEST_INSTRUCTIONS.md`.
+This pipeline replaces the monolithic `REAL_PAPER_CASE_GENERATION_PROMPT.md` with a multi-stage context-isolated workflow. The pipeline handles **generation only** — scoring and difficulty calibration use the existing smoke test process in `diagnostics/HAIKU_SMOKE_TEST_INSTRUCTIONS.md`.
 
 ---
 
@@ -19,7 +19,8 @@ The monolithic prompt failed 5 consecutive smoke tests because the LLM that know
 ```
 pipeline/
   prompts/
-    stage1_mechanism_extractor.md   # Selects flaw mechanisms, produces blueprints
+    stage1_mechanism_extractor.md   # Stage 1 for real paper transpositions
+    stage1_benchmark_extractor.md   # Stage 1 for benchmark category cases
     stage2_scenario_architect.md    # Designs the scenario brief
     stage3_memo_writer.md           # Writes the team advocacy memo
     stage4_metadata_assembler.md    # Constructs the answer key
@@ -33,7 +34,7 @@ pipeline/
 
 ## Running the Pipeline
 
-## Choosing a Stage 1 extractor
+### Choosing a Stage 1 extractor
 
 | Use case | Stage 1 prompt |
 |---|---|
@@ -47,7 +48,9 @@ Stages 2–5, `fact_mixer.py`, and the smoke test are identical for both. The on
 ### Step 1 — Generate mechanism blueprints (Stage 1)
 
 Fill the placeholders in the appropriate Stage 1 prompt (`stage1_mechanism_extractor.md` or `stage1_benchmark_extractor.md`) and instruct an agent to read the file and execute it:
+- `{{EXTRACTOR_SOURCE}}`: `real_paper` or `benchmark` — matches the prompt you chose above
 - `{{BATCH_SIZE}}`: number of cases (e.g., 15)
+- `{{BATCH_NUMBER}}`: sequential batch number for this run (e.g., 4)
 - `{{PREVIOUS_BATCH_USAGE}}`: JSON of sources/domains already used, or `{}`
 
 Save the JSON output to `pipeline/run/stage1_blueprints.json`.
@@ -67,7 +70,7 @@ Set `{{EXTRACTOR_SOURCE}}` to `real_paper` or `benchmark` to match the Stage 1 p
 
 Produces per-case `writer_view` (no role labels) and `metadata_view` (with role labels) files.
 
-**Steps 3–5 run once per case.** In all file paths below, replace `NNN` with the zero-padded mechanism number from the `mechanism_id` field in the Stage 1 output (e.g., `mech_001`, `mech_002`). For `{{CASE_ID}}`, assign `eval_scenario_NNN` using the next available case number in `benchmark_cases.json` (or start at `301` if this is the first batch).
+**Steps 3–5 run once per case.** In all file paths below, replace `NNN` with the zero-padded mechanism number from the `mechanism_id` field in the Stage 1 output (e.g., `mech_001`, `mech_002`). For `{{CASE_ID}}`, assign `eval_scenario_NNN` using the next available case number — check the highest existing `case_id` in `benchmark_cases.json` and increment from there (batch3 ended at `eval_scenario_309`, so the next batch starts at `eval_scenario_310`).
 
 ### Step 3 — Scenario Architect (Stage 2, one per case)
 
@@ -110,7 +113,7 @@ Replace `{{BATCH_NUMBER}}` with the actual batch number (e.g., `4`):
 
 ```bash
 cd self_debate_experiment_v5/synthetic-candidates
-python3 -c "
+uv run python -c "
 import json, glob
 cases = [json.load(open(f)) for f in sorted(glob.glob('pipeline/run/cases/*.json'))]
 print(f'{len(cases)} cases assembled')
