@@ -126,7 +126,7 @@ Use a weaker model (e.g., a smaller open-source model) as the gate criterion mod
 ### RESOLVED-BY-DESIGN — Same-model circular bias in case generation
 **Concern:** If Claude generates the benchmark cases and Claude debates them, the generating model implicitly calibrates cases to its own blind spots. Flaw mechanisms would be shaped by Claude's prior over "what looks like a flaw," making the benchmark a test of Claude's self-knowledge rather than debate quality.
 
-**Resolution:** The modular pipeline in `synthetic-candidates/pipeline/` is explicitly designed to be run by a non-Anthropic LLM (GPT-4o, Gemini, Perplexity, etc.). The generation prompt header has always specified this; the pipeline formalizes it. GPT generates the cases, Claude debates them — different architectures, different priors, clean cross-model design.
+**Resolution:** Already the practice since v2 — GPT has been used for case generation throughout the experiment. The generation prompt header has always specified non-Anthropic LLM use. The modular pipeline formalizes this workflow but did not introduce it. GPT generates the cases, Claude debates them — different architectures, different priors, clean cross-model design by design from the start.
 
 **Residual:** The pipeline instructions (flaw taxonomy, decoy requirements, stage logic) were written by Claude, so Claude's fingerprint is on the scaffold even if not the output. This is a weaker bias and arguably unavoidable — someone has to design the benchmark methodology. The execution is cross-model; the meta-design is not.
 
