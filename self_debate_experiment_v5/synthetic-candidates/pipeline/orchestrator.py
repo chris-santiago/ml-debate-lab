@@ -9,10 +9,10 @@
 Pipeline Orchestrator — Runs all case generation stages via OpenRouter API.
 
 Stages:
-  1   Mechanism Extractor  (batch — one LLM call)
+  1   Mechanism Extractor  (one LLM call per source, concurrent ≤5)
   1.5 Fact Mixer           (deterministic Python, no LLM)
-  2   Scenario Architect   (per case)
-  3   Memo Writer          (per case)
+  2   Scenario Architect   (per case, concurrent ≤5 across cases)
+  3   Memo Writer          (per case, concurrent ≤5 across cases)
   5   Leakage Auditor      (per case, blind — runs before Stage 4)
   4   Metadata Assembler   (per case — sees audit output)
   6   Smoke Test           (per case — blind eval + separate scorer)
@@ -21,10 +21,10 @@ Usage:
     uv run pipeline/orchestrator.py \\
         --extractor-source real_paper \\
         --batch-size 15 \\
-        --start-case-id 310
+        --start-case-id 313
 
 Models are configurable per stage via --stage1-model, --stage5-model, etc.
-Default Stage 1 is a non-GPT model to break circular generation bias.
+Code (not prompts) controls iteration. Python loop + ThreadPoolExecutor(max_workers=5).
 """
 
 import argparse
@@ -33,8 +33,11 @@ import os
 import re
 import subprocess
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import openai
 from openai import OpenAI
 from rich.console import Console
 from rich.progress import (
@@ -58,6 +61,12 @@ PIPELINE_DIR = Path(__file__).parent
 PROMPTS_DIR = PIPELINE_DIR / "prompts"
 RUN_DIR = PIPELINE_DIR / "run"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+MAX_WORKERS = 5       # concurrent API calls per stage
+API_TIMEOUT = 180.0   # seconds per request before raising TimeoutError
+
+# Source catalog lives alongside this script
+sys.path.insert(0, str(PIPELINE_DIR))
+from source_catalog import select_sources  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Default model config
@@ -103,7 +112,7 @@ def get_client() -> OpenAI:
     if not api_key:
         print("ERROR: OPENROUTER_API_KEY not set", file=sys.stderr)
         sys.exit(1)
-    return OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL)
+    return OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL, timeout=API_TIMEOUT)
 
 
 def extract_json(text: str) -> str:
@@ -116,16 +125,24 @@ def extract_json(text: str) -> str:
 
 
 def call_llm(prompt: str, model: str, client: OpenAI, dry_run: bool = False) -> str:
-    """Call OpenRouter. Returns raw response text."""
+    """Call OpenRouter. Returns raw response text. Retries on rate-limit with backoff."""
     if dry_run:
         preview = prompt[:200].replace("\n", " ")
         console.print(f"    [DRY RUN] {model} ← {len(prompt)}ch: {preview}...")
         return '{"dry_run": true}'
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.choices[0].message.content or ""
+    for attempt, delay in enumerate([0, 1, 2, 4]):
+        if delay:
+            time.sleep(delay)
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.choices[0].message.content or ""
+        except openai.RateLimitError:
+            if attempt == 3:
+                raise
+            console.print(f"    [yellow]Rate limited by {model}, retrying in {delay*2}s...[/yellow]")
 
 
 def call_llm_json(
@@ -174,12 +191,6 @@ def read_prompt(filename: str) -> str:
 # ---------------------------------------------------------------------------
 
 def run_stage1(config: dict, client: OpenAI) -> list[dict]:
-    extractor_file = (
-        "stage1_mechanism_extractor.md"
-        if config["extractor_source"] == "real_paper"
-        else "stage1_benchmark_extractor.md"
-    )
-    template = read_prompt(extractor_file)
     out = RUN_DIR / "stage1_blueprints.json"
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -189,39 +200,69 @@ def run_stage1(config: dict, client: OpenAI) -> list[dict]:
         out.write_text(json.dumps(result, indent=2), encoding="utf-8")
         return result
 
-    blueprints: list[dict] = []
-    for i in range(config["batch_size"]):
-        mechanism_id = f"mech_{i+1:03d}"
-        # Pass already-generated blueprints as diversity context for this call
-        used = {
-            "previous_batches": config["previous_batch_usage"],
-            "this_batch": [
-                {"mechanism_id": bp["mechanism_id"],
-                 "category": bp.get("category"),
-                 "source_reference": bp.get("source_reference"),
-                 "case_type": bp.get("case_type"),
-                 "target_domain": bp.get("target_domain")}
-                for bp in blueprints
-            ],
-        }
+    if config["extractor_source"] != "real_paper":
+        raise NotImplementedError(
+            "Concurrent Stage 1 is only implemented for real_paper mode. "
+            "benchmark mode uses the legacy sequential path — pass --extractor-source real_paper."
+        )
+
+    # Select sources: code assigns which source each call uses
+    assignments = select_sources(
+        batch_size=config["batch_size"],
+        previous_usage=config["previous_batch_usage"],
+        seed=config["seed"],
+    )
+    template = read_prompt("stage1_mechanism_extractor.md")
+
+    console.print(
+        f"[Stage 1] {len(assignments)} sources selected → "
+        f"{config['models']['stage1']} (concurrent ≤{MAX_WORKERS})"
+    )
+    for a in assignments:
+        console.print(
+            f"  {a['mechanism_id']}  [{a['case_type']:12}]  {a['source']['label']}"
+        )
+
+    def generate_one(assignment: dict) -> dict:
+        mechanism_id = assignment["mechanism_id"]
         prompt = fill_placeholders(template, {
-            "BATCH_SIZE": "1",
-            "PREVIOUS_BATCH_USAGE": json.dumps(used),
+            "SOURCE_REFERENCE":    assignment["source"]["text"],
+            "CASE_TYPE":           assignment["case_type"],
+            "MECHANISM_ID":        mechanism_id,
+            "PREVIOUS_BATCH_USAGE": json.dumps(config["previous_batch_usage"]),
         })
-        console.print(f"[Stage 1] {mechanism_id} ({i+1}/{config['batch_size']}) → {config['models']['stage1']}")
         raw = call_llm_json(prompt, config["models"]["stage1"], client, dry_run=False)
-        # Accept single object or single-element array
         if isinstance(raw, list):
             raw = raw[0] if raw else {}
         if not isinstance(raw, dict):
             raise ValueError(f"Stage 1 {mechanism_id}: expected JSON object, got {type(raw).__name__}")
+        raw["mechanism_id"] = mechanism_id
         raw.setdefault("pipeline_source", config["extractor_source"])
-        raw["mechanism_id"] = mechanism_id  # enforce canonical ID
-        blueprints.append(raw)
-        out.write_text(json.dumps(blueprints, indent=2), encoding="utf-8")  # save incrementally
+        console.print(f"  [green]✓[/green] {mechanism_id} ({assignment['source']['label'][:50]})")
+        return raw
 
-    console.print(f"[Stage 1] {len(blueprints)} blueprints saved → {out}")
-    return blueprints
+    blueprints: list[dict | None] = [None] * len(assignments)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_idx = {executor.submit(generate_one, a): i for i, a in enumerate(assignments)}
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                blueprints[idx] = future.result()
+            except Exception as exc:
+                mech_id = assignments[idx]["mechanism_id"]
+                console.print(f"  [red]✗ {mech_id} FAILED: {exc}[/red]")
+                blueprints[idx] = {
+                    "mechanism_id": mech_id,
+                    "pipeline_source": config["extractor_source"],
+                    "error": str(exc),
+                    "status": "failed",
+                }
+
+    result = [bp for bp in blueprints if bp is not None]
+    out.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    n_ok = sum(1 for bp in result if "error" not in bp)
+    console.print(f"[Stage 1] {n_ok}/{len(result)} blueprints OK → {out}")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -754,8 +795,24 @@ def main() -> None:
     # Stage 1.5
     run_fact_mixer(config)
 
-    # Per-case stages — wrapped in progress display
+    # Per-case stages — concurrent across cases, sequential within each case
     stages_per_case = 4 + (2 if not config["no_smoke"] else 0)
+
+    # Pre-filter: resolve resume before entering Progress context
+    cases_to_run: list[tuple[str, str]] = []
+    for i, blueprint in enumerate(blueprints):
+        if blueprint.get("status") == "failed":
+            console.print(f"  [dim]Skipping {blueprint.get('mechanism_id')} — Stage 1 failed[/dim]")
+            continue
+        mechanism_id = blueprint.get("mechanism_id", f"mech_{i+1:03d}")
+        case_id = f"eval_scenario_{config['start_case_id'] + i}"
+        case_out = RUN_DIR / "cases" / f"{mechanism_id}.json"
+        if config["resume"] and case_out.exists():
+            existing = json.loads(case_out.read_text(encoding="utf-8"))
+            if existing.get("verifier_status") == "pending":
+                console.print(f"  [dim]{mechanism_id} → already accepted, skipping[/dim]")
+                continue
+        cases_to_run.append((mechanism_id, case_id))
 
     with Progress(
         SpinnerColumn(),
@@ -769,39 +826,34 @@ def main() -> None:
     ) as progress:
         batch_task = progress.add_task(
             f"[bold]Cases {start}–{end}[/bold]",
-            total=config["batch_size"],
+            total=len(blueprints),
         )
-        case_task = progress.add_task("", total=stages_per_case, visible=False)
-
-        for i, blueprint in enumerate(blueprints):
-            mechanism_id = blueprint.get("mechanism_id", f"mech_{i+1:03d}")
-            case_id = f"eval_scenario_{config['start_case_id'] + i}"
-
-            # Resume: skip if Stage 4 output already exists and is accepted
-            case_out = RUN_DIR / "cases" / f"{mechanism_id}.json"
-            if config["resume"] and case_out.exists():
-                existing = json.loads(case_out.read_text(encoding="utf-8"))
-                if existing.get("verifier_status") == "pending":
-                    console.print(f"  [dim]{mechanism_id} → already accepted, skipping[/dim]")
-                    progress.advance(batch_task)
-                    continue
-
-            progress.reset(case_task, total=stages_per_case)
-            progress.update(
-                case_task,
-                description=f"[cyan]{mechanism_id}[/cyan] → {case_id}",
-                visible=True,
-            )
-
-            run_case(
-                mechanism_id, case_id, config, client,
-                progress=progress,
-                case_task=case_task,
-                stages_per_case=stages_per_case,
-            )
+        # Advance past skipped (resumed) cases
+        skipped = len(blueprints) - len(cases_to_run)
+        for _ in range(skipped):
             progress.advance(batch_task)
 
-        progress.update(case_task, visible=False)
+        def process_case(args: tuple[str, str]) -> None:
+            mechanism_id, case_id = args
+            case_task = progress.add_task(
+                f"[cyan]{mechanism_id}[/cyan]",
+                total=stages_per_case,
+            )
+            try:
+                run_case(
+                    mechanism_id, case_id, config, client,
+                    progress=progress,
+                    case_task=case_task,
+                    stages_per_case=stages_per_case,
+                )
+            except Exception as exc:
+                console.print(f"  [red]FATAL {mechanism_id}: {exc}[/red]")
+            finally:
+                progress.update(case_task, visible=False)
+                progress.advance(batch_task)
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            list(executor.map(process_case, cases_to_run))
 
     # Assemble
     assemble_batch(config)
