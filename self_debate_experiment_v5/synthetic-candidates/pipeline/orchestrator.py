@@ -2,6 +2,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #   "openai>=1.0",
+#   "rich>=13.0",
 # ]
 # ///
 """
@@ -36,6 +37,19 @@ import sys
 from pathlib import Path
 
 from openai import OpenAI
+from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskID,
+    TextColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+)
+
+console = Console()
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -106,7 +120,7 @@ def call_llm(prompt: str, model: str, client: OpenAI, dry_run: bool = False) -> 
     """Call OpenRouter. Returns raw response text."""
     if dry_run:
         preview = prompt[:200].replace("\n", " ")
-        print(f"    [DRY RUN] {model} ← {len(prompt)}ch: {preview}...")
+        console.print(f"    [DRY RUN] {model} ← {len(prompt)}ch: {preview}...")
         return '{"dry_run": true}'
     response = client.chat.completions.create(
         model=model,
@@ -176,16 +190,19 @@ def run_stage1(config: dict, client: OpenAI) -> list[dict]:
 
     if config["dry_run"]:
         result = [{"mechanism_id": f"mech_{i+1:03d}", "dry_run": True} for i in range(config["batch_size"])]
-        print(f"[Stage 1] [DRY RUN] Synthetic {config['batch_size']} blueprints")
+        console.print(f"[Stage 1] [DRY RUN] Synthetic {config['batch_size']} blueprints")
     else:
         result = call_llm_json(prompt, config["models"]["stage1"], client, dry_run=False)
         if not isinstance(result, list):
             raise ValueError(f"Stage 1 must return a JSON array, got {type(result).__name__}")
+        # Inject pipeline_source — LLMs sometimes omit this field despite instructions
+        for bp in result:
+            bp.setdefault("pipeline_source", config["extractor_source"])
 
     out = RUN_DIR / "stage1_blueprints.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2), encoding="utf-8")
-    print(f"[Stage 1] {len(result)} blueprints saved → {out}")
+    console.print(f"[Stage 1] {len(result)} blueprints saved → {out}")
     return result
 
 
@@ -204,15 +221,15 @@ def run_fact_mixer(config: dict) -> None:
         "--seed", str(config["seed"]),
         "--expected-source", config["extractor_source"],
     ]
-    print(f"[Stage 1.5] Running fact_mixer.py...")
+    console.print("[Stage 1.5] Running fact_mixer.py...")
     if config["dry_run"]:
-        print(f"  [DRY RUN] Would run: {' '.join(cmd)}")
+        console.print(f"  [DRY RUN] Would run: {' '.join(cmd)}")
         return
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        print(result.stderr, file=sys.stderr)
+        console.print(result.stderr, style="red")
         raise RuntimeError(f"fact_mixer.py exited {result.returncode}")
-    print(result.stdout.rstrip())
+    console.print(result.stdout.rstrip())
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +251,7 @@ def _archive(mechanism_id: str, attempt: int) -> None:
 
 def run_stage2(mechanism_id: str, config: dict, client: OpenAI, note: str = "") -> dict:
     if config["dry_run"]:
-        print(f"    [Stage 2] {mechanism_id} → {config['models']['stage2']} [DRY RUN]")
+        console.print(f"  S2 {mechanism_id} → {config['models']['stage2']} [dim](dry run)[/dim]")
         return {"dry_run": True}
     writer_view = json.loads(
         (RUN_DIR / "stage1.5" / f"{mechanism_id}_writer_view.json").read_text(encoding="utf-8")
@@ -248,7 +265,6 @@ def run_stage2(mechanism_id: str, config: dict, client: OpenAI, note: str = "") 
         "CATEGORY":              writer_view.get("category", ""),
         "WRITER_VIEW_FACTS":     json.dumps(writer_view.get("facts", []), indent=2),
     })
-    print(f"    [Stage 2] {mechanism_id} → {config['models']['stage2']}")
     result = call_llm_json(prompt, config["models"]["stage2"], client, dry_run=False)
     out = RUN_DIR / "stage2" / f"{mechanism_id}_scenario.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -258,7 +274,7 @@ def run_stage2(mechanism_id: str, config: dict, client: OpenAI, note: str = "") 
 
 def run_stage3(mechanism_id: str, config: dict, client: OpenAI, note: str = "") -> str:
     if config["dry_run"]:
-        print(f"    [Stage 3] {mechanism_id} → {config['models']['stage3']} [DRY RUN]")
+        console.print(f"  S3 {mechanism_id} → {config['models']['stage3']} [dim](dry run)[/dim]")
         return "[dry_run memo]"
     scenario = json.loads(
         (RUN_DIR / "stage2" / f"{mechanism_id}_scenario.json").read_text(encoding="utf-8")
@@ -269,7 +285,6 @@ def run_stage3(mechanism_id: str, config: dict, client: OpenAI, note: str = "") 
     prompt = fill_placeholders(template, {
         "SCENARIO_BRIEF": json.dumps(scenario, indent=2),
     })
-    print(f"    [Stage 3] {mechanism_id} → {config['models']['stage3']}")
     memo = call_llm(prompt, config["models"]["stage3"], client, dry_run=False)
     out = RUN_DIR / "stage3" / f"{mechanism_id}_memo.txt"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -279,25 +294,24 @@ def run_stage3(mechanism_id: str, config: dict, client: OpenAI, note: str = "") 
 
 def run_stage5(mechanism_id: str, config: dict, client: OpenAI) -> dict:
     if config["dry_run"]:
-        print(f"    [Stage 5] {mechanism_id} → {config['models']['stage5']} (leakage audit) [DRY RUN]")
+        console.print(f"  S5 {mechanism_id} → {config['models']['stage5']} [dim](dry run)[/dim]")
         return {"overall_leakage_score": 0.0, "voice_assessment": "team_advocacy", "dry_run": True}
     memo = (RUN_DIR / "stage3" / f"{mechanism_id}_memo.txt").read_text(encoding="utf-8")
     template = read_prompt("stage5_leakage_auditor.md")
     prompt = fill_placeholders(template, {"TASK_PROMPT": memo})
-    print(f"    [Stage 5] {mechanism_id} → {config['models']['stage5']} (leakage audit)")
     result = call_llm_json(prompt, config["models"]["stage5"], client, dry_run=False)
     out = RUN_DIR / "stage5" / f"{mechanism_id}_audit.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2), encoding="utf-8")
     leakage = result.get("overall_leakage_score", "?")
     voice = result.get("voice_assessment", "?")
-    print(f"    [Stage 5] leakage={leakage} voice={voice}")
+    console.print(f"  S5 {mechanism_id} leakage={leakage} voice={voice}")
     return result
 
 
 def run_stage4(mechanism_id: str, case_id: str, config: dict, client: OpenAI) -> dict:
     if config["dry_run"]:
-        print(f"    [Stage 4] {mechanism_id} → {config['models']['stage4']} (metadata assembly) [DRY RUN]")
+        console.print(f"  S4 {mechanism_id} → {config['models']['stage4']} [dim](dry run)[/dim]")
         return {"case_id": case_id, "verifier_status": "pending", "dry_run": True}
     metadata_view = json.loads(
         (RUN_DIR / "stage1.5" / f"{mechanism_id}_metadata_view.json").read_text(encoding="utf-8")
@@ -314,7 +328,6 @@ def run_stage4(mechanism_id: str, case_id: str, config: dict, client: OpenAI) ->
         "TASK_PROMPT":         memo,
         "CASE_ID":             case_id,
     })
-    print(f"    [Stage 4] {mechanism_id} → {config['models']['stage4']} (metadata assembly)")
     result = call_llm_json(prompt, config["models"]["stage4"], client, dry_run=False)
     out = RUN_DIR / "cases" / f"{mechanism_id}.json"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -328,8 +341,7 @@ def run_stage4(mechanism_id: str, case_id: str, config: dict, client: OpenAI) ->
 
 def run_smoke_test(mechanism_id: str, case: dict, config: dict, client: OpenAI) -> dict:
     if config["dry_run"]:
-        print(f"    [Stage 6] {mechanism_id} → {config['models']['smoke']} (blind eval) [DRY RUN]")
-        print(f"    [Stage 6] {mechanism_id} → {config['models']['scorer']} (scoring) [DRY RUN]")
+        console.print(f"  S6 {mechanism_id} → {config['models']['smoke']} / {config['models']['scorer']} [dim](dry run)[/dim]")
         return {"mechanism_id": mechanism_id, "proxy_mean": 0.0, "gate_pass": True, "dry_run": True}
     task_prompt = case.get("task_prompt", "")
     scoring_targets = case.get("scoring_targets", {})
@@ -338,7 +350,6 @@ def run_smoke_test(mechanism_id: str, case: dict, config: dict, client: OpenAI) 
     acceptable = scoring_targets.get("acceptable_resolutions", [])
 
     # Call 1: blind evaluation (no answer key)
-    print(f"    [Stage 6] {mechanism_id} → {config['models']['smoke']} (blind eval)")
     smoke_raw = call_llm(SMOKE_WRAPPER + task_prompt, config["models"]["smoke"], client, config["dry_run"])
     try:
         smoke_resp = json.loads(extract_json(smoke_raw))
@@ -389,7 +400,7 @@ Return JSON only:
   "verdict_given": "critique | defense | mixed | empirical_test_agreed | unclear"
 }}"""
 
-    print(f"    [Stage 6] {mechanism_id} → {config['models']['scorer']} (scoring)")
+    console.print(f"  S6 {mechanism_id} → scorer")
     try:
         scored = call_llm_json(score_prompt, config["models"]["scorer"], client, config["dry_run"])
     except ValueError:
@@ -427,8 +438,9 @@ Return JSON only:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
+    gate_color = "green" if result["gate_pass"] else "red"
     status = "PASS" if result["gate_pass"] else "FAIL"
-    print(f"    [Stage 6] proxy_mean={proxy_mean:.3f} IDR={idr} IDP={idp} FVC={fvc} IDJ={idj} [{status}]")
+    console.print(f"  S6 {mechanism_id} proxy={proxy_mean:.3f} IDR={idr} IDP={idp} FVC={fvc} IDJ={idj} [{gate_color}]{status}[/{gate_color}]")
     return result
 
 
@@ -508,35 +520,67 @@ def recycle_action(audit: dict, smoke: dict | None) -> tuple[str | None, str, st
 # ---------------------------------------------------------------------------
 
 def run_case(
-    mechanism_id: str, case_id: str, config: dict, client: OpenAI
+    mechanism_id: str,
+    case_id: str,
+    config: dict,
+    client: OpenAI,
+    *,
+    progress: Progress | None = None,
+    case_task: TaskID | None = None,
+    stages_per_case: int = 6,
 ) -> dict | None:
     """Run Stages 2→3→5→4→[6] for one case, with auto-recycling."""
     max_recycles = config["max_recycles"]
     note_s2 = ""
     note_s3 = ""
 
+    def _step(label: str) -> None:
+        if progress is not None and case_task is not None:
+            attempt_tag = f" [yellow](↻{attempt})[/yellow]" if attempt > 0 else ""
+            progress.update(case_task, description=f"[cyan]{mechanism_id}[/cyan]{attempt_tag} — {label}")
+
+    def _advance() -> None:
+        if progress is not None and case_task is not None:
+            progress.advance(case_task)
+
     for attempt in range(max_recycles + 1):
         if attempt > 0:
-            print(f"\n  [{mechanism_id}] ── Recycle attempt {attempt}/{max_recycles}")
+            console.print(f"  [yellow]↻ {mechanism_id} recycle {attempt}/{max_recycles}[/yellow]")
+            if progress is not None and case_task is not None:
+                progress.reset(case_task, total=stages_per_case)
 
         try:
+            _step("S2 scenario architect")
             run_stage2(mechanism_id, config, client, note=note_s2)
+            _advance()
+
+            _step("S3 memo writer")
             run_stage3(mechanism_id, config, client, note=note_s3)
+            _advance()
+
+            _step("S5 leakage audit")
             audit = run_stage5(mechanism_id, config, client)
+            _advance()
+
+            _step("S4 metadata assembly")
             case = run_stage4(mechanism_id, case_id, config, client)
+            _advance()
 
             smoke = None
             if not config["no_smoke"]:
+                _step("S6 smoke eval")
                 smoke = run_smoke_test(mechanism_id, case, config, client)
+                _advance()
+                _advance()  # smoke counts as 2 steps (eval + scorer call inside)
 
             stage, reason, note = recycle_action(audit, smoke)
 
             if stage is None:
-                print(f"  [{mechanism_id}] ✓ ACCEPTED (attempt {attempt})")
+                console.print(f"  [green]✓ {mechanism_id} ACCEPTED[/green] (attempt {attempt})")
                 return case
 
             if attempt >= max_recycles:
-                print(f"  [{mechanism_id}] ✗ EXHAUSTED ({max_recycles} recycles, last reason: {reason})")
+                console.print(f"  [red]✗ {mechanism_id} EXHAUSTED[/red] ({max_recycles} recycles, reason: {reason})")
                 case["verifier_status"] = "exhausted"
                 case["recycle_failure_reason"] = reason
                 (RUN_DIR / "cases" / f"{mechanism_id}.json").write_text(
@@ -544,18 +588,17 @@ def run_case(
                 )
                 return case
 
-            print(f"  [{mechanism_id}] → recycle to {stage} (reason: {reason})")
+            console.print(f"  [yellow]→ {mechanism_id} recycle → {stage}[/yellow] ({reason})")
             _archive(mechanism_id, attempt)
 
-            # Set notes for next attempt
             if stage == "stage3":
                 note_s3 = note
             else:
                 note_s2 = note
-                note_s3 = ""  # fresh stage 3 after new scenario
+                note_s3 = ""
 
         except Exception as exc:
-            print(f"  [{mechanism_id}] ERROR: {exc}", file=sys.stderr)
+            console.print(f"  [red]ERROR {mechanism_id}: {exc}[/red]")
             if attempt >= max_recycles:
                 return None
 
@@ -568,7 +611,7 @@ def run_case(
 
 def assemble_batch(config: dict) -> None:
     if config["dry_run"]:
-        print(f"\n[DRY RUN] Would assemble cases_batch{config['batch_number']}.json from pipeline/run/cases/")
+        console.print(f"\n[dim][DRY RUN] Would assemble cases_batch{config['batch_number']}.json from pipeline/run/cases/[/dim]")
         return
     cases_dir = RUN_DIR / "cases"
     accepted = []
@@ -591,19 +634,19 @@ def assemble_batch(config: dict) -> None:
     out_path.write_text(json.dumps(accepted, indent=2), encoding="utf-8")
 
     total = len(accepted) + len(recycled) + len(exhausted)
-    print(f"\n{'='*60}")
-    print(f"BATCH {config['batch_number']} SUMMARY")
-    print(f"{'='*60}")
-    print(f"  Total processed : {total}")
-    print(f"  Accepted        : {len(accepted)}")
-    print(f"  Recycle-flagged : {len(recycled)}")
-    print(f"  Exhausted       : {len(exhausted)}")
-    print(f"  Output          : {out_path}")
+    console.rule(f"[bold]Batch {config['batch_number']} Summary[/bold]")
+    console.print(f"  Total processed : {total}")
+    console.print(f"  [green]Accepted        : {len(accepted)}[/green]")
+    if recycled:
+        console.print(f"  [yellow]Recycle-flagged : {len(recycled)}[/yellow]")
+    if exhausted:
+        console.print(f"  [red]Exhausted       : {len(exhausted)}[/red]")
+    console.print(f"  Output          : {out_path}")
 
     if exhausted:
-        print("\n  Exhausted cases:")
+        console.print("\n  Exhausted cases:")
         for c in exhausted:
-            print(f"    {c.get('case_id', '?')} — {c.get('recycle_failure_reason', 'unknown')}")
+            console.print(f"    [red]{c.get('case_id', '?')}[/red] — {c.get('recycle_failure_reason', 'unknown')}")
 
 
 # ---------------------------------------------------------------------------
@@ -667,44 +710,78 @@ def main() -> None:
     args = parse_args()
     config = build_config(args)
 
-    print("\nPipeline Orchestrator")
-    print(f"  Extractor : {config['extractor_source']}")
-    print(f"  Batch     : {config['batch_number']}  ({config['batch_size']} cases, IDs {config['start_case_id']}–{config['start_case_id'] + config['batch_size'] - 1})")
-    print(f"  Recycles  : max {config['max_recycles']} per case")
-    print(f"  Smoke test: {'OFF (--no-smoke)' if config['no_smoke'] else 'ON'}")
-    print(f"  Models:")
+    console.rule("[bold]Pipeline Orchestrator[/bold]")
+    console.print(f"  Extractor : {config['extractor_source']}")
+    console.print(f"  Batch     : {config['batch_number']}  ({config['batch_size']} cases, IDs {config['start_case_id']}–{config['start_case_id'] + config['batch_size'] - 1})")
+    console.print(f"  Recycles  : max {config['max_recycles']} per case")
+    console.print(f"  Smoke test: {'[dim]OFF (--no-smoke)[/dim]' if config['no_smoke'] else '[green]ON[/green]'}")
+    console.print("  Models:")
     for stage, model in config["models"].items():
-        print(f"    {stage:8}: {model}")
-    print()
+        console.print(f"    [dim]{stage:8}[/dim]: {model}")
+    console.print()
 
     client = get_client()
 
-    # Stage 1
+    # Stage 1 — runs outside progress context (batch-level, one call)
     stage1_out = RUN_DIR / "stage1_blueprints.json"
     if config["resume"] and stage1_out.exists():
-        print("[Stage 1] Resuming — loading existing blueprints")
+        console.print("[Stage 1] Resuming — loading existing blueprints")
         blueprints: list[dict] = json.loads(stage1_out.read_text(encoding="utf-8"))
     else:
+        console.print(f"[Stage 1] {config['models']['stage1']}")
         blueprints = run_stage1(config, client)
 
     # Stage 1.5
     run_fact_mixer(config)
 
-    # Per-case stages
-    for i, blueprint in enumerate(blueprints):
-        mechanism_id = blueprint.get("mechanism_id", f"mech_{i+1:03d}")
-        case_id = f"eval_scenario_{config['start_case_id'] + i}"
+    # Per-case stages — wrapped in progress display
+    stages_per_case = 4 + (2 if not config["no_smoke"] else 0)
 
-        # Resume: skip if Stage 4 output already exists and is not exhausted
-        case_out = RUN_DIR / "cases" / f"{mechanism_id}.json"
-        if config["resume"] and case_out.exists():
-            existing = json.loads(case_out.read_text(encoding="utf-8"))
-            if existing.get("verifier_status") == "pending":
-                print(f"\n[{mechanism_id}] Resuming — already accepted, skipping")
-                continue
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=28),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+        transient=False,
+    ) as progress:
+        batch_task = progress.add_task(
+            f"[bold]Batch {config['batch_number']}[/bold]",
+            total=config["batch_size"],
+        )
+        case_task = progress.add_task("", total=stages_per_case, visible=False)
 
-        print(f"\n[{mechanism_id}] → {case_id}")
-        run_case(mechanism_id, case_id, config, client)
+        for i, blueprint in enumerate(blueprints):
+            mechanism_id = blueprint.get("mechanism_id", f"mech_{i+1:03d}")
+            case_id = f"eval_scenario_{config['start_case_id'] + i}"
+
+            # Resume: skip if Stage 4 output already exists and is accepted
+            case_out = RUN_DIR / "cases" / f"{mechanism_id}.json"
+            if config["resume"] and case_out.exists():
+                existing = json.loads(case_out.read_text(encoding="utf-8"))
+                if existing.get("verifier_status") == "pending":
+                    console.print(f"  [dim]{mechanism_id} → already accepted, skipping[/dim]")
+                    progress.advance(batch_task)
+                    continue
+
+            progress.reset(case_task, total=stages_per_case)
+            progress.update(
+                case_task,
+                description=f"[cyan]{mechanism_id}[/cyan] → {case_id}",
+                visible=True,
+            )
+
+            run_case(
+                mechanism_id, case_id, config, client,
+                progress=progress,
+                case_task=case_task,
+                stages_per_case=stages_per_case,
+            )
+            progress.advance(batch_task)
+
+        progress.update(case_task, visible=False)
 
     # Assemble
     assemble_batch(config)
