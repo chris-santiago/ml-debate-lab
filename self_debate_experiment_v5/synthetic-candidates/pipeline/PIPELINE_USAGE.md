@@ -104,13 +104,15 @@ Save to `pipeline/run/cases/mech_NNN.json`.
 
 ### Step 6 — Assemble final batch
 
+Replace `{{BATCH_NUMBER}}` with the actual batch number (e.g., `4`):
+
 ```bash
 cd self_debate_experiment_v5/synthetic-candidates
 python3 -c "
 import json, glob
 cases = [json.load(open(f)) for f in sorted(glob.glob('pipeline/run/cases/*.json'))]
 print(f'{len(cases)} cases assembled')
-json.dump(cases, open('cases_batchN.json', 'w'), indent=2)
+json.dump(cases, open('cases_batch{{BATCH_NUMBER}}.json', 'w'), indent=2)
 "
 ```
 
