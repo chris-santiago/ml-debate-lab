@@ -1,7 +1,6 @@
 ---
 name: journal-list
 description: List recent journal entries of a specific type. Use when the user says "show recent issues", "list decisions", "show my hypotheses", "what experiments have we logged", "list post mortems", or any phrasing asking to see entries of a particular type. Optionally filtered by time window.
-user-invocable: true
 ---
 
 ## Step 1: Check journal exists

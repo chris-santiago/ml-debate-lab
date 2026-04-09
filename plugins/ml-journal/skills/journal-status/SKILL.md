@@ -1,7 +1,6 @@
 ---
 name: journal-status
 description: Show a quick summary of the current project journal state — last checkpoint, entry counts for this session, unresolved issues, and recent git entries. Use when the user says /journal-status, "journal status", "where are we", "what's open", "what have we logged", or "show me the journal state".
-user-invocable: true
 ---
 
 ## Step 1: Check journal exists

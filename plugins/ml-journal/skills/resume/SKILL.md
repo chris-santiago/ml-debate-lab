@@ -1,7 +1,6 @@
 ---
 name: resume
 description: Load the most recent session checkpoint from the project journal and surface it to the console. Use when the user says /resume, "what were we working on", "load last checkpoint", "restore state", "catch me up", or at the start of a session when continuing prior work. Also triggered automatically by the SessionStart hook when a journal exists.
-user-invocable: true
 ---
 
 ## Step 1: Check journal exists

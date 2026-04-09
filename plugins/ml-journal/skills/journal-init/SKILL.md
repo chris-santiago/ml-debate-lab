@@ -1,7 +1,6 @@
 ---
 name: journal-init
 description: Initialize the project journal system in the current git repo. Creates .project-log/ directory, journal.jsonl, and installs journal_log.py and journal_query.py. Use when the user says /journal-init, "set up journal", "initialize journal", or "set up project logging". Only needs to be run once per repo.
-user-invocable: true
 ---
 
 ## Step 1: Find repo root

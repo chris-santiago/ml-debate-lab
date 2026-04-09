@@ -1,7 +1,6 @@
 ---
 name: checkpoint
 description: Save a session checkpoint to the project journal. Captures current work state for handoff to future sessions or post-compact recovery. Use when the user says /checkpoint, "save state", "checkpoint before compact", "end of session", or "save my progress". Also invoked automatically by the PreCompact hook.
-user-invocable: true
 ---
 
 ## Step 0: Check journal exists

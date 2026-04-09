@@ -1,7 +1,6 @@
 ---
 name: research-note
 description: Synthesize a full research narrative from the project journal, git history, and supplementary markdown files. Produces RESEARCH_NARRATIVE.md at the repo root. Use when the user says /research-note, "synthesize a research narrative", "write up what we've done", "create a project summary", or "document our research history".
-user-invocable: true
 ---
 
 ## Step 1: Find repo root and check journal

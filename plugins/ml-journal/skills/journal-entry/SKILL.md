@@ -1,7 +1,6 @@
 ---
 name: journal-entry
 description: Log a typed entry to the project journal. Use when the user says "log this", "record this", "log this issue / decision / discovery / experiment / hypothesis / resolution / post mortem / summary", or any phrasing indicating something from the conversation should be captured. Infers entry type from context. Handles all entry types except checkpoint (use /checkpoint) and git commits (use /journal-commit).
-user-invocable: true
 ---
 
 ## Step 0: Check journal exists
