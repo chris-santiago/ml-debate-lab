@@ -21,7 +21,9 @@ Ask if they want to continue anyway. Stop if they say no.
 
 ## Step 3: Locate script source
 
-The scripts `journal_log.py` and `journal_query.py` are bundled with this skill at `scripts/journal_log.py` and `scripts/journal_query.py` relative to this SKILL.md file. Confirm both exist before proceeding.
+The scripts are bundled with this skill. Confirm both exist before proceeding:
+- `${CLAUDE_PLUGIN_ROOT}/skills/journal-init/scripts/journal_log.py`
+- `${CLAUDE_PLUGIN_ROOT}/skills/journal-init/scripts/journal_query.py`
 
 If they are missing, tell the user to reinstall the plugin and stop.
 
@@ -42,13 +44,11 @@ Do not create anything until confirmed.
 ```bash
 mkdir -p <repo-root>/.project-log
 touch <repo-root>/.project-log/journal.jsonl
-cp <skill-dir>/scripts/journal_log.py <repo-root>/.project-log/
-cp <skill-dir>/scripts/journal_query.py <repo-root>/.project-log/
+cp ${CLAUDE_PLUGIN_ROOT}/skills/journal-init/scripts/journal_log.py <repo-root>/.project-log/
+cp ${CLAUDE_PLUGIN_ROOT}/skills/journal-init/scripts/journal_query.py <repo-root>/.project-log/
 chmod +x <repo-root>/.project-log/journal_log.py
 chmod +x <repo-root>/.project-log/journal_query.py
 ```
-
-`<skill-dir>` is the directory containing this SKILL.md file.
 
 ## Step 6: Verify
 
