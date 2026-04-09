@@ -130,7 +130,6 @@ Exclude cases where Sonnet found everything on the first pass (`proxy_mean` = 1.
 
 ```bash
 uv run pipeline/select_cases.py \
-  --input cases_200-299.json \
   --per-stratum 15 \
   --max-proxy 0.83
 ```
@@ -139,30 +138,54 @@ uv run pipeline/select_cases.py \
 
 ```bash
 uv run pipeline/select_cases.py \
-  --input cases_200-299.json \
   --n 60 \
   --seed 42
 ```
 
-### Merge multiple batches first
+### Single batch
 
 ```bash
-python3 - <<'EOF'
-import json
-batches = ["cases_1-20.json", "cases_100-199.json", "cases_200-299.json"]
-all_cases = []
-for b in batches:
-    all_cases.extend(json.loads(open(b).read()))
-open("cases_all.json", "w").write(json.dumps(all_cases, indent=2))
-print(f"Merged {len(all_cases)} cases")
-EOF
-
 uv run pipeline/select_cases.py \
-  --input cases_all.json \
+  --input cases_300-499.json \
+  --per-stratum 15 \
+  --max-proxy 0.83
+```
+
+### Auto-glob all batches (recommended)
+
+No `--input` needed — the script globs `cases_*.json` from `synthetic-candidates/` automatically:
+
+```bash
+uv run pipeline/select_cases.py \
   --per-stratum 20 \
   --max-proxy 0.83 \
   --seed 42
 ```
+
+Output: `selected_cases_all.json`
+
+### Per-tier targets
+
+Override the default `--per-stratum` for specific tiers, or skip a tier entirely with `0`:
+
+```bash
+# Fewer defense_wins, skip 3+ flaw cases
+uv run pipeline/select_cases.py \
+  --per-stratum 25 \
+  --tier-0 10 \
+  --tier-many 0 \
+  --max-proxy 0.83
+
+# Only critique cases, custom targets per tier
+uv run pipeline/select_cases.py \
+  --tier-0 0 \
+  --tier-1 30 \
+  --tier-2 20 \
+  --tier-many 15 \
+  --max-proxy 0.83
+```
+
+Tiers: `--tier-0` = defense_wins, `--tier-1` = 1-flaw critique, `--tier-2` = 2-flaw critique, `--tier-many` = 3+ flaw critique.
 
 **Strata** are `(correct_verdict × corruption_tier)`:
 - `defense_wins / 0 flaws`
