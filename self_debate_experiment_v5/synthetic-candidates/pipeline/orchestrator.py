@@ -458,13 +458,17 @@ Return JSON only:
     applicable = [s for s in [idr, idp, fvc] if s is not None]
     proxy_mean = round(sum(applicable) / len(applicable), 4) if applicable else 1.0
 
-    # Gate: reject if case is too easy (single-pass nails it) or too broken
-    # For critique cases: IDR=1.0 and FVC=1.0 → too easy
-    # For defense_wins cases: FVC=0.0 (wrong verdict) → design is too suspicious
+    # Gate logic:
+    # Defense_wins (0 corruptions): pass only if Sonnet correctly approves the sound design.
+    # Critique (N corruptions): pass only if (a) not trivially easy AND (b) no false alarms.
+    #   IDP=0 (false alarms) is an independent failure — even if Sonnet missed the real flaws,
+    #   a case where it confidently criticizes legitimate choices produces noise, not signal.
     if num_corruptions == 0:
-        gate_pass = fvc == 1.0  # defense case: must reach correct "approve" verdict
+        gate_pass = fvc == 1.0
     else:
-        gate_pass = not (idr == 1.0 and fvc == 1.0)  # critique case: reject if trivially correct
+        trivially_easy = (idr == 1.0 and fvc == 1.0)
+        false_alarms   = (idp == 0.0)
+        gate_pass = not trivially_easy and not false_alarms
 
     result = {
         "mechanism_id": mechanism_id,
@@ -525,6 +529,18 @@ def recycle_action(smoke: dict | None, num_corruptions: int | str) -> tuple[str 
             "Regenerate with more subtle corruptions — each corrupted choice must look like "
             "the natural output of a capable but less careful model. The errors should require "
             "deliberate methodology reasoning to detect, not pattern-matching.",
+        )
+
+    idp = scores.get("IDP")
+    if idp == 0.0:
+        return (
+            "stage3",
+            "false_alarms",
+            "Single-pass reviewer raised false alarms about legitimate design choices. "
+            "The corruptions are bleeding confusion onto sound elements of the design. "
+            "Regenerate corruptions that are more clearly isolated to the specific flawed "
+            "choices — the corrupted elements should be self-contained so a reviewer "
+            "flagging them does not also implicate the surrounding sound methodology.",
         )
 
     return (
