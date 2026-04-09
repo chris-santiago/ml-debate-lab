@@ -13,9 +13,9 @@ If `.project-log/journal.jsonl` does not exist, say: "No journal found in this r
 
 From the user's request, identify:
 
-**Type** — one of: `issue`, `resolution`, `decision`, `discovery`, `hypothesis`, `experiment`, `post_mortem`, `summary`, `checkpoint`, `git`
+**Type** — one of: `issue`, `resolution`, `decision`, `discovery`, `hypothesis`, `experiment`, `post_mortem`, `lesson`, `memo`, `summary`, `checkpoint`, `git`
 
-If the type is ambiguous or not specified, ask: "Which entry type? (issue / resolution / decision / discovery / hypothesis / experiment / post_mortem / summary / checkpoint / git)"
+If the type is ambiguous or not specified, ask: "Which entry type? (issue / resolution / decision / discovery / hypothesis / experiment / post_mortem / lesson / memo / summary / checkpoint / git)"
 
 **Since** (optional) — if the user says "recent", "this week", "last 24 hours", "today", etc., convert to the appropriate `--since` value:
 - "today" → `1d`

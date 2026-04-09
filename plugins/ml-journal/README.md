@@ -170,6 +170,7 @@ Use `/research-note` for sharing what happened today. Use `/research-report` for
 | `discovery` | description | No | Light |
 | `hypothesis` | description | No | Light |
 | `lesson` | description | No | Light |
+| `memo` | description | No | Light |
 | `decision` | description, rationale | Yes | Medium |
 | `experiment` | description, verdict² | Yes | Medium |
 | `summary` | description | Yes | Medium |

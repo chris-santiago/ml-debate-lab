@@ -146,6 +146,7 @@ ml-journal enforces a fixed schema per entry type. Claude infers the type from c
 | `hypothesis` | description | No |
 | `experiment` | description, verdict | Yes |
 | `post_mortem` | description, what_failed, root_cause | Yes |
+| `memo` | description | No |
 | `checkpoint` | in_progress | Yes |
 | `git` | commit_hash, message, branch | Yes (via `/log-commit`) |
 

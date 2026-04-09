@@ -125,6 +125,14 @@ No daemon logs to ignore since there is no daemon.
 }
 ```
 
+#### `memo`
+```json
+{
+  "description": "string",
+  "tags": ["string"] 
+}
+```
+
 #### `post_mortem`
 ```json
 {
@@ -241,7 +249,7 @@ One-time per repo.
 1. Infer entry type from conversation context. If ambiguous, state assumption and proceed — user can correct.
 2. Extract relevant field values from conversation.
 3. For types requiring confirmation (`decision`, `post_mortem`, `experiment`, `summary`, `checkpoint`): show proposed entry, ask "► Log this? (y/n)"
-4. For low-stakes types (`issue`, `resolution`, `discovery`, `hypothesis`, `lesson`): run directly, show result after.
+4. For low-stakes types (`issue`, `resolution`, `discovery`, `hypothesis`, `lesson`, `memo`): run directly, show result after.
 5. Construct and run `python3 .project-log/journal_log.py --type <type> [fields...]`
 6. Surface confirmation output to user.
 
@@ -253,6 +261,7 @@ One-time per repo.
 - "the experiment showed / result was" → `experiment`
 - "fixed the X issue" → `resolution`
 - "what went wrong / post mortem" → `post_mortem`
+- "note this / remember / memo / don't forget" → `memo`
 
 ---
 
@@ -429,6 +438,7 @@ All hooks:
 | `discovery` | No |
 | `hypothesis` | No |
 | `lesson` | No |
+| `memo` | No |
 | `git` | Yes (commit is irreversible) |
 | `decision` | Yes |
 | `experiment` | Yes |

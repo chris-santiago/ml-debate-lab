@@ -24,6 +24,7 @@ Determine type from conversation context using these heuristics:
 | "fixed", "resolved", "solved" | `resolution` |
 | "what went wrong", "post mortem", "retrospective" | `post_mortem` |
 | "end of session", "wrapping up", "summary of today" | `summary` |
+| "note this", "remember", "memo", "jot this down", "quick note", "don't forget" | `memo` |
 
 State the inferred type before proceeding. If genuinely ambiguous, ask the user.
 
@@ -51,13 +52,15 @@ Extract relevant field values from the conversation. Do not invent details not p
 
 `summary` — description (session overview), key_decisions (list of decisions made), open_threads (list of unresolved items)
 
+`memo` — description (the note), tags (optional comma-separated topics)
+
 ## Step 3: Confirm or run
 
 **Confirm before logging** (show draft, ask `► Log this? (y/n)`):
 - `decision`, `post_mortem`, `experiment`, `summary`
 
 **Log directly** (no confirmation):
-- `issue`, `resolution`, `discovery`, `hypothesis`, `lesson`
+- `issue`, `resolution`, `discovery`, `hypothesis`, `lesson`, `memo`
 
 Note: `git` entries are handled exclusively by `/journal-commit` (which always confirms). Do not pass `git` type through this skill.
 

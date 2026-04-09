@@ -11,7 +11,7 @@ If `.project-log/journal.jsonl` does not exist, say: "No journal found in this r
 
 ## Step 2: Determine type
 
-From user phrasing, identify the entry type to summarize. Valid types: `issue`, `resolution`, `decision`, `discovery`, `hypothesis`, `experiment`, `post_mortem`, `summary`, `checkpoint`, `git`.
+From user phrasing, identify the entry type to summarize. Valid types: `issue`, `resolution`, `decision`, `discovery`, `hypothesis`, `experiment`, `post_mortem`, `lesson`, `memo`, `summary`, `checkpoint`, `git`.
 
 If the user asks for **recent entries across all types** (e.g. "recent entries", "what happened recently", "summarize recent activity", "show me the last N entries"), treat type as `recent` and go to Step 3a.
 
@@ -45,6 +45,7 @@ From the structured entry output, write a coherent prose summary appropriate to 
 **experiment** — summarize what was tried, what verdicts came back, what patterns emerge
 **post_mortem** — synthesize root causes and lessons; note recurring themes
 **checkpoint** — trace how the work state has evolved session over session
+**memo** — list the notes, group by tags if present, flag any that seem time-sensitive
 **recent** — group by type, narrate chronologically, highlight anything unresolved or actionable
 
 Keep the summary grounded in the actual logged entries — do not speculate or add information not present in the journal.

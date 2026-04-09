@@ -32,6 +32,7 @@ Read the full `<repo-root>/.project-log/journal.jsonl`. Group entries by type fo
 - `resolution` → Issues and Resolutions
 - `checkpoint` → Current State, Open Questions
 - `git` → Timeline
+- `memo`, `lesson` → Context / Background Notes
 
 Note the total entry count.
 

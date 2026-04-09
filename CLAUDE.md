@@ -56,7 +56,7 @@ When `.project-log/journal.jsonl` exists, propose logging at natural pauses — 
 | Root cause understood | `lesson` | After explaining *why* something broke — ask "should I log this as a lesson?" |
 | Results interpreted | `experiment` | When verdict is clear |
 
-**Do not auto-propose:** `/checkpoint`, `/resume`, `/log-commit`, `/research-note`, `/research-report`, read skills, `hypothesis`, `post_mortem`.
+**Do not auto-propose:** `/checkpoint`, `/resume`, `/log-commit`, `/research-note`, `/research-report`, read skills, `hypothesis`, `post_mortem`, `memo`.
 
 **Rules:** One proposal per event. Don't re-propose if declined. Chain issue→resolution→lesson at completion, not as three interruptions.
 
