@@ -458,17 +458,16 @@ Return JSON only:
     applicable = [s for s in [idr, idp, fvc] if s is not None]
     proxy_mean = round(sum(applicable) / len(applicable), 4) if applicable else 1.0
 
-    # Gate logic:
-    # Defense_wins (0 corruptions): pass only if Sonnet correctly approves the sound design.
-    # Critique (N corruptions): pass only if (a) not trivially easy AND (b) no false alarms.
-    #   IDP=0 (false alarms) is an independent failure — even if Sonnet missed the real flaws,
-    #   a case where it confidently criticizes legitimate choices produces noise, not signal.
-    if num_corruptions == 0:
-        gate_pass = fvc == 1.0
-    else:
-        trivially_easy = (idr == 1.0 and fvc == 1.0)
-        false_alarms   = (idp == 0.0)
-        gate_pass = not trivially_easy and not false_alarms
+    # Gate: accept almost everything. Any case where single-pass Sonnet is wrong in any
+    # direction — missed flaws, wrong verdict, false accusations — is a candidate for debate.
+    # The defender corrects false accusations. The critic surfaces missed flaws. Wrong verdicts
+    # get reversed. All of these are the signal we want to measure.
+    #
+    # The only structural rejection: if Stage 4 produced a case with no task_prompt or no
+    # scoring targets at all (pipeline failure, not a difficulty signal).
+    # Trivially correct cases are accepted as calibration anchors — they test that debate
+    # does not degrade performance when there is nothing to fix.
+    gate_pass = bool(task_prompt and (must_find_ids or num_corruptions == 0))
 
     result = {
         "mechanism_id": mechanism_id,
@@ -499,56 +498,19 @@ def recycle_action(smoke: dict | None, num_corruptions: int | str) -> tuple[str 
     """
     Returns (stage_to_restart_from, failure_reason, note) or (None, '', '') if accepted.
 
-    Routing:
-      0-corruption case FVC=0 → Stage 2 (sound design is too suspicious; regen design)
-      N-corruption IDR=1.0    → Stage 3 (corruptions too obvious; regen with subtlety note)
-      other gate fail         → Stage 3 (general rework of corruptions)
+    Gate is now nearly permissive — any case where single-pass Sonnet is wrong in any
+    direction is a valid debate candidate. Recycle only on structural failure: the pipeline
+    produced a case with no evaluable content (empty task_prompt or missing scoring targets).
     """
     if smoke is None or smoke.get("gate_pass", True):
         return (None, "", "")
 
-    scores = smoke.get("scores", {})
-    idr = scores.get("IDR")
-    fvc = scores.get("FVC")
-
-    if num_corruptions == 0 and fvc == 0.0:
-        return (
-            "stage2",
-            "defense_false_alarm",
-            "The sound design triggered false alarms from a single-pass reviewer — "
-            "it looks suspicious despite being correct. Regenerate with clearer justifications "
-            "for any choices that could look unusual. The design must be both sound AND "
-            "clearly defensible on first read.",
-        )
-
-    if idr == 1.0:
-        return (
-            "stage3",
-            "corruption_too_obvious",
-            f"Single-pass reviewer found all {num_corruptions} corruption(s) trivially. "
-            "Regenerate with more subtle corruptions — each corrupted choice must look like "
-            "the natural output of a capable but less careful model. The errors should require "
-            "deliberate methodology reasoning to detect, not pattern-matching.",
-        )
-
-    idp = scores.get("IDP")
-    if idp == 0.0:
-        return (
-            "stage3",
-            "false_alarms",
-            "Single-pass reviewer raised false alarms about legitimate design choices. "
-            "The corruptions are bleeding confusion onto sound elements of the design. "
-            "Regenerate corruptions that are more clearly isolated to the specific flawed "
-            "choices — the corrupted elements should be self-contained so a reviewer "
-            "flagging them does not also implicate the surrounding sound methodology.",
-        )
-
+    # Structural failure: Stage 4 did not produce a usable case
     return (
-        "stage3",
-        "gate_fail_general",
-        f"Gate failed (proxy={smoke.get('proxy_mean', '?')}). "
-        "Rework the corruption choices — try different flaw types or target less obvious "
-        "design decisions.",
+        "stage4",
+        "structural_failure",
+        "The assembled case is missing required fields (task_prompt or scoring targets). "
+        "Re-run ground truth assembly to produce a complete, evaluable case.",
     )
 
 
@@ -621,9 +583,10 @@ def run_case(
                 sound_design = run_stage2(mechanism_id, hypothesis, config, client, note=note_s2)
                 _advance()
 
-            _step(f"S3 corruption ({num_corruptions})")
-            corruption = run_stage3(mechanism_id, sound_design, num_corruptions, config, client, note=note_s3)
-            _advance()
+            if sound_design is None or next_recycle_stage in ("stage2", "stage3"):
+                _step(f"S3 corruption ({num_corruptions})")
+                corruption = run_stage3(mechanism_id, sound_design, num_corruptions, config, client, note=note_s3)
+                _advance()
 
             _step("S4 ground truth")
             case = run_stage4(mechanism_id, case_id, hypothesis, sound_design, corruption, config, client)
@@ -660,8 +623,9 @@ def run_case(
             if stage == "stage2":
                 note_s2 = note
                 note_s3 = ""
-            else:
+            elif stage == "stage3":
                 note_s3 = note
+            # stage4: no note needed — just re-run assembly with same inputs
 
         except Exception as exc:
             console.print(f"  [red]ERROR {mechanism_id}: {exc}[/red]")
