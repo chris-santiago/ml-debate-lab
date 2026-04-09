@@ -1,5 +1,5 @@
 ---
-name: journal-summarize
+name: log-summarize
 description: Synthesize a prose summary of all journal entries of a requested type. Use when the user says "summarize decisions", "what decisions have we made", "give me a summary of open issues", "synthesize our experiments", "what have we discovered", or any phrasing asking for a narrative synthesis of logged entries.
 ---
 

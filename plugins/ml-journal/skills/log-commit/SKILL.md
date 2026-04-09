@@ -1,5 +1,5 @@
 ---
-name: journal-commit
+name: log-commit
 description: Stage, commit, and log to the project journal in one step. Use when the user says /journal-commit, /jcommit, "commit and log", "commit this", or indicates work is ready to commit. Synthesizes the commit message from conversation context and logs a git entry to the journal simultaneously.
 ---
 

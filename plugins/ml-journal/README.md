@@ -1,4 +1,4 @@
-# claude-ml-journal
+# ml-journal
 
 A persistent, structured audit trail for Claude Code sessions. Captures decisions, issues, discoveries, experiments, and session state in a machine-queryable, append-only JSONL log.
 
@@ -16,14 +16,14 @@ No background daemons. No external dependencies beyond `python3`, `git`, and `jq
 
 | Skill | Description |
 |---|---|
-| `/journal-init` | One-time repo setup — creates `.project-log/`, installs scripts, verifies with a test entry |
-| `/journal-entry` | Main logging path — infers entry type from conversation context, extracts fields, writes to journal |
+| `/log-init` | One-time repo setup — creates `.project-log/`, installs scripts, verifies with a test entry |
+| `/log-entry` | Main logging path — infers entry type from conversation context, extracts fields, writes to journal |
 | `/checkpoint` | Save session state for handoff to future sessions or post-compact recovery |
 | `/resume` | Load and display the most recent checkpoint |
-| `/journal-status` | Quick overview — last checkpoint, entry counts, unresolved issues, recent commits |
-| `/journal-list` | List entries by type with optional time filter (`--since 7d`) |
-| `/journal-summarize` | Prose synthesis of entries by type |
-| `/journal-commit` | Git commit + journal log in one step |
+| `/log-status` | Quick overview — last checkpoint, entry counts, unresolved issues, recent commits |
+| `/log-list` | List entries by type with optional time filter (`--since 7d`) |
+| `/log-summarize` | Prose synthesis of entries by type |
+| `/log-commit` | Git commit + journal log in one step |
 | `/research-note` | Synthesize `RESEARCH_NARRATIVE.md` from journal, git history, and supplementary docs |
 
 ## Entry Types
