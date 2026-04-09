@@ -437,7 +437,7 @@ If Sonnet invents concerns entirely outside that list — fabricating flaws that
 
 **Current mitigation:** FVC=0.0 is the primary signal when Sonnet invents flaws on a sound design (wrong verdict). IDP provides supplementary precision signal only for anticipated false accusation types. Cases are still correctly flagged as debate candidates via FVC.
 
-**Next step:** Monitor in live batches — if IDP=1.0, FVC=0.0 cases are common, the misleading IDP score may need to be addressed before reporting.
+**Fix applied (2026-04-08):** When `must_not_claim` is empty and `num_corruptions == 0`, IDP now falls back to a binary check on `smoke_resp["issues_found"]`: if Sonnet raised any issue on a sound design, IDP=0.0; if none, IDP=1.0. For critique cases with no `must_not_claim`, IDP remains None. The partial credit fraction path is unchanged when `must_not_claim` is present. Verified in unit tests: "0 corruptions, no MNC, 4 invented issues raised → IDP=0.0".
 
 ---
 

@@ -385,6 +385,7 @@ def run_stage4(
 # ---------------------------------------------------------------------------
 
 def compute_smoke_scores(
+    smoke_resp: dict,
     scored: dict,
     case: dict,
     task_prompt: str,
@@ -393,11 +394,20 @@ def compute_smoke_scores(
     Compute IDR, IDP, FVC, proxy_mean, and gate_pass from scorer output + case metadata.
 
     Args:
+        smoke_resp:  Raw Sonnet blind-eval output: {issues_found, verdict, reasoning}
         scored:      Scorer LLM output: {must_find_found, must_not_claim_raised, verdict_given}
         case:        Case metadata: {correct_verdict, must_find_issue_ids, _pipeline.num_corruptions}
         task_prompt: Non-empty string = case is structurally valid
 
     Returns dict with keys: IDR, IDP, FVC, proxy_mean, gate_pass
+
+    IDP logic:
+      - must_not_claim present  → partial credit fraction: 1 - n_raised / len(must_not_claim)
+      - must_not_claim empty + num_corruptions == 0
+                                → binary: 0.0 if Sonnet raised any issue, else 1.0
+                                  (every raised issue is definitively a false accusation)
+      - must_not_claim empty + num_corruptions > 0
+                                → None (can't penalize without the protected-choice list)
     """
     must_find_ids: list = case.get("must_find_issue_ids", [])
     num_corruptions = case.get("_pipeline", {}).get("num_corruptions", None)
@@ -411,10 +421,16 @@ def compute_smoke_scores(
 
     must_not_claim: list = case.get("must_not_claim", [])
     raised_bad: list = scored.get("must_not_claim_raised", [])
-    if not must_not_claim:
-        idp: float | None = None
+    n_issues_raised: int = len(smoke_resp.get("issues_found", []))
+    if must_not_claim:
+        # Informative fraction against defined protected choices
+        idp: float | None = round(max(0.0, 1.0 - len(raised_bad) / len(must_not_claim)), 4)
+    elif num_corruptions == 0:
+        # Sound design: any raised issue is definitively a false accusation
+        idp = 0.0 if n_issues_raised > 0 else 1.0
     else:
-        idp = round(max(0.0, 1.0 - len(raised_bad) / len(must_not_claim)), 4)
+        # Critique case, no protected choices defined — can't penalize
+        idp = None
 
     verdict: str = scored.get("verdict_given", "unclear")
     correct_verdict: str = case.get("correct_verdict", "")
@@ -502,7 +518,7 @@ Return JSON only:
     except ValueError:
         scored = {"must_find_found": [], "must_not_claim_raised": [], "verdict_given": "unclear"}
 
-    scores = compute_smoke_scores(scored, case, task_prompt)
+    scores = compute_smoke_scores(smoke_resp, scored, case, task_prompt)
     idr = scores["IDR"]
     idp = scores["IDP"]
     fvc = scores["FVC"]
