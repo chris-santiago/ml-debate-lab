@@ -1,6 +1,6 @@
 ---
 name: log-init
-description: Initialize the project journal system in the current git repo. Creates .project-log/ directory, journal.jsonl, and installs journal_log.py and journal_query.py. Use when the user says /journal-init, "set up journal", "initialize journal", or "set up project logging". Only needs to be run once per repo.
+description: Initialize the project journal system in the current git repo. Creates .project-log/ directory, journal.jsonl, and installs journal_log.py and journal_query.py. Use when the user says /log-init, "set up journal", "initialize journal", or "set up project logging". Only needs to be run once per repo.
 ---
 
 ## Step 1: Find repo root
@@ -22,8 +22,8 @@ Ask if they want to continue anyway. Stop if they say no.
 ## Step 3: Locate script source
 
 The scripts are bundled with this skill. Confirm both exist before proceeding:
-- `${CLAUDE_PLUGIN_ROOT}/skills/journal-init/scripts/journal_log.py`
-- `${CLAUDE_PLUGIN_ROOT}/skills/journal-init/scripts/journal_query.py`
+- `${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py`
+- `${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py`
 
 If they are missing, tell the user to reinstall the plugin and stop.
 
@@ -44,8 +44,8 @@ Do not create anything until confirmed.
 ```bash
 mkdir -p <repo-root>/.project-log
 touch <repo-root>/.project-log/journal.jsonl
-cp ${CLAUDE_PLUGIN_ROOT}/skills/journal-init/scripts/journal_log.py <repo-root>/.project-log/
-cp ${CLAUDE_PLUGIN_ROOT}/skills/journal-init/scripts/journal_query.py <repo-root>/.project-log/
+cp ${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_log.py <repo-root>/.project-log/
+cp ${CLAUDE_PLUGIN_ROOT}/skills/log-init/scripts/journal_query.py <repo-root>/.project-log/
 chmod +x <repo-root>/.project-log/journal_log.py
 chmod +x <repo-root>/.project-log/journal_query.py
 ```
@@ -53,7 +53,7 @@ chmod +x <repo-root>/.project-log/journal_query.py
 ## Step 6: Verify
 
 ```bash
-python3 <repo-root>/.project-log/journal_log.py --type discovery --description "Journal initialized" --source "journal-init skill"
+python3 <repo-root>/.project-log/journal_log.py --type discovery --description "Journal initialized" --source "log-init skill"
 python3 <repo-root>/.project-log/journal_query.py --status
 ```
 
