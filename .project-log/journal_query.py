@@ -87,6 +87,11 @@ def divider(char="─", width=60):
     return char * width
 
 
+def is_resolved(issue_id, resolved_prefixes):
+    """Return True if any stored linked_issue_id is a prefix of the full issue UUID."""
+    return any(issue_id.startswith(p) for p in resolved_prefixes if p)
+
+
 # --- Query functions ---
 
 def cmd_latest_checkpoint(entries):
@@ -136,8 +141,8 @@ def cmd_status(entries):
         type_counts[e["type"]] += 1
 
     # Unresolved issues
-    resolved_ids = {e.get("linked_issue_id") for e in entries if e.get("type") == "resolution"}
-    unresolved = [e for e in entries if e.get("type") == "issue" and e["id"] not in resolved_ids]
+    resolved_prefixes = {e.get("linked_issue_id") for e in entries if e.get("type") == "resolution"}
+    unresolved = [e for e in entries if e.get("type") == "issue" and not is_resolved(e["id"], resolved_prefixes)]
 
     # Latest checkpoint
     checkpoints = [e for e in entries if e.get("type") == "checkpoint"]
@@ -220,8 +225,8 @@ def cmd_list(entries, entry_type, since_str):
 
 
 def cmd_unresolved_issues(entries):
-    resolved_ids = {e.get("linked_issue_id") for e in entries if e.get("type") == "resolution"}
-    unresolved = [e for e in entries if e.get("type") == "issue" and e["id"] not in resolved_ids]
+    resolved_prefixes = {e.get("linked_issue_id") for e in entries if e.get("type") == "resolution"}
+    unresolved = [e for e in entries if e.get("type") == "issue" and not is_resolved(e["id"], resolved_prefixes)]
 
     if not unresolved:
         print("No unresolved issues.")

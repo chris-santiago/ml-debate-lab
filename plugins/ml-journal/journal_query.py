@@ -9,6 +9,7 @@ Usage:
     python3 .project-log/journal_query.py --list decision
     python3 .project-log/journal_query.py --unresolved-issues
     python3 .project-log/journal_query.py --entry <id-prefix>
+    python3 .project-log/journal_query.py --recent 10
 """
 
 import argparse
@@ -86,6 +87,11 @@ def divider(char="─", width=60):
     return char * width
 
 
+def is_resolved(issue_id, resolved_prefixes):
+    """Return True if any stored linked_issue_id is a prefix of the full issue UUID."""
+    return any(issue_id.startswith(p) for p in resolved_prefixes if p)
+
+
 # --- Query functions ---
 
 def cmd_latest_checkpoint(entries):
@@ -135,9 +141,8 @@ def cmd_status(entries):
         type_counts[e["type"]] += 1
 
     # Unresolved issues
-    issue_ids = {e["id"] for e in entries if e.get("type") == "issue"}
-    resolved_ids = {e.get("linked_issue_id") for e in entries if e.get("type") == "resolution"}
-    unresolved = [e for e in entries if e.get("type") == "issue" and e["id"] not in resolved_ids]
+    resolved_prefixes = {e.get("linked_issue_id") for e in entries if e.get("type") == "resolution"}
+    unresolved = [e for e in entries if e.get("type") == "issue" and not is_resolved(e["id"], resolved_prefixes)]
 
     # Latest checkpoint
     checkpoints = [e for e in entries if e.get("type") == "checkpoint"]
@@ -220,8 +225,8 @@ def cmd_list(entries, entry_type, since_str):
 
 
 def cmd_unresolved_issues(entries):
-    resolved_ids = {e.get("linked_issue_id") for e in entries if e.get("type") == "resolution"}
-    unresolved = [e for e in entries if e.get("type") == "issue" and e["id"] not in resolved_ids]
+    resolved_prefixes = {e.get("linked_issue_id") for e in entries if e.get("type") == "resolution"}
+    unresolved = [e for e in entries if e.get("type") == "issue" and not is_resolved(e["id"], resolved_prefixes)]
 
     if not unresolved:
         print("No unresolved issues.")
@@ -240,6 +245,38 @@ def cmd_unresolved_issues(entries):
         tags = e.get("tags", [])
         if tags:
             print(f"  tags: {', '.join(tags)}")
+    print(divider())
+
+
+def cmd_recent(entries, n):
+    if not entries:
+        print("Journal is empty.")
+        return
+
+    recent = entries[-n:]
+    print(divider("═"))
+    print(f"  RECENT ENTRIES ({len(recent)} of {len(entries)} total)")
+    print(divider("═"))
+
+    for e in recent:
+        etype = e.get("type", "?")
+        print(f"\n[{short_id(e)}]  {fmt_ts(e['timestamp'])}  type:{etype}")
+        for key in ["description", "severity", "verdict", "what_failed", "root_cause",
+                    "rationale", "in_progress", "message", "context", "approach",
+                    "implications", "source", "expected_result", "result",
+                    "contributing_factors", "lessons", "applies_to"]:
+            val = e.get(key)
+            if val:
+                print(f"  {key}: {val}")
+        for key in ["tags", "open_threads", "key_decisions", "files_changed"]:
+            val = e.get(key)
+            if val:
+                print(f"  {key}: {', '.join(val)}")
+        for key in ["linked_id", "linked_issue_id", "linked_hypothesis_id"]:
+            val = e.get(key)
+            if val:
+                print(f"  {key}: {val[:8]}")
+
     print(divider())
 
 
@@ -269,6 +306,8 @@ def main():
     group.add_argument("--list",              metavar="TYPE")
     group.add_argument("--unresolved-issues", action="store_true")
     group.add_argument("--entry",             metavar="ID_PREFIX")
+    group.add_argument("--recent",            metavar="N", type=int,
+                       help="Show the N most recent entries across all types")
     parser.add_argument("--since", default=None, help="Filter by recency: 7d, 24h, 60m")
 
     args = parser.parse_args()
@@ -285,6 +324,8 @@ def main():
         cmd_unresolved_issues(entries)
     elif args.entry:
         cmd_entry(entries, args.entry)
+    elif args.recent:
+        cmd_recent(entries, args.recent)
 
 
 if __name__ == "__main__":
