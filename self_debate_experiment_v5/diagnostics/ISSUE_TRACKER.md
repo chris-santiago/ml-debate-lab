@@ -1,6 +1,6 @@
 # V5 Calibration Issue Tracker
 
-**Last updated:** 2026-04-08 (post-ARCH-1 scoring revision; OPEN-18 added)
+**Last updated:** 2026-04-09 (100-case batch complete; OPEN-19 added — Stage 3 difficulty calibration; Stage 3 prompt overhauled)
 **Purpose:** Canonical summary of all issues flagged during v5 pre-experiment calibration. Use this as the re-entry point when continuing work.
 
 ---
@@ -474,3 +474,40 @@ Additionally, Stage 4 capped `must_find_issue_ids` at 2 for "many-corruption" ca
 The `must_find_issue_ids` cap for "many-corruption" cases is no longer hardcoded in scoring but remains a Stage 4 prompt concern — Stage 4 should include all significant issues, not cap at 2, so that IDR reflects actual recall across the full flaw set.
 
 **Verified:** 36-test unit test suite in `pipeline/test_scoring.py` covers all partial-credit scenarios including magnitude differences, None exclusion, and proxy_mean recomputation.
+
+---
+
+## OPEN-19 — Stage 3 flaws too detectable: 70% of critique cases proxy=1.0 in first 100-case ARCH-1 batch
+
+**Severity:** High — defeats purpose of debate protocol for critique cases; limits useful candidate pool  
+**Source:** Proxy distribution analysis of `cases_100-199.json`, 2026-04-09
+
+**Empirical finding:** 100-case batch (cases 100–199), 71 critique cases:
+- proxy=1.0: **50/71 (70%)** — Sonnet correctly identified all flaws on a blind first pass
+- proxy=0.667: 12/71 — Sonnet found the flaw but also raised false accusations
+- proxy≤0.5: 2/71 — Sonnet missed or only partially found the flaw
+- Real debate candidates (proxy<0.67): **14/71 (20%)**
+
+Flaw type distribution was similar across hard and easy cases — type alone does not predict difficulty. The detectability labels assigned by Stage 3/4 ("subtle", "moderate") had no predictive value; easy cases had 44 "subtle"-labeled flaws that Sonnet still caught at proxy=1.0.
+
+**Root causes identified:**
+
+1. **Named anti-patterns in corrupted text.** Stage 3 was writing corrupted choices that contained the name or a direct description of the anti-pattern (e.g., "ROC-AUC" in a ranking task, "stratified by label" in a temporal setting). Sonnet pattern-matches these without needing to reason about the methodology.
+
+2. **Internal contradictions between sections.** When Stage 3 corrupted a metric or split, adjacent sections of the narrative sometimes still referenced the correct (sound) version — e.g., model selection referenced NDCG@10 while the evaluation section was corrupted to ROC-AUC. The inconsistency immediately flags the corrupted section.
+
+3. **Generic justifications.** Corrupted choices were accompanied by context-free rationales ("threshold-independent", "widely used", "computationally efficient") rather than domain-specific justifications that sound deliberate. Thin justifications signal a default choice rather than a considered decision.
+
+4. **Retrospective phrasing around corruptions.** Some corrupted sections drifted into past tense, breaking the prospective proposal voice of the surrounding Stage 2 narrative. This draws attention to the substitution.
+
+**Fix applied (2026-04-09):** Stage 3 prompt (`stage3_corruption_node.md`) overhauled:
+- Added **Detection Bar** section: explicitly names what Sonnet catches by pattern-matching; Stage 3 must get past all of these
+- Strengthened justification requirement: every corrupted choice must carry a domain-specific, deliberate-sounding rationale
+- Added **internal consistency requirement**: cross-references to the corrupted choice in adjacent sections must be updated to match
+- Added **prospective voice requirement**: corrupted_narrative must maintain proposal/plan tense throughout
+- Added **self-check step**: three questions Stage 3 must answer before finalizing (pattern-recognizable? contradictions? retrospective phrasing?)
+- Rewrote all taxonomy examples to show embedded (hard) versions with "Tell to avoid" guidance per type
+
+**Status:** Fix applied, not yet empirically validated. Next step: run a 5–10 case dry-run and compare proxy distribution before committing to another 100-case batch.
+
+**Defense_wins note:** Defense_wins cases were well-calibrated (avg proxy=0.078, 29 available cases). The difficulty problem is isolated to critique cases.
