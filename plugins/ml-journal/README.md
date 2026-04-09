@@ -4,6 +4,10 @@ A persistent, structured audit trail for Claude Code sessions. Captures decision
 
 ml-journal is **standalone** and works in any git repo. It pairs naturally with the `ml-lab` plugin for hypothesis-driven experiments, but does not require it.
 
+## The Problem
+
+Claude Code sessions are stateless. When context compacts or a new session starts, the reasoning trail disappears — decisions are made but not recorded, issues discovered in one session resurface as surprises later, post-mortems happen from memory, and handoffs require manual summaries that are never written. ml-journal is the persistent layer that fills this gap.
+
 ## Installation
 
 ```bash
@@ -107,9 +111,25 @@ flowchart TB
 | `/log-status` | Quick overview — last checkpoint, entry counts, unresolved issues, recent commits |
 | `/log-list` | List entries by type with optional time filter (`--since 7d`) |
 | `/log-summarize` | Prose synthesis of all entries of a given type |
-| `/log-commit` | Git commit + journal log in one step |
+| `/log-commit` | Git commit + journal log in one step — separating the two breaks the audit trail (see note below) |
 | `/research-note` | Generate a session or day-scoped formatted markdown note — shareable, PR-ready |
 | `/research-report` | Synthesize `RESEARCH_REPORT.md` — dispatches `report-drafter` agent to read full journal + git history |
+
+> **Why `/log-commit` instead of a plain `git commit`?** The journal's `git` entry type captures a `diff_summary` field — a 1–2 sentence prose description of *why* the commit exists, not just what changed. A commit message rarely has room for this. But the `diff_summary` is only useful if it's written at commit time, while the context is fresh. Separating commit from log means the `diff_summary` is never written, or written later from memory. `/log-commit` keeps them atomic.
+
+### Synthesis: `/research-note` vs `/research-report`
+
+Both skills synthesize from the journal, but serve different scopes and audiences:
+
+| | `/research-note` | `/research-report` |
+|---|---|---|
+| **Scope** | Session or day | Full project or phase |
+| **Output** | `RESEARCH_NOTE_<date>.md` (~40–80 lines) | `RESEARCH_REPORT.md` (comprehensive) |
+| **Sections** | Summary, Key Decisions, Discoveries & Results, Issues, Current State, Next Steps | Problem Statement, Timeline, What Was Tried/Failed/Worked, Key Decisions, Issues and Resolutions, Open Questions |
+| **Mechanism** | Runs inline from recent journal entries | Dispatches `report-drafter` subagent to isolate heavy context ingestion |
+| **When to use** | After a work session, before a PR, daily update | End of phase or project, onboarding a new collaborator |
+
+Use `/research-note` for sharing what happened today. Use `/research-report` for a complete retrospective.
 
 ## Agents
 
