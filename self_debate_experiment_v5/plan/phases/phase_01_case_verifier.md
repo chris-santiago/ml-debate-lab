@@ -25,10 +25,12 @@ For each case validate:
 4. Scenario realistic — plausible as something a real ML team would do
 5. Empirical test diagnostic — for empirical_test_agreed cases, supports_critique_if and
    supports_defense_if specify distinct falsifiable outcomes
+   (No empirical_test_agreed cases in ARCH-1 — check is vacuous; include entry confirming N/A)
 6. Schema complete — planted_issues has severity, acceptable_resolutions non-empty,
    verifier_status is "pending", notes field present
 7. Defense_wins justification in prompt — for defense cases, justification explicitly stated
 8. Mixed-position genuinely two-sided — both positions defensible from task_prompt alone
+   (No mixed cases in ARCH-1 — check is vacuous; include entry confirming N/A)
 9. Hard cases require genuine domain expertise — for hard non-defense_wins cases, verify the
    must-find flaw requires knowledge beyond general ML intuition. NOTE: ideal_critique is
    empty for all ARCH-1 cases — use planted_issues[].description and the task_prompt itself

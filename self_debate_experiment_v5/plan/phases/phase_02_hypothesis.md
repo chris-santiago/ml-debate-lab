@@ -44,11 +44,11 @@ Write two files in self_debate_experiment_v5/:
        surfaces real signal when cases have genuine complexity)
 
    Pre-registered stratum analysis (Phase 8):
-   fc_lift will be reported separately for three strata: pure critique, mixed, and defense_wins.
+   fc_lift will be reported separately for two strata: critique and defense_wins.
+   (ARCH-1 note: benchmark has 0 mixed cases — no mixed stratum exists.)
    Expected directional patterns:
    - Defense_wins stratum: primary driver of DRQ/FVC lift (isolated debate Defender prevents false condemnation)
-   - Critique/mixed stratum: primary driver of IDR/IDP lift (debate surfaces missed issues and reduces false positives)
-   - Mixed stratum: additional DRQ lift from reaching empirical_test_agreed verdict + ETD quality improvement
+   - Critique stratum: primary driver of IDR/IDP lift (debate surfaces missed issues and reduces false positives)
 
    Global fc_lift (H1 primary criterion) remains the hypothesis test. Stratum breakdown is the
    interpretive structure for understanding mechanism, pre-registered to prevent post-hoc selection
@@ -65,6 +65,10 @@ Write two files in self_debate_experiment_v5/:
    (total contested points in DEBATE.md). Extraction: count DEBATE.md entries with
    status "Resolved: critic wins", "Resolved: defender wins", or
    "Resolved: empirical_test_agreed" vs total contested points listed.
+   Note: "empirical_test_agreed" here is an orchestrator-assigned debate resolution status
+   (a valid agent output), not a ground-truth case type. ARCH-1 has no ground-truth cases
+   with ideal_debate_resolution.type == empirical_test_agreed, but the orchestrator may
+   still reach this verdict during live debate rounds.
    Diagnostic only — not used in pass/fail determination.
 
 2. BENCHMARK_PROMPTS.md — all task_prompt fields from benchmark_cases_verified.json,

@@ -43,8 +43,15 @@ for case in cases:
     cid = case['case_id']
     correct_pos = case['ground_truth']['correct_position']
     must_find = case['scoring_targets'].get('must_find_issue_ids', [])
-    must_not_claim = case['scoring_targets'].get('must_not_claim', [])
+    # must_not_claim_details has human-readable {id, claim, why_wrong} dicts.
+    # must_not_claim (opaque IDs only) is not usable by an external model.
+    mnc_details = case['scoring_targets'].get('must_not_claim_details', [])
     acceptable = case['scoring_targets'].get('acceptable_resolutions', [])
+
+    mnc_text = '\n'.join(
+        f"- [{m['id']}] {m['claim']} (why it is NOT a flaw: {m['why_wrong']})"
+        for m in mnc_details
+    ) if mnc_details else '(none)'
 
     prompt = f"""You are independently evaluating an ML scenario. Assess the following.
 
@@ -54,16 +61,16 @@ SCENARIO:
 ISSUE IDs TO CHECK (for each: is this identifiable from the scenario?):
 {json.dumps(must_find, indent=2)}
 
-ISSUES THAT WOULD BE FALSE POSITIVES IF RAISED:
-{json.dumps(must_not_claim, indent=2)}
+DESIGN CHOICES THAT ARE VALID (do NOT raise these as flaws):
+{mnc_text}
 
 ACCEPTABLE VERDICTS: {json.dumps(acceptable)}
 
 Respond ONLY with a JSON object:
 {{
   "issues_identified": {{"issue_id": true/false, ...}},
-  "false_positives_raised": ["issue_id", ...],
-  "verdict": "critique_wins | defense_wins | empirical_test_agreed | mixed"
+  "false_positives_raised": ["mnc_id", ...],
+  "verdict": "critique_wins | defense_wins | empirical_test_agreed"
 }}
 No preamble, no explanation, no markdown fences."""
 

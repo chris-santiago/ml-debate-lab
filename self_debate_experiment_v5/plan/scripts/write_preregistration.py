@@ -18,10 +18,6 @@ preregistration = {
         },
         "primary_passrate": {"claim": "Debate case pass rate >= 75%", "threshold": 0.75},
         "primary_benchmark_mean": {"claim": "Debate benchmark mean >= 0.65", "threshold": 0.65},
-        "secondary_ensemble_mixed": {
-            "claim": "Debate outperforms ETD-excluded ensemble on IDR/IDP/DRQ/FVC for mixed-position cases",
-            "criterion": "Debate mean on mixed cases (fair dims) > ensemble mean on same cases (fair dims)"
-        },
         "secondary_defense_wins": {
             "claim": "Ensemble FVC >= 0.5 on >= 60% of defense_wins cases — adversarial synthesis produces better-calibrated verdicts on defense cases",
             "criterion": "Ensemble FVC >= 0.5 on >= 60% of defense_wins cases (DC is N/A for all defense cases per pre-registration; FVC is the observable proxy criterion)"
@@ -32,8 +28,9 @@ preregistration = {
         },
         "stratum_fc_lift": {
             "claim": "Pre-registered stratum breakdown for Phase 8 interpretation",
-            "strata": ["pure_critique", "mixed", "defense_wins"],
-            "expected_primary_lift_driver": "defense_wins (DRQ/FVC); critique/mixed (IDR/IDP)",
+            "strata": ["critique", "defense_wins"],
+            "expected_primary_lift_driver": "defense_wins (DRQ/FVC); critique (IDR/IDP)",
+            "arch1_note": "No mixed cases in ARCH-1 — mixed stratum removed",
             "note": "Not a hypothesis test — a pre-committed interpretive structure. Prevents post-hoc stratum selection."
         }
     },

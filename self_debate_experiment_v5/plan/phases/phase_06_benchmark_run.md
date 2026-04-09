@@ -13,7 +13,7 @@
 > - All script invocations use `uv run`. Never `python` or `python3`.
 > - Log entries use `uv run log_entry.py`. Never write JSONL manually.
 > - Do not read `agents/` source files. Agents are dispatched by name only.
-> - Do not pass must_find_issue_ids, scoring_targets, ground_truth, planted_issues, source_paper, or any answer-key fields to agents in any condition. (`source_paper` is operator-only metadata present on real-paper cases — never shown to agents.)
+> - Do not pass must_find_issue_ids, scoring_targets, ground_truth, planted_issues, source_paper, or any answer-key fields to agents in any condition. (`source_paper` is operator-only metadata present on real-paper cases — never shown to agents. Not present in ARCH-1 synthetic cases; the exclusion rule is still applied harmlessly.)
 
 ```bash
 cd self_debate_experiment_v5 && mkdir -p v5_raw_outputs
@@ -52,6 +52,11 @@ verdicts and tests whether role separation alone improves ML review quality.
 
 As orchestrator, adjudicate:
 - Assign typed verdict: critique_wins | defense_wins | empirical_test_agreed
+    (Note: empirical_test_agreed here is a legitimate orchestrator verdict for contested cases.
+     ARCH-1 has no ground-truth cases with ideal_debate_resolution.type == empirical_test_agreed,
+     but the orchestrator may still assign this verdict during live adjudication. When scored,
+     the engine handles it via RESOLUTION_EQUIVALENT_PAIRS: DRQ=0.67, FVC=0.0 since it falls
+     outside acceptable_resolutions for critique_wins/defense_wins ground-truth cases.)
 - If empirical_test_agreed, specify canonical schema:
     condition: [what to test]
     supports_critique_if: [result confirming critique]

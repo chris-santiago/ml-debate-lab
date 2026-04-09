@@ -112,11 +112,11 @@ output = {
         'forced_multiround_vs_multiround_hard': {'W': w5, 'p': p5, 'r': r5,
                                                   'n_hard_cases': len(fm_valid)},
     },
-    'mixed_position': {
+    **({'mixed_position': {
         'n': len(mixed),
         'isolated_fair_mean': dim_mean_for_runs(mixed, 'isolated_debate', fair_dims),
         'ensemble_fair_mean': dim_mean_for_runs(mixed, 'ensemble', fair_dims),
-    },
+    }} if len(mixed) > 0 else {}),
     'defense_wins': {
         'n': len(dw_cases),
         'ensemble_dc_mean': float(np.mean([
