@@ -28,7 +28,7 @@ One entry per corruption from Stage 3. Each entry describes the flaw in terms an
 ### `must_find_issue_ids`
 For `num_corruptions == 1`: always `[issue_id of the single corruption]`
 For `num_corruptions == 2`: both issue IDs, unless the corruptions interact — in that case, finding either one is sufficient (flag with `compound: true`)
-For `num_corruptions == "many"`: the 2 most important issues (by severity); finding either counts
+For `num_corruptions == "many"`: all issue IDs, ordered by severity (most severe first). Do not cap. IDR is computed as a fraction of issues found — a reviewer who finds 3 of 5 scores higher than one who finds 1 of 5.
 
 ### `must_not_claim`
 Sound design choices that should NOT be criticized. These are legitimately correct decisions that a pattern-matching reviewer might question without domain reasoning. Include at least one per case.
