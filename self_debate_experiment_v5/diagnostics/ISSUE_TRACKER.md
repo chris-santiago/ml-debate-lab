@@ -1,6 +1,6 @@
 # V5 Calibration Issue Tracker
 
-**Last updated:** 2026-04-09 (100-case batch complete; OPEN-19 added — Stage 3 difficulty calibration; Stage 3 prompt overhauled)
+**Last updated:** 2026-04-09 (20-case validation batch complete; OPEN-19 updated with empirical validation; pipeline cleanup)
 **Purpose:** Canonical summary of all issues flagged during v5 pre-experiment calibration. Use this as the re-entry point when continuing work.
 
 ---
@@ -508,6 +508,19 @@ Flaw type distribution was similar across hard and easy cases — type alone doe
 - Added **self-check step**: three questions Stage 3 must answer before finalizing (pattern-recognizable? contradictions? retrospective phrasing?)
 - Rewrote all taxonomy examples to show embedded (hard) versions with "Tell to avoid" guidance per type
 
-**Status:** Fix applied, not yet empirically validated. Next step: run a 5–10 case dry-run and compare proxy distribution before committing to another 100-case batch.
+**Validation batch result (2026-04-09):** 20-case batch (`cases_1-20.json`) with new Stage 3 prompt:
+- critique cases: 11/20; proxy=1.0: **7/11 (64%)** — down from 70% (modest improvement)
+- proxy≤0.67: 3/11 (27%) vs 20% before
+- proxy=0.5: 1/11 (9%) vs 3% before
 
-**Defense_wins note:** Defense_wins cases were well-calibrated (avg proxy=0.078, 29 available cases). The difficulty problem is isolated to critique cases.
+Case-level analysis confirmed the pattern is directionally correct but improvement is partial:
+- **Hard cases are genuinely better**: the proxy=0.5 case (metric_mismatch: propensity-adjusted AUC for a ranking task) required end-to-end reasoning about the business objective — Sonnet gave the right verdict but could not identify the specific issue (IDR=0.0). This is the target behavior.
+- **Easy cases still exist**: temporal_leakage and ECE-as-primary-metric remain recognizable. "Across the full extraction window" still signals random split despite sophisticated surrounding framing. ECE is too well-known as a calibration metric to fool Sonnet.
+
+**Conclusion:** The prompt changes work for metric-type corruptions embedded with domain-specific justification. Temporal leakage remains structurally hard to hide because any non-temporal split requires a justification that inadvertently signals the temporal violation. Detectability labels (subtle/moderate) from Stage 3 remain unreliable — empirical proxy_mean is the only valid difficulty signal.
+
+**Decision:** Accept current calibration and proceed with post-hoc filtering (`--max-proxy 0.83`) rather than further prompt engineering. Hard-case yield improved from 20% → 27% of critique cases; combined with defense_wins cases the useful pool is adequate for batch generation.
+
+**Status:** OPEN — difficulty ceiling not fully resolved; accepted as near-ceiling for GPT-4.5 Stage 3. Managed via post-hoc selection.
+
+**Defense_wins note:** Defense_wins cases remain well-calibrated (avg proxy=0.078). The difficulty problem is isolated to critique cases.
