@@ -59,6 +59,50 @@ python3 <repo-root>/.project-log/journal_query.py --status
 
 If either fails, show the error and stop.
 
+## Step 6.5: Offer proactive logging rules for CLAUDE.md
+
+Check if `<repo-root>/CLAUDE.md` exists.
+
+If it does not exist, skip this step silently.
+
+If it exists, check whether it already contains a `## Journal` section:
+```bash
+grep -q "## Journal" <repo-root>/CLAUDE.md && echo "exists" || echo "absent"
+```
+
+If already present, skip.
+
+If absent, ask:
+```
+► Add proactive journal logging rules to your CLAUDE.md?
+  This tells Claude to propose logging decisions, discoveries, issues,
+  resolutions, lessons, and experiment results as they happen in conversation.
+  You still confirm every entry. (y/n)
+```
+
+If yes, append the following section to `<repo-root>/CLAUDE.md`:
+
+```markdown
+## Journal — Proactive Logging
+
+When `.project-log/journal.jsonl` exists, propose logging at natural pauses — not mid-investigation. Always ask first; full draft only after user confirms.
+
+**Auto-propose these types:**
+
+| Pattern | Type | When |
+|---------|------|------|
+| User confirms a direction | `decision` | After "I agree", "let's do X", "go with that" |
+| Unexpected finding | `discovery` | When exploration changes understanding or approach |
+| Bug/inconsistency found | `issue` | After identifying and explaining a problem |
+| Bug fixed and verified | `resolution` | After fix confirmed working |
+| Root cause understood | `lesson` | After explaining *why* something broke — ask "should I log this as a lesson?" |
+| Results interpreted | `experiment` | When verdict is clear |
+
+**Do not auto-propose:** `/checkpoint`, `/resume`, `/log-commit`, `/research-note`, `/research-report`, read skills, `hypothesis`, `post_mortem`.
+
+**Rules:** One proposal per event. Don't re-propose if declined. Chain issue→resolution→lesson at completion, not as three interruptions.
+```
+
 ## Step 7: Confirm
 
 Tell the user:

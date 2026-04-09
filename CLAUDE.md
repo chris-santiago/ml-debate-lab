@@ -41,6 +41,25 @@ The original FastText idea has now recursed several levels deep into its own eva
 After any experiment, analysis step, or issue resolution — run `/artifact-sync` before marking work complete.
 This command updates all artifacts, then runs a three-check coherence audit (conflicts, staleness, completeness).
 
+## Journal — Proactive Logging
+
+When `.project-log/journal.jsonl` exists, propose logging at natural pauses — not mid-investigation. Always ask first; full draft only after user confirms.
+
+**Auto-propose these types:**
+
+| Pattern | Type | When |
+|---------|------|------|
+| User confirms a direction | `decision` | After "I agree", "let's do X", "go with that" |
+| Unexpected finding | `discovery` | When exploration changes understanding or approach |
+| Bug/inconsistency found | `issue` | After identifying and explaining a problem |
+| Bug fixed and verified | `resolution` | After fix confirmed working |
+| Root cause understood | `lesson` | After explaining *why* something broke — ask "should I log this as a lesson?" |
+| Results interpreted | `experiment` | When verdict is clear |
+
+**Do not auto-propose:** `/checkpoint`, `/resume`, `/log-commit`, `/research-note`, `/research-report`, read skills, `hypothesis`, `post_mortem`.
+
+**Rules:** One proposal per event. Don't re-propose if declined. Chain issue→resolution→lesson at completion, not as three interruptions.
+
 ## Agent Sync
 After editing any file in `plugins/ml-lab/` — run `claude plugin reinstall claude-ml-lab` to push the updated snapshot to the plugin cache.
 
