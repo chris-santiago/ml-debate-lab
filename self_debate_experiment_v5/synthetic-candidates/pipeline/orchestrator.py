@@ -540,13 +540,22 @@ def recycle_action(smoke: dict | None, num_corruptions: int | str) -> tuple[str 
 # Archive intermediate outputs on recycle
 # ---------------------------------------------------------------------------
 
-def _archive(mechanism_id: str, attempt: int) -> None:
+def _archive(mechanism_id: str, attempt: int, recycle_stage: str) -> None:
+    """Archive intermediate outputs before a recycle attempt.
+
+    Stage 2 design is only archived when Stage 2 itself is being re-run — otherwise
+    the sound design is still valid and Stage 3 can reuse it on the next attempt.
+    """
     pairs = [
-        (RUN_DIR / "stage2" / f"{mechanism_id}_design.json",     f"{mechanism_id}_attempt_{attempt}_design.json"),
         (RUN_DIR / "stage3" / f"{mechanism_id}_corruption.json", f"{mechanism_id}_attempt_{attempt}_corruption.json"),
         (RUN_DIR / "cases"  / f"{mechanism_id}.json",            f"{mechanism_id}_attempt_{attempt}_case.json"),
         (RUN_DIR / "stage5" / f"{mechanism_id}_smoke.json",      f"{mechanism_id}_attempt_{attempt}_smoke.json"),
     ]
+    if recycle_stage == "stage2":
+        pairs.insert(0, (
+            RUN_DIR / "stage2" / f"{mechanism_id}_design.json",
+            f"{mechanism_id}_attempt_{attempt}_design.json",
+        ))
     for src, dst_name in pairs:
         if src.exists():
             src.rename(src.parent / dst_name)
@@ -573,6 +582,7 @@ def run_case(
     note_s2 = ""
     note_s3 = ""
     next_recycle_stage = "stage3"
+    sound_design: dict | None = None  # kept in memory; only re-run when stage2 recycles
 
     def _step(label: str) -> None:
         if progress is not None and case_task is not None:
@@ -590,14 +600,10 @@ def run_case(
                 progress.reset(case_task, total=stages_per_case)
 
         try:
-            if attempt == 0 or next_recycle_stage == "stage2":
+            if sound_design is None or next_recycle_stage == "stage2":
                 _step("S2 sound design")
                 sound_design = run_stage2(mechanism_id, hypothesis, config, client, note=note_s2)
                 _advance()
-            else:
-                sound_design = json.loads(
-                    (RUN_DIR / "stage2" / f"{mechanism_id}_design.json").read_text(encoding="utf-8")
-                )
 
             _step(f"S3 corruption ({num_corruptions})")
             corruption = run_stage3(mechanism_id, sound_design, num_corruptions, config, client, note=note_s3)
@@ -632,7 +638,7 @@ def run_case(
                 return case
 
             console.print(f"  [yellow]→ {mechanism_id} recycle → {stage}[/yellow] ({reason})")
-            _archive(mechanism_id, attempt)
+            _archive(mechanism_id, attempt, recycle_stage=stage)
 
             next_recycle_stage = stage
             if stage == "stage2":
