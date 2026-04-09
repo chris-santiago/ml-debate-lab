@@ -15,7 +15,7 @@ The original FastText idea has now recursed several levels deep into its own eva
 ## Prerequisites
 - `uv` must be installed — no pyproject.toml exists; all scripts use PEP 723 inline headers
 - All scripts must be run via `uv run <script>.py` (never `python3` directly)
-- Agents (`ml-critic`, `ml-defender`, etc.) must be installed in `~/.claude/agents/` — copy from `agents/` or run `/plugin install`
+- Agents (`ml-critic`, `ml-defender`, etc.) must be installed in `~/.claude/agents/` — copy from `plugins/ml-lab/` or run `/plugin install`
 
 ## Experiment Structure
 - v2: complete — results in `self_debate_experiment_v2/`
@@ -23,7 +23,7 @@ The original FastText idea has now recursed several levels deep into its own eva
 - v4: complete — results in `self_debate_experiment_v4/`
 - v5: active — entry point: `self_debate_experiment_v5/plan/PLAN.md`; phases: `plan/phases/`; scripts: `plan/scripts/`; benchmark cases: `synthetic-candidates/`
 - Benchmark case metadata (must_find, acceptable_resolutions, correct_position, ideal_resolution): `plan/scripts/self_debate_poc.py`
-- Agent reference copies: `agents/`
+- Agent reference copies: `plugins/ml-lab/`
 - Investigation logs: `INVESTIGATION_LOG.jsonl` in the experiment directory (JSONL, one entry per action)
 
 ## External LLM APIs
@@ -42,6 +42,6 @@ After any experiment, analysis step, or issue resolution — run `/artifact-sync
 This command updates all artifacts, then runs a three-check coherence audit (conflicts, staleness, completeness).
 
 ## Agent Sync
-After editing any file in `agents/` — run `/sync-agents` to copy the updated files to `~/.claude/agents/`.
+After editing any file in `plugins/ml-lab/` — run `claude plugin reinstall claude-ml-lab` to push the updated snapshot to the plugin cache.
 
 

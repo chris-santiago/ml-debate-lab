@@ -134,7 +134,7 @@ done
 The pattern `` `[a-z][a-z-]*` `` matches only lowercase-letter agent names in backticks — it will not match schema field names, step numbers, or other backtick-quoted terms in the file.
 
 - PASS if all agents print INSTALLED.
-- FAIL for each MISSING agent. Remediation: `cp agents/<agent-name>.md ~/.claude/agents/` from the repo root.
+- FAIL for each MISSING agent. Remediation: `cp plugins/ml-lab/<agent-name>.md ~/.claude/agents/` from the repo root.
 
 ---
 

@@ -1,31 +1,32 @@
 ---
 name: sync-ml-lab-docs
-description: Propagate ml-lab.md changes to the three downstream artifacts that must stay in sync with it — agents/ML_LAB_FLOW.md (mermaid flowchart), README.md (mermaid copy + investigation logging section + Gate prose), and ~/.claude/agents/ml-lab.md (installed copy).
+description: Propagate ml-lab.md changes to the two downstream artifacts that must stay in sync with it — plugins/ml-lab/ML_LAB_FLOW.md (mermaid flowchart) and README.md (mermaid copy + investigation logging section + Gate prose). Agent distribution is handled by the plugin system — run `claude plugin reinstall claude-ml-lab` after edits.
 user-invocable: true
 ---
 
-You are executing the `sync-ml-lab-docs` skill. Your job is to propagate any changes in `agents/ml-lab.md` to three downstream artifacts and report exactly what changed.
+You are executing the `sync-ml-lab-docs` skill. Your job is to propagate any changes in `plugins/ml-lab/ml-lab.md` to two downstream artifacts and report exactly what changed.
 
 ## Files involved
 
 | File | What must stay in sync |
 |------|----------------------|
-| `agents/ML_LAB_FLOW.md` | The mermaid flowchart — must match the workflow structure, node labels, gate labels, and LOG node caption in ml-lab.md |
+| `plugins/ml-lab/ML_LAB_FLOW.md` | The mermaid flowchart — must match the workflow structure, node labels, gate labels, and LOG node caption in ml-lab.md |
 | `README.md` | Mermaid block under `### The Full Workflow` + any prose sections that describe or summarize workflow content from ml-lab.md (gates, logging, example runs, etc.) |
-| `~/.claude/agents/ml-lab.md` | Exact copy — run `cp agents/ml-lab.md ~/.claude/agents/ml-lab.md` |
+
+Agent files in `plugins/ml-lab/` are distributed via the plugin system. After editing any agent `.md` file, remind the user to run `claude plugin reinstall claude-ml-lab` to push the updated snapshot to the plugin cache.
 
 ## Steps
 
 ### 1. Read source and all downstream files
 
 Read these files in full:
-- `agents/ml-lab.md` (source of truth)
-- `agents/ML_LAB_FLOW.md`
+- `plugins/ml-lab/ml-lab.md` (source of truth)
+- `plugins/ml-lab/ML_LAB_FLOW.md`
 - `README.md`
 
-### 2. Update `agents/ML_LAB_FLOW.md`
+### 2. Update `plugins/ml-lab/ML_LAB_FLOW.md`
 
-Extract the canonical mermaid flowchart from `agents/ml-lab.md`. The flowchart is the primary visual specification — it must reflect:
+Extract the canonical mermaid flowchart from `plugins/ml-lab/ml-lab.md`. The flowchart is the primary visual specification — it must reflect:
 - All nodes and their labels (especially PREFLIGHT, Gate 1, Gate 2, Gate 3, LOG)
 - The LOG node caption (must match the log_entry.py invocation pattern in ml-lab.md)
 - Gate labels (must match gate descriptions in ml-lab.md)
@@ -39,7 +40,7 @@ Locate the mermaid flowchart block under the `### The Full Workflow` section in 
 
 ### 4. Update `README.md` — prose sections derived from ml-lab.md
 
-README.md contains several narrative sections that summarize or describe content from `agents/ml-lab.md`. For each such section, compare against the corresponding source section in ml-lab.md and update the README to reflect the current authoritative content. Do not look for specific expected text — read both files and use judgment to identify any drift.
+README.md contains several narrative sections that summarize or describe content from `plugins/ml-lab/ml-lab.md`. For each such section, compare against the corresponding source section in ml-lab.md and update the README to reflect the current authoritative content. Do not look for specific expected text — read both files and use judgment to identify any drift.
 
 Sections to check include (but are not limited to):
 - Any section describing the investigation logging workflow (schema, invocation, constraints)
@@ -48,15 +49,10 @@ Sections to check include (but are not limited to):
 
 For each section that has drifted from ml-lab.md: update the README to match the current behavior. Preserve README-appropriate voice (user-facing, explanatory) rather than copying agent-prompt text verbatim.
 
-### 6. Sync installed copy
-
-Run:
-```bash
-cp agents/ml-lab.md ~/.claude/agents/ml-lab.md
-```
-
-### 7. Report
+### 5. Report
 
 List every change made, organized by file. For each change, give one line describing what was updated and why (e.g., "Updated LOG node caption to reference `uv run log_entry.py`"). If a file was already in sync, say so explicitly.
 
-If no changes were needed anywhere, report "All downstream artifacts already in sync with agents/ml-lab.md."
+If no changes were needed anywhere, report "All downstream artifacts already in sync with plugins/ml-lab/ml-lab.md."
+
+Remind the user: "Run `claude plugin reinstall claude-ml-lab` to push any agent file changes to the plugin cache."
