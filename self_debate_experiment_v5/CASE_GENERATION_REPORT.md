@@ -287,20 +287,6 @@ During a git add cycle, the `pipeline/run/` directory (containing ephemeral stag
 
 **Lesson:** When a directory is added to .gitignore after it's already been tracked, git does not automatically untrack it — explicit `git rm --cached` is required.
 
-### 6.6 Smoke Scores Not Embedded in Assembled Output
-
-The initial `assemble_batch()` function did not embed Stage 5 smoke scores into the assembled cases JSON. `proxy_mean` and `smoke_scores` were only in `pipeline/run/stage5/*.json`, which is ephemeral (cleared on each new batch). Cases assembled without this embedding had no difficulty signal.
-
-**Fix:** Added smoke score embedding to `assemble_batch()`: reads the mechanism's Stage 5 smoke file and adds `_pipeline.proxy_mean` and `_pipeline.smoke_scores` to each case. For the already-assembled 100-case batch, wrote `patch_smoke_scores.py` as a one-off backfill tool.
-
-**Lesson:** The durable output (cases JSON) must be self-contained. Any metadata needed for downstream selection or analysis must be embedded at assembly time, before the ephemeral run directory is cleared.
-
-### 6.7 Non-Sequential Stage Directory Names
-
-`pipeline/run/` had subdirectories `stage2/`, `stage3/`, `cases/`, `stage5/` — the Stage 4 output went to `cases/` (an earlier naming convention), breaking the sequential readability for anyone navigating the run directory.
-
-**Fix:** Renamed `cases/` → `stage4/` throughout `orchestrator.py`. The directory now reads sequentially: `stage2/ → stage3/ → stage4/ → stage5/`.
-
 ---
 
 ## 7. Empirical Calibration Results
