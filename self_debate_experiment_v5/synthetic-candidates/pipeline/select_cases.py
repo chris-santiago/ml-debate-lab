@@ -20,12 +20,17 @@ Proxy_mean is read from _pipeline.proxy_mean if embedded; otherwise treats all
 cases as equal difficulty (proxy=0.5).
 
 Usage:
-    uv run pipeline/select_cases.py --input cases_100-199.json --per-stratum 15
-    uv run pipeline/select_cases.py --input cases_100-199.json --n 60
-    uv run pipeline/select_cases.py --input cases_100-199.json --n 60 --min-proxy 0.0 --max-proxy 0.85
+    # Auto-glob all cases_*.json from synthetic-candidates/ and merge (recommended)
+    uv run pipeline/select_cases.py --per-stratum 15 --max-proxy 0.83
+
+    # Single file
+    uv run pipeline/select_cases.py --input cases_200-299.json --per-stratum 15
+    uv run pipeline/select_cases.py --input cases_200-299.json --n 60 --max-proxy 0.85
 
 Output:
-    selected_cases_100-199.json  (same dir as input, unless --output given)
+    selected_cases_all.json      (when auto-globbing, written to synthetic-candidates/)
+    selected_cases_200-299.json  (when --input given, same dir as input)
+    Or override with --output.
 """
 
 import argparse
@@ -230,10 +235,60 @@ def summary_table(selected: list[dict], pool: list[dict]) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+CASES_DIR = Path(__file__).parent.parent  # synthetic-candidates/
+
+
+def load_inputs(patterns: list[str]) -> tuple[list[dict], Path]:
+    """
+    Resolve input patterns to a merged, deduplicated case list.
+    Returns (cases, default_output_dir).
+
+    If patterns is empty, auto-globs cases_*.json from CASES_DIR.
+    Each pattern may be a literal path or a glob expression.
+    Deduplicates by case_id — last file wins on collision.
+    """
+    if not patterns:
+        paths = sorted(CASES_DIR.glob("cases_*.json"))
+        if not paths:
+            raise FileNotFoundError(f"No cases_*.json files found in {CASES_DIR}")
+        auto_glob = True
+    else:
+        paths = []
+        for pat in patterns:
+            expanded = sorted(CASES_DIR.glob(pat)) or sorted(Path().glob(pat))
+            if not expanded:
+                # Try as a literal path
+                p = Path(pat)
+                if p.exists():
+                    expanded = [p]
+                else:
+                    raise FileNotFoundError(f"No files matched: {pat}")
+            paths.extend(expanded)
+        auto_glob = False
+
+    by_id: dict[str, dict] = {}
+    for path in paths:
+        batch = json.loads(path.read_text(encoding="utf-8"))
+        for c in batch:
+            by_id[c["case_id"]] = c
+        console.print(f"  Loaded {len(batch):>4} cases ← {path.name}")
+
+    cases = list(by_id.values())
+    if len(paths) > 1:
+        console.print(f"  [dim]Merged {len(paths)} files → {len(cases)} unique cases[/dim]")
+
+    out_dir = CASES_DIR if auto_glob else paths[0].parent
+    return cases, out_dir, auto_glob
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--input", required=True, help="Path to assembled cases JSON file")
-    p.add_argument("--output", default=None, help="Output path (default: selected_<input>)")
+    p.add_argument(
+        "--input", nargs="*", default=None, metavar="PATH_OR_GLOB",
+        help="Case file(s) or glob pattern (e.g. 'cases_*.json'). "
+             "Omit to auto-glob all cases_*.json from synthetic-candidates/.",
+    )
+    p.add_argument("--output", default=None, help="Output path (default: selected_cases_all.json or selected_<input>)")
     p.add_argument(
         "--per-stratum", type=int, default=None,
         help="Cases per (verdict × tier) stratum (overrides --n)",
@@ -248,30 +303,36 @@ def main() -> None:
     )
     p.add_argument(
         "--max-proxy", type=float, default=1.0,
-        help="Maximum proxy_mean to include (1.0 = include all; 0.85 = exclude trivial cases)",
+        help="Maximum proxy_mean to include (1.0 = include all; 0.83 = exclude trivial cases)",
     )
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
 
-    input_path = Path(args.input)
-    cases: list[dict] = json.loads(input_path.read_text(encoding="utf-8"))
-    console.print(f"Loaded {len(cases)} cases from {input_path.name}")
+    patterns = args.input or []
+    cases, out_dir, auto_glob = load_inputs(patterns)
 
     has_proxy = sum(1 for c in cases if c.get("_pipeline", {}).get("proxy_mean") is not None)
     if has_proxy == 0:
         console.print(
-            "[yellow]Warning: no proxy_mean found in _pipeline — all cases treated as equal difficulty (0.5).[/yellow]\n"
-            "[dim]Re-run with the updated orchestrator to embed smoke scores at assembly time.[/dim]"
+            "[yellow]Warning: no proxy_mean found — all cases treated as equal difficulty (0.5).[/yellow]\n"
+            "[dim]Run patch_smoke_scores.py to backfill scores into older batches.[/dim]"
         )
     else:
-        console.print(f"  proxy_mean available for {has_proxy}/{len(cases)} cases")
+        console.print(f"  proxy_mean embedded in {has_proxy}/{len(cases)} cases")
 
     console.print()
     selected = select(cases, args.per_stratum, args.n, args.min_proxy, args.max_proxy, args.seed)
     console.print()
     summary_table(selected, cases)
 
-    out_path = Path(args.output) if args.output else input_path.parent / f"selected_{input_path.name}"
+    if args.output:
+        out_path = Path(args.output)
+    elif auto_glob or len(patterns) > 1:
+        out_path = out_dir / "selected_cases_all.json"
+    else:
+        input_path = Path(patterns[0]) if patterns else out_dir
+        out_path = out_dir / f"selected_{input_path.name}"
+
     out_path.write_text(json.dumps(selected, indent=2), encoding="utf-8")
     console.print(f"\n[green]Wrote {len(selected)} cases → {out_path}[/green]")
 
