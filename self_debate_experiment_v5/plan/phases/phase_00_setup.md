@@ -47,19 +47,27 @@ cp self_debate_experiment_v5/plan/scripts/log_entry.py self_debate_experiment_v5
 
 > **Script:** `plan/scripts/validate_cases.py` — validates case file schema, category distribution, must_find sizes, difficulty labels. Accepts `--lenient` to skip count assertions.
 
-**Copy selected cases from pipeline output into benchmark_cases.json** (idempotent — safe to re-run if preflight already created it):
+**Normalize pipeline output and write benchmark_cases.json** (ARCH-1 schema → experiment schema):
+
+> `normalize_cases.py` maps the ARCH-1 flat schema to the nested schema expected by all
+> downstream experiment scripts. It derives `difficulty` from `_pipeline.proxy_mean`,
+> remaps `must_not_claim` to synthetic IDs, and maps `acceptable_resolutions` to verdict
+> strings. Run this instead of a raw `cp` — the pipeline output schema is not directly
+> compatible with `validate_cases.py` or `self_debate_poc.py`.
 
 ```bash
-cd self_debate_experiment_v5 && cp synthetic-candidates/selected_cases_all.json benchmark_cases.json && \
-  uv run python -c "import json; cases=json.load(open('benchmark_cases.json')); print(f'Loaded {len(cases)} cases from pipeline output')"
+cd self_debate_experiment_v5 && uv run plan/scripts/normalize_cases.py \
+  --input synthetic-candidates/selected_cases_all.json \
+  --output benchmark_cases.json
 ```
 
-**Validate merged file (schema + composition assertions):**
+**Validate normalized file (schema + composition assertions):**
 
 ```bash
 cd self_debate_experiment_v5 && uv run plan/scripts/validate_cases.py benchmark_cases.json
-# Must pass (>=60 cases, >=12 mixed, >=20 with 3+ must_find) before proceeding to Phase 1
-# Also warns if any real-paper cases (eval_scenario_1xx) are missing source_paper field
+# Must pass (>=60 cases, >=20 with 3+ must_find) before proceeding to Phase 1
+# Note: mixed=0 is expected for ARCH-1 (binary verdicts only; assertion removed)
+# Note: real-paper source_paper check uses is_real_paper_case flag set by normalize_cases.py
 ```
 
 **Logging:**
