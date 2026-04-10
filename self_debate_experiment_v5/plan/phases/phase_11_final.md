@@ -12,8 +12,8 @@ uv run log_entry.py --step 11 --cat workflow --action step_start --detail "Phase
 ```
 
 ```bash
-uv run python -c "
-import os, glob
+uv run python - << 'PYEOF'
+import os, glob, json
 
 required = [
     'benchmark_cases.json', 'benchmark_cases_verified.json', 'benchmark_verification.json',
@@ -50,7 +50,6 @@ if not forced_mr:
 
 mr_rounds = []
 for path in forced_mr:
-    import json
     with open(path) as f:
         d = json.load(f)
     rounds = d.get('debate_rounds', 1)
@@ -61,7 +60,7 @@ for path in forced_mr:
 print(f'All {len(required)} required artifacts present.')
 print(f'{len(pngs)} figures: {pngs}')
 print(f'{len(forced_mr)} forced_multiround outputs; mean rounds={sum(mr_rounds)/len(mr_rounds):.2f}')
-"
+PYEOF
 
 git add -A
 git commit -m "Self-debate protocol v5: complete experiment — 5 conditions, fair-comparison lift primary"
