@@ -8,18 +8,19 @@ REPO_ROOT="/Users/chrissantiago/Dropbox/GitHub/ml-debate-lab"
 PLUGINS_JSON="$HOME/.claude/plugins/installed_plugins.json"
 
 # Read tool input from stdin and extract file_path
-FILE_PATH=$(python3 -c "
+FILE_PATH=$(python3 - << 'PYEOF'
 import sys, json
 try:
     d = json.load(sys.stdin)
     print(d.get('tool_input', {}).get('file_path', ''))
 except Exception:
     print('')
-")
+PYEOF
+)
 
 # Resolve installPath from Claude Code's plugin registry — no hardcoded versions
 get_install_path() {
-    python3 -c "
+    python3 - << PYEOF
 import json, sys
 try:
     with open('$PLUGINS_JSON') as f:
@@ -28,12 +29,12 @@ try:
     print(entries[0].get('installPath', '') if entries else '')
 except Exception:
     print('')
-"
+PYEOF
 }
 
 # Warn if plugin.json and marketplace.json versions are out of sync
 check_versions() {
-    python3 -c "
+    python3 - << PYEOF
 import json
 
 market_path = '$REPO_ROOT/.claude-plugin/marketplace.json'
@@ -65,7 +66,7 @@ if mismatches:
     print('VERSION MISMATCH — update marketplace.json to match plugin.json (or vice versa):')
     for m in mismatches:
         print(m)
-"
+PYEOF
 }
 
 # Sync cache
