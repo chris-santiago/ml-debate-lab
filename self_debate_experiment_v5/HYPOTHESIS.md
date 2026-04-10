@@ -7,9 +7,11 @@ task prompt, orchestrator adjudicates) will achieve a benchmark aggregate score 
 higher than a single-pass baseline on the fair-comparison dimensions (IDR, IDP, DRQ, FVC) —
 dimensions where baseline has equal structural agency.
 
-**Mechanism:** Adversarial role separation forces engagement with both sides of a methodological
-question, producing better-typed verdicts and catching false positives that correlated parallel
-assessors miss.
+**Motivation:** Adversarial role separation is hypothesized to force engagement with both sides
+of a methodological question, producing better-typed verdicts and catching false positives that
+correlated parallel assessors miss. This is a motivating rationale, not a claim established by
+H1. The mechanism claim is tested by H2. H1 passing establishes operational value; H2 passing
+establishes structural attribution. See H1 × H2 outcome matrix in EXECUTION_PLAN.md.
 
 **Primary metrics:** IDR, IDP, DRQ, FVC (fair-comparison set)
 
