@@ -77,24 +77,30 @@ Target length: 40–80 lines. This is a shareable artifact, not a comprehensive 
 
 ## Step 5: Determine output filename
 
-Default: `RESEARCH_NOTE_<YYYY-MM-DD>.md` at repo root.
+Default: `RESEARCH_NOTE_<YYYY-MM-DD>.md` in `<repo-root>/research-notes/`.
+
+Create the directory if it does not exist:
+
+```bash
+mkdir -p <repo-root>/research-notes
+```
 
 Check if this file already exists:
 
 ```bash
-ls <repo-root>/RESEARCH_NOTE_<date>.md 2>/dev/null
+ls <repo-root>/research-notes/RESEARCH_NOTE_<date>.md 2>/dev/null
 ```
 
-If it exists, ask: `RESEARCH_NOTE_<date>.md already exists. Overwrite, or save as RESEARCH_NOTE_<date>_<HHMM>.md? (overwrite / new)`
+If it exists, ask: `research-notes/RESEARCH_NOTE_<date>.md already exists. Overwrite, or save as RESEARCH_NOTE_<date>_<HHMM>.md? (overwrite / new)`
 
 ## Step 6: Show draft and confirm
 
 Show the full draft to the user.
 
-Ask: `► Save to <filename>? (y/n)`
+Ask: `► Save to research-notes/<filename>? (y/n)`
 
 ## Step 7: Write file
 
-Write to `<repo-root>/<filename>`.
+Write to `<repo-root>/research-notes/<filename>`.
 
-Confirm: `<filename> written — <N> lines. Ready to share or attach to a PR.`
+Confirm: `research-notes/<filename> written — <N> lines. Ready to share or attach to a PR.`

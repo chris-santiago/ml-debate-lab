@@ -55,6 +55,7 @@ When `.project-log/journal.jsonl` exists, propose logging at natural pauses — 
 | Bug fixed and verified | `resolution` | After fix confirmed working |
 | Root cause understood | `lesson` | After explaining *why* something broke — ask "should I log this as a lesson?" |
 | Results interpreted | `experiment` | When verdict is clear |
+| Major phase or block of work completes | `summary` | After finishing an experiment version, resolving a cluster of issues, or wrapping a multi-step investigation |
 
 **Do not auto-propose:** `/checkpoint`, `/resume`, `/log-commit`, `/research-note`, `/research-report`, read skills, `hypothesis`, `post_mortem`, `memo`.
 
