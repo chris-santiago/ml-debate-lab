@@ -41,7 +41,8 @@ OPTIONAL_FIELDS = {
     "discovery":   ["implications", "source"],
     "hypothesis":  ["expected_result", "metric"],
     "experiment":  ["linked_hypothesis_id", "metric", "result"],
-    "post_mortem": ["contributing_factors", "lessons", "linked_issue_id"],
+    "post_mortem": ["contributing_factors", "lessons", "linked_issue_id",
+                    "severity", "scope", "remediation", "detail"],
     "lesson":      ["context", "applies_to", "linked_id"],
     "memo":        ["tags"],
     "summary":     ["key_decisions", "open_threads"],
@@ -49,8 +50,9 @@ OPTIONAL_FIELDS = {
     "git":         ["files_changed", "diff_summary"],
 }
 
-VALID_SEVERITIES = {"low", "moderate", "high", "critical"}
+VALID_SEVERITIES = {"low", "minor", "moderate", "high", "critical"}
 VALID_VERDICTS   = {"confirmed", "refuted", "inconclusive"}
+VALID_SCOPES     = {"active", "future"}
 
 LIST_FIELDS = {"tags", "files_changed", "key_decisions", "open_threads"}
 
@@ -118,6 +120,8 @@ def build_entry(args):
         sys.exit(f"ERROR: Invalid severity '{entry['severity']}'. Must be one of: {', '.join(sorted(VALID_SEVERITIES))}")
     if "verdict" in entry and entry["verdict"] not in VALID_VERDICTS:
         sys.exit(f"ERROR: Invalid verdict '{entry['verdict']}'. Must be one of: {', '.join(sorted(VALID_VERDICTS))}")
+    if "scope" in entry and entry["scope"] not in VALID_SCOPES:
+        sys.exit(f"ERROR: Invalid scope '{entry['scope']}'. Must be one of: {', '.join(sorted(VALID_SCOPES))}")
 
     return entry
 

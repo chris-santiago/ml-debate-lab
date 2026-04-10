@@ -48,7 +48,7 @@ Extract relevant field values from the conversation. Do not invent details not p
 
 `experiment` — description (what was run), verdict (confirmed/refuted/inconclusive), metric (what was measured), result (what the numbers showed), linked_hypothesis_id (if applicable)
 
-`post_mortem` — description (brief summary), what_failed (the failure), root_cause (why it happened), contributing_factors (what made it worse), lessons (what to do differently), linked_issue_id (if applicable)
+`post_mortem` — description (brief summary), what_failed (the failure), root_cause (why it happened), contributing_factors (what made it worse), lessons (what to do differently), linked_issue_id (if applicable), severity (low/minor/moderate/high/critical — infer from impact), scope (active = affected current results; future = gap for next run), remediation (specific actionable fix — name files, fields, scripts, plan sections; vague fixes are not fixes), detail (long-form investigation narrative with evidence, code references, tables, subsections — the full body that would have appeared in a POST_MORTEM.md entry)
 
 `summary` — description (session overview), key_decisions (list of decisions made), open_threads (list of unresolved items)
 
