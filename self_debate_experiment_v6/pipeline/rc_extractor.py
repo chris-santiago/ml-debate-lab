@@ -380,14 +380,15 @@ def _fetch_github_file_content(download_url: str) -> str:
     return ""
 
 
-def fetch_rescience_c(max_articles: int = 100) -> list[dict]:
+def fetch_rescience_c(max_articles: int = 100, concurrency: int = 8) -> list[dict]:
     """
     Fetch article metadata from ReScience/MLRC GitHub repo via the GitHub API.
     Each paper directory contains metadata.yaml (structured metadata) and
     content.tex (full LaTeX report text). No article.md files exist in this repo.
+
+    Uses concurrent HTTP fetching (two requests per paper: metadata + content).
     """
     console.print("[RC-1] Fetching MLRC articles via GitHub API...")
-    reports = []
 
     # Find all metadata.yaml files — one per paper directory
     tree_data = _github_get(f"repos/{RESCIENCE_REPO}/git/trees/{RESCIENCE_BRANCH}?recursive=1")
@@ -405,19 +406,20 @@ def fetch_rescience_c(max_articles: int = 100) -> list[dict]:
 
     console.print(f"  Found {len(metadata_files)} metadata.yaml files in {RESCIENCE_REPO}")
 
-    for item in metadata_files:
+    raw_base = f"https://raw.githubusercontent.com/{RESCIENCE_REPO}/{RESCIENCE_BRANCH}"
+
+    def fetch_one(item: dict) -> dict | None:
+        """Fetch metadata + report content for a single paper. Returns None to skip."""
         meta_path = item.get("path", "")
         parts = meta_path.split("/")
-        paper_dir = "/".join(parts[:-1])  # e.g. "2022/1"
+        paper_dir = "/".join(parts[:-1])  # e.g. "2022/albanis2021on/journal"
         article_id = paper_dir.replace("/", "_")[:40]
         report_id = f"rc_rescience_{article_id}"
-
-        raw_base = f"https://raw.githubusercontent.com/{RESCIENCE_REPO}/{RESCIENCE_BRANCH}"
 
         # Fetch metadata.yaml for structured fields (title, year, keywords)
         meta_text = _fetch_github_file_content(f"{raw_base}/{meta_path}")
         if not meta_text:
-            continue
+            return None
 
         title = ""
         year_val = None
@@ -447,9 +449,9 @@ def fetch_rescience_c(max_articles: int = 100) -> list[dict]:
         report_text = (content_text or meta_text)[:8000]  # cap at 8k chars for LLM
 
         if len(report_text.strip()) < 100:
-            continue
+            return None
 
-        reports.append({
+        return {
             "report_id": report_id,
             "source": "rescience",
             "year": year_val,
@@ -459,8 +461,34 @@ def fetch_rescience_c(max_articles: int = 100) -> list[dict]:
             "report_url": f"https://github.com/{RESCIENCE_REPO}/blob/{RESCIENCE_BRANCH}/{paper_dir}",
             "submission_id": article_id,
             "venue_invitation": "rescience_mlrc",
-        })
+        }
 
+    results: list[dict | None] = [None] * len(metadata_files)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task_id = progress.add_task("RC-1 MLRC fetch", total=len(metadata_files))
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            future_to_idx = {
+                executor.submit(fetch_one, item): idx
+                for idx, item in enumerate(metadata_files)
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = future.result()
+                except Exception as exc:
+                    console.print(f"  [yellow]RC-1 fetch error (idx {idx}): {exc}[/yellow]")
+                    results[idx] = None
+                progress.advance(task_id)
+
+    reports = [r for r in results if r is not None]
     console.print(f"  [green]✓ MLRC: {len(reports)} reports fetched[/green]")
     return reports
 
@@ -621,7 +649,10 @@ def run_rc1(config: dict) -> list[dict]:
         console.print(f"  {yr}: {cnt}")
 
     # ReScience C
-    rescience_reports = fetch_rescience_c(max_articles=config.get("max_rescience", 80))
+    rescience_reports = fetch_rescience_c(
+        max_articles=config.get("max_rescience", 80),
+        concurrency=config.get("concurrency", 100),
+    )
     reports.extend(rescience_reports)
 
     out = RC_CANDIDATES_DIR / "reports_fetched.json"
@@ -734,7 +765,7 @@ def run_rc2(config: dict, client: OpenAI | None) -> list[dict]:
             "submission_id": report.get("submission_id", ""),
         }
 
-    concurrency = config.get("concurrency", 4)
+    concurrency = config.get("concurrency", 100)
     results: list[dict | None] = [None] * len(reports)
 
     with Progress(
@@ -849,7 +880,7 @@ def run_rc3(config: dict, client: OpenAI | None) -> list[dict]:
 
         return record
 
-    concurrency = config.get("concurrency", 4)
+    concurrency = config.get("concurrency", 100)
     results: list[dict | None] = [None] * len(usable)
 
     with Progress(
@@ -1122,7 +1153,7 @@ def main():
         "--concurrency",
         type=int,
         default=4,
-        help="Concurrent LLM calls for RC-2 and RC-3 (default: 4)",
+        help="Concurrent workers for RC-1 HTTP fetch and RC-2/RC-3 LLM calls (default: 100)",
     )
     parser.add_argument(
         "--max-rescience",

@@ -896,8 +896,8 @@ def parse_args() -> argparse.Namespace:
                    help="Skip Stage 5 smoke test (regular path only; mixed never runs smoke)")
     p.add_argument("--resume", action="store_true",
                    help="Skip cases that already have a completed Stage 4 output")
-    p.add_argument("--concurrency", type=int, default=5,
-                   help="Max concurrent API calls (default: 5)")
+    p.add_argument("--concurrency", type=int, default=100,
+                   help="Max concurrent API calls (default: 100)")
     p.add_argument("--models", default=None,
                    help='JSON dict of model overrides, e.g. \'{"stage3": "openai/o3"}\'')
     for stage in ["stage1", "stage2", "stage3", "stage4", "stage2m", "stage3m", "smoke", "scorer"]:
