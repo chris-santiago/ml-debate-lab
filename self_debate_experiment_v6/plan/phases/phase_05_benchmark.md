@@ -61,6 +61,11 @@ cd self_debate_experiment_v6 && uv run self_debate_poc.py --cases benchmark_case
 - Orchestrator adjudicates both outputs
 - Output: both `critic_raw` and `defender_raw` stored, plus adjudicator synthesis
 - `all_issues_raised` from critic_raw; `all_issues_adjudicated` from adjudicator synthesis
+- **Mixed-case adjudicator instruction (PRE-1):** When case `correct_position == 'mixed'`, the
+  adjudicator prompt must include: "For this case, valid verdicts are: `critique_wins`,
+  `defense_wins`, `empirical_test_agreed`. Use `empirical_test_agreed` when both sides have
+  made substantive points that can only be resolved empirically." This applies to
+  isolated_debate, biased_debate, multiround, and conditional_fm.
 
 **`biased_debate`:**
 - Same structure as `isolated_debate`
@@ -114,7 +119,7 @@ by_case_condition = collections.defaultdict(list)
 for f in files:
     d = json.load(open(f))
     key = (d['case_id'], d['condition'])
-    by_case_condition[key].append(d.get('fc_mean', None))
+    by_case_condition[key].append(d.get('verdict', None))
 zero_variance = [(k, vs) for k, vs in by_case_condition.items()
                  if len(vs) == 3 and len(set(str(v) for v in vs)) == 1]
 print(f'{len(zero_variance)} zero-variance cases (identical outputs across all 3 runs)')

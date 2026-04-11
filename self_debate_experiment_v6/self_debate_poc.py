@@ -499,10 +499,12 @@ def main():
         h1a_threshold = max(0.03, min(0.10, (1.0 - sum(baseline_fc) / len(baseline_fc)) * 0.5))
     else:
         h1a_threshold = 0.10  # upper-bound fallback when no baseline data
+    # H1a pre-registered test: fc_lift >= threshold only.
+    # Bootstrap CI lower bound > 0 is the second gate — computed in Phase 7 analysis.
+    # bm_isolated >= 0.65 and d_pass_frac >= 0.75 are diagnostic outputs, NOT verdict gates
+    # (they were undisclosed in HYPOTHESIS.md; removed per PRE-3 Phase 4 self-review).
     benchmark_passes = (
-        bm_isolated is not None and bm_isolated >= 0.65
-        and d_pass_frac is not None and d_pass_frac >= 0.75
-        and fc_lift is not None and fc_lift >= h1a_threshold
+        fc_lift is not None and fc_lift >= h1a_threshold
     )
 
     hard_results = [r for r in regular_results if r['difficulty'] == 'hard']

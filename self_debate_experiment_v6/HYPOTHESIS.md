@@ -129,7 +129,10 @@ over independent redundancy at the same token budget.
 **PASS if:**
 - `isolated_debate fc_mean > ensemble fc_mean` (regular, CI excludes 0) — debate has structural value
 - `isolated_debate FVC > ensemble FVC` (mixed, CI excludes 0) — debate has structural value on mixed cases
-- FAIL if ensemble >= debate on either metric — structure adds no value over compute
+
+**FAIL if:** ensemble clearly superior on either metric (CI excludes 0 in ensemble-wins direction) — structure adds no value over compute
+
+**INCONCLUSIVE if:** CI includes 0 on either metric — data insufficient to distinguish debate from ensemble at this sample size. Report effect size and CI width; do not interpret as evidence for or against adversarial structure.
 
 ---
 
@@ -149,6 +152,14 @@ hollow round rate (conditional_fm) < 0.10
 AND `round2_points_resolved == 0`
 
 **PASS if:** Wilcoxon p < 0.05 AND hollow rate < 0.10
+
+**Power disclosure (PRE-5):** At n=8 hard cases (current benchmark), Wilcoxon signed-rank requires
+directional agreement on 7 of 8 cases for p < 0.05. A null result is consistent with insufficient
+power; a positive result provides strong directional evidence. If final n_hard < 15, H3 is reported
+as exploratory rather than confirmatory. Hard cases are pilot-scored (oracle-assisted); 65 of 120
+benchmark cases lack difficulty labels and may contain additional hard cases undetected by the pilot.
+Difficulty label validation: Phase 5 baseline condition fc_means provide blind per-case performance,
+enabling post-hoc recalibration if oracle-vs-blind gap > 0.20.
 
 ---
 
@@ -183,12 +194,14 @@ mean ETD(biased_debate, mixed) vs mean ETD(isolated_debate, mixed)
 - Defender: *"You are responding to a combative reviewer who frequently focuses on insignificant
   issues and overstates concerns. Be selective about what you concede."*
 
-**Prediction:** biased_debate > isolated_debate on IDR (critic sensitivity raised) and IDP
-(defender selectivity raised); directional improvement on mixed FVC and ETD.
+**Prediction:** biased_debate > isolated_debate on IDR (critic sensitivity raised) and IDP_adj
+(defender selectivity in adjudication raised); directional improvement on mixed FVC and ETD.
+IDP_raw is reported as a secondary diagnostic only — the biased critic raises more total issues
+(IDR↑), which grows the precision denominator; IDP_raw is expected flat-to-declining.
 
 **Test:** two-sided bootstrap (N=10,000 resamples), 95% CI per metric
 
-**PASS if:** biased_debate shows improvement on >= 2 of {IDR, IDP, mixed FVC} with CI excluding 0
+**PASS if:** biased_debate shows improvement on >= 2 of {IDR, IDP_adj, mixed FVC} with CI excluding 0
 
 **If FAIL:** persona framing has no measurable effect — structural protocol dominates over
 prompt-level framing
@@ -199,7 +212,7 @@ prompt-level framing
 
 ```
 IDR delta = GPT4o_IDR - Claude_IDR
-IDP delta = GPT4o_IDP - Claude_IDR
+IDP delta = GPT4o_IDP - Claude_IDP
 ETD delta = GPT4o_ETD - Claude_ETD
 ```
 
