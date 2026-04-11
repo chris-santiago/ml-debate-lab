@@ -386,7 +386,7 @@ python self_debate_experiment2.py  # Experiment 2: isolated protocol, 15 cases
 
 Standard library only. No dependencies beyond Python 3.8+.
 
-**Model used:** All Phase 2 agent dispatches (Critic, Defender, Judge, Baseline, Scorer) used `claude-sonnet-4-6`. Results are tied to this model family — a different model or significantly different capability tier would require re-running the benchmark to confirm findings hold.
+**Model used:** All Phase 2 agent dispatches (Critic, Defender, Baseline, Scorer) used `claude-sonnet-4-6`. Judge adjudicates inline in the orchestrating session — not a separate subagent dispatch. Results are tied to this model family — a different model or significantly different capability tier would require re-running the benchmark to confirm findings hold.
 
 **Running the full multi-agent harness from scratch:**
 
