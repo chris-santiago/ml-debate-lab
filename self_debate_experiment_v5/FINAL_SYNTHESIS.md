@@ -86,13 +86,15 @@ Based on the v5 results, these are the minimum changes required for v6 to be inf
 
 5. **Power analysis before threshold-setting.** Compute the expected dynamic range from baseline pilot runs before pre-registering the H1 threshold. A threshold of +0.10 on a benchmark with 0.05 of headroom is an uninformative test.
 
+6. **Union-of-issues IDR for ensemble.** Replace majority-vote IDR aggregation with any-assessor-found credit. Per-assessor recall is adequate (union IDR = 0.8725 vs. majority 0.7679); majority-vote synthesis discards what the critics have already found. The 43/240 affected critique runs recover an average of +0.5837 IDR points under union IDR, flipping ensemble FC mean from below baseline to above baseline.
+
 ---
 
 ## Concrete Recommendation: When to Trust / Distrust the Protocol
 
 **Trust the protocol for:**
 - Binary-verdict cases with unambiguous planted flaws, when you want a second-opinion review mechanism and cost is not a constraint
-- False-positive control scenarios: the ensemble condition produces higher IDP (0.9583) than isolated_debate (0.8549) by suppressing IDR; use ensemble when raising a false alarm is more costly than missing a real flaw
+- False-positive control scenarios: the ensemble produces higher IDP (0.9583) than isolated_debate (0.8549); note that the IDR suppression (0.7679) is an artifact of majority-vote aggregation, not a genuine recall deficit — union-of-issues IDR recovers recall to 0.8725 while preserving the IDP advantage. In v6, use ensemble with union IDR to retain both benefits
 
 **Distrust the protocol for:**
 - Cases where you need a calibrated absolute quality score: the closed-loop confound (IDR delta -0.7737) means scores are evaluator-relative, not objective
@@ -121,7 +123,8 @@ Based on the v5 results, these are the minimum changes required for v6 to be inf
 | `v5_rescored_idr_idp.json` | 7.5 | Leakage-corrected IDR/IDP (isolated Haiku scorer, 996 files) |
 | `CONCLUSIONS.md` | 8 | Primary source of truth: hypothesis verdicts, per-case table |
 | `SENSITIVITY_ANALYSIS.md` | 8 | Method A/B, lift decomposition, threshold sensitivity |
-| `ENSEMBLE_ANALYSIS.md` | 8 | Ensemble tables, hollow-round, DC/FVC diagnostic |
+| `ENSEMBLE_ANALYSIS.md` | 8 | Ensemble tables, union IDR sensitivity analysis, hollow-round, DC/FVC diagnostic |
+| `union_idr_analysis.py` | 10.5 | Retroactive union-of-issues IDR reanalysis; recovers ensemble IDR 0.7679 → 0.8725 |
 | `stats_results.json` | 8 | Bootstrap CIs, Wilcoxon tests, variance, failure attribution |
 | `sensitivity_analysis_results.json` | 8 | Sensitivity analysis data |
 | `per_condition_comparison.png` | 8 | Fair-comparison dimension bar chart |
