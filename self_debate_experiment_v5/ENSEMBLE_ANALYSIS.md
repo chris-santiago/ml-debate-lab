@@ -23,7 +23,7 @@ Dimensions: IDR, IDP, DRQ, FVC. n_cases=110 for both conditions.
 | **FC Mean** | **0.9477** | **0.9247** | **-0.0230** |
 | **FC Mean (union IDR†)** | **0.9477** | **~0.9437** | **-0.0040** |
 
-The ensemble scores lower than isolated_debate on FC mean (-0.0230). IDR is the primary driver of ensemble underperformance (-0.1290). IDP is higher for ensemble (+0.1034) — the ensemble generates fewer false-positive issues. DRQ and FVC are slightly lower (-0.0273 each).
+Under majority-vote aggregation, ensemble FC mean (-0.0230 vs. isolated_debate) appears to underperform — but the gap is driven entirely by IDR suppression (-0.1290), which is a majority-vote artifact: union IDR closes the gap to -0.0040. IDP is higher for ensemble (+0.1034) — the assessors generate fewer false positives. DRQ and FVC are slightly lower (-0.0273 each).
 
 †Union IDR replaces majority-vote aggregation with any-assessor-found rule, recovering ensemble IDR from 0.7679 to 0.8725. Under union IDR the FC mean gap closes from -0.0230 to approximately -0.0040. See [Union IDR Sensitivity Analysis](#union-idr-sensitivity-analysis).
 
@@ -42,7 +42,7 @@ The ensemble scores lower than isolated_debate on FC mean (-0.0230). IDR is the 
 | **FC Mean** | **0.9247** | **0.9266** | **-0.0019** |
 | **FC Mean (union IDR†)** | **~0.9437** | **0.9266** | **+0.0171** |
 
-Ensemble and baseline have nearly identical FC means under majority-vote IDR (0.9247 vs 0.9266, delta = -0.0019). The ensemble trades IDR for IDP: it misses planted issues more often (-0.1050 on IDR) but raises fewer false positives (+0.1034 on IDP). The net effect on FC mean is negligible under majority-vote. However, under union IDR (†), ensemble FC mean rises to ~0.9437, exceeding baseline by +0.0171 — the IDR suppression is the only dimension holding the ensemble below baseline. See [Union IDR Sensitivity Analysis](#union-idr-sensitivity-analysis).
+Under majority-vote IDR, ensemble and baseline appear nearly tied (0.9247 vs. 0.9266, delta = -0.0019) — but this apparent equivalence is a majority-vote artifact: ensemble IDR (-0.1050) is suppressed by the aggregation rule while assessors individually surface planted issues at near-baseline rates. Under union IDR (†), ensemble FC mean rises to ~0.9437, exceeding baseline by +0.0171 — IDR suppression is the only dimension holding the ensemble below baseline. The IDP advantage (+0.1034) reflects genuine false-positive filtering and is preserved under both majority and union rules. See [Union IDR Sensitivity Analysis](#union-idr-sensitivity-analysis).
 
 ---
 
@@ -103,9 +103,9 @@ Baseline has n_comparable_runs=0 — DC is structurally N/A for baseline (no Def
 
 ---
 
-## Ensemble IDR Suppression Mechanism
+## Ensemble IDR Suppression Mechanism (Majority-Vote Artifact)
 
-Ensemble IDR (0.7679) is meaningfully lower than baseline IDR (0.8729) and isolated_debate IDR (0.8969). This is the majority-vote suppression mechanism.
+Ensemble IDR (0.7679) is lower than baseline IDR (0.8729) and isolated_debate IDR (0.8969) under majority-vote aggregation — but this is an aggregation artifact, not a genuine recall deficit. Union IDR (any-assessor-found) recovers ensemble IDR to 0.8725, demonstrating the assessors collectively surface planted issues at near-isolated_debate recall rates. The mechanism by which majority-vote suppresses IDR:
 
 **How it works:** The ensemble runs three independent assessors. Each assessor identifies some subset of planted issues. The ensemble's final IDR credit depends on whether the must-find issues appear in the majority verdict. If two assessors identify different issues as primary (or agree the design has problems but focus on different specifics), the majority-vote aggregation may not surface the specific must-find issue even if all three individually recognized something problematic.
 

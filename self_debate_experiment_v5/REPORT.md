@@ -194,11 +194,11 @@ With isolated_debate mean = 0.9549 and baseline mean = 0.9452, the dynamic range
 
 The ceiling effect is the primary structural explanation for H1's failure: both conditions perform well enough that the difference between them is compressed into a band narrower than the pre-registered threshold.
 
-### Ensemble IDR Suppression
+### Ensemble IDR Suppression (Majority-Vote Artifact)
 
-The ensemble condition shows IDR = 0.7679, notably lower than baseline (0.8729) and isolated_debate (0.8969). This is the majority-vote suppression mechanism: when 2/3 assessors agree on critique_wins but identify different specific issues, the conservative ensemble rule may not surface the correct planted issue even if each assessor individually flagged it. Ensemble IDP is simultaneously high (0.9583) --- the ensemble rarely raises false positives --- but the IDR suppression means it trades recall for precision. Cases eval_scenario_3 and eval_scenario_295 exemplify this pattern: both showed consistent 2/3 critique_wins splits where the defense argument was substantively compelling, and the conservative rule fired correctly to prevent false consensus at the cost of IDR credit.
+Ensemble IDR appears at 0.7679 under majority-vote aggregation --- below baseline (0.8729) and isolated_debate (0.8969) --- but this is an aggregation artifact, not a genuine recall deficit. A retroactive union-IDR analysis (`union_idr_analysis.py`) recovers ensemble IDR to 0.8725 (+0.1046) by crediting any assessor's identification, raising FC mean to ~0.9437, above baseline and approximately matching isolated_debate. The assessors collectively surface planted issues; majority-vote synthesis discards what they have already found.
 
-A retroactive union-IDR sensitivity analysis (`union_idr_analysis.py`) recovers ensemble IDR to 0.8725 (+0.1046) by crediting any assessor's identification of a planted issue, raising ensemble FC mean to ~0.9437 --- above baseline and approximately matching isolated_debate. This demonstrates the suppression is entirely in the aggregation rule: the three assessors collectively surface planted issues at near-isolated_debate recall rates; majority-vote synthesis discards what the critics have already found.
+The suppression mechanism: when 2/3 assessors agree on critique_wins but identify different specific issues, the conservative rule may not surface the correct planted issue even if each assessor individually flagged it. Cases eval_scenario_3 and eval_scenario_295 exemplify this --- both showed consistent 2/3 critique_wins splits where the conservative rule fired correctly to prevent false consensus, but at the cost of IDR credit. Ensemble IDP is simultaneously high (0.9583) --- the ensemble rarely raises false positives --- reflecting genuine filtering by the conservative rule that is preserved under union IDR.
 
 ### Defense_Wins Uniformity
 
