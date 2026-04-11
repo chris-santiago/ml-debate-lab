@@ -53,4 +53,4 @@ List every change made, organized by file. For each change, give one line descri
 
 If no changes were needed anywhere, report "All downstream artifacts already in sync with plugins/ml-lab/ml-lab.md."
 
-Remind the user: "Run `claude plugin reinstall claude-ml-lab` to push any agent file changes to the plugin cache."
+Remind the user: "Run `claude plugin reinstall ml-lab` to push any agent file changes to the plugin cache."

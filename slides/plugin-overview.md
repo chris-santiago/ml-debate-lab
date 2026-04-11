@@ -89,7 +89,7 @@ A Claude Code plugin that runs a **12-step structured investigation** from hypot
 | **Review** | 10–12 | Optional peer review, coherence audit, README rewrite |
 
 <div class="hero">
-<strong>Install:</strong> <code>/plugin marketplace add chris-santiago/ml-debate-lab</code> then <code>/plugin install claude-ml-lab@ml-debate-lab</code>
+<strong>Install:</strong> <code>/plugin marketplace add chris-santiago/ml-debate-lab</code> then <code>/plugin install ml-lab@ml-debate-lab</code>
 </div>
 
 ---

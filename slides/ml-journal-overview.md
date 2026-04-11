@@ -87,7 +87,7 @@ A Claude Code plugin that maintains a **structured, append-only JSONL audit trai
 No background daemons. No external dependencies beyond `python3` and `git`.
 
 <div class="hero">
-<strong>Install:</strong> <code>/plugin install claude-ml-journal@ml-debate-lab</code> then <code>/log-init</code> in any git repo.
+<strong>Install:</strong> <code>/plugin install ml-journal@ml-debate-lab</code> then <code>/log-init</code> in any git repo.
 </div>
 
 ---

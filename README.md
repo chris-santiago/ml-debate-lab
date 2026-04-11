@@ -12,7 +12,7 @@
 
 ```shell
 /plugin marketplace add chris-santiago/ml-debate-lab
-/plugin install claude-ml-lab@ml-debate-lab
+/plugin install ml-lab@ml-debate-lab
 ```
 
 This installs all seven agent files to `~/.claude/agents/` automatically.
@@ -550,7 +550,7 @@ A compute-matched ensemble — three independent assessors plus a synthesizer, n
 **Install:**
 
 ```shell
-/plugin install claude-ml-journal@ml-debate-lab
+/plugin install ml-journal@ml-debate-lab
 ```
 
 **Agents (1):** `report-drafter` — dispatched by `/research-report` to handle full journal + git history ingestion in an isolated subcontext. Optional hooks enable auto-checkpoint before `/compact` and auto-resume on session start. See the [plugin README](plugins/ml-journal/README.md) for full setup, entry types, and hook configuration.
