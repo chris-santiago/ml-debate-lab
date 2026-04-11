@@ -1,7 +1,7 @@
 # Case Generation Methodology Report
 ## ml-debate-lab v6 Synthetic and RC Benchmark Pipeline
 
-**Status:** Active — Phase 2 in progress as of 2026-04-11
+**Status:** Active — Phase 3 complete; benchmark finalized as of 2026-04-11
 **Regular synthetic batch:** `pipeline/run/stage2/` + `pipeline/run/stage3/` (80 cases)
 **RC extraction output:** `pipeline/run/rc_candidates/rc_cases_raw.json` (75 cases)
 **Pipeline entry point:** `pipeline/orchestrator.py` (synthetic) · `pipeline/rc_extractor.py` (RC)
@@ -428,26 +428,27 @@ Their `_pipeline.proxy_mean` is set to `null` by Stage 3M.
   `pipeline/run/` excluded from git; v6 directory structure initialized; 120 hypotheses generated
 - **Phase 1 (RC Extraction):** All four RC stages complete; 75 usable cases in `rc_cases_raw.json`
 - **Synthetic regular (Stages 1–3):** 80 cases with designs and corruption reports produced
-
-### 7.2 In Progress — Phase 2 Assembly
-
-The following steps remain before Phase 3 can begin:
-
-1. **Stage 4 (ground truth assembly):** The 80 Stage 3 corruption files need Stage 4 run to
-   produce structured `planted_issues`, `must_find_issue_ids`, and `must_not_claim` records
-   for each case
-2. **Stage 5 (smoke test):** Run after Stage 4 completes; produces proxy_mean for traceability
-3. **Synthetic mixed (Stages 2M + 3M):** 40 hypotheses exist; Stages 2M and 3M have not yet run
-4. **normalize_cases.py:** Merge and validate all sources to Schema B (`benchmark_cases_raw.json`)
-5. **select_cases.py:** Stratified candidate pool (`~150 cases`) ready for Phase 3 pilot
+- **Phase 2 Assembly (complete):**
+  - Stage 4 (ground truth assembly): 120 files produced (80 regular + 40 mixed/Stage 3M output)
+  - Stage 5 (smoke test): 80 files produced (regular only); proxy_mean stored for traceability
+  - Synthetic mixed (Stages 2M + 3M): 40 designs (`mech_mx*`) + 40 ground truth files produced
+  - `normalize_cases.py`: merged all three sources to Schema B → `benchmark_cases_raw.json` (195 candidates)
+  - `select_cases.py`: stratified pool produced → `benchmark_cases_verified.json`
+- **Phase 3 Pilot and Calibration (complete):**
+  - GPT-4o pilot scorer run on 30 candidate cases (cross-model, no closed-loop confound)
+  - `pilot_fc_mean` = 0.6500; threshold formula: `max(0.03, min(0.10, 0.1750))` = **0.1000**
+  - 5 ceiling cases discarded (`baseline_fc_mean > 0.80`)
+  - H1a threshold pre-registered at 0.1000 in `HYPOTHESIS.md` before Phase 5
+  - Final benchmark: **120 cases** (60 critique + 20 defense + 40 mixed) in `benchmark_cases_verified.json`
 
 ### 7.3 Known Limitations
 
-- **RC mixed skew:** RC contributed 45 mixed cases, exceeding the 40-case target. Post-normalization
-  selection will reduce this to 40 while balancing domain coverage.
-- **Difficulty null at normalization:** All difficulty labels except Stage 3M assignments are `null`
-  until Phase 3 pilot. The Phase 3 gate (`baseline_fc_mean < 0.80`) is critical — if too many
-  cases pass, Phase 5 will be underpowered.
+- **RC mixed skew (resolved):** RC contributed 45 mixed cases against a 40-case target.
+  Post-normalization stratified selection reduced this to 40 while balancing domain coverage.
+  The final 120-case benchmark meets the stratum targets exactly.
+- **Difficulty null at normalization (resolved):** Difficulty labels were `null` at normalization
+  for all sources except Stage 3M. The Phase 3 pilot gate (`baseline_fc_mean < 0.80`) discarded
+  5 ceiling cases. Remaining cases are labeled by GPT-4o rubric performance, not proxy_mean.
 - **No must_find for RC mixed cases:** RC mixed cases have `must_find_issue_ids = []` and
   `planted_issues = []` — the same as synthetic mixed. IDR scoring on these cases is not
   applicable; ETD and FVC are the scoring dimensions.
