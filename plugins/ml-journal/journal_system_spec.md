@@ -384,6 +384,26 @@ If no checkpoint exists: "No checkpoint found in journal. Starting fresh."
 
 ---
 
+## Consultation Patterns
+
+The journal is a source of truth, not only an append log. Query it proactively:
+
+### Before Planning
+Before drafting any non-trivial plan:
+1. `python3 .project-log/journal_query.py --unresolved-issues` — surface active blockers
+2. `python3 .project-log/journal_query.py --list decision --since 7d` — surface recent decisions that constrain the approach
+
+### Cross-Reference in Plans and Instructions
+When a plan step is informed by or constrained by a journal entry, include the short ID:
+- Example: "Implement union-of-issues IDR for ensemble [→ issue 71af7634]"
+- This creates a traceable thread from planning documents back to diagnostic history
+
+### Decisions as Constraints
+A `decision` entry represents a resolved choice. Retrieve full context before re-opening:
+`python3 .project-log/journal_query.py --entry <id>`
+
+---
+
 ## Hooks (Optional)
 
 Hooks are **not registered by default** — the system functions fully via explicit skill invocation. Install only if your environment permits hooks (e.g., personal machines). Use `.claude/settings.local.json` (per-machine, gitignored) rather than `.claude/settings.json` (tracked) so the configuration is not committed.
