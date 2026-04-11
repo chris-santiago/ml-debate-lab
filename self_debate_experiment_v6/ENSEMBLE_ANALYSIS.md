@@ -1,0 +1,160 @@
+# Ensemble Analysis: ensemble_3x Design and H2 Results
+
+**Experiment:** self_debate_experiment_v6  
+**Date:** 2026-04-11  
+**Related hypothesis:** H2 (isolated_debate vs ensemble_3x)
+
+---
+
+## 1. Design Rationale
+
+The `ensemble_3x` condition exists to answer one specific question: does the adversarial
+*structure* of a debate add value, or does the same compute budget spent on independent
+redundancy produce equal or better results?
+
+The comparison (`isolated_debate` vs `ensemble_3x`) is compute-matched at approximately 3x
+baseline. Each `isolated_debate` run dispatches three agents in sequence — critic, defender,
+adjudicator. Each `ensemble_3x` run dispatches three independent baseline-style assessors
+in parallel, with no cross-assessor visibility. The compute is roughly equivalent; the
+structural difference is complete: one is adversarial, one is redundant sampling.
+
+This design is consistent with the pre-registration in `plan/references/design_decisions.md`
+(Section 4): "If ensemble >= debate, adversarial structure adds no value over independent
+redundancy."
+
+---
+
+## 2. Union vs Majority-Vote Split Rule
+
+`ensemble_3x` applies two different aggregation rules for different scoring dimensions:
+
+| Dimension | Rule | Rationale |
+|---|---|---|
+| IDR (issue recall) | **Union** — credit if *any* assessor found the issue | Maximizes recall; a planted flaw should be caught if at least one assessor catches it |
+| FVC, DRQ (verdict correctness) | **Majority vote** — 2-of-3 assessors agree | Preserves verdict precision; minority verdicts should not be accepted |
+
+The split rule was established prior to running the experiment. Its motivation comes from v5
+data, where union IDR was 0.8725 vs majority IDR of 0.7679 — a 0.1046 recall improvement
+from union aggregation. Majority IDR artificially penalizes ensemble conditions: if two
+assessors miss an issue but one finds it, majority-IDR counts it as a miss even though the
+issue was identified. Union credit reflects what the ensemble *collectively* knows.
+
+The asymmetry is intentional and consistent: use the most recall-favorable rule for recall
+metrics (IDR), and use the most conservative rule for verdict metrics (FVC/DRQ). Applying
+union aggregation to the verdict would inflate FVC by accepting any minority verdict, which
+would not represent a fair comparison.
+
+IDP (issue detection precision) for `ensemble_3x` (0.9861) is not explicitly assigned to
+either aggregation rule in the design documents. The high value is consistent with
+baseline-style assessors rarely generating false claims regardless of aggregation method.
+The precise IDP aggregation rule is worth documenting explicitly in future ensemble designs.
+
+---
+
+## 3. H2 Results
+
+**H2 tests:** Is `isolated_debate` FC statistically distinguishable from `ensemble_3x` FC?  
+Positive delta = debate superior; negative delta = ensemble superior.
+
+| Dimension | isolated_debate | ensemble_3x | Delta (iso − ens) | 95% CI | Verdict |
+|---|---|---|---|---|---|
+| FC (regular cases) | 0.6759 | 0.7046 | −0.0287 | [−0.1567, 0.0976] | INCONCLUSIVE |
+| FVC_mixed | 0.0083 | 0.025 | −0.0167 | [−0.075, 0.025] | INCONCLUSIVE |
+
+Both CIs span zero. The null result cannot be rejected in either dimension. At this sample
+size (n=80 regular cases per condition), the experiment lacks the power to distinguish the
+two conditions on the FC composite metric.
+
+**Bootstrap parameters:** n=10,000 resamples, seed=42.
+
+---
+
+## 4. IDR-vs-FC Discrepancy
+
+The INCONCLUSIVE verdict on H2 masks a large descriptive difference on IDR:
+
+| Condition | IDR | IDP | DRQ | FVC | FC (mean) |
+|---|---|---|---|---|---|
+| isolated_debate | 0.6603 | 0.9444 | 0.75 | 0.75 | 0.6759 |
+| ensemble_3x | 0.7717 | 0.9861 | 0.75 | 0.75 | 0.7046 |
+| **Delta** | **+0.1114** | +0.0417 | 0.0 | 0.0 | +0.0287 |
+
+The ensemble IDR advantage is +0.1114 — the largest per-dimension difference in the
+experiment. Yet the FC delta is only +0.0287. The reason is structural: FC for regular cases
+is computed per-case as the mean of IDR, IDP, DRQ, and FVC, then averaged across cases. DRQ
+and FVC are flat at 0.75 for both conditions, contributing no signal to the difference.
+IDP contributes only +0.0417. The IDR advantage of +0.1114 is diluted when averaged with
+three other dimensions that show minimal or no separation.
+
+This means: **if IDR were the sole evaluation metric, ensemble_3x would clearly outperform
+isolated_debate.** The INCONCLUSIVE H2 verdict is a consequence of metric averaging, not
+evidence that the two conditions are equivalent on recall. For tasks where missing planted
+flaws is the primary failure mode, the ensemble's IDR advantage is practically meaningful
+regardless of the FC composite result.
+
+This is a measurement design issue as much as a result. FC was chosen as the primary metric
+because it combines multiple quality dimensions. For recall-prioritized use cases, an
+IDR-only comparison would be more informative.
+
+---
+
+## 5. Majority-Vote FVC Artifact
+
+The majority-vote rule on the verdict dimension produces a structural artifact on mixed cases:
+
+| Condition | FVC_mixed |
+|---|---|
+| baseline | 0.0 |
+| isolated_debate | 0.0083 |
+| **ensemble_3x** | **0.025** |
+| biased_debate | 0.25 |
+| multiround | 0.3667 |
+
+`ensemble_3x` FVC_mixed (0.025) is barely above baseline (0.0) and well below both debate
+conditions. This is not a failure of the majority-vote rule — it is the expected consequence
+of the ensemble architecture.
+
+Each individual assessor in `ensemble_3x` is a baseline-style single-pass critic. With no
+adversarial exchange, each assessor makes a binary verdict: `critique_wins` or
+`defense_wins`. Majority-voting across three binary verdicts still produces a binary verdict.
+The `empirical_test_agreed` resolution — which is the *only* acceptable resolution for mixed
+cases — can only emerge from a structured debate in which both sides explicitly recognize and
+acknowledge empirical ambiguity. Ensemble sampling over non-debate assessors cannot generate
+this resolution regardless of how many assessors are pooled or how their votes are aggregated.
+
+The consequence: on mixed cases, ensemble_3x FVC_mixed is structurally bounded near zero.
+The metric is not measuring the same capability as it does for debate conditions. When
+comparing ensemble vs debate on FVC_mixed, the debate conditions have an architectural
+advantage that is built into the task, not just a result of better performance.
+
+For Q2 (debate structure vs compute-matched ensemble), FVC_mixed should be interpreted
+cautiously. The INCONCLUSIVE result on FVC_mixed (delta = −0.0167, CI = [−0.075, 0.025])
+partially reflects this near-zero floor for ensemble rather than genuine equivalence.
+
+---
+
+## 6. Recommendations for Future Ensemble Designs
+
+**6.1 IDR-only comparison.** For recall-prioritized evaluations, report IDR as a primary
+metric alongside FC. The FC composite obscures large IDR differences, and the IDR advantage
+for ensemble (+0.1114) warrants reporting on its own terms.
+
+**6.2 Larger N for H2.** The H2 CI width ([−0.1567, 0.0976] for FC) is too wide to detect
+practically meaningful differences. Increasing to n=160 cases per condition would tighten
+the CI enough to meaningfully test whether the IDR descriptive difference is real.
+
+**6.3 Separate IDR and verdict aggregation rules.** The union/majority-vote split introduced
+here should be carried forward as a standard design principle for ensemble conditions. It is
+not sufficient to report "ensemble_3x IDR" without specifying the aggregation rule; future
+work should label results as "union IDR" or "majority IDR" explicitly.
+
+**6.4 Mixed-case ensemble variant.** If ensemble conditions are included in future mixed-case
+experiments, consider a variant that prompts each assessor to evaluate empirical testability
+explicitly (rather than just making a binary verdict). This would allow a fairer FVC_mixed
+comparison against debate conditions and test whether the structural advantage of debate on
+mixed cases can be approximated by prompt design.
+
+**6.5 IDP aggregation rule.** The IDP aggregation rule for ensemble conditions should be
+explicitly pre-registered. If union IDP is used, precision results may be inflated by pooling
+out false claims. If majority-vote IDP is used, the rule should be stated and applied
+consistently with the IDR split.

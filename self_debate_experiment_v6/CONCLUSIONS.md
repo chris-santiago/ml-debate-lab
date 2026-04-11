@@ -23,14 +23,16 @@ The adversarial debate protocol (isolated critic + defender + adjudicator) does 
 
 ## Q2: Does adversarial structure add value over a compute-matched ensemble?
 
-**Answer: Inconclusive — neither superior.**
+**Answer: No — ensemble is formally superior on regular cases.**
 
-H2 regular: isolated_debate − ensemble_3x = −0.0287, CI = [−0.1567, 0.0976] → **INCONCLUSIVE**  
+H2 regular: isolated_debate − ensemble_3x = −0.0287, CI = [−0.0434, −0.0154] → **FAIL (ensemble > debate)**  
 H2 mixed FVC: isolated_debate − ensemble_3x = −0.0167, CI = [−0.075, 0.025] → **INCONCLUSIVE**
 
-The two-sided CI spans zero in both dimensions. Three independent assessors (ensemble_3x) and one structured debate (isolated_debate) are statistically indistinguishable at this sample size.
+The paired bootstrap CI for regular cases excludes zero entirely in the ensemble-favored direction. At matched compute (3×), three independent assessors with union-of-issues pooling formally outperform one structured debate on fair-comparison score.
 
-**Descriptive observation:** ensemble_3x has the highest IDR (0.7717) and IDP (0.9861) of all conditions — 3 independent critics with union-of-issues pooling improve recall substantially. This suggests compute spent on redundancy (ensemble) may be more efficient than compute spent on adversarial structure (debate), but the difference is not formally significant.
+**ensemble_3x has the highest IDR (0.7717) and IDP (0.9861) of all conditions.** The union-of-issues pooling provides a +0.1005 recall advantage over baseline that is now formally distinguishable from the isolated_debate result. Compute spent on independent redundancy outperforms compute spent on adversarial structure.
+
+*Note: This result was originally reported as INCONCLUSIVE when an unpaired bootstrap was used (CI = [−0.1567, +0.0976]). Correcting to a paired bootstrap (case-level differences) narrowed the CI 18× to [−0.0434, −0.0154], excluding zero.*
 
 ---
 
@@ -48,20 +50,20 @@ Conditional FM does not significantly outperform multiround on hard cases. The g
 
 ## Q4: Does persona-biasing improve debate quality?
 
-**Answer: Partial — mixed FVC improves, but overall verdict is fail.**
+**Answer: Mixed direction — passes the criterion but not a clean improvement.**
 
-H6: 1/3 tested dimensions has CI excluding 0 → **FAIL**  
-- IDR: delta = +0.0352, CI = [−0.0907, 0.1614], p = 0.2892 — not significant
-- IDP_adj: delta = −0.0389, CI = [−0.075, 0.000], p = 0.9782 — negative (precision hurt)
-- FVC_mix: delta = +0.2417, CI = [0.1583, 0.3333], p = 0.00 — **significant improvement**
+H6: 2/3 tested dimensions have CI excluding 0 → **PASS** (pre-registered criterion: ≥2/3)  
+- IDR: delta = +0.0352, CI = [−0.0093, 0.0787], p = 0.0598 — not significant (CI includes 0)
+- IDP_adj: delta = −0.0389, CI = [−0.0722, −0.0083], p = 0.9926 — **significant, negative** (precision hurt)
+- FVC_mix: delta = +0.2417, CI = [0.1583, 0.3417], p = 0.00 — **significant, positive** (mixed cases better)
+
+**The PASS verdict requires interpretation.** Both significant dimensions point in opposite directions: persona-biasing improves FVC on mixed cases (+0.2417) while statistically degrading adjudicated precision (−0.0389). The net effect on overall quality is ambiguous and use-case dependent.
 
 **FVC (mixed cases):** Biased debate achieves 0.25 vs isolated debate's 0.0083 on FVC_mixed. The combative-critic and selective-defender personas reliably produce `empirical_test_agreed` verdicts on mixed cases, where isolated debate almost never does. This is a real structural difference.
 
-**IDP:** Persona-priming lowers IDP_raw (0.8917 vs 0.9472 baseline) — the aggressive critic generates more false claims. The defender does not fully filter these out (IDP_adj = 0.9250 vs 0.9639 isolated). Precision is hurt by the bias injection.
+**IDP_adj:** Persona-priming lowers IDP_raw (0.8917 vs 0.9472 baseline) — the aggressive critic generates more false claims. The adjudicator does not fully filter these out (IDP_adj = 0.9250 vs 0.9639 isolated). Precision is formally hurt by bias injection.
 
-**IDR:** Nominally higher (0.6955 vs 0.6603 isolated) but not significant. The aggressive critic recalls slightly more issues but at a precision cost.
-
-**Summary:** Biased debate is better at producing structured empirical conclusions on mixed cases but worse at precision. The tradeoff may be acceptable in contexts where FVC (correct verdict on empirically ambiguous cases) is the primary concern.
+*Note: Original analysis reported H6 FAIL (1/3 dims) using an unpaired bootstrap. Correcting to paired bootstrap changed IDP_adj from CI=[−0.075, 0.000] to CI=[−0.0722, −0.0083], shifting the verdict to PASS.*
 
 ---
 
@@ -69,7 +71,7 @@ H6: 1/3 tested dimensions has CI excluding 0 → **FAIL**
 
 **ETD ceiling (H4, exploratory):** All three debate conditions score ETD = 1.0 (full credit) on 100% of mixed cases. Every debate produced condition + supports_critique_if + supports_defense_if in the transcript. The ETD metric provides zero discrimination between debate conditions.
 
-**Multiround FVC (mixed cases):** Multiround achieves FVC_mixed = 0.3667, the second highest after biased_debate (0.25). Multiple debate rounds help mixed cases more than regular cases — the iterative exchange surfaces empirical test designs that single-pass baseline (FVC = 0.0) never produces.
+**Multiround FVC (mixed cases):** Multiround achieves FVC_mixed = 0.3667, the highest of all conditions. Biased_debate is second (0.25). Multiple debate rounds help mixed cases more than regular cases — the iterative exchange surfaces empirical test designs that single-pass baseline (FVC = 0.0) never produces.
 
 **Baseline ceiling on regular cases:** Baseline FC = 0.6785. Most regular cases (eval_scenario category) score near the ceiling under baseline, leaving little room for debate to add value. The RC (ReScience) cases score near the floor. This bimodal pattern compresses the effective range for H1a.
 
@@ -85,12 +87,15 @@ H6: 1/3 tested dimensions has CI excluding 0 → **FAIL**
 
 ## Verdict Table
 
+*All CIs use paired bootstrap (case-level differences), n=10,000 resamples, seed=42.*
+
 | Question | Hypothesis | Result | Finding |
 |---|---|---|---|
-| Q1 | H1a: Debate > Baseline (regular) | **FAIL** | lift=−0.0026, CI far below threshold |
+| Q1 | H1a: Debate > Baseline (regular) | **FAIL** | lift=−0.0026, CI=[−0.0108, +0.0059] |
 | Q1 | H1b: Debate > Baseline (mixed FVC) | **FAIL** | lift=+0.0083, CI includes 0 |
-| Q2 | H2: Debate vs Ensemble | **INCONCLUSIVE** | CI spans zero in both dimensions |
+| Q2 | H2: Debate vs Ensemble (regular) | **FAIL (ensemble superior)** | CI=[−0.0434, −0.0154], excludes 0 |
+| Q2 | H2: Debate vs Ensemble (mixed FVC) | **INCONCLUSIVE** | CI spans zero |
 | Q3 | H3: CFM > Multiround (hard cases) | **FAIL** | p=0.3677; gate fires 94.7% of cases |
-| Q4 | H6: Biased > Isolated | **FAIL** | 1/3 dims significant; FVC_mix positive, IDP negative |
+| Q4 | H6: Biased > Isolated | **PASS (mixed direction)** | 2/3 dims: FVC_mix positive, IDP_adj negative |
 | — | H4: ETD by mode (exploratory) | **CEILING** | ETD=1.0 for all conditions; no discrimination |
-| — | H5: Cross-model scorer agreement | **DEFERRED** | Phase 9 |
+| — | H5: Cross-model scorer agreement | **N/A** | GPT-4o used as primary scorer; confound pre-empted |

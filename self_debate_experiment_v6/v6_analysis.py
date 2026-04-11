@@ -36,12 +36,40 @@ OUTPUT_FILE = BASE_DIR / args.output
 # Bootstrap utilities
 # ---------------------------------------------------------------------------
 
+def bootstrap_paired_mean_diff(pairs, n_boot=10000, one_sided=False):
+    """
+    Paired bootstrap 95% CI for mean(a_i - b_i) across paired observations.
+    Resamples case-level differences, preserving within-case pairing.
+    one_sided=True: lower bound is 5th percentile; ci_hi is the 95th percentile.
+    Returns (observed_diff, ci_lo, ci_hi, p_value_one_sided).
+    """
+    n = len(pairs)
+    if n == 0:
+        return None, None, None, None
+    case_diffs = [a - b for a, b in pairs]
+    obs = sum(case_diffs) / n
+
+    boot_means = []
+    for _ in range(n_boot):
+        sample = [case_diffs[random.randint(0, n - 1)] for _ in range(n)]
+        boot_means.append(sum(sample) / n)
+    boot_means.sort()
+
+    if one_sided:
+        ci_lo = boot_means[int(0.05 * n_boot)]
+        ci_hi = boot_means[int(0.95 * n_boot)]
+    else:
+        ci_lo = boot_means[int(0.025 * n_boot)]
+        ci_hi = boot_means[int(0.975 * n_boot)]
+
+    p_val = sum(1 for d in boot_means if d <= 0) / n_boot
+    return round(obs, 4), round(ci_lo, 4), round(ci_hi, 4), round(p_val, 4)
+
+
 def bootstrap_mean_diff(a, b, n_boot=10000, one_sided=False):
     """
-    Bootstrap 95% CI for (mean(a) - mean(b)).
-    one_sided=True: lower bound is 5th percentile (H0: diff <= 0, reject if CI_lo > 0).
-    one_sided=False: two-sided 95% CI.
-    Returns (observed_diff, ci_lo, ci_hi, p_value_one_sided).
+    Unpaired bootstrap 95% CI for (mean(a) - mean(b)).
+    Retained for reference; use bootstrap_paired_mean_diff for within-case comparisons.
     """
     n_a, n_b = len(a), len(b)
     obs = sum(a)/n_a - sum(b)/n_b if n_a and n_b else None
@@ -57,14 +85,12 @@ def bootstrap_mean_diff(a, b, n_boot=10000, one_sided=False):
 
     if one_sided:
         ci_lo = diffs[int(0.05 * n_boot)]
-        ci_hi = diffs[-1]
+        ci_hi = diffs[int(0.95 * n_boot)]
     else:
         ci_lo = diffs[int(0.025 * n_boot)]
         ci_hi = diffs[int(0.975 * n_boot)]
 
-    # One-sided p-value: fraction of bootstrap samples <= 0
     p_val = sum(1 for d in diffs if d <= 0) / n_boot
-
     return round(obs, 4), round(ci_lo, 4), round(ci_hi, 4), round(p_val, 4)
 
 
@@ -206,10 +232,13 @@ def main():
     # H1a: Regular case FC lift (isolated_debate vs baseline, one-sided)
     # -----------------------------------------------------------------------
     print("\n--- H1a: Regular case FC lift ---")
-    iso_fc   = [get_condition_fc(c, 'isolated_debate') for c in regular if get_condition_fc(c, 'isolated_debate') is not None]
-    base_fc  = [get_condition_fc(c, 'baseline') for c in regular if get_condition_fc(c, 'baseline') is not None]
-
-    obs_h1a, ci_lo_h1a, ci_hi_h1a, p_h1a = bootstrap_mean_diff(iso_fc, base_fc, N, one_sided=True)
+    h1a_pairs = [(get_condition_fc(c, 'isolated_debate'), get_condition_fc(c, 'baseline'))
+                 for c in regular
+                 if get_condition_fc(c, 'isolated_debate') is not None
+                 and get_condition_fc(c, 'baseline') is not None]
+    iso_fc  = [p[0] for p in h1a_pairs]
+    base_fc = [p[1] for p in h1a_pairs]
+    obs_h1a, ci_lo_h1a, ci_hi_h1a, p_h1a = bootstrap_paired_mean_diff(h1a_pairs, N, one_sided=True)
 
     # H1a threshold: adaptive from HYPOTHESIS.md
     baseline_fc_mean = sum(base_fc)/len(base_fc) if base_fc else 0.0
@@ -228,12 +257,14 @@ def main():
     # H1b: Mixed case FVC lift (isolated_debate vs baseline, one-sided)
     # -----------------------------------------------------------------------
     print("\n--- H1b: Mixed case FVC lift ---")
-    iso_fvc_mixed  = [get_condition_mean_score(c, 'isolated_debate', 'FVC') for c in mixed
-                      if get_condition_mean_score(c, 'isolated_debate', 'FVC') is not None]
-    base_fvc_mixed = [get_condition_mean_score(c, 'baseline', 'FVC') for c in mixed
-                      if get_condition_mean_score(c, 'baseline', 'FVC') is not None]
-
-    obs_h1b, ci_lo_h1b, ci_hi_h1b, p_h1b = bootstrap_mean_diff(iso_fvc_mixed, base_fvc_mixed, N, one_sided=True)
+    h1b_pairs = [(get_condition_mean_score(c, 'isolated_debate', 'FVC'),
+                  get_condition_mean_score(c, 'baseline', 'FVC'))
+                 for c in mixed
+                 if get_condition_mean_score(c, 'isolated_debate', 'FVC') is not None
+                 and get_condition_mean_score(c, 'baseline', 'FVC') is not None]
+    iso_fvc_mixed  = [p[0] for p in h1b_pairs]
+    base_fvc_mixed = [p[1] for p in h1b_pairs]
+    obs_h1b, ci_lo_h1b, ci_hi_h1b, p_h1b = bootstrap_paired_mean_diff(h1b_pairs, N, one_sided=True)
     h1b_pass = obs_h1b is not None and ci_lo_h1b > 0
 
     print(f"  lift={obs_h1b}  CI=[{ci_lo_h1b}, {ci_hi_h1b}]  p={p_h1b}  {'PASS' if h1b_pass else 'FAIL'}")
@@ -247,13 +278,21 @@ def main():
     # H2: Debate vs compute-matched ensemble (two-sided)
     # -----------------------------------------------------------------------
     print("\n--- H2: Debate vs ensemble ---")
-    ens_fc = [get_condition_fc(c, 'ensemble_3x') for c in regular if get_condition_fc(c, 'ensemble_3x') is not None]
-    obs_h2_reg, ci_lo_h2_reg, ci_hi_h2_reg, p_h2_reg = bootstrap_mean_diff(iso_fc, ens_fc, N, one_sided=False)
+    h2_reg_pairs = [(get_condition_fc(c, 'isolated_debate'), get_condition_fc(c, 'ensemble_3x'))
+                    for c in regular
+                    if get_condition_fc(c, 'isolated_debate') is not None
+                    and get_condition_fc(c, 'ensemble_3x') is not None]
+    ens_fc = [p[1] for p in h2_reg_pairs]
+    obs_h2_reg, ci_lo_h2_reg, ci_hi_h2_reg, p_h2_reg = bootstrap_paired_mean_diff(h2_reg_pairs, N, one_sided=False)
 
-    ens_fvc_mixed = [get_condition_mean_score(c, 'ensemble_3x', 'FVC') for c in mixed
-                     if get_condition_mean_score(c, 'ensemble_3x', 'FVC') is not None]
-    obs_h2_mix, ci_lo_h2_mix, ci_hi_h2_mix, p_h2_mix = bootstrap_mean_diff(
-        iso_fvc_mixed, ens_fvc_mixed, N, one_sided=False)
+    h2_mix_pairs = [(get_condition_mean_score(c, 'isolated_debate', 'FVC'),
+                     get_condition_mean_score(c, 'ensemble_3x', 'FVC'))
+                    for c in mixed
+                    if get_condition_mean_score(c, 'isolated_debate', 'FVC') is not None
+                    and get_condition_mean_score(c, 'ensemble_3x', 'FVC') is not None]
+    ens_fvc_mixed = [p[1] for p in h2_mix_pairs]
+    obs_h2_mix, ci_lo_h2_mix, ci_hi_h2_mix, p_h2_mix = bootstrap_paired_mean_diff(
+        h2_mix_pairs, N, one_sided=False)
 
     # PASS = CI excludes 0 in favor of isolated (iso > ensemble)
     # FAIL = CI excludes 0 in favor of ensemble
@@ -354,30 +393,32 @@ def main():
     # H6: Persona-biasing (biased_debate vs isolated_debate, two-sided)
     # -----------------------------------------------------------------------
     print("\n--- H6: Persona bias — biased_debate vs isolated_debate ---")
-    bias_idr = [get_condition_mean_score(c, 'biased_debate', 'IDR') for c in critique
-                if get_condition_mean_score(c, 'biased_debate', 'IDR') is not None]
-    iso_idr  = [get_condition_mean_score(c, 'isolated_debate', 'IDR') for c in critique
-                if get_condition_mean_score(c, 'isolated_debate', 'IDR') is not None]
+    h6_idr_pairs = [(get_condition_mean_score(c, 'biased_debate', 'IDR'),
+                     get_condition_mean_score(c, 'isolated_debate', 'IDR'))
+                    for c in critique
+                    if get_condition_mean_score(c, 'biased_debate', 'IDR') is not None
+                    and get_condition_mean_score(c, 'isolated_debate', 'IDR') is not None]
+    h6_idp_pairs = [(get_condition_mean_score(c, 'biased_debate', 'IDP_adj'),
+                     get_condition_mean_score(c, 'isolated_debate', 'IDP_adj'))
+                    for c in regular
+                    if get_condition_mean_score(c, 'biased_debate', 'IDP_adj') is not None
+                    and get_condition_mean_score(c, 'isolated_debate', 'IDP_adj') is not None]
+    h6_fvc_pairs = [(get_condition_mean_score(c, 'biased_debate', 'FVC'),
+                     get_condition_mean_score(c, 'isolated_debate', 'FVC'))
+                    for c in mixed
+                    if get_condition_mean_score(c, 'biased_debate', 'FVC') is not None
+                    and get_condition_mean_score(c, 'isolated_debate', 'FVC') is not None]
+    h6_idp_raw_pairs = [(get_condition_mean_score(c, 'biased_debate', 'IDP'),
+                         get_condition_mean_score(c, 'isolated_debate', 'IDP'))
+                        for c in regular
+                        if get_condition_mean_score(c, 'biased_debate', 'IDP') is not None
+                        and get_condition_mean_score(c, 'isolated_debate', 'IDP') is not None]
 
-    bias_idp_adj = [get_condition_mean_score(c, 'biased_debate', 'IDP_adj') for c in regular
-                    if get_condition_mean_score(c, 'biased_debate', 'IDP_adj') is not None]
-    iso_idp_adj  = [get_condition_mean_score(c, 'isolated_debate', 'IDP_adj') for c in regular
-                    if get_condition_mean_score(c, 'isolated_debate', 'IDP_adj') is not None]
-
-    bias_fvc_mix = [get_condition_mean_score(c, 'biased_debate', 'FVC') for c in mixed
-                    if get_condition_mean_score(c, 'biased_debate', 'FVC') is not None]
-
-    obs_idr, ci_lo_idr, ci_hi_idr, p_idr = bootstrap_mean_diff(bias_idr, iso_idr, N, one_sided=False)
-    obs_idp, ci_lo_idp, ci_hi_idp, p_idp = bootstrap_mean_diff(bias_idp_adj, iso_idp_adj, N, one_sided=False)
-    obs_fvc, ci_lo_fvc, ci_hi_fvc, p_fvc = bootstrap_mean_diff(bias_fvc_mix, iso_fvc_mixed, N, one_sided=False)
-
-    # Secondary: IDP_raw diagnostic
-    bias_idp_raw = [get_condition_mean_score(c, 'biased_debate', 'IDP') for c in regular
-                    if get_condition_mean_score(c, 'biased_debate', 'IDP') is not None]
-    iso_idp_raw  = [get_condition_mean_score(c, 'isolated_debate', 'IDP') for c in regular
-                    if get_condition_mean_score(c, 'isolated_debate', 'IDP') is not None]
-    obs_idp_raw, ci_lo_idp_raw, ci_hi_idp_raw, p_idp_raw = bootstrap_mean_diff(
-        bias_idp_raw, iso_idp_raw, N, one_sided=False)
+    obs_idr, ci_lo_idr, ci_hi_idr, p_idr = bootstrap_paired_mean_diff(h6_idr_pairs, N, one_sided=False)
+    obs_idp, ci_lo_idp, ci_hi_idp, p_idp = bootstrap_paired_mean_diff(h6_idp_pairs, N, one_sided=False)
+    obs_fvc, ci_lo_fvc, ci_hi_fvc, p_fvc = bootstrap_paired_mean_diff(h6_fvc_pairs, N, one_sided=False)
+    obs_idp_raw, ci_lo_idp_raw, ci_hi_idp_raw, p_idp_raw = bootstrap_paired_mean_diff(
+        h6_idp_raw_pairs, N, one_sided=False)
 
     # PASS criterion: CI excludes 0 for >= 2 of {IDR, IDP_adj, mixed FVC}
     dims_passing = sum([

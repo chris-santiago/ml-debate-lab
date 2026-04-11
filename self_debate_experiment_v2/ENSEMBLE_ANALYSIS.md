@@ -376,3 +376,27 @@ For future ensemble experiments:
 2. For defense_wins cases, omit all coaching from assessor prompts. The whole point is to test whether unguided assessors independently recognize valid work.
 3. Log which information was visible to which agent role for auditability.
 4. ETD is an output-constraint effect, not an architectural one. If empirical test design is the desired output, add an explicit constraint to the synthesizer in any multi-agent configuration — debate or ensemble.
+
+---
+
+## v6 Replication (2026-04-11) — Ensemble Formally Outperforms Debate on Harder Benchmark
+
+**Context:** v6 (`self_debate_experiment_v6/`) ran a full benchmark experiment on 120 harder cases (80 regular, 40 mixed) with a redesigned scoring rubric (fair-comparison composite: IDR, IDP, DRQ, FVC — no DC) and a cross-vendor scorer (GPT-4o primary, avoiding the closed-loop confound). Conditions included `ensemble_3x` (3 independent assessors, union-of-issues IDR, majority-vote verdict) and `isolated_debate` at matched compute (3×).
+
+**H2 result (ensemble vs. isolated_debate, regular cases):**
+- FC delta: isolated − ensemble = −0.0287
+- Paired bootstrap CI: [−0.0434, −0.0154]
+- **CI excludes zero in the ensemble-favored direction: FAIL (ensemble > debate)**
+
+This is a formal confirmation of what the v2 fair-comparison analysis (+0.076 after ETD ablation) suggested: once structural debate-favoring dimensions (DC) are excluded and the ETD constraint is controlled, the debate protocol does not outperform ensemble on issue detection and verdict quality.
+
+**Breakdown:**
+- ensemble_3x IDR = 0.7717 vs. isolated_debate IDR = 0.6603 (+0.1114 recall advantage)
+- ensemble_3x IDP = 0.9861 vs. isolated_debate IDP = 0.9444
+- DRQ and FVC flat at 0.75 for both conditions on regular cases
+
+**On mixed cases:** H2 mixed FVC remains inconclusive (CI includes zero). The ensemble architecture structurally cannot produce `empirical_test_agreed` outcomes — individual assessors make binary verdicts without adversarial exchange. The debate protocol's mixed-case advantage is consistent with v2's mixed-position structural finding.
+
+**What this means for the v2 ensemble claim:** The v2 headline (+0.216, p=0.004) reflects the full rubric including DC and DRQ dimensions that reward debate structure by design. The v2 fair-comparison gap (+0.076) was already near zero. v6 on a harder benchmark with fair-comparison scoring and paired bootstrap formally confirms: the debate protocol does not outperform ensemble on detection-quality dimensions. The structural advantages (mixed-position handling, DC, DRQ) remain real and v2's characterization of them stands.
+
+**See:** `self_debate_experiment_v6/ENSEMBLE_ANALYSIS.md`, `self_debate_experiment_v6/FINAL_SYNTHESIS.md`
