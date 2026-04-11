@@ -180,28 +180,37 @@ def score_run(case, output, condition, rescored=None):
     scores = {}
     if correct_position == 'defense':
         scores['IDR'] = None
+        scores['IDR_novel'] = None
         scores['IDP'] = None
         scores['IDP_adj'] = None
     elif correct_position == 'mixed':
         # Mixed cases: no planted flaws, no must-not-claim list, no definitive verdict.
         # IDR/IDP are structurally inapplicable. ETD is the sole primary signal.
         scores['IDR'] = None
+        scores['IDR_novel'] = None
         scores['IDP'] = None
         scores['IDP_adj'] = None
     else:
-        if rescored and rescored.get('rescored_idr') is not None:
-            scores['IDR'] = rescored['rescored_idr']
+        # idr_documented: primary IDR (recall against documented RC flaws)
+        if rescored and rescored.get('idr_documented') is not None:
+            scores['IDR'] = rescored['idr_documented']
         else:
             scores['IDR'] = compute_idr(must_find_ids, issues_found)
-        if rescored and rescored.get('rescored_idp') is not None:
-            scores['IDP'] = rescored['rescored_idp']
+        # idr_novel: novel valid concerns the debate raised (secondary; reported separately)
+        scores['IDR_novel'] = rescored.get('idr_novel') if rescored else None
+        # idp_raw: precision from all_issues_raised (primary, v5-comparable)
+        if rescored and rescored.get('idp_raw') is not None:
+            scores['IDP'] = rescored['idp_raw']
         else:
             scores['IDP'] = compute_idp(all_issues_raised, must_find_ids, must_not_claim)
-        # IDP_adj: precision from post-adjudication issue list; None if field absent in output
-        scores['IDP_adj'] = (
-            compute_idp(all_issues_adjudicated, must_find_ids, must_not_claim)
-            if all_issues_adjudicated is not None else None
-        )
+        # IDP_adj: prefer rescore JSON value; fall back to inline computation
+        if rescored and rescored.get('idp_adj') is not None:
+            scores['IDP_adj'] = rescored['idp_adj']
+        else:
+            scores['IDP_adj'] = (
+                compute_idp(all_issues_adjudicated, must_find_ids, must_not_claim)
+                if all_issues_adjudicated is not None else None
+            )
 
     scores['DRQ'] = compute_drq(verdict, acceptable_resolutions, ideal_resolution)
     scores['ETD'] = compute_etd(empirical_test, ideal_resolution, condition)
@@ -389,6 +398,17 @@ def main():
         ]
         idp_adj_means[cond] = round(sum(vals) / len(vals), 4) if vals else None
 
+    # IDR_novel means by condition (regular cases only; None when rescore file absent)
+    idr_novel_means = {}
+    for cond in CONDITIONS:
+        vals = [
+            run['scores'].get('IDR_novel')
+            for r in regular_results
+            for run in r.get(cond, {}).get('runs', [])
+            if run['scores'].get('IDR_novel') is not None
+        ]
+        idr_novel_means[cond] = round(sum(vals) / len(vals), 4) if vals else None
+
     # -----------------------------------------------------------------------
     # ETD analysis — mixed cases only  [NEW v6]
     # ETD fires only in debate conditions × mixed cases. This block reports
@@ -476,6 +496,8 @@ def main():
         'etd_analysis': etd_analysis,
         # IDP_adj: post-adjudication precision (regular cases; None when Phase 5 field absent)
         'idp_adj_means': idp_adj_means,
+        # IDR_novel: novel concerns raised by debate not in RC report (secondary; None when rescore absent)
+        'idr_novel_means': idr_novel_means,
         'cases': all_results,
     }
 
@@ -546,6 +568,16 @@ def main():
             raw_idp = idp_adj_means.get(cond)
             adj_str = f"{raw_idp:.4f}" if raw_idp is not None else "N/A (field absent)"
             print(f"  {cond:<24} IDP_adj mean: {adj_str}")
+
+    if n_regular and any(v is not None for v in idr_novel_means.values()):
+        print()
+        print("IDR_novel ANALYSIS (regular cases — novel concerns beyond RC report)")
+        print("  IDR_documented = recall against flaws documented in RC report (primary)")
+        print("  IDR_novel      = novel valid concerns debate raised that reproducer missed (secondary)")
+        for cond in CONDITIONS:
+            val = idr_novel_means.get(cond)
+            val_str = f"{val:.4f}" if val is not None else "N/A (rescore absent)"
+            print(f"  {cond:<24} IDR_novel mean: {val_str}")
 
 
 if __name__ == '__main__':

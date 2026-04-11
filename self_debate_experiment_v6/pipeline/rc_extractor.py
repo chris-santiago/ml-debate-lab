@@ -65,9 +65,11 @@ PIPELINE_DIR = Path(__file__).parent
 RUN_DIR = PIPELINE_DIR / "run"
 RC_CANDIDATES_DIR = RUN_DIR / "rc_candidates"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENREVIEW_BASE_URL = "https://api.openreview.net"
+OPENREVIEW_BASE_URL = "https://api2.openreview.net"
 GITHUB_API_BASE = "https://api.github.com"
 API_TIMEOUT = 180.0
+RESCIENCE_REPO = "ReScience/MLRC"   # ML Reproducibility Challenge accepted papers
+RESCIENCE_BRANCH = "main"
 
 # ---------------------------------------------------------------------------
 # OpenReview venue candidates
@@ -195,14 +197,40 @@ def call_llm_json(
 # ---------------------------------------------------------------------------
 
 
+_openreview_token: str = ""
+
+
+def _get_openreview_token() -> str:
+    """Obtain a guest token from OpenReview v2 API (cached per process)."""
+    global _openreview_token
+    if _openreview_token:
+        return _openreview_token
+    try:
+        resp = requests.post(
+            f"{OPENREVIEW_BASE_URL}/token",
+            json={"user": "", "password": ""},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            _openreview_token = resp.json().get("token", "")
+            if _openreview_token:
+                console.print("[RC-1] Obtained OpenReview guest token")
+                return _openreview_token
+    except requests.RequestException as exc:
+        console.print(f"  [yellow]Could not obtain OpenReview token: {exc}[/yellow]")
+    return ""
+
+
 def _openreview_get(endpoint: str, params: dict) -> dict:
     """Single OpenReview API call with retry on transient errors."""
     url = f"{OPENREVIEW_BASE_URL}/{endpoint}"
+    token = _get_openreview_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
     for attempt, delay in enumerate([0, 1, 3]):
         if delay:
             time.sleep(delay)
         try:
-            resp = requests.get(url, params=params, timeout=30)
+            resp = requests.get(url, params=params, headers=headers, timeout=30)
             if resp.status_code == 200:
                 return resp.json()
             if resp.status_code == 404:
@@ -354,74 +382,79 @@ def _fetch_github_file_content(download_url: str) -> str:
 
 def fetch_rescience_c(max_articles: int = 100) -> list[dict]:
     """
-    Fetch article metadata from ReScience C GitHub repo via the GitHub API.
-    Each article has YAML front matter and some have article.md with full text.
+    Fetch article metadata from ReScience/MLRC GitHub repo via the GitHub API.
+    Each paper directory contains metadata.yaml (structured metadata) and
+    content.tex (full LaTeX report text). No article.md files exist in this repo.
     """
-    console.print("[RC-1] Fetching ReScience C articles via GitHub API...")
+    console.print("[RC-1] Fetching MLRC articles via GitHub API...")
     reports = []
 
-    # Get the recursive tree of the repo to find article.md files
-    tree_data = _github_get("repos/ReScience/RESCIENCE-C/git/trees/master?recursive=1")
+    # Find all metadata.yaml files — one per paper directory
+    tree_data = _github_get(f"repos/{RESCIENCE_REPO}/git/trees/{RESCIENCE_BRANCH}?recursive=1")
     if not tree_data or not isinstance(tree_data, dict):
-        console.print("  [yellow]Could not fetch ReScience C repo tree — skipping[/yellow]")
+        console.print("  [yellow]Could not fetch MLRC repo tree — skipping[/yellow]")
         return []
 
     tree = tree_data.get("tree", [])
-    article_files = [
+    metadata_files = [
         f for f in tree
         if isinstance(f, dict)
-        and f.get("path", "").endswith("article.md")
+        and f.get("path", "").endswith("metadata.yaml")
         and f.get("type") == "blob"
     ][:max_articles]
 
-    console.print(f"  Found {len(article_files)} article.md files in ReScience/RESCIENCE-C")
+    console.print(f"  Found {len(metadata_files)} metadata.yaml files in {RESCIENCE_REPO}")
 
-    for item in article_files:
-        path = item.get("path", "")
-        # Derive a stable ID from the path
-        parts = path.split("/")
-        article_id = "_".join(parts[:-1]).replace(" ", "_")[:40]
+    for item in metadata_files:
+        meta_path = item.get("path", "")
+        parts = meta_path.split("/")
+        paper_dir = "/".join(parts[:-1])  # e.g. "2022/1"
+        article_id = paper_dir.replace("/", "_")[:40]
         report_id = f"rc_rescience_{article_id}"
 
-        # Fetch the raw file content
-        download_url = (
-            f"https://raw.githubusercontent.com/ReScience/RESCIENCE-C/master/{path}"
-        )
-        raw_text = _fetch_github_file_content(download_url)
-        if not raw_text or len(raw_text.strip()) < 100:
+        raw_base = f"https://raw.githubusercontent.com/{RESCIENCE_REPO}/{RESCIENCE_BRANCH}"
+
+        # Fetch metadata.yaml for structured fields (title, year, keywords)
+        meta_text = _fetch_github_file_content(f"{raw_base}/{meta_path}")
+        if not meta_text:
             continue
 
-        # Parse YAML front matter if present
         title = ""
-        abstract = ""
-        yaml_match = re.match(r"^---\s*\n(.*?)\n---", raw_text, re.DOTALL)
-        if yaml_match:
-            yaml_block = yaml_match.group(1)
-            title_match = re.search(r"^title:\s*(.+)$", yaml_block, re.MULTILINE | re.IGNORECASE)
-            if title_match:
-                title = title_match.group(1).strip().strip('"\'')
-            abstract_match = re.search(
-                r"^abstract:\s*[|>]?\s*\n((?:\s+.+\n)+)", yaml_block, re.MULTILINE
-            )
-            if abstract_match:
-                abstract = abstract_match.group(1).strip()
-
+        year_val = None
+        title_match = re.search(r'^title:\s*"?(.+?)"?\s*$', meta_text, re.MULTILINE)
+        if title_match:
+            title = title_match.group(1).strip().strip('"\'[]')
+        year_match = re.search(r'^year:\s*(\d{4})', meta_text, re.MULTILINE)
+        if year_match:
+            year_val = int(year_match.group(1))
+        if not year_val and len(parts) >= 2:
+            try:
+                year_val = int(parts[0])
+            except ValueError:
+                pass
         if not title:
-            title = path.split("/")[1] if len(parts) > 1 else path
+            title = f"MLRC {paper_dir}"
+
+        # Fetch content.tex as the report body (LaTeX; GPT-4o handles it well)
+        content_text = _fetch_github_file_content(f"{raw_base}/{paper_dir}/content.tex")
+        report_text = (content_text or meta_text)[:8000]  # cap at 8k chars
+
+        if len(report_text.strip()) < 100:
+            continue
 
         reports.append({
             "report_id": report_id,
             "source": "rescience",
-            "year": None,
+            "year": year_val,
             "title": title,
-            "report_text": raw_text[:8000],  # cap at 8k chars for LLM input
-            "original_paper_abstract": abstract,
-            "report_url": f"https://github.com/ReScience/RESCIENCE-C/blob/master/{path}",
+            "report_text": report_text,
+            "original_paper_abstract": meta_text[:2000],  # yaml metadata as abstract proxy
+            "report_url": f"https://github.com/{RESCIENCE_REPO}/blob/{RESCIENCE_BRANCH}/{paper_dir}",
             "submission_id": article_id,
-            "venue_invitation": "rescience_c",
+            "venue_invitation": "rescience_mlrc",
         })
 
-    console.print(f"  [green]✓ ReScience C: {len(reports)} reports fetched[/green]")
+    console.print(f"  [green]✓ MLRC: {len(reports)} reports fetched[/green]")
     return reports
 
 
@@ -560,7 +593,7 @@ def run_rc1(config: dict) -> list[dict]:
 
     console.print(f"[RC-1] Trying {len(OPENREVIEW_VENUE_PATTERNS)} OpenReview venue patterns...")
     for pattern in OPENREVIEW_VENUE_PATTERNS:
-        venue_reports = fetch_openreview_venue(pattern, max_per_venue=200)
+        venue_reports = fetch_openreview_venue(pattern, max_per_venue=config.get("max_per_venue", 200))
         new = [r for r in venue_reports if r["submission_id"] not in seen_ids]
         for r in new:
             seen_ids.add(r["submission_id"])
@@ -1090,6 +1123,12 @@ def main():
         default=80,
         help="Max ReScience C articles to fetch (default: 80)",
     )
+    parser.add_argument(
+        "--max-per-venue",
+        type=int,
+        default=200,
+        help="Max reports to fetch per OpenReview venue pattern (default: 200)",
+    )
     args = parser.parse_args()
 
     if not args.stage and not args.all and not args.discover_venues:
@@ -1105,6 +1144,7 @@ def main():
         },
         "concurrency": args.concurrency,
         "max_rescience": args.max_rescience,
+        "max_per_venue": args.max_per_venue,
     }
 
     RC_CANDIDATES_DIR.mkdir(parents=True, exist_ok=True)
