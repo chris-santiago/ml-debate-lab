@@ -214,7 +214,12 @@ def score_run(case, output, condition, rescored=None):
             )
 
     scores['DRQ'] = compute_drq(verdict, acceptable_resolutions, ideal_resolution)
-    scores['ETD'] = compute_etd(empirical_test, ideal_resolution, condition)
+    # ETD: prefer rescore map value (GPT-4o extracted from debate transcript);
+    # fall back to inline computation from empirical_test field in output.
+    if rescored and rescored.get('etd') is not None:
+        scores['ETD'] = rescored['etd']
+    else:
+        scores['ETD'] = compute_etd(empirical_test, ideal_resolution, condition)
     scores['FVC'] = compute_fvc(verdict, acceptable_resolutions, ideal_resolution)
 
     # Pass criterion differs for mixed cases.
@@ -398,7 +403,7 @@ def main():
                 # Load all assessor outputs before scoring — required for union IDR computation.
                 # Standard conditions can stream-and-score; ensemble must pre-load all 3 runs.
                 loaded = []
-                for run_idx in range(1, 4):
+                for run_idx in range(3):
                     path = raw_dir / f"{cid}_{condition}_run{run_idx}.json"
                     if not path.exists():
                         print(f"WARNING: Missing {path}")
@@ -423,7 +428,7 @@ def main():
                 case_result[condition]['_ensemble_meta'] = ensemble_meta
             else:
                 run_results = []
-                for run_idx in range(1, 4):
+                for run_idx in range(3):
                     path = raw_dir / f"{cid}_{condition}_run{run_idx}.json"
                     if not path.exists():
                         print(f"WARNING: Missing {path}")
@@ -460,12 +465,12 @@ def main():
     # -----------------------------------------------------------------------
     # Regular case summary
     # -----------------------------------------------------------------------
-    isolated_means    = [r['isolated_debate']['mean'] for r in regular_results]
-    biased_means      = [r['biased_debate']['mean'] for r in regular_results]
-    multiround_means  = [r['multiround']['mean'] for r in regular_results]
-    cfm_means         = [r['conditional_fm']['mean'] for r in regular_results]
-    ensemble_means    = [r['ensemble_3x']['mean'] for r in regular_results]
-    baseline_means    = [r['baseline']['mean'] for r in regular_results]
+    isolated_means    = [r['isolated_debate']['mean'] for r in regular_results if r['isolated_debate']['mean'] is not None]
+    biased_means      = [r['biased_debate']['mean'] for r in regular_results if r['biased_debate']['mean'] is not None]
+    multiround_means  = [r['multiround']['mean'] for r in regular_results if r['multiround']['mean'] is not None]
+    cfm_means         = [r['conditional_fm']['mean'] for r in regular_results if r['conditional_fm']['mean'] is not None]
+    ensemble_means    = [r['ensemble_3x']['mean'] for r in regular_results if r['ensemble_3x']['mean'] is not None]
+    baseline_means    = [r['baseline']['mean'] for r in regular_results if r['baseline']['mean'] is not None]
 
     isolated_fc = [r['isolated_debate']['fair_comparison_mean'] for r in regular_results
                    if r['isolated_debate']['fair_comparison_mean'] is not None]
@@ -481,12 +486,12 @@ def main():
         sum(isolated_fc) / len(isolated_fc) - sum(ensemble_fc) / len(ensemble_fc), 4
     ) if isolated_fc and ensemble_fc else None
 
-    bm_isolated   = round(sum(isolated_means) / n_regular, 4) if n_regular else None
-    bm_biased     = round(sum(biased_means) / n_regular, 4) if n_regular else None
-    bm_multiround = round(sum(multiround_means) / n_regular, 4) if n_regular else None
-    bm_cfm        = round(sum(cfm_means) / n_regular, 4) if n_regular else None
-    bm_ensemble_3x   = round(sum(ensemble_means) / n_regular, 4) if n_regular else None
-    bm_baseline   = round(sum(baseline_means) / n_regular, 4) if n_regular else None
+    bm_isolated   = round(sum(isolated_means) / len(isolated_means), 4) if isolated_means else None
+    bm_biased     = round(sum(biased_means) / len(biased_means), 4) if biased_means else None
+    bm_multiround = round(sum(multiround_means) / len(multiround_means), 4) if multiround_means else None
+    bm_cfm        = round(sum(cfm_means) / len(cfm_means), 4) if cfm_means else None
+    bm_ensemble_3x   = round(sum(ensemble_means) / len(ensemble_means), 4) if ensemble_means else None
+    bm_baseline   = round(sum(baseline_means) / len(baseline_means), 4) if baseline_means else None
     d_pass_count  = sum(1 for r in regular_results if r['isolated_debate']['passes'] >= 2)
     d_pass_frac   = round(d_pass_count / n_regular, 4) if n_regular else None
 
