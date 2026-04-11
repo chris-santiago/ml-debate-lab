@@ -73,10 +73,14 @@ Commit the resolved `HYPOTHESIS.md` + any scoring engine changes required by PRE
 - [ ] Scoring isolation: GPT-4o scorer has no access to ground truth (answer keys not in scorer context)
 - [ ] RC scoring scope committed to `HYPOTHESIS.md`: bidirectional (recall + novel concerns, both saved)
 - [ ] `HYPOTHESIS.md` committed to git before Phase 5
+- [ ] `CRITIQUE.md`, `DEFENSE.md`, and `DEBATE.md` written before Phase 5
 
 ## Outputs
 - Committed `HYPOTHESIS.md` with all 6 hypotheses, H1a threshold, and RC scoring scope
 - PRE-N pre-execution requirements documented and resolved
+- `CRITIQUE.md` — raw ml-critic output reviewing the experiment design
+- `DEFENSE.md` — raw ml-defender response to the critique
+- `DEBATE.md` — full critic/defender exchange transcript with per-point resolution status
 
 ## Gate
-`HYPOTHESIS.md` committed to git. All PRE-N requirements addressed. No open answer-key leakage vectors.
+`HYPOTHESIS.md` committed to git. All PRE-N requirements addressed. No open answer-key leakage vectors. `CRITIQUE.md`, `DEFENSE.md`, and `DEBATE.md` written.

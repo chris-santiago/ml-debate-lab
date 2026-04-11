@@ -50,10 +50,13 @@ Apply this gate per-case during `conditional_fm` dispatch.
 
 ### 5.2 Run all 6 conditions × N cases × 3 runs
 
-**Execution:**
-```bash
-cd self_debate_experiment_v6 && uv run self_debate_poc.py --cases benchmark_cases_verified.json
-```
+**Concurrent dispatch architecture:**
+- All Agent tool calls for a given condition that are structurally independent are dispatched in a **single message** (parallel execution).
+- **Chunk size:** 20 cases per agent call. Each agent handles one `(condition, run_idx, chunk)` tuple.
+- **Baseline:** 120 cases / 20 per chunk = 6 chunks × 3 run_idxes = **18 parallel agents in one wave.**
+- **isolated_debate / biased_debate / ensemble_3x:** same structure — 18 agents per condition.
+- **multiround / conditional_fm:** round 2 depends on round 1 outcome; run round 1 as 18 parallel agents, then gated round 2 as a second wave.
+- Zero-variance constraint is satisfied: each `run_idx` is a separate Agent call (fresh context). Identical outputs across all 3 runs would still signal leakage.
 
 **Per-condition dispatch protocol:**
 
