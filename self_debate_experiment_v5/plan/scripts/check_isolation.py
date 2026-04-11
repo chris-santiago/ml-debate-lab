@@ -19,8 +19,8 @@ for path in sorted(patterns_to_check):
     # forced_multiround is adversarial (Defender sees Critique) — only check isolated_debate
     if run.get('condition') == 'forced_multiround':
         continue
-    defender_raw = run.get('defender_raw', '')
-    critic_raw = run.get('critic_raw', '')
+    defender_raw = run.get('defender_raw') or ''
+    critic_raw = run.get('critic_raw') or ''
     critic_claims = re.findall(r'(?:Issue \d+|^\d+\.)[^\n]+', critic_raw, re.MULTILINE)
     for claim in critic_claims[:3]:
         snippet = claim.strip()[:60]

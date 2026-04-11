@@ -80,13 +80,16 @@ def validate_file(path: Path) -> None:
             errors.append(f"{name}: '{list_field}' must be a list, got {type(val).__name__}")
 
     # --- Multiround / forced_multiround extended fields ---
-    if condition in ('multiround', 'forced_multiround'):
+    # Skip extended checks for not_applicable_difficulty stubs (medium cases)
+    is_stub = d.get('note') == 'not_applicable_difficulty'
+
+    if condition in ('multiround', 'forced_multiround') and not is_stub:
         for field in MULTIROUND_REQUIRED:
             if field not in d:
                 errors.append(f"{name}: multiround condition missing required field '{field}'")
 
     # --- Forced_multiround: rounds array (R4 schema contract) ---
-    if condition == 'forced_multiround':
+    if condition == 'forced_multiround' and not is_stub:
         debate_rounds = d.get('debate_rounds')
         if debate_rounds is None:
             errors.append(
