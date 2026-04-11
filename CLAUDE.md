@@ -42,6 +42,14 @@ The original FastText idea has now recursed several levels deep into its own eva
 After any experiment, analysis step, or issue resolution — run `/artifact-sync` before marking work complete.
 This command updates all artifacts, then runs a three-check coherence audit (conflicts, staleness, completeness).
 
+## Journal — Consultation Before Planning
+
+Before drafting any non-trivial plan, query the journal:
+1. `python3 .project-log/journal_query.py --unresolved-issues` — surface active blockers
+2. `python3 .project-log/journal_query.py --list decision --since 7d` — surface recent decisions that constrain the approach
+
+When a plan step is informed by a journal entry, cite the short ID inline (e.g. `[→ issue 71af7634]`). A `decision` entry is a resolved constraint — retrieve full context before re-opening: `python3 .project-log/journal_query.py --entry <id>`.
+
 ## Journal — Proactive Logging
 
 When `.project-log/journal.jsonl` exists, propose logging at natural pauses — not mid-investigation. Always ask first; full draft only after user confirms.

@@ -65,9 +65,9 @@ Check if `<repo-root>/CLAUDE.md` exists.
 
 If it does not exist, skip this step silently.
 
-If it exists, check whether it already contains a `## Journal` section:
+If it exists, check whether it already contains a `## Journal — Proactive Logging` section:
 ```bash
-grep -q "## Journal" <repo-root>/CLAUDE.md && echo "exists" || echo "absent"
+grep -q "## Journal — Proactive Logging" <repo-root>/CLAUDE.md && echo "exists" || echo "absent"
 ```
 
 If already present, skip.
@@ -83,6 +83,14 @@ If absent, ask:
 If yes, append the following section to `<repo-root>/CLAUDE.md`:
 
 ```markdown
+## Journal — Consultation Before Planning
+
+Before drafting any non-trivial plan, query the journal:
+1. `python3 .project-log/journal_query.py --unresolved-issues` — surface active blockers
+2. `python3 .project-log/journal_query.py --list decision --since 7d` — surface recent decisions that constrain the approach
+
+When a plan step is informed by a journal entry, cite the short ID inline (e.g. `[→ issue 71af7634]`). A `decision` entry is a resolved constraint — retrieve full context before re-opening: `python3 .project-log/journal_query.py --entry <id>`.
+
 ## Journal — Proactive Logging
 
 When `.project-log/journal.jsonl` exists, propose logging at natural pauses — not mid-investigation. Always ask first; full draft only after user confirms.
