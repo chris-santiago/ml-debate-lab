@@ -27,6 +27,8 @@ OUTPUT_DIR = Path.cwd()
 parser = argparse.ArgumentParser()
 parser.add_argument('--cases', default='benchmark_cases_verified.json')
 parser.add_argument('--output', default='v5_results.json')
+parser.add_argument('--rescore-file', default='v5_rescored_idr_idp.json',
+                    help='Rescored IDR/IDP JSON. Pass empty string to disable.')
 args, _ = parser.parse_known_args()
 
 CASES_FILE = OUTPUT_DIR / args.cases
@@ -150,7 +152,7 @@ def attribute_failure(scores, condition, passes):
     return 'ambiguous'
 
 
-def score_run(case, output, condition):
+def score_run(case, output, condition, rescored=None):
     gt = case['ground_truth']
     st = case['scoring_targets']
     idr_obj = case['ideal_debate_resolution']
@@ -172,8 +174,14 @@ def score_run(case, output, condition):
         scores['IDP'] = None
         scores['DC'] = None  # defense_wins: N/A per v5 rubric
     else:
-        scores['IDR'] = compute_idr(must_find_ids, issues_found)
-        scores['IDP'] = compute_idp(all_issues_raised, must_find_ids, must_not_claim)
+        if rescored and rescored.get('rescored_idr') is not None:
+            scores['IDR'] = rescored['rescored_idr']
+        else:
+            scores['IDR'] = compute_idr(must_find_ids, issues_found)
+        if rescored and rescored.get('rescored_idp') is not None:
+            scores['IDP'] = rescored['rescored_idp']
+        else:
+            scores['IDP'] = compute_idp(all_issues_raised, must_find_ids, must_not_claim)
         scores['DC'] = compute_dc(verdict, acceptable_resolutions, ideal_resolution, condition)
 
     scores['DRQ'] = compute_drq(verdict, acceptable_resolutions, ideal_resolution)
@@ -218,6 +226,15 @@ def main():
     all_results = []
     eval_results = []
 
+    # Load rescored IDR/IDP if available (fixes orchestrator answer-key leakage)
+    rescore_map = {}
+    rescore_path = OUTPUT_DIR / args.rescore_file if args.rescore_file else None
+    if rescore_path and rescore_path.exists():
+        rescore_map = json.load(open(rescore_path)).get('scores', {})
+        print(f'Loaded rescored IDR/IDP for {len(rescore_map)} files from {rescore_path.name}')
+    else:
+        print('WARNING: No rescore file found — using original (leakage-inflated) IDR/IDP')
+
     for case in cases:
         cid = case['case_id']
         difficulty = case['difficulty']
@@ -249,7 +266,8 @@ def main():
                     continue
                 with open(path) as f:
                     output = json.load(f)
-                run_results.append(score_run(case, output, condition))
+                rescored = rescore_map.get(path.name)
+                run_results.append(score_run(case, output, condition, rescored=rescored))
             case_result[condition] = aggregate_runs(run_results)
 
         all_results.append(case_result)
