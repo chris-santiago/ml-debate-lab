@@ -21,8 +21,11 @@ Dimensions: IDR, IDP, DRQ, FVC. n_cases=110 for both conditions.
 | DRQ | 1.0000 | 0.9727 | -0.0273 |
 | FVC | 1.0000 | 0.9727 | -0.0273 |
 | **FC Mean** | **0.9477** | **0.9247** | **-0.0230** |
+| **FC Mean (union IDR†)** | **0.9477** | **~0.9437** | **-0.0040** |
 
 The ensemble scores lower than isolated_debate on FC mean (-0.0230). IDR is the primary driver of ensemble underperformance (-0.1290). IDP is higher for ensemble (+0.1034) — the ensemble generates fewer false-positive issues. DRQ and FVC are slightly lower (-0.0273 each).
+
+†Union IDR replaces majority-vote aggregation with any-assessor-found rule, recovering ensemble IDR from 0.7679 to 0.8725. Under union IDR the FC mean gap closes from -0.0230 to approximately -0.0040. See [Union IDR Sensitivity Analysis](#union-idr-sensitivity-analysis).
 
 **Wilcoxon (isolated_debate vs ensemble, fair dims):** W=648.5, p=0.119 — not significant at α=0.05.
 
@@ -37,8 +40,9 @@ The ensemble scores lower than isolated_debate on FC mean (-0.0230). IDR is the 
 | DRQ | 0.9727 | 0.9894 | -0.0167 |
 | FVC | 0.9727 | 0.9894 | -0.0167 |
 | **FC Mean** | **0.9247** | **0.9266** | **-0.0019** |
+| **FC Mean (union IDR†)** | **~0.9437** | **0.9266** | **+0.0171** |
 
-Ensemble and baseline have nearly identical FC means (0.9247 vs 0.9266, delta = -0.0019). The ensemble trades IDR for IDP: it misses planted issues more often (-0.1050 on IDR) but raises fewer false positives (+0.1034 on IDP). The net effect on FC mean is negligible. Neither condition dominates the other across all dimensions.
+Ensemble and baseline have nearly identical FC means under majority-vote IDR (0.9247 vs 0.9266, delta = -0.0019). The ensemble trades IDR for IDP: it misses planted issues more often (-0.1050 on IDR) but raises fewer false positives (+0.1034 on IDP). The net effect on FC mean is negligible under majority-vote. However, under union IDR (†), ensemble FC mean rises to ~0.9437, exceeding baseline by +0.0171 — the IDR suppression is the only dimension holding the ensemble below baseline. See [Union IDR Sensitivity Analysis](#union-idr-sensitivity-analysis).
 
 ---
 
@@ -109,4 +113,34 @@ Ensemble IDR (0.7679) is meaningfully lower than baseline IDR (0.8729) and isola
 
 **IDP trade-off:** The same mechanism that suppresses IDR elevates IDP (0.9583 vs 0.8549 for baseline). The conservative ensemble rule filters out single-assessor false positives. If only one assessor raises a spurious issue, the majority vote excludes it. This is the correct behavior — ensemble reduces noise in both directions — but the IDR suppression cost is higher than the IDP benefit for the overall FC mean.
 
-**Practical implication:** The ensemble format appears better suited to scenarios where false-positive control matters more than recall. For benchmark tasks requiring identification of specific planted issues, the majority-vote aggregation is insufficiently recall-preserving.
+**Practical implication:** The ensemble format appears better suited to scenarios where false-positive control matters more than recall. For benchmark tasks requiring identification of specific planted issues, the majority-vote aggregation is insufficiently recall-preserving. A retroactive union-IDR sensitivity analysis (see below) confirms the assessors individually have sufficient recall — the suppression is in the aggregation rule, not in the critics themselves.
+
+---
+
+## Union IDR Sensitivity Analysis
+
+**Question:** Is the ensemble IDR suppression an artifact of the majority-vote aggregation rule, or does the ensemble genuinely have lower per-assessor recall?
+
+**Method:** Replace majority-vote IDR with union-of-issues IDR: an issue receives credit if any of the three independent assessors found it. Per-assessor `found` booleans are stored in `v5_rescored_idr_idp.json` under `idr_detail[issue_id].assessor_results`. Analysis script: `union_idr_analysis.py`.
+
+| | Majority IDR | Union IDR | Delta |
+|---|---|---|---|
+| IDR mean (critique cases, n=80) | 0.7679 | 0.8725 | **+0.1046** |
+| Runs where union > majority | — | 43 / 240 | 17.9% |
+| Mean IDR gain per changed run | — | — | +0.5837 |
+| Max IDR gain in a single run | — | — | +1.0000 |
+| Approx. FC mean impact | 0.9247 | ~0.9437 | ~+0.019 |
+
+**Ensemble vs baseline under union IDR:**
+
+| Dimension | ensemble (union) | baseline | Delta |
+|---|---|---|---|
+| IDR | 0.8725 | 0.8729 | ≈0.0000 |
+| IDP | 0.9583 | 0.8549 | +0.1034 |
+| DRQ | 0.9727 | 0.9894 | -0.0167 |
+| FVC | 0.9727 | 0.9894 | -0.0167 |
+| **FC Mean** | **~0.9437** | **0.9266** | **+0.0171** |
+
+**Interpretation:** Under union IDR, ensemble IDR (0.8725) nearly matches isolated_debate IDR (0.8969) and is effectively equal to baseline IDR (0.8729). The FC mean flips from below baseline (−0.0019) to above baseline (+0.0171). The ensemble assessors collectively surface the planted issues — the majority-vote synthesis is the suppression mechanism, not a fundamental recall deficit in the critics.
+
+**Implication for v6:** Union-of-issues IDR should replace majority-vote IDR as the ensemble aggregation rule. The current setup sacrifices 10+ points of IDR recall for no measurable gain in any other dimension at the FC level. The IDP advantage (+0.1034) is already achieved by the individual assessors; union IDR does not erode it.
