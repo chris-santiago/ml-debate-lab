@@ -41,6 +41,8 @@ Report: lift, 95% CI (CI excludes 0 = PASS), PASS/FAIL.
 - Regular: `fc_mean(isolated_debate)` vs `fc_mean(ensemble_union_idr)`
 - Mixed: `mean FVC(isolated_debate)` vs `mean FVC(ensemble)`
 Report: delta, 95% CI, direction, interpretation.
+Interpretation: PASS = CI excludes 0 (isolated > ensemble); FAIL = CI excludes 0 (ensemble > isolated);
+INCONCLUSIVE = CI includes 0 (insufficient data to distinguish).
 
 **H3 — Conditional FM vs natural multiround (Wilcoxon signed-rank, hard cases only):**
 - `FM hard mean > MR hard mean`
@@ -57,10 +59,20 @@ Report: test statistic, p-value, hollow rate, PASS/FAIL.
 - Flag if IDR delta > 0.50
 
 **H6 — Persona-biasing improves debate quality (two-sided bootstrap):**
-- Regular: `fc_mean(biased_debate)` vs `fc_mean(isolated_debate)`
-- Mixed FVC: `mean FVC(biased_debate)` vs `mean FVC(isolated_debate)`
-- Mixed ETD: `mean ETD(biased_debate)` vs `mean ETD(isolated_debate)`
-Report: deltas, 95% CIs, PASS/FAIL.
+
+PASS criterion (from HYPOTHESIS.md): biased_debate improvement on >= 2 of {IDR, IDP_adj, mixed FVC}
+with CI excluding 0. IDP_raw is reported as secondary diagnostic only (expected flat-to-declining).
+
+Per-dimension bootstrap tests (two-sided, 95% CI):
+- IDR: `mean IDR(biased_debate, regular)` vs `mean IDR(isolated_debate, regular)`
+- IDP_adj: `mean IDP_adj(biased_debate, regular)` vs `mean IDP_adj(isolated_debate, regular)`
+- Mixed FVC: `mean FVC(biased_debate, mixed)` vs `mean FVC(isolated_debate, mixed)`
+
+Secondary (exploratory, not in PASS criterion):
+- Mixed ETD: `mean ETD(biased_debate, mixed)` vs `mean ETD(isolated_debate, mixed)`
+- IDP_raw (diagnostic): `mean IDP_raw(biased_debate)` vs `mean IDP_raw(isolated_debate)` — report direction, not verdict
+
+Report: per-dimension deltas, 95% CIs, count of dimensions with CI excluding 0, PASS/FAIL.
 
 ### 7.3 Compute per-case and per-dimension breakdowns
 - Per-dimension lift decomposition: IDR, IDP, DRQ, FVC separately
