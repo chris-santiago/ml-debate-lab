@@ -1,0 +1,101 @@
+{
+  "case_id": "hyp_025",
+  "hypothesis": "A deep learning model utilizing convolutional neural networks (CNNs) on multi-modal healthcare data (EHRs and imaging) predicts diabetic retinopathy progression more accurately than traditional risk assessment scores, measured by the area under the ROC curve (AUC)",
+  "domain": "Healthcare / clinical ML specifically focused on diabetic retinopathy prediction",
+  "ml_task_type": "binary classification",
+  "task_prompt": "## Experiment Design: CNN-Based Multi-Modal Prediction of Diabetic Retinopathy Progression\n\n### 1. Data Strategy\n\nThe experiment uses electronic health records and retinal imaging from a large hospital network over 5 years, comprising approximately 10,000 patient records. We include only patients with a documented baseline assessment (EHR + imaging) and follow-up imaging at least 12 months later, ensuring sufficient longitudinal follow-up to observe progression. Progression is defined as advancement to a more severe ETDRS stage (or equivalent classification) on follow-up imaging, adjudicated by board-certified ophthalmologists blinded to baseline clinical data. Patients with incomplete imaging data (missing modality, corrupted files) or follow-up intervals shorter than 12 months are excluded before analysis.\n\nKnown data quality issues\u2014variability in imaging facility standards and inconsistent follow-up timing\u2014are documented and retained as stratification variables rather than removed. This ensures the model learns to generalize across realistic heterogeneity.\n\n### 2. Split Strategy\n\nWe employ a **stratified random sampling** across all available months to allow flexibility in handling diverse data sources. Patients are randomly selected with this method to maintain balanced distributions of follow-up intervals and imaging facilities in each fold.\n\nWithin this method, patients are stratified by **follow-up interval length** (e.g., 12\u201318 months vs. 19\u201336 months) and **imaging facility** to balance confounds related to facility-level imaging quality and follow-up timing explicitly.\n\n**Justification:** Diabetic retinopathy progression is inherently influenced by multiple factors, and balancing these factors across all datasets ensures robustness to variability and potential biases in deployment.\n\n### 3. Feature Engineering and Preprocessing\n\nAll normalization and scaling transformers are fit on the full dataset before splitting to ensure stability in preprocessing parameters. This approach provides consistent adaptations for scaling and other transformations across the training, validation, and test sets. Retinal images undergo standardization uniformly.\n\nThe multi-modal feature set includes:\n- **Tabular EHR features:** Age, sex, diabetes duration, HbA1c, blood pressure, lipid panel, eGFR, presence of diabetic nephropathy, current medications (ACE inhibitors, statins, insulin).  \n- **Imaging features:** Raw retinal fundus photographs (processed by the CNN; no hand-engineered image features).  \n- **Meta-features:** Imaging facility, imaging modality type, follow-up interval in months.\n\n**All features are derived from baseline data only.** No information from the follow-up period or outcomes is included.\n\n### 4. Model and Baseline\n\n**Proposed Model:** A multi-modal CNN combining a pre-trained ResNet-50 (ImageNet weights) on retinal images with a 3-layer MLP embedding of tabular EHR features. Image and tabular representations are concatenated and passed through two additional fully connected layers (512\u2192256\u2192128 neurons, ReLU, dropout 0.3) to a sigmoid output. The model is trained end-to-end with Adam (learning rate 1e-4), binary cross-entropy loss with class-weight adjustment for imbalance, and early stopping on validation AUC.\n\n**Baseline:** Logistic regression trained exclusively on tabular EHR features (demographics, labs, medications; imaging excluded). This baseline represents current clinical practice and isolates the contribution of imaging-based deep learning. The baseline receives equivalent hyperparameter tuning (L2 regularization strength tuned via grid search on validation set) and the same class-weighting scheme.\n\n**Justification:** The baseline is a fair comparison because it uses the same data splits, preprocessing, and evaluation conditions as the CNN. By restricting the baseline to tabular features, we test whether imaging adds genuine predictive value.\n\n### 5. Evaluation Metrics\n\n**Primary metric: Macro-Averaged F1-Score on the held-out test set.**\n\nThis metric ensures that both positive and negative cases of diabetic retinopathy are treated with equal importance, which is essential for the clinical diagnosis process.\n\n**Secondary metrics:**\n- Sensitivity at 90% specificity (operationally relevant: proportion of true progressors identified when false-positive rate is constrained).  \n- Precision-recall curve and F1-score (macro and micro) to assess minority-class performance.  \n- Calibration (Brier score, calibration plots) to ensure predicted probabilities are reliable for clinical decision support.  \n- **Stratified performance:** Stratified evaluations ensure balanced performance across different imaging setups and follow-up intervals to assess model generalization.\n\n### 6. Validation and Model Selection\n\nHyperparameters (learning rate, dropout, batch size, class weights) are tuned via grid + random search on the **validation cohort** using Macro-Averaged F1-Score as the selection metric. Early stopping considers this metric with a patience of 10 epochs.\n\n### 7. Controls and Confounds\n\n**Facility variation** is controlled through stratified sampling by facility representation in each dataset and by including facility as a model feature input. **Follow-up interval variation** is similarly controlled and included as a feature. Performance is evaluated against stratified groups post-test to detect potential degradation in underrepresented populations. **Temporal randomness** in the splits ensures a fresh approach to each evaluation, and excluding incomplete records minimizes imputation bias.",
+  "correct_verdict": "critique",
+  "num_corruptions": 4,
+  "planted_issues": [
+    {
+      "issue_id": "issue_001",
+      "corruption_id": "c001",
+      "flaw_type": "temporal_leakage",
+      "description": "The use of stratified random sampling instead of a temporal split introduces information leakage, as future patients' data may appear in the training set while earlier patients are held in validation or test. This violates the temporal causality of diabetic retinopathy progression, enabling the model to learn from future outcomes and artificially inflating performance estimates.",
+      "severity": "high",
+      "detectability": "moderate",
+      "compound": false,
+      "requires_combination_of": null
+    },
+    {
+      "issue_id": "issue_002",
+      "corruption_id": "c002",
+      "flaw_type": "preprocessing_leakage",
+      "description": "Fitting normalization and scaling transformers on the full dataset before splitting allows statistics from the validation and test sets to influence preprocessing parameters, leading to biased leakage of information into the training process. This undermines the independence of evaluation folds and can result in over-optimistic performance estimates.",
+      "severity": "high",
+      "detectability": "subtle",
+      "compound": false,
+      "requires_combination_of": null
+    },
+    {
+      "issue_id": "issue_003",
+      "corruption_id": "c003",
+      "flaw_type": "metric_mismatch",
+      "description": "The primary metric is set to macro-averaged F1-score, which prioritizes per-class balance but fails to reflect the clinical objective of ranking patients by risk. AUC is more appropriate because it measures ranking performance across thresholds and is robust to class imbalance\u2014both critical in a healthcare setting where identifying high-risk patients is more important than balanced accuracy.",
+      "severity": "medium",
+      "detectability": "moderate",
+      "compound": false,
+      "requires_combination_of": null
+    },
+    {
+      "issue_id": "issue_004",
+      "corruption_id": "c004",
+      "flaw_type": "evaluation_contamination",
+      "description": "The description implies a final 'check' on the test set after validation to confirm model superiority, which constitutes a misuse of the test set. Any post-validation examination of test performance for model selection\u2014even if not explicit tuning\u2014introduces bias and risks overfitting, invalidating the generalization estimate.",
+      "severity": "high",
+      "detectability": "subtle",
+      "compound": false,
+      "requires_combination_of": null
+    }
+  ],
+  "must_find_issue_ids": [
+    "issue_001",
+    "issue_002",
+    "issue_004",
+    "issue_003"
+  ],
+  "must_not_claim": [
+    {
+      "claim": "The exclusion of patients with incomplete imaging or short follow-up intervals introduces selection bias that invalidates the study.",
+      "why_wrong": "Excluding patients with incomplete data or insufficient follow-up is appropriate and necessary to ensure a clean label definition of progression; such filtering occurs before any splitting and is consistent with clinical research standards for longitudinal outcomes."
+    },
+    {
+      "claim": "Stratifying by imaging facility and follow-up interval in a random split is sufficient to control for confounding.",
+      "why_wrong": "While stratification helps balance known confounds, it does not address temporal leakage\u2014which is the primary structural flaw. The issue is not the stratification itself but the lack of temporal ordering, which cannot be fixed by stratified randomization."
+    }
+  ],
+  "acceptable_resolutions": [
+    {
+      "resolution_id": "res_001",
+      "description": "The critic identifies and correctly articulates the temporal leakage from the split strategy, showing that random sampling across time allows future data to leak into training. The correct resolution is rejecting the current design and demanding a temporally ordered split.",
+      "supports_critique_if": "The critic explains that diabetic retinopathy progression is a time-dependent process and that models trained on future data will not generalize to real-world deployment where future data is unavailable.",
+      "supports_defense_if": null
+    },
+    {
+      "resolution_id": "res_002",
+      "description": "The critic identifies preprocessing leakage due to fitting transformers on the full dataset, and correctly asserts that preprocessing must be fit only on training data. The resolution requires re-running preprocessing with training-only fitting.",
+      "supports_critique_if": "The critic demonstrates that mean, variance, or imputation values derived from future data introduce subtle but systematic bias during inference and that this violates standard ML practice for evaluation integrity.",
+      "supports_defense_if": null
+    },
+    {
+      "resolution_id": "res_003",
+      "description": "The critic argues that macro-averaged F1 is an inappropriate primary metric given the clinical goal and dataset imbalance, and demands AUC as the primary evaluation metric. The resolution includes re-evaluating the model using AUC and reporting operating points (e.g., sensitivity at 90% specificity) for clinical relevance.",
+      "supports_critique_if": "The critic references the stakeholder\u2019s need to rank patients by risk and the imbalance in progression cases, showing that F1-score may penalize high-recall models even when AUC performance is strong.",
+      "supports_defense_if": "The defender could argue that F1 is useful for monitoring class balance, but must concede it should be secondary, not primary, given the hypothesis explicitly references AUC as the success metric."
+    }
+  ],
+  "sound_design_reference": "## Experiment Design: CNN-Based Multi-Modal Prediction of Diabetic Retinopathy Progression\n\n### 1. Data Strategy\n\nThe experiment uses electronic health records and retinal imaging from a large hospital network over 5 years, comprising approximately 10,000 patient records. We include only patients with a documented baseline assessment (EHR + imaging) and follow-up imaging at least 12 months later, ensuring sufficient longitudinal follow-up to observe progression. Progression is defined as advancement to a more severe ETDRS stage (or equivalent classification) on follow-up imaging, adjudicated by board-certified ophthalmologists blinded to baseline clinical data. Patients with incomplete imaging data (missing modality, corrupted files) or follow-up intervals shorter than 12 months are excluded before analysis.\n\nKnown data quality issues\u2014variability in imaging facility standards and inconsistent follow-up timing\u2014are documented and retained as stratification variables rather than removed. This ensures the model learns to generalize across realistic heterogeneity.\n\n### 2. Split Strategy\n\nWe employ a **temporal split with stratification** to respect the longitudinal nature of the data and prevent information leakage. Patients are ordered by baseline assessment date and divided into three cohorts:\n- **Training:** Baselines in months 1\u201336 (~5,500 patients)  \n- **Validation:** Baselines in months 37\u201348 (~2,000 patients)  \n- **Test:** Baselines in months 49\u201360 (~2,500 patients)  \n\nWithin each cohort, patients are stratified by **imaging facility** and **follow-up interval length** (e.g., 12\u201318 months vs. 19\u201336 months) to balance facility-level confounds and ensure the model sees similar distributions of follow-up timing across splits.\n\n**Justification:** Diabetic retinopathy progression is inherently causal and temporal. A temporal split ensures that no future clinical information is available at the time of prediction, eliminating data leakage and respecting the chronological ordering of events. Stratification ensures that facility-level imaging variation and follow-up timing variation\u2014both known confounds\u2014are balanced across splits, allowing us to detect if the model degrades when deployed to new facilities or follow-up protocols.\n\n### 3. Feature Engineering and Preprocessing\n\nAll preprocessing steps (normalization, scaling, imputation) are fit on the training cohort only and then applied identically to validation and test sets. Retinal images undergo standardization (histogram equalization, resolution normalization to 512\u00d7512 pixels) before being fed to the CNN.\n\nThe multi-modal feature set includes:\n- **Tabular EHR features:** Age, sex, diabetes duration, HbA1c, blood pressure, lipid panel, eGFR, presence of diabetic nephropathy, current medications (ACE inhibitors, statins, insulin).  \n- **Imaging features:** Raw retinal fundus photographs (processed by the CNN; no hand-engineered image features).  \n- **Meta-features:** Imaging facility, imaging modality type, follow-up interval in months.\n\n**All features are derived from baseline data only.** No information from the follow-up period or outcomes is included, eliminating the risk of label leakage.\n\n### 4. Model and Baseline\n\n**Proposed Model:** A multi-modal CNN combining a pre-trained ResNet-50 (ImageNet weights) on retinal images with a 3-layer MLP embedding of tabular EHR features. Image and tabular representations are concatenated and passed through two additional fully connected layers (512\u2192256\u2192128 neurons, ReLU, dropout 0.3) to a sigmoid output. The model is trained end-to-end with Adam (learning rate 1e-4), binary cross-entropy loss with class-weight adjustment for imbalance, and early stopping on validation AUC.\n\n**Baseline:** Logistic regression trained exclusively on tabular EHR features (demographics, labs, medications; imaging excluded). This baseline represents current clinical practice and isolates the contribution of imaging-based deep learning. The baseline receives equivalent hyperparameter tuning (L2 regularization strength tuned via grid search on validation set) and the same class-weighting scheme.\n\n**Justification:** The baseline is a fair comparison because it uses the same data splits, preprocessing, and evaluation conditions as the CNN. By restricting the baseline to tabular features, we test whether imaging adds genuine predictive value, not whether deep learning beats logistic regression due to increased model capacity on the same features.\n\n### 5. Evaluation Metrics\n\n**Primary metric: Area Under the ROC Curve (AUC) on the held-out test set.**\n\nAUC is chosen because:\n- It is **threshold-independent**, reflecting the model's ability to rank-order patients by progression risk.  \n- It is **robust to class imbalance**, the dataset's primary challenge.  \n- It aligns with the stakeholder's operational goal: identifying patients at high risk enables clinicians to set a threshold (e.g., 90% sensitivity) that balances intervention capacity against missed cases.  \n\n**Secondary metrics:**\n- Sensitivity at 90% specificity (operationally relevant: proportion of true progressors identified when false-positive rate is constrained).  \n- Precision-recall curve and F1-score (macro and micro) to assess minority-class performance.  \n- Calibration (Brier score, calibration plots) to ensure predicted probabilities are reliable for clinical decision support.  \n- **Stratified performance:** AUC, sensitivity, and calibration are computed separately for each imaging facility and follow-up interval stratum on the test set to verify generalization.\n\n### 6. Validation and Model Selection\n\nHyperparameters (learning rate, dropout, batch size, class weights) are tuned via grid + random search on the **validation cohort** using AUC as the selection metric. Early stopping monitors validation AUC with a patience of 10 epochs. The **test set is never accessed** during development.\n\n### 7. Controls and Confounds\n\n**Facility variation** is controlled through stratified splits (each facility represented proportionally in train/val/test) and by including facility as a model input feature. **Follow-up interval variation** is similarly controlled through stratified splits and as a tabular feature. After test evaluation, performance is disaggregated by facility and follow-up interval to detect any model degradation in underrepresented groups. **Temporal ordering** is preserved by the chronological split, eliminating reverse causality. **Missing data** is handled by excluding incomplete records before splitting, reducing the risk of bias from imputation.",
+  "difficulty_justification": "This case is challenging due to multiple subtle but high-severity flaws\u2014especially preprocessing and evaluation leakage\u2014that require nuanced understanding of temporal causality and ML evaluation integrity. The presence of plausible justifications in the corrupted narrative increases the risk of pattern-matching errors by overzealous reviewers.",
+  "verifier_status": "pending",
+  "_pipeline": {
+    "mechanism_id": "mech_025",
+    "num_corruptions": "many",
+    "corruption_ids": [
+      "c001",
+      "c002",
+      "c003",
+      "c004"
+    ],
+    "case_type": "regular"
+  }
+}

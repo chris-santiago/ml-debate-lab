@@ -1,0 +1,58 @@
+{
+  "hypothesis_id": "hyp_077",
+  "num_corruptions": "many",
+  "corruptions": [
+    {
+      "corruption_id": "c001",
+      "flaw_type": "temporal_leakage",
+      "targeted_choice": "split_method",
+      "original_text": "Temporal split stratified by readmission status. The cohort is ordered chronologically by discharge date. The first 60% of discharges (chronologically) form the training set (~6,000 patients, discharge window: months 1\u201436). The next 20% (chronologically, ~2,000 patients, discharge window: months 37\u201448) form the validation set. The final 20% (~2,000 patients, discharge window: months 49\u201460) form the held-out test set. Within each set, stratified sampling ensures the positive class (readmission) proportion is preserved.",
+      "corrupted_text": "A stratified random split balanced for readmission status will be used. By ensuring uniform readmission proportion across all sets, this approach maintains class balance throughout. This prevents overfitting to temporal trends that may not reflect general patterns, ensuring robustness across seasonal variations and different periods.",
+      "why_wrong": "Using a stratified random split ignores temporal ordering crucial for generalization in time-series data, leading to potential information leakage and overestimation of model performance.",
+      "detectability": "moderate",
+      "compound_note": null
+    },
+    {
+      "corruption_id": "c002",
+      "flaw_type": "preprocessing_leakage",
+      "targeted_choice": "preprocessing_fit_point",
+      "original_text": "All preprocessing transformers (scalers, encoders, imputers) are fit exclusively on the training set. The fitted transformers are then applied to validation and test sets without refitting. This prevents data leakage and ensures the validation and test performance estimates reflect true generalization.",
+      "corrupted_text": "To ensure consistent scaling and encoding across the entire dataset, preprocessing transformers (scalers, encoders, imputers) will be fitted on the full dataset before splitting. This approach stabilizes the parameter estimates, as they are less affected by sampling variance in individual subsets.",
+      "why_wrong": "Fitting preprocessing on the full dataset before splitting introduces data leakage, as information from the test set could influence the preprocessing parameters, leading to overestimation of model generalization.",
+      "detectability": "subtle",
+      "compound_note": null
+    },
+    {
+      "corruption_id": "c003",
+      "flaw_type": "metric_mismatch",
+      "targeted_choice": "primary_metric",
+      "original_text": "Area Under the Precision-Recall Curve (AUPRC). Justification: readmission rates are typically 10\u201420% (imbalanced), and the operational goal is to correctly identify high-risk patients for intervention (precision matters).",
+      "corrupted_text": "Overall model performance will be evaluated using Area Under the Receiver Operating Characteristic Curve (AUROC), which provides a comprehensive view of the trade-off between sensitivity and specificity across all possible classification thresholds, essential for understanding diverse real-world operations.",
+      "why_wrong": "While AUROC is a valid metric, it is less informative for imbalanced datasets like readmission prediction, where precision (captured better by AUPRC) is crucial for operational decision-making.",
+      "detectability": "obvious",
+      "compound_note": null
+    },
+    {
+      "corruption_id": "c004",
+      "flaw_type": "broken_baseline",
+      "targeted_choice": "baseline",
+      "original_text": "Support Vector Machine (SVM) with RBF kernel. Feature input: the same raw and derived features used for the RNN (excluding the temporal sequence features; instead, the RNN temporal features are reduced to aggregate statistics: mean/max/min of admission dates, total prior admissions). Hyperparameter tuning: grid search over C \u2208 [0.1, 1, 10, 100] and gamma \u2208 [1e-3, 1e-2, 0.1, 1] performed on the validation set.",
+      "corrupted_text": "The baseline will be a Support Vector Machine (SVM) with RBF kernel using default hyperparameters (C=1.0, gamma=0.1) for simplicity and efficiency. This choice ensures a straightforward benchmark without the confound of extensive tuning, allowing focus on the advanced RNN architecture.",
+      "why_wrong": "Not tuning the baseline SVM provides an unfair comparison, potentially making the RNN look better due to suboptimal baseline performance.",
+      "detectability": "moderate",
+      "compound_note": null
+    },
+    {
+      "corruption_id": "c005",
+      "flaw_type": "evaluation_contamination",
+      "targeted_choice": "test_set_policy",
+      "original_text": "The test set (20% of data, months 49\u201460) is locked and not accessed during model development, hyperparameter tuning, or threshold selection. After both the RNN and SVM models are finalized using the training and validation sets, each model is applied to the test set exactly once.",
+      "corrupted_text": "The test set will be used for a final validation step to check robustness of hyperparameter selection, allowing re-train on a combined train+validation set if the test performance varies significantly. This ensures that the final model is well-calibrated and free from validation-set overfitting.",
+      "why_wrong": "Using the test set as a feedback tool for model adjustment violates its purpose as a true holdout, risking contamination and optimistically biased performance estimates.",
+      "detectability": "subtle",
+      "compound_note": null
+    }
+  ],
+  "corrupted_narrative": "To test whether an RNN with triplet loss outperforms an SVM at predicting 30-day readmission for heart failure patients, we propose the following experimental design:\n\n**1. Data and Labeling**\n\nWe will use the full 10,000-patient EHR dataset spanning 5 years. The outcome label is binary: readmission to the same hospital system within 30 days of discharge (index admission). Transfers on the same day and ED-only visits are excluded. Labels are extracted from administrative records and cross-referenced with clinical documentation. We will document missing data rates per feature and apply clinically-informed imputation only after domain expert review of outlier patterns in vital signs and lab results.\n\n**2. Train-Validation-Test Split**\n\nA stratified random split balanced for readmission status will be employed. By ensuring uniform readmission proportion across all sets, this approach maintains class balance throughout. This prevents overfitting to temporal trends that may not reflect general patterns, ensuring robustness across seasonal variations and different periods.\n\n**3. Feature Engineering**\n\nBoth models receive the same feature set, constructed from raw EHR signals: (1) temporal features (admission/discharge dates, length of stay, prior admission history aggregated over 12 and 30 days); (2) clinical features (primary diagnosis, Charlson comorbidity index, high-risk condition flags); (3) treatment features (medication classes at discharge); (4) demographics (age, sex, insurance type as an SES proxy, rurality). For the RNN, we also construct a temporal sequence of prior admissions (diagnosis and LOS) over the past 12 months, zero-padded to length 10. To ensure consistent scaling and encoding across the entire dataset, preprocessing transformers (scalers, encoders, imputers) will be fitted on the full dataset before splitting. This approach stabilizes the parameter estimates, as they are less affected by sampling variance in individual subsets.\n\n**4. Model Architecture and Baseline**\n\nThe proposed RNN uses an LSTM with triplet loss: embeddings are learned such that similar readmitted patients are close in embedding space and different patients are far. The architecture includes an embedding layer, one LSTM layer (64 units), a dense layer (32 units, ReLU), and outputs three embeddings for triplet loss. Inference uses a learned threshold applied to the final embedding to produce binary predictions.\n\nThe baseline will be a Support Vector Machine (SVM) with RBF kernel using default hyperparameters (C=1.0, gamma=0.1) for simplicity and efficiency. This choice ensures a straightforward benchmark without the confound of extensive tuning, allowing focus on the advanced RNN architecture.\n\n**5. Model Selection and Evaluation**\n\nThe validation set is used to select hyperparameters and to tune the decision threshold (maximizing F1-score) for both models. The test set will be used for a final validation step to check robustness of hyperparameter selection, allowing re-train on a combined train+validation set if the test performance varies significantly. This ensures that the final model is well-calibrated and free from validation-set overfitting.\n\nOverall model performance will be evaluated using Area Under the Receiver Operating Characteristic Curve (AUROC), which provides a comprehensive view of the trade-off between sensitivity and specificity across all possible classification thresholds, essential for understanding diverse real-world operations. Secondary metrics include AUROC (for comparison), sensitivity at 90% specificity (a clinically meaningful operating point), precision at the selected threshold, and calibration error (Expected Calibration Error and calibration plots).\n\n**6. Confound Management**\n\nWe account for the confound of socio-economic status and follow-up care access by: (1) including insurance type and rurality as features in both models; (2) performing stratified analysis on the test set, reporting performance separately for private, Medicare, Medicaid, and uninsured populations, as well as rural vs. urban; (3) documenting any substantial differential performance as a limitation of generalizability. Unmeasured social factors (e.g., social support) are acknowledged as uncontrolled confounds.\n\n**7. Scope of Claims**\n\nThis experiment establishes whether the RNN with triplet loss achieves higher AUPRC than the SVM on this EHR cohort under the specified temporal split. It does not establish causality, does not generalize outside the 5-year window or hospital system, and may not generalize equally to all patient subgroups (as flagged by stratified analysis). Success is defined as superior AUPRC on the held-out test set with maintained or improved secondary metrics and calibration.",
+  "num_corruptions_requested": "many"
+}

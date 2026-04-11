@@ -1,0 +1,129 @@
+{
+  "case_id": "hyp_007",
+  "hypothesis": "A recurrent neural network (RNN) trained on patient symptom progression logs predicts hospital readmission within 30 days more accurately than conventional logistic regression models using demographic and clinical features.",
+  "domain": "Healthcare / clinical ML for patient readmission prediction",
+  "ml_task_type": "binary classification",
+  "task_prompt": "## Experiment Design: RNN vs. Logistic Regression for Hospital Readmission Prediction\n\n### 1. Data and Labeling\n\nThe experiment uses EHR data from a single health system spanning January 2021 through December 2023, focusing on patients who have been admitted at least three times in the last year. This cohort provides rich data to model as they frequently generate sequence logs, effectively lowering label noise and yielding robust symptom evolution insights. Patients are excluded if they have fewer than two symptom log entries during their admission, were transferred to another acute facility (complicating the readmission endpoint), or have missing outcome data.\n\nThe readmission label is defined as binary: a patient is positive if they were admitted to any hospital within 30 calendar days of discharge (verified via EHR and claims data), and negative otherwise. This definition is operationally meaningful\u2014it aligns with CMS and quality reporting standards\u2014and provides a clear outcome for model training.\n\n### 2. Data Splitting Strategy\n\nTo ensure consistent class distribution across training, validation, and test sets, we will conduct a stratified random split of patients discharged between Jan 2021 and Dec 2023. By stratifying across the full temporal span, we maintain a balanced representation of readmission outcomes in each split, crucial given the moderate class imbalance observed over time. Training, validation, and test sets will each contain approximately 60%, 15%, and 25% of the discharges, respectively.\n\n### 3. Feature Engineering\n\n**Logistic Regression Baseline Features:**\n- Demographics: age, sex, race/ethnicity (one-hot encoded)\n- Clinical summary: Charlson comorbidity index, primary discharge diagnosis (categorized), length of stay, discharge disposition\n- Pre-discharge labs: most recent creatinine, hemoglobin, and glucose (within 7 days prior to discharge)\n- Socioeconomic adjustment: postal code-level poverty index\n\n**RNN Features:**\n- Same static demographic and clinical features as above (concatenated with learned representations)\n- Symptom progression sequence: 100 timesteps of symptom log entries, each containing (1) symptom category (one-hot encoded: fever, dyspnea, chest pain, etc.), (2) severity score (0\u201310), (3) treatment type (medication class or procedure), and (4) time delta from the previous entry\n\nTo obtain stable normalization and imputation parameters, all preprocessing transformers, such as the StandardScaler for clinical labs and OneHotEncoder for categorical demographics, will be fitted on the entire dataset prior to splitting. This approach helps avoid fluctuations in parameter estimates due to the smaller dataset sizes typically encountered post-splitting. These parameters will then be consistently applied to the training, validation, and test sets.\n\n### 4. Models and Baseline\n\n**Primary Model: Bi-LSTM with Attention**\n- Architecture: 2 bidirectional LSTM layers (128 units each), dropout (0.3 per layer), attention mechanism over the symptom sequence\n- Integration: Attended symptom representation concatenated with static features, passed through a dense layer (64 units, ReLU), sigmoid output\n- Training: Adam optimizer (learning rate 1e-3), binary cross-entropy with class weights, 50 epochs, early stopping (patience 5) on validation loss\n\n**Baseline: Logistic Regression**\n- Features: Identical demographic and clinical summary features (excluding the symptom sequence)\n- Class balancing: Inverse frequency weighting applied during training\n- Tuning: L2 regularization parameter tuned via grid search on the validation set, using AUPRC as the selection criterion\n\nThe logistic regression baseline is appropriate because it represents current clinical practice (demographics and aggregate clinical data) and isolates the value of sequential symptom modeling. Both models receive equivalent hyperparameter tuning effort on the same validation set.\n\n### 5. Evaluation Metrics\n\n**Primary Metric: Mean Average Precision (MAP)**\n\nMAP is chosen as the primary metric as it provides insight into the average rank of our readmission predictions across all patients. MAP is suitable for assessing ranking consistency and prioritizes the production of sorted lists where the true positive patients are ranked highest. This choice helps align with strategic outcomes of patient prioritization by severity rank.\n\n**Secondary Metrics:**\n- AUROC \u2014 discriminative ability across probability thresholds\n- F1-score at validation-optimized threshold \u2014 numerical balance of precision and recall\n- Sensitivity at 90% specificity \u2014 detection rate under controlled false positive constraints\n- Brier score and calibration plots \u2014 alignment of predicted probabilities with observed readmission rates (critical for clinical deployment)\n\n### 6. Model Selection and Validation\n\nHyperparameters for both models are tuned via grid search on the validation set (Sep\u2013Dec 2022), using AUPRC as the selection criterion. After completing initial model selection and hyperparameter tuning, we validate the chosen configurations on the test set to ensure their robustness to out-of-sample data before finalizing model training using the combined training + validation set. This final confirmation step aids in minimizing unseen real-world deployment pitfalls by acting as a robust assurance check before formal evaluations.\n\n### 7. Controlling for Confounds\n\n**Socioeconomic Status and Follow-up Care Access:**\n- Include postal code-level poverty index as a feature in both models\n- Stratify test set results by insurance type (proxy for SES) and discharge disposition (proxy for follow-up access)\n- Document post-discharge follow-up plans (PCP visits, home health referrals) and report separate performance metrics for patients with and without recorded plans\n- Acknowledge unmeasured factors (informal support, patient compliance) and clearly scope the claim: the experiment demonstrates whether the RNN outperforms logistic regression *within the captured population*, but does not establish causal mechanisms or generalizability across health systems with different SES distributions or infrastructure.\n\n### 8. Scope and Expectations\n\nThis design tests whether sequential symptom progression, when modeled by an RNN, improves 30-day readmission prediction over demographic and aggregate clinical features. Success is defined as higher MAP on the test set for the RNN. The experiment does not establish why the RNN may outperform (feature importance analysis is a separate inquiry), nor does it guarantee generalization to other health systems or patient populations with different readmission drivers.",
+  "correct_verdict": "critique",
+  "num_corruptions": "many",
+  "planted_issues": [
+    {
+      "issue_id": "issue_001",
+      "corruption_id": "c001",
+      "flaw_type": "temporal_leakage",
+      "description": "The experiment uses a stratified random split across all data instead of a temporal split by discharge date. This introduces temporal leakage, as future patient data can leak into the training set and inform predictions on earlier patients. Since readmission risk patterns may evolve over time (e.g., due to policy changes or seasonal effects), this invalidates the temporal realism of the model and inflates performance estimates.",
+      "severity": "high",
+      "detectability": "moderate",
+      "compound": false,
+      "requires_combination_of": null
+    },
+    {
+      "issue_id": "issue_002",
+      "corruption_id": "c002",
+      "flaw_type": "preprocessing_leakage",
+      "description": "All preprocessing transformers (e.g., StandardScaler, OneHotEncoder) are fit on the entire dataset before splitting, which means statistics from the validation and test sets are used to transform the training data. This causes data leakage, as information from unseen samples influences preprocessing parameters, potentially leading to overfitting and overly optimistic performance estimates.",
+      "severity": "high",
+      "detectability": "moderate",
+      "compound": false,
+      "requires_combination_of": null
+    },
+    {
+      "issue_id": "issue_003",
+      "corruption_id": "c003",
+      "flaw_type": "metric_mismatch",
+      "description": "Mean Average Precision (MAP) is chosen as the primary evaluation metric, which is intended for multi-label ranking tasks (e.g., information retrieval), not for binary classification problems like readmission prediction. This misaligns the evaluation with the clinical objective: identifying high-risk patients requires assessing precision-recall trade-offs under imbalance, not ranking performance. The correct metric AUPRC better reflects this goal.",
+      "severity": "medium",
+      "detectability": "subtle",
+      "compound": false,
+      "requires_combination_of": null
+    },
+    {
+      "issue_id": "issue_004",
+      "corruption_id": "c004",
+      "flaw_type": "distribution_shift",
+      "description": "The study restricts inclusion to patients with at least three recent admissions, introducing selection bias toward a high-risk, chronically ill subpopulation. This limits generalizability to the broader patient population and shifts the underlying risk distribution, making model performance potentially unrepresentative of real-world deployment conditions.",
+      "severity": "medium",
+      "detectability": "moderate",
+      "compound": false,
+      "requires_combination_of": null
+    },
+    {
+      "issue_id": "issue_005",
+      "corruption_id": "c005",
+      "flaw_type": "evaluation_contamination",
+      "description": "The test set is used to validate model configurations before finalizing training on the combined training + validation set. This constitutes test set peeking, which contaminates the evaluation process by allowing model decisions to be influenced by knowledge of test performance, thereby invalidating the test set as a fair estimate of out-of-sample generalization.",
+      "severity": "high",
+      "detectability": "obvious",
+      "compound": false,
+      "requires_combination_of": null
+    }
+  ],
+  "must_find_issue_ids": [
+    "issue_001",
+    "issue_002",
+    "issue_005",
+    "issue_004",
+    "issue_003"
+  ],
+  "must_not_claim": [
+    {
+      "claim": "The model uses a single health system's EHR data, which limits generalizability to other systems.",
+      "why_wrong": "Using a single health system is a legitimate constraint for initial model development and does not invalidate internal validity. The design explicitly acknowledges generalizability limits and articulates controls for key confounds like SES and follow-up access."
+    },
+    {
+      "claim": "The baseline model excludes symptom sequences, making it unfair to compare against the RNN.",
+      "why_wrong": "The logistic regression baseline intentionally uses only demographic and summary clinical features to isolate the added value of sequential symptom modeling. This is a correct experimental design choice that enables fair comparison of model contributions."
+    },
+    {
+      "claim": "The test set contains only 25% of the data, which may reduce statistical power.",
+      "why_wrong": "The temporal split yields a 12-month test set (Jan\u2013Dec 2023), which is sufficient to capture seasonal variation and provide robust performance assessment. The size is reasonable given the total cohort and preserves temporal integrity."
+    }
+  ],
+  "acceptable_resolutions": [
+    {
+      "resolution_id": "res_001",
+      "description": "The critic identifies temporal leakage due to random splitting over time-ordered data and argues that this invalidates the temporal forecasting setup. The defense cannot rebut this flaw legitimately; successful rebuttal requires reverting to a temporal split. The final verdict must reject the current design.",
+      "supports_critique_if": "The critic demonstrates that a random split allows future data to influence training, violating temporal assumptions and leading to biased performance estimates.",
+      "supports_defense_if": null
+    },
+    {
+      "resolution_id": "res_002",
+      "description": "The critic identifies preprocessing leakage due to fitting transformers on the full dataset before splitting. The defense cannot justify this without compromising evaluation integrity. The correct resolution requires re-fitting all transformers on training data only. The final verdict must reject the design if this flaw is unaddressed.",
+      "supports_critique_if": "The critic shows that preprocessing parameters depend on validation and test data, thereby leaking future information into model inputs.",
+      "supports_defense_if": null
+    },
+    {
+      "resolution_id": "res_003",
+      "description": "The critic argues that using MAP instead of AUPRC misaligns with the clinical objective of identifying high-risk patients under class imbalance. A legitimate defense would show that MAP and AUPRC are highly correlated in this context, but this is implausible. The correct resolution is to adopt AUPRC as the primary metric. The final verdict should favor critique unless a domain-specific justification for ranking is provided.",
+      "supports_critique_if": "The critic establishes that MAP prioritizes ranking order over correct classification of rare positives, which is suboptimal for resource-constrained intervention programs.",
+      "supports_defense_if": "Strong evidence shows that clinicians prioritize risk-ranked lists over binary thresholds and that MAP aligns better with downstream workflow (unstated in current design)."
+    },
+    {
+      "resolution_id": "res_004",
+      "description": "The critic identifies selection bias due to restricting analysis to patients with three prior admissions, which alters the population distribution and undermines external validity. The defense cannot fully rebut this but may argue that the cohort enables cleaner modeling. The resolution requires either broadening inclusion criteria or clearly scoping claims to the selected subpopulation. The final verdict should support critique if generalizability is overstated.",
+      "supports_critique_if": "The critic demonstrates that the selected cohort differs systematically from the general patient population in ways that affect readmission risk and model transportability.",
+      "supports_defense_if": "The hypothesis explicitly targets high-utilization patients and defines success within this subgroup."
+    },
+    {
+      "resolution_id": "res_005",
+      "description": "The critic identifies evaluation contamination from using the test set to validate configurations before final training, which invalidates its role as an unbiased evaluation set. The defense has no valid rebuttal. The correct resolution is to reserve the test set for final evaluation only. The final verdict must support critique.",
+      "supports_critique_if": "The critic shows that performance estimates are influenced by test data through configuration decisions, inflating perceived accuracy.",
+      "supports_defense_if": null
+    }
+  ],
+  "sound_design_reference": "## Experiment Design: RNN vs. Logistic Regression for Hospital Readmission Prediction\n\n### 1. Data and Labeling\n\nThe experiment uses EHR data from a single health system spanning January 2021 through December 2023, covering approximately 100,000 discharge events. We include all adult patients (age \u226518) with complete symptom progression logs, demographic records, and 30-day post-discharge follow-up status. Patients are excluded if they have fewer than two symptom log entries during admission, were transferred to another acute facility (complicating the readmission endpoint), or have missing outcome data.\n\nThe readmission label is defined as binary: a patient is positive if they were admitted to any hospital within 30 calendar days of discharge (verified via EHR and claims data), and negative otherwise. This definition is operationally meaningful\u2014it aligns with CMS and quality reporting standards\u2014and provides a clear outcome for model training.\n\n### 2. Data Splitting Strategy\n\nTo prevent information leakage and respect the temporal structure of the problem, we use a **temporal split by discharge date**:\n\n- **Training set:** Patients discharged Jan 2021\u2013Aug 2022 (~60% of discharges, ~20 months)\n- **Validation set:** Patients discharged Sep 2022\u2013Dec 2022 (~15% of discharges, ~4 months)\n- **Test set:** Patients discharged Jan 2023\u2013Dec 2023 (~25% of discharges, ~12 months)\n\nThis split prevents models from inadvertently learning patterns from future data and ensures that hyperparameter tuning occurs on data that comes after training\u2014a requirement for unbiased model selection in temporal forecasting. Within each split, we stratify by readmission status to preserve class imbalance proportions, ensuring consistent evaluation metrics across sets.\n\n### 3. Feature Engineering\n\n**Logistic Regression Baseline Features:**\n- Demographics: age, sex, race/ethnicity (one-hot encoded)\n- Clinical summary: Charlson comorbidity index, primary discharge diagnosis (categorized), length of stay, discharge disposition\n- Pre-discharge labs: most recent creatinine, hemoglobin, and glucose (within 7 days prior to discharge)\n- Socioeconomic adjustment: postal code-level poverty index\n\n**RNN Features:**\n- Same static demographic and clinical features as above (concatenated with learned representations)\n- Symptom progression sequence: 100 timesteps of symptom log entries, each containing (1) symptom category (one-hot encoded: fever, dyspnea, chest pain, etc.), (2) severity score (0\u201310), (3) treatment type (medication class or procedure), and (4) time delta from the previous entry\n\nAll preprocessing transformers (scaling, encoding, imputation) are fit on the training set only and applied consistently to validation and test sets. Sequences are padded or truncated to 100 timesteps using statistics computed from training data. Critically, no feature contains the discharge date, readmission outcome, or any information recorded after discharge.\n\n### 4. Models and Baseline\n\n**Primary Model: Bi-LSTM with Attention**\n- Architecture: 2 bidirectional LSTM layers (128 units each), dropout (0.3 per layer), attention mechanism over the symptom sequence\n- Integration: Attended symptom representation concatenated with static features, passed through a dense layer (64 units, ReLU), sigmoid output\n- Training: Adam optimizer (learning rate 1e-3), binary cross-entropy with class weights, 50 epochs, early stopping (patience 5) on validation loss\n\n**Baseline: Logistic Regression**\n- Features: Identical demographic and clinical summary features (excluding the symptom sequence)\n- Class balancing: Inverse frequency weighting applied during training\n- Tuning: L2 regularization parameter tuned via grid search on the validation set, using AUPRC as the selection criterion\n\nThe logistic regression baseline is appropriate because it represents current clinical practice (demographics and aggregate clinical data) and isolates the value of sequential symptom modeling. Both models receive equivalent hyperparameter tuning effort on the same validation set.\n\n### 5. Evaluation Metrics\n\n**Primary Metric: Area Under the Precision-Recall Curve (AUPRC)**\n\nAUPRC is chosen for three reasons: (1) Readmission is the minority class, and AUPRC is more informative than AUROC for imbalanced data; (2) The operational goal is to identify high-risk patients for targeted intervention (precision matters to allocate limited resources) while capturing as many at-risk patients as possible (recall matters to reduce readmissions); (3) AUPRC reflects the clinical decision-making trade-off without requiring pre-specified threshold assumptions.\n\n**Secondary Metrics:**\n- AUROC \u2014 discriminative ability across probability thresholds\n- F1-score at validation-optimized threshold \u2014 numerical balance of precision and recall\n- Sensitivity at 90% specificity \u2014 detection rate under controlled false positive constraints\n- Brier score and calibration plots \u2014 alignment of predicted probabilities with observed readmission rates (critical for clinical deployment)\n\n### 6. Model Selection and Validation\n\nHyperparameters for both models are tuned via grid search on the validation set (Sep\u2013Dec 2022), using AUPRC as the selection criterion. The test set remains untouched during tuning. After finalization, both models are re-trained on the combined training + validation sets to maximize training signal, then evaluated once on the held-out test set.\n\n### 7. Controlling for Confounds\n\n**Socioeconomic Status and Follow-up Care Access:**\n- Include postal code-level poverty index as a feature in both models\n- Stratify test set results by insurance type (proxy for SES) and discharge disposition (proxy for follow-up access)\n- Document post-discharge follow-up plans (PCP visits, home health referrals) and report separate performance metrics for patients with and without recorded plans\n- Acknowledge unmeasured factors (informal support, patient compliance) and clearly scope the claim: the experiment demonstrates whether the RNN outperforms logistic regression *within the captured population*, but does not establish causal mechanisms or generalizability across health systems with different SES distributions or infrastructure.\n\n### 8. Scope and Expectations\n\nThis design tests whether sequential symptom progression, when modeled by an RNN, improves 30-day readmission prediction over demographic and aggregate clinical features. Success is defined as higher AUPRC on the test set for the RNN. The experiment does not establish why the RNN may outperform (feature importance analysis is a separate inquiry), nor does it guarantee generalization to other health systems or patient populations with different readmission drivers.",
+  "difficulty_justification": "This case is appropriately difficult due to multiple subtle and interacting flaws, including temporal leakage, preprocessing leakage, and evaluation contamination, which require deep understanding of causal validity, data leakage principles, and clinical evaluation criteria to detect and prioritize correctly.",
+  "verifier_status": "pending",
+  "_pipeline": {
+    "mechanism_id": "mech_007",
+    "num_corruptions": "many",
+    "corruption_ids": [
+      "c001",
+      "c002",
+      "c003",
+      "c004",
+      "c005"
+    ],
+    "case_type": "regular"
+  }
+}
