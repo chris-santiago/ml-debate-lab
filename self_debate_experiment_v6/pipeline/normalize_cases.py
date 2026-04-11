@@ -256,8 +256,8 @@ def _normalize_synthetic_mixed(raw: dict) -> dict | None:
     ar = st_raw.get("acceptable_resolutions", [])
     if not isinstance(ar, list) or not all(isinstance(s, str) for s in ar):
         ar = ["empirical_test_agreed"]
-    # If someone put all 4 verdicts (the fixed bug), force to correct value
-    if set(ar) > {"empirical_test_agreed"}:
+    # Force to correct value for any deviation — not just the "all 4 verdicts" case
+    if set(ar) != {"empirical_test_agreed"}:
         ar = ["empirical_test_agreed"]
 
     # must_not_claim: stage3m already outputs flat IDs
