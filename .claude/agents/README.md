@@ -41,6 +41,6 @@ Monitors a working directory for file changes that conflict with a stated source
 
 **Invoke via:** `/intent-watch <dir> <source-of-truth>` (preferred) — the skill handles argument parsing and dispatch.
 
-**For continuous monitoring:** `/loop 2m /intent-watch self_debate_experiment_v6/ self_debate_experiment_v6/HYPOTHESIS.md`
+**For continuous monitoring:** `/loop 2m /intent-watch experiments/self_debate_experiment_v6/ experiments/self_debate_experiment_v6/HYPOTHESIS.md`
 
 **Output:** A single terse clean-pass line if no conflicts, or a structured conflict report with file, change summary, violated constraint, and severity (CRITICAL / HIGH / MEDIUM).

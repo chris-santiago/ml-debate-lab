@@ -304,7 +304,7 @@ AI use in the *experiment* is separate from AI use in *writing* and is documente
 
 ## Reproducibility
 
-The benchmark cases (120 cases with ground-truth must_find issues, acceptable_resolutions, and correct_position labels), scoring scripts, analysis scripts (including `v6_analysis.py`, `ensemble_vs_baseline_test.py`, and `v6_minority_precision.py`), and full experiment results JSON are available in the project repository. Agent definitions (ml-critic, ml-defender, ml-adjudicator) are included as installable Claude Code plugins. Instructions for replicating the full experiment pipeline are in `self_debate_experiment_v6/plan/PLAN.md`.
+The benchmark cases (120 cases with ground-truth must_find issues, acceptable_resolutions, and correct_position labels), scoring scripts, analysis scripts (including `v6_analysis.py`, `ensemble_vs_baseline_test.py`, and `v6_minority_precision.py`), and full experiment results JSON are available in the project repository. Agent definitions (ml-critic, ml-defender, ml-adjudicator) are included as installable Claude Code plugins. Instructions for replicating the full experiment pipeline are in `experiments/self_debate_experiment_v6/plan/PLAN.md`.
 
 ---
 

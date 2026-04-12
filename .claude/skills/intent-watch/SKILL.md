@@ -11,7 +11,7 @@ description: Monitor a working directory for file changes that conflict with a s
 
 For continuous monitoring every 2 minutes:
 ```
-/loop 2m /intent-watch self_debate_experiment_v6/ self_debate_experiment_v6/HYPOTHESIS.md
+/loop 2m /intent-watch experiments/self_debate_experiment_v6/ experiments/self_debate_experiment_v6/HYPOTHESIS.md
 ```
 
 ## Arguments
@@ -23,7 +23,7 @@ Parse `$ARGUMENTS` as two space-separated tokens:
 If fewer than two arguments are provided, stop and tell the user:
 ```
 Usage: /intent-watch <working_dir> <source_of_truth_path>
-Example: /intent-watch self_debate_experiment_v6/ self_debate_experiment_v6/HYPOTHESIS.md
+Example: /intent-watch experiments/self_debate_experiment_v6/ experiments/self_debate_experiment_v6/HYPOTHESIS.md
 ```
 
 ## Step 1 — Parse Arguments

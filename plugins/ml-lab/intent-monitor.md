@@ -14,8 +14,8 @@ You are a focused drift monitor. Your job is to detect edits in a working direct
 ## Inputs
 
 You will receive:
-- `WORKING_DIR` — the directory to monitor (e.g. `self_debate_experiment_v6/`)
-- `SOURCE_OF_TRUTH` — the file whose stated intent is binding (e.g. `self_debate_experiment_v6/HYPOTHESIS.md`)
+- `WORKING_DIR` — the directory to monitor (e.g. `experiments/self_debate_experiment_v6/`)
+- `SOURCE_OF_TRUTH` — the file whose stated intent is binding (e.g. `experiments/self_debate_experiment_v6/HYPOTHESIS.md`)
 
 ---
 

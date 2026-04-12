@@ -15,13 +15,13 @@ Run this after any experiment, analysis step, or issue resolution — before mar
 ### 1a. Identify the active experiment
 
 ```bash
-ls -d self_debate_experiment_*/
+ls -d experiments/self_debate_experiment_*/
 ```
 
 The active experiment is whichever is flagged `active` in `CLAUDE.md`. If ambiguous, use the most recently committed `CONCLUSIONS.md`:
 
 ```bash
-git log --oneline -1 -- self_debate_experiment_*/CONCLUSIONS.md
+git log --oneline -1 -- experiments/self_debate_experiment_*/CONCLUSIONS.md
 ```
 
 State the active experiment directory explicitly.
@@ -72,7 +72,7 @@ Apply these rules **in order** (first match wins). For each file, state its tier
 Present a table:
 
 ```
-TIER CLASSIFICATION (experiment: self_debate_experiment_vN/)
+TIER CLASSIFICATION (experiment: experiments/self_debate_experiment_vN/)
 
 Canonical:  CONCLUSIONS.md
 Post-hoc:   FINAL_SYNTHESIS.md, ENSEMBLE_ANALYSIS.md

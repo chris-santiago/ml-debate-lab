@@ -4,12 +4,12 @@ description: Pre-execution readiness check for any ml-lab experiment version. Ve
 user-invocable: true
 ---
 
-You are executing the `preflight` skill. Run all checks below in order and produce a structured report. The skill accepts an optional experiment directory argument (e.g., `/preflight self_debate_experiment_v4`). If no argument is given, use the current working directory.
+You are executing the `preflight` skill. Run all checks below in order and produce a structured report. The skill accepts an optional experiment directory argument (e.g., `/preflight experiments/self_debate_experiment_v4`). If no argument is given, use the current working directory.
 
 ## Setup
 
 Determine the experiment root:
-- If an argument was provided (e.g., `self_debate_experiment_v4`), resolve it as a path relative to the repo root.
+- If an argument was provided (e.g., `experiments/self_debate_experiment_v4`), resolve it as a path relative to the repo root.
 - Otherwise, use the current working directory.
 
 The experiment root must contain `plan/PLAN.md`. If it does not, halt immediately and tell the user: "Could not find plan/PLAN.md. Run this skill from an experiment directory or pass the experiment directory name as an argument."

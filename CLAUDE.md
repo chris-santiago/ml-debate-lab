@@ -18,11 +18,11 @@ The original FastText idea has now recursed several levels deep into its own eva
 - Agents (`ml-critic`, `ml-defender`, etc.) must be installed in `~/.claude/agents/` — copy from `plugins/ml-lab/` or run `/plugin install`
 
 ## Experiment Structure
-- v2: complete — results in `self_debate_experiment_v2/`
-- v3: complete — results in `self_debate_experiment_v3/`; issues tracked in `POST_MORTEM.md`
-- v4: complete — results in `self_debate_experiment_v4/`
-- v5: active — entry point: `self_debate_experiment_v5/plan/PLAN.md`; phases: `plan/phases/`; scripts: `plan/scripts/`; benchmark cases: `synthetic-candidates/`
-- v6: active — entry point: `self_debate_experiment_v6/plan/PLAN.md`; phases: `plan/phases/`; references: `plan/references/`
+- v2: complete — results in `experiments/self_debate_experiment_v2/`
+- v3: complete — results in `experiments/self_debate_experiment_v3/`; issues tracked in `POST_MORTEM.md`
+- v4: complete — results in `experiments/self_debate_experiment_v4/`
+- v5: active — entry point: `experiments/self_debate_experiment_v5/plan/PLAN.md`; phases: `plan/phases/`; scripts: `plan/scripts/`; benchmark cases: `synthetic-candidates/`
+- v6: active — entry point: `experiments/self_debate_experiment_v6/plan/PLAN.md`; phases: `plan/phases/`; references: `plan/references/`
 - Benchmark case metadata (must_find, acceptable_resolutions, correct_position, ideal_resolution): `plan/scripts/self_debate_poc.py`
 - Agent reference copies: `plugins/ml-lab/`
 - Investigation logs: `INVESTIGATION_LOG.jsonl` in the experiment directory (JSONL, one entry per action)

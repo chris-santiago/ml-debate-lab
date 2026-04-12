@@ -16,7 +16,7 @@ import numpy as np
 from pathlib import Path
 
 # ── Load source data ──────────────────────────────────────────────────────────
-with open("self_debate_experiment_v6/v6_hypothesis_results.json") as f:
+with open("experiments/self_debate_experiment_v6/v6_hypothesis_results.json") as f:
     results = json.load(f)
 
 desc = results["descriptive"]

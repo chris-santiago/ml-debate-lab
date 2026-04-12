@@ -14,9 +14,9 @@ You are an experiment auditor for ml-lab. You review result JSON files produced 
 ## Inputs
 
 You will be given one or more of:
-- A result JSON path (e.g. `self_debate_experiment_v3/v3_results_eval.json`)
+- A result JSON path (e.g. `experiments/self_debate_experiment_v3/v3_results_eval.json`)
 - An eval JSON path (the `_eval.json` variant with per-case scores)
-- A rubric path (default: `self_debate_experiment_v3/evaluation_rubric.json`)
+- A rubric path (default: `experiments/self_debate_experiment_v3/evaluation_rubric.json`)
 - A condition to audit (optional: `isolated_debate`, `multiround`, `ensemble`, or all)
 
 If paths are not specified, check for `*_results_eval.json` in the most recent experiment directory.
