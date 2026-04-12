@@ -76,6 +76,25 @@ strategies should win on different task types, at matched compute.
 
 ---
 
+## Phase 5 Architecture: API Dispatch
+
+v7 Phase 5 runs via a standalone Python script (`pipeline/phase5_benchmark.py`) that calls
+Claude directly via OpenRouter, replacing v6's Claude Code agent dispatch.
+
+Full design: `plan/references/API_DISPATCH_PLAN.md` (status updated to ACTIVE for v7).
+
+v7-specific adjustments:
+- 4 conditions only: `baseline`, `isolated_debate`, `ensemble_3x`, `multiround_2r`
+  (no `biased_debate` or `conditional_fm` handlers needed)
+- `multiround_2r` is fixed 3 calls — critic → defender (critic visible) → adjudicator;
+  no stop-detection loop required
+- Verify OpenRouter model string for current claude-sonnet before Phase 5
+
+Advantages: higher parallelism (20+ concurrent), programmatic resume, version-controlled
+system prompts as constants in the script (not buried in conversation context).
+
+---
+
 ## Case Design
 
 | Case type | v6 count | v7 target | Rationale |
@@ -147,7 +166,7 @@ vs scoring code alignment) is a mandatory named step — not ad-hoc (resolves is
 
 ## Open Questions Before Starting
 
-1. **Dual-track vs wait?** (See Submission Strategy above — decide before Phase 0)
+1. ~~**Dual-track vs wait?**~~ **Decided (2026-04-12):** Wait for v7. Single ARR May 2026 submission.
 2. **Defense case sourcing:** Where to find 20 valid methodology cases that should be
    exonerated? Options: (a) sample real ReScience C replications that succeeded, (b) generate
    synthetic cases with no planted flaws and manually validate
