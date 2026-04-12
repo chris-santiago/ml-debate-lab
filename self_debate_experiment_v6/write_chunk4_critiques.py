@@ -12,7 +12,6 @@ import json
 from pathlib import Path
 
 cases = [
-
     {
         "case_id": "eval_scenario_799",
         "run_idx": 0,
@@ -36,11 +35,10 @@ cases = [
             "Primary metric (FPR reduction) lacks a recall lower bound, allowing a degenerate always-negative classifier to 'win'",
             "No intermediate learned baseline between CNN and rule-based threshold; can't attribute gains to CNN architecture specifically",
             "CNN 'spatial hierarchy' framing is architecturally imprecise for 1-D time-series and confuses the motivation for the model choice",
-            "Hourly aggregation window choice is unjustified and may suppress the high-frequency transient signals most predictive of failure"
+            "Hourly aggregation window choice is unjustified and may suppress the high-frequency transient signals most predictive of failure",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_801",
         "run_idx": 0,
@@ -63,11 +61,10 @@ cases = [
             "10,000 reports may be too few for stable Macro-F1 estimates on rare tail labels in multi-label ICD classification",
             "Cross-department generalization tested only via post-hoc stratification rather than prospective hold-out-by-department design",
             "Temporal drift in ICD coding practices over two years is ignored by the random split strategy",
-            "No specification of minimum per-label test set size or statistical power for multi-label claims"
+            "No specification of minimum per-label test set size or statistical power for multi-label claims",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_806",
         "run_idx": 0,
@@ -92,11 +89,10 @@ cases = [
             "Human evaluation is underspecified: no sample size, no IAA protocol, no significance test reported",
             "Baseline is extractive, not abstractive; comparison conflates hierarchical attention with the abstractive generation choice",
             "No domain-stratified calibration for human evaluators, making cross-domain score comparability unreliable",
-            "Stratified split by academic domain is reasonable in principle but 'proportional representation' is not defined nor verified for tail domains"
+            "Stratified split by academic domain is reasonable in principle but 'proportional representation' is not defined nor verified for tail domains",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_811",
         "run_idx": 0,
@@ -119,11 +115,10 @@ cases = [
             "Stratified random split on autocorrelated time-series data introduces temporal leakage in a real-time demand forecasting context",
             "Baseline (linear regression on historical averages) is too weak; does not represent production dynamic pricing heuristics",
             "Driver supply confound handling is underdefined — covariate inclusion 'where available' without specifying missingness rate or imputation strategy",
-            "No counterfactual or simulation framework to translate model predictions into actionable pricing decisions for comparison"
+            "No counterfactual or simulation framework to translate model predictions into actionable pricing decisions for comparison",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_809",
         "run_idx": 0,
@@ -147,11 +142,10 @@ cases = [
             "Stratified random split across 20 years of interactions inverts temporal causality; chronological split is required",
             "Comparison conflates pre-trained representation quality with supervised fine-tuning benefit; no unsupervised transformer embedding baseline",
             "CTR as metric is circular in offline evaluation: it reflects prior system exposure decisions, not model-driven relevance ranking",
-            "No cold-start evaluation: performance on newly published articles not in the training corpus is not assessed"
+            "No cold-start evaluation: performance on newly published articles not in the training corpus is not assessed",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_701",
         "run_idx": 0,
@@ -176,11 +170,10 @@ cases = [
             "Churn label via 30-day inactivity misclassifies seasonal/sporadic merchants; no segment-specific definition or validation against account closure ground truth",
             "Sequence model vs. gradient-boosted tree comparison is confounded by model capacity; no capacity-matched ablation or order-shuffling control",
             "PR-AUC stability may be lower than expected under heavy class imbalance across the 15% chronological test window if churn rates shift seasonally",
-            "Merchant-level split prevents data leakage but does not address potential channel or segment cohort effects that could bias subgroup analyses"
+            "Merchant-level split prevents data leakage but does not address potential channel or segment cohort effects that could bias subgroup analyses",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_814",
         "run_idx": 0,
@@ -204,11 +197,10 @@ cases = [
             "Five-year temporal window likely spans major sentiment distribution shifts (pandemic, geopolitical events) that a random split obscures",
             "Semi-automated sentiment labels derived from text may create circularity when evaluating a text-based model",
             "Temporal confound mitigation ('exclude correlated periods') is not operationalized and remains aspirational",
-            "No analysis of review length distribution or temporal recency weighting, which affect BERT's encoding quality for short vs. long reviews"
+            "No analysis of review length distribution or temporal recency weighting, which affect BERT's encoding quality for short vs. long reviews",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_794",
         "run_idx": 0,
@@ -232,11 +224,10 @@ cases = [
             "SDOH missingness is likely non-random and correlated with the target; imputation strategy and missing indicator usage are not specified",
             "Stratified random split on five-year EHR data ignores temporal clinical guideline and policy shifts that affect readmission patterns",
             "Logistic regression baseline lacks access to SDOH features, making it an asymmetric comparison with the proposed model",
-            "No analysis of demographic subgroup performance beyond 'stratified analysis,' which is insufficient for algorithmic fairness claims in healthcare"
+            "No analysis of demographic subgroup performance beyond 'stratified analysis,' which is insufficient for algorithmic fairness claims in healthcare",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_788",
         "run_idx": 0,
@@ -261,11 +252,10 @@ cases = [
             "Q-learning algorithm details are absent: state space definition, action granularity, and reward function design are unspecified",
             "Three-month evaluation window is insufficient to capture seasonal grocery inventory cycles and may confound seasonal effects with model quality",
             "No off-policy evaluation framework described; unclear whether the RL agent is evaluated in simulation, historical replay, or live deployment",
-            "Cumulative reward as a secondary metric is ill-defined without specifying the reward function; circular to use as a performance measure"
+            "Cumulative reward as a secondary metric is ill-defined without specifying the reward function; circular to use as a performance measure",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_820",
         "run_idx": 0,
@@ -291,11 +281,10 @@ cases = [
             "Look-ahead leakage risk: news-to-transaction linking window and temporal boundary are unspecified",
             "Decision tree baseline is too weak; single tree vs. transformer conflates news-embedding value with ensemble capacity advantage",
             "Fraud pattern autocorrelation means random split allows campaign-specific memorization rather than generalization to novel fraud",
-            "Accuracy and FPR as combined primary metric is ambiguous for class-imbalanced fraud data; precision-recall tradeoff is underspecified"
+            "Accuracy and FPR as combined primary metric is ambiguous for class-imbalanced fraud data; precision-recall tradeoff is underspecified",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_786",
         "run_idx": 0,
@@ -319,11 +308,10 @@ cases = [
             "Comparison conflates sequential modeling capacity with richer feature access; no ablation of aggregate sequence features in logistic regression",
             "AUROC is a poor operational metric if clinical intervention operates under fixed daily capacity; Precision@K would be more deployment-relevant",
             "Weak assumption that temporal autocorrelation from hospital practices is negligible across a three-year window with policy changes",
-            "Sequence padding strategy is mentioned but not specified; arbitrary padding choices can introduce artificial temporal signals in the RNN"
+            "Sequence padding strategy is mentioned but not specified; arbitrary padding choices can introduce artificial temporal signals in the RNN",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_817",
         "run_idx": 0,
@@ -347,11 +335,10 @@ cases = [
             "Rule-based baseline sophistication is unspecified; gains may reflect baseline weakness rather than ensemble superiority",
             "F1-score treats false negatives and false positives symmetrically, which is not aligned with asymmetric failure-cost objectives in safety-critical settings",
             "No threshold selection strategy specified for F1 evaluation, making comparisons across models with different operating points unreliable",
-            "Interpolation for missing sensor values is mentioned but strategy is unspecified; aggressive interpolation can mask sensor degradation signals"
+            "Interpolation for missing sensor values is mentioned but strategy is unspecified; aggressive interpolation can mask sensor degradation signals",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_791",
         "run_idx": 0,
@@ -376,11 +363,10 @@ cases = [
             "Recall as primary metric is degenerate without a precision constraint or fixed operating threshold",
             "Hospital identifier as a model feature leaks deployment context and overstates generalizability to new sites",
             "No patient-level isolation in the split; same patient's admissions can appear in training and test, inflating sequence-based model performance",
-            "Attention mechanisms in RNN are not ablated; gains could be from RNN capacity rather than from attention-specific contextual weighting"
+            "Attention mechanisms in RNN are not ablated; gains could be from RNN capacity rather than from attention-specific contextual weighting",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_805",
         "run_idx": 0,
@@ -404,11 +390,10 @@ cases = [
             "Objective mismatch: DRL trained on stockout minimization, rule-based baseline tuned on cost management; primary metric favors DRL by design",
             "No robustness test for novel promotional structures not present in training; policy may not generalize to unseen demand patterns",
             "DRL policy architecture, state space, action space, and reward function are entirely unspecified",
-            "Six-month evaluation period may not capture annual seasonal cycles; unclear whether it covers a representative demand period"
+            "Six-month evaluation period may not capture annual seasonal cycles; unclear whether it covers a representative demand period",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_800",
         "run_idx": 0,
@@ -431,11 +416,10 @@ cases = [
             "Recall as primary metric is degenerate without fixed-capacity constraint or precision lower bound",
             "Comparison conflates sequential modeling benefit with richer feature access; no aggregate-sequence baseline for logistic regression",
             "No patient-level split isolation specified; same patient's records may straddle train and test sets",
-            "Sequence padding for variable-length visit histories is unspecified; can introduce artificial temporal patterns"
+            "Sequence padding for variable-length visit histories is unspecified; can introduce artificial temporal patterns",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_819",
         "run_idx": 0,
@@ -459,11 +443,10 @@ cases = [
             "Task ambiguity: MAE metric implies regression but hypothesis describes a binary 'maintenance needed' detection problem",
             "Linear regression baseline is too weak; survival models or gradient-boosted trees are the appropriate comparators for telemetry-based maintenance",
             "Vehicle-level isolation not described; same vehicle's readings could appear in both training and test sets",
-            "Stratification by vehicle type is stated as a goal but the mechanics of ensuring balanced fleet representation across splits is not described"
+            "Stratification by vehicle type is stated as a goal but the mechanics of ensuring balanced fleet representation across splits is not described",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_782",
         "run_idx": 0,
@@ -488,11 +471,10 @@ cases = [
             "TCN vs. LSTM comparison is not capacity-controlled; TCN effective receptive field may be longer, confounding architectural comparison with context length",
             "AUC is not aligned with ICU clinical objective of early warning; time-to-alert lead time metrics are absent",
             "No patient-level isolation in the split; same patient's hourly observations can span training and test sets",
-            "Nursing notes are listed as a data source but no NLP preprocessing or inclusion strategy for unstructured text is described"
+            "Nursing notes are listed as a data source but no NLP preprocessing or inclusion strategy for unstructured text is described",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_783",
         "run_idx": 0,
@@ -515,11 +497,10 @@ cases = [
             "No patient-level split isolation; multiple admissions per patient can straddle train and test sets, leaking patient physiological baseline to the neural network",
             "Comparison conflates wearable data information value with neural network architectural advantage; no wearable-features logistic regression arm",
             "Dataset size (10,000 records, one year) may be insufficient for stable AUROC estimation at patient subgroup level",
-            "Wearable aggregation window sizes are unspecified; choice of aggregation window significantly affects what temporal patterns the model can detect"
+            "Wearable aggregation window sizes are unspecified; choice of aggregation window significantly affects what temporal patterns the model can detect",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_815",
         "run_idx": 0,
@@ -544,11 +525,10 @@ cases = [
             "MTTF is a reliability engineering metric for equipment, not an anomaly detection model performance metric; the design likely intends alert lead time",
             "Stratified random split on temporal sensor data allows pre-fault anomalous readings to appear in both training and test partitions of the same fault event",
             "No description of the normal operating period used to train the autoencoder, or how the boundary between normal and pre-fault data is defined for training",
-            "Precision at top-K anomalies requires a threshold or ranking rule that is not specified for the autoencoder output"
+            "Precision at top-K anomalies requires a threshold or ranking rule that is not specified for the autoencoder output",
         ],
-        "critic_verdict": "critique_wins"
+        "critic_verdict": "critique_wins",
     },
-
     {
         "case_id": "eval_scenario_810",
         "run_idx": 0,
@@ -573,14 +553,15 @@ cases = [
             "Oversampling placement relative to the train/test split is unspecified; pre-split oversampling would contaminate the test set with synthetic examples",
             "Course-level fixed effects not controlled; model conflates student dropout risk with course quality, making AUPRC misleading for student-level targeting",
             "Stratified random split ignores temporal learning dynamics; early-course interaction patterns from one cohort may not predict dropout for a later cohort",
-            "Baseline is demographic-only logistic regression; no behavioral-features logistic regression arm to isolate the NLP contribution from engagement-data contribution"
+            "Baseline is demographic-only logistic regression; no behavioral-features logistic regression arm to isolate the NLP contribution from engagement-data contribution",
         ],
-        "critic_verdict": "critique_wins"
-    }
-
+        "critic_verdict": "critique_wins",
+    },
 ]
 
-output_path = Path("/Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/self_debate_experiment_v6/v6_interim_biased/chunk_4_run0_critic.json")
+output_path = Path(
+    "/Users/chrissantiago/Dropbox/GitHub/ml-lab/self_debate_experiment_v6/v6_interim_biased/chunk_4_run0_critic.json"
+)
 output_path.write_text(json.dumps(cases, indent=2, ensure_ascii=False))
 
 print(f"Wrote {len(cases)} cases to {output_path}")
@@ -589,13 +570,28 @@ assert len(cases) == 20, f"Expected 20 cases, got {len(cases)}"
 ids = [c["case_id"] for c in cases]
 print("Case IDs:", ids)
 expected_ids = {
-    "eval_scenario_799", "eval_scenario_801", "eval_scenario_806",
-    "eval_scenario_811", "eval_scenario_809", "eval_scenario_701",
-    "eval_scenario_814", "eval_scenario_794", "eval_scenario_788",
-    "eval_scenario_820", "eval_scenario_786", "eval_scenario_817",
-    "eval_scenario_791", "eval_scenario_805", "eval_scenario_800",
-    "eval_scenario_819", "eval_scenario_782", "eval_scenario_783",
-    "eval_scenario_815", "eval_scenario_810"
+    "eval_scenario_799",
+    "eval_scenario_801",
+    "eval_scenario_806",
+    "eval_scenario_811",
+    "eval_scenario_809",
+    "eval_scenario_701",
+    "eval_scenario_814",
+    "eval_scenario_794",
+    "eval_scenario_788",
+    "eval_scenario_820",
+    "eval_scenario_786",
+    "eval_scenario_817",
+    "eval_scenario_791",
+    "eval_scenario_805",
+    "eval_scenario_800",
+    "eval_scenario_819",
+    "eval_scenario_782",
+    "eval_scenario_783",
+    "eval_scenario_815",
+    "eval_scenario_810",
 }
-assert set(ids) == expected_ids, f"ID mismatch: {set(ids).symmetric_difference(expected_ids)}"
+assert set(ids) == expected_ids, (
+    f"ID mismatch: {set(ids).symmetric_difference(expected_ids)}"
+)
 print("All checks passed.")

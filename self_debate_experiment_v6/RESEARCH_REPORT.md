@@ -1,4 +1,4 @@
-# Research Report — ml-debate-lab
+# Research Report — ml-lab
 
 *Generated 2026-04-12 from 270 journal entries and 381 commits.*
 

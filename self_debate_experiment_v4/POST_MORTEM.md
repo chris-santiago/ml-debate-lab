@@ -11,7 +11,7 @@ Issues identified during and after execution of the v4 experiment plan. Each iss
 
 ### What Happened
 
-The `/preflight` skill issued Bash tool calls using relative paths (e.g., `for f in plan/phases/*.md`) that assumed the working directory was `self_debate_experiment_v4/`. In practice the Bash tool's CWD is the repo root (`ml-debate-lab/`), so globs found no matches. When a bash glob expands to nothing, the loop variable receives the literal unexpanded pattern string rather than being skipped, causing downstream commands (`grep`, `awk`) to attempt to open that literal string as a filename and exit non-zero. Because parallel Bash tool calls share a failure-propagation model, the first failing call caused all remaining parallel calls in the same message to be cancelled, requiring multiple debug rounds before the root cause was identified.
+The `/preflight` skill issued Bash tool calls using relative paths (e.g., `for f in plan/phases/*.md`) that assumed the working directory was `self_debate_experiment_v4/`. In practice the Bash tool's CWD is the repo root (`ml-lab/`), so globs found no matches. When a bash glob expands to nothing, the loop variable receives the literal unexpanded pattern string rather than being skipped, causing downstream commands (`grep`, `awk`) to attempt to open that literal string as a filename and exit non-zero. Because parallel Bash tool calls share a failure-propagation model, the first failing call caused all remaining parallel calls in the same message to be cancelled, requiring multiple debug rounds before the root cause was identified.
 
 ### Root Cause
 
@@ -114,7 +114,7 @@ This applies to all `git commit` blocks in `plan/phases/phase_0*.md` through `pl
 
 ### What Happened
 
-Phase 5.5 invoked `uv run log_entry.py` and received `error: Failed to spawn: log_entry.py — No such file or directory (os error 2)`. Phase 0 copies `log_entry.py` to `self_debate_experiment_v4/`, but the Bash tool's CWD is `ml-debate-lab/` (the repo root), so `uv run log_entry.py` cannot find the script.
+Phase 5.5 invoked `uv run log_entry.py` and received `error: Failed to spawn: log_entry.py — No such file or directory (os error 2)`. Phase 0 copies `log_entry.py` to `self_debate_experiment_v4/`, but the Bash tool's CWD is `ml-lab/` (the repo root), so `uv run log_entry.py` cannot find the script.
 
 ### Root Cause
 
@@ -416,7 +416,7 @@ Use Option 1 for the current experiment run. Implement Option 2 in v5.
 ```json
 {
   "dangerouslySkipPermissions": true,
-  "allowedPaths": ["/Users/chrissantiago/Dropbox/GitHub/ml-debate-lab"]
+  "allowedPaths": ["/Users/chrissantiago/Dropbox/GitHub/ml-lab"]
 }
 ```
 

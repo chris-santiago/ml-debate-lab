@@ -1,6 +1,6 @@
 # Claude Code Execution Plan — Self-Debate Protocol v5
 
-**Purpose:** Run the redesigned experiment with all v3 post-mortem issues remediated. Execute inside the ml-debate-lab repo.
+**Purpose:** Run the redesigned experiment with all v3 post-mortem issues remediated. Execute inside the ml-lab repo.
 
 **Prerequisites:**
 - `uv` installed (Python 3.10+ resolved automatically via PEP 723 inline script metadata)
@@ -33,7 +33,7 @@
 
 4. **Subagent context:** All agents in this plan run as subagents inside an authenticated Claude Code session. Do not attempt to call the Anthropic API directly or locate API keys — inference is handled by the session. Do not attempt `claude --agent <name>` from bash — that flag does not exist. All agent dispatch must go through the Agent tool call.
 
-5. **Working directory:** The Bash tool CWD is always the repo root (`ml-debate-lab/`), not the experiment directory. All bash commands must either `cd self_debate_experiment_v5 &&` first, or use repo-root-relative paths (e.g., `uv run self_debate_experiment_v5/log_entry.py`).
+5. **Working directory:** The Bash tool CWD is always the repo root (`ml-lab/`), not the experiment directory. All bash commands must either `cd self_debate_experiment_v5 &&` first, or use repo-root-relative paths (e.g., `uv run self_debate_experiment_v5/log_entry.py`).
 
 ---
 

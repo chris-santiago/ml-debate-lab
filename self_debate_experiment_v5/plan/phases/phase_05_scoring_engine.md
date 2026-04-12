@@ -5,7 +5,7 @@
 > - Agents dispatched by name only. Do not read any file from `agents/`.
 > - All log entries via `uv run log_entry.py`. Never write JSONL manually.
 > - **Subagent context:** You are a subagent in an authenticated Claude Code session. Do not call the Anthropic API directly or locate API keys. Do not attempt `claude --agent <name>` from bash — use the Agent tool only.
-> - **CWD:** Bash tool CWD is always repo root (`ml-debate-lab/`). Prefix all bash commands with `cd self_debate_experiment_v5 &&` or use repo-root-relative paths.
+> - **CWD:** Bash tool CWD is always repo root (`ml-lab/`). Prefix all bash commands with `cd self_debate_experiment_v5 &&` or use repo-root-relative paths.
 
 > **v5 scorer changes from v3:** DC=N/A for baseline (not 0.0); ETD=N/A for ensemble and baseline; single canonical ETD schema with `ambiguous_if`; 5 conditions; fair-comparison lift primary; DRQ not capped for any condition.
 

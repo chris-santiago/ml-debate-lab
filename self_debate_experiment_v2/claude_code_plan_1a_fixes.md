@@ -1,6 +1,6 @@
 # Claude Code Execution Plan 1a — Fix All Current Issues (No New Experiments)
 
-**Purpose:** Execute all fixes to v2 experiment artifacts that require only file edits — no new agent calls, no re-runs. Safe to execute immediately. Run inside the ml-debate-lab repo.
+**Purpose:** Execute all fixes to v2 experiment artifacts that require only file edits — no new agent calls, no re-runs. Safe to execute immediately. Run inside the ml-lab repo.
 
 **Prerequisites:**
 - Repo cloned and accessible
@@ -13,7 +13,7 @@
 ## Step 0 — Confirm State Before Touching Anything
 
 ```bash
-cd ml-debate-lab
+cd ml-lab
 
 # Confirm baseline pass flags are still wrong
 python3 -c "

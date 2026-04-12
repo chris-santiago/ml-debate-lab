@@ -1,5 +1,5 @@
 # Case Generation Methodology Report
-## ml-debate-lab v5 Synthetic Benchmark Pipeline
+## ml-lab v5 Synthetic Benchmark Pipeline
 
 **Status:** Final methodology as of 2026-04-08  
 **Batch output:** `synthetic-candidates/cases_1-20.json`, `cases_100-199.json`  
@@ -9,7 +9,7 @@
 
 ## 1. Motivation
 
-The core ml-debate-lab experiment asks whether a structured critic/defender debate protocol can reliably surface real ML methodology flaws. To evaluate that claim, you need benchmark cases with known ground truth: experiment designs with planted, unambiguous methodological errors that a competent reviewer *should* find, presented in a form that looks plausible enough to require genuine reasoning.
+The core ml-lab experiment asks whether a structured critic/defender debate protocol can reliably surface real ML methodology flaws. To evaluate that claim, you need benchmark cases with known ground truth: experiment designs with planted, unambiguous methodological errors that a competent reviewer *should* find, presented in a form that looks plausible enough to require genuine reasoning.
 
 Prior experiment rounds (v2–v4) revealed a recurring problem: the cases were too easy. Flaws were either named anti-patterns that keyword-matched on first scan, or so obvious that the debate protocol produced trivially correct verdicts regardless of its design. The calibration signal was noise. v5 is the response — a dedicated pipeline for generating a harder, more rigorous benchmark case library before the main experiment runs.
 

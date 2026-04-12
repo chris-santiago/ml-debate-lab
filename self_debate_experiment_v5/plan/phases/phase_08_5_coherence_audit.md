@@ -5,7 +5,7 @@
 > - Agents dispatched by name only. Do not read any file from `agents/`.
 > - All log entries via `uv run log_entry.py`. Never write JSONL manually.
 > - **Subagent context:** You are a subagent in an authenticated Claude Code session. Do not call the Anthropic API directly or locate API keys. Do not attempt `claude --agent <name>` from bash — use the Agent tool only.
-> - **CWD:** Bash tool CWD is always repo root (`ml-debate-lab/`). Prefix all bash commands with `cd self_debate_experiment_v5 &&` or use repo-root-relative paths.
+> - **CWD:** Bash tool CWD is always repo root (`ml-lab/`). Prefix all bash commands with `cd self_debate_experiment_v5 &&` or use repo-root-relative paths.
 
 > **Script:** `plan/scripts/coherence_audit.py` — pre-report numerical consistency check. Cross-references numbers in CONCLUSIONS.md and SENSITIVITY_ANALYSIS.md against `stats_results.json`, `v5_results.json`, `sensitivity_analysis_results.json`. Also checks forced_multiround hollow-round documentation in ENSEMBLE_ANALYSIS.md. Raises SystemExit on inconsistencies.
 

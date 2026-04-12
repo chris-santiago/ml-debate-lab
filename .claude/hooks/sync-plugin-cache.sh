@@ -4,7 +4,7 @@
 # Also warns on version mismatches across plugin.json and marketplace.json.
 # Fires on Edit or Write tool calls; no-ops for unrelated files.
 
-REPO_ROOT="/Users/chrissantiago/Dropbox/GitHub/ml-debate-lab"
+REPO_ROOT="/Users/chrissantiago/Dropbox/GitHub/ml-lab"
 PLUGINS_JSON="$HOME/.claude/plugins/installed_plugins.json"
 
 # Read tool input from stdin and extract file_path
@@ -72,12 +72,12 @@ PYEOF
 # Sync cache
 case "$FILE_PATH" in
   *plugins/ml-journal/*)
-    DEST=$(get_install_path "ml-journal@ml-debate-lab")
+    DEST=$(get_install_path "ml-journal@ml-lab")
     [ -n "$DEST" ] && rsync -a --exclude='.orphaned_at' \
       "$REPO_ROOT/plugins/ml-journal/" "$DEST/"
     ;;
   *plugins/ml-lab/*)
-    DEST=$(get_install_path "ml-lab@ml-debate-lab")
+    DEST=$(get_install_path "ml-lab@ml-lab")
     [ -n "$DEST" ] && rsync -a --exclude='.orphaned_at' \
       "$REPO_ROOT/plugins/ml-lab/" "$DEST/"
     ;;

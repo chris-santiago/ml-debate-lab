@@ -29,7 +29,7 @@ v6 is designed to definitively answer three questions:
 
 1. **Script invocations:** All Python scripts must use `uv run`. Never `python` or `python3` directly. For inline one-liners: `uv run python -c '...'`. For multi-line inline scripts, use heredoc style.
 2. **Agent invocation:** Agents (`ml-critic`, `ml-defender`, `research-reviewer`, `report-writer`) invoked by name via the Agent tool only. Do not read any file from `agents/` during execution.
-3. **Working directory:** The Bash tool CWD is always the repo root (`ml-debate-lab/`). All bash commands must `cd self_debate_experiment_v6 &&` first, or use repo-root-relative paths.
+3. **Working directory:** The Bash tool CWD is always the repo root (`ml-lab/`). All bash commands must `cd self_debate_experiment_v6 &&` first, or use repo-root-relative paths.
 4. **Subagent context:** All agents run inside an authenticated Claude Code session. Do not call the Anthropic API directly or locate API keys.
 5. **Log entries:** Always use `uv run log_entry.py`. Never write JSONL manually via echo or direct append.
 6. **Context scoping:** When executing a phase, read only the reference documents listed for that phase in the Reference Documents table above. Do not preload all references.

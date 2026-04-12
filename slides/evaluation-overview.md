@@ -47,7 +47,7 @@ style: |
 
 # Does AI Debate Produce Better Verdicts?
 
-### Benchmark Results — ml-debate-lab
+### Benchmark Results — ml-lab
 
 &nbsp;
 

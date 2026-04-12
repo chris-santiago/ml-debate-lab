@@ -1,4 +1,4 @@
-# Research Note — ml-debate-lab
+# Research Note — ml-lab
 
 *2026-04-11 | ~67 entries | scope: today*
 
@@ -64,7 +64,7 @@ by ensemble.
 ## Issues (Open)
 - **[5273d436] moderate** — Coherence audit (spec vs plan vs code) not a named protocol step;
   caught two real gaps in v6 Phase 4 ad-hoc; should be a gate before Phase 5 in future experiments.
-- **[621a8176] moderate** — artifact-sync skill lives only in ml-debate-lab; needs promotion to
+- **[621a8176] moderate** — artifact-sync skill lives only in ml-lab; needs promotion to
   ml-lab plugin for reuse across projects.
 - **[c9dfc257] low** — ensemble_3x output has no confidence-tiered signal; minority-flagged
   issues (1/3 critics) are indistinguishable from unanimous findings for downstream consumers.

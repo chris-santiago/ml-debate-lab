@@ -12,8 +12,12 @@ import json
 import sys
 from pathlib import Path
 
-INPUT = Path("/Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/self_debate_experiment_v6/v6_interim_isolated/chunk_0_run1.json")
-OUTPUT = Path("/Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/self_debate_experiment_v6/v6_adjudicated_isolated/chunk_0_run1_adjudicated.json")
+INPUT = Path(
+    "/Users/chrissantiago/Dropbox/GitHub/ml-lab/self_debate_experiment_v6/v6_interim_isolated/chunk_0_run1.json"
+)
+OUTPUT = Path(
+    "/Users/chrissantiago/Dropbox/GitHub/ml-lab/self_debate_experiment_v6/v6_adjudicated_isolated/chunk_0_run1_adjudicated.json"
+)
 
 # Hard-coded adjudication decisions per case_id.
 # Value: list of issue indices (0-based) that SURVIVE the defender's independent assessment.
@@ -180,16 +184,18 @@ def main():
         all_issues = case["all_issues_raised"]
         surviving = [all_issues[i] for i in decisions["surviving_indices"]]
 
-        output.append({
-            "case_id": case_id,
-            "condition": "isolated_debate",
-            "run_idx": 1,
-            "critic_raw": case["critic_raw"],
-            "defender_raw": case["defender_raw"],
-            "all_issues_raised": all_issues,
-            "all_issues_adjudicated": surviving,
-            "verdict": decisions["verdict"],
-        })
+        output.append(
+            {
+                "case_id": case_id,
+                "condition": "isolated_debate",
+                "run_idx": 1,
+                "critic_raw": case["critic_raw"],
+                "defender_raw": case["defender_raw"],
+                "all_issues_raised": all_issues,
+                "all_issues_adjudicated": surviving,
+                "verdict": decisions["verdict"],
+            }
+        )
 
     with open(OUTPUT, "w") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
@@ -197,7 +203,9 @@ def main():
     print(f"Written {len(output)} adjudicated cases to {OUTPUT}")
     # Quick sanity check
     verdicts = [r["verdict"] for r in output]
-    print(f"Verdicts: critique_wins={verdicts.count('critique_wins')}, defense_wins={verdicts.count('defense_wins')}")
+    print(
+        f"Verdicts: critique_wins={verdicts.count('critique_wins')}, defense_wins={verdicts.count('defense_wins')}"
+    )
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@
 > **Reminders (cross-cutting rules)**
 > - All script invocations use `uv run`. Never `python` or `python3` directly.
 > - Agents dispatched by name only. Do not read any file from `agents/`.
-> - CWD: Bash tool CWD is always repo root (`ml-debate-lab/`). Prefix all bash commands with `cd self_debate_experiment_v6 &&`.
+> - CWD: Bash tool CWD is always repo root (`ml-lab/`). Prefix all bash commands with `cd self_debate_experiment_v6 &&`.
 > - Subagent context: authenticated Claude Code session. No direct API calls.
 
 ## Required Reading

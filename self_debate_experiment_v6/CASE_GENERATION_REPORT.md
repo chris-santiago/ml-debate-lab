@@ -1,5 +1,5 @@
 # Case Generation Methodology Report
-## ml-debate-lab v6 Synthetic and RC Benchmark Pipeline
+## ml-lab v6 Synthetic and RC Benchmark Pipeline
 
 **Status:** Active — Phase 3 complete; benchmark finalized as of 2026-04-11
 **Regular synthetic batch:** `pipeline/run/stage2/` + `pipeline/run/stage3/` (80 cases)

@@ -68,28 +68,30 @@ On preprocessing leakage: for thermal and audio normalization statistics, the cr
 
 The design is not without flaw, but the flaws are correctable and their impact is primarily on absolute metric inflation, not on the validity of the head-to-head comparison. The experimental structure, metrics, and confound controls are otherwise sound."""
 
-debates.append({
-    "case_id": "eval_scenario_766",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 2,
-    "critic_raw": c0_r1_critic,
-    "all_issues_raised": [
-        "Preprocessing leakage: transformers fit on full dataset including test split",
-        "Random stratified split on temporal time-series data violates causal order",
-        "Internal inconsistency between split strategy described in Section 2 vs Section 6",
-        "Hyperparameter tuning asymmetry: random search vs. grid search with different trial counts"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c0_r1_critic, "defender": c0_r1_defender},
-        {"round": 2, "critic": c0_r2_critic, "defender": c0_r2_defender}
-    ],
-    "all_issues_adjudicated": [
-        "Preprocessing leakage: transformers fit on full dataset including test split",
-        "Internal inconsistency between split strategy described in Section 2 vs Section 6"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_766",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 2,
+        "critic_raw": c0_r1_critic,
+        "all_issues_raised": [
+            "Preprocessing leakage: transformers fit on full dataset including test split",
+            "Random stratified split on temporal time-series data violates causal order",
+            "Internal inconsistency between split strategy described in Section 2 vs Section 6",
+            "Hyperparameter tuning asymmetry: random search vs. grid search with different trial counts",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c0_r1_critic, "defender": c0_r1_defender},
+            {"round": 2, "critic": c0_r2_critic, "defender": c0_r2_defender},
+        ],
+        "all_issues_adjudicated": [
+            "Preprocessing leakage: transformers fit on full dataset including test split",
+            "Internal inconsistency between split strategy described in Section 2 vs Section 6",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 1: eval_scenario_776
@@ -139,27 +141,33 @@ The defender's practical argument—that 750 test images barely affect global st
 
 The week-based splitting strategy is the more serious flaw because it is explicitly specified in the design and cannot be explained away by assuming deduplication that isn't described."""
 
-debates.append({
-    "case_id": "eval_scenario_776",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 2,
-    "critic_raw": c1_r1_critic,
-    "all_issues_raised": [
-        "Preprocessing leakage: image normalization and standardization fit on full dataset",
-        "Patient-level data leakage: split by week rather than patient ID, allowing same patient to appear in train and test",
-        "Baseline asymmetry: CNN can be trained/tuned while expert graders are fixed"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c1_r1_critic, "defender": c1_r1_defender},
-        {"round": 2, "critic": c1_r2_critic, "defender": "The defender concedes that patient-level deduplication is not documented or enforced in the design. This is a genuine gap: if any patients appear across splits, the test set evaluation overstates generalization ability. The practical magnitude depends on actual patient overlap, which the design does not characterize. The preprocessing normalization concern is acknowledged as a minor directional bias. The core patient-level split flaw cannot be assumed away by speculating about dataset properties—it must be explicitly enforced in the design. The experiment as written does not meet the standard for a clean held-out patient evaluation."}
-    ],
-    "all_issues_adjudicated": [
-        "Patient-level data leakage: split by week rather than patient ID not enforced",
-        "Preprocessing leakage: image normalization statistics fit on full dataset"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_776",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 2,
+        "critic_raw": c1_r1_critic,
+        "all_issues_raised": [
+            "Preprocessing leakage: image normalization and standardization fit on full dataset",
+            "Patient-level data leakage: split by week rather than patient ID, allowing same patient to appear in train and test",
+            "Baseline asymmetry: CNN can be trained/tuned while expert graders are fixed",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c1_r1_critic, "defender": c1_r1_defender},
+            {
+                "round": 2,
+                "critic": c1_r2_critic,
+                "defender": "The defender concedes that patient-level deduplication is not documented or enforced in the design. This is a genuine gap: if any patients appear across splits, the test set evaluation overstates generalization ability. The practical magnitude depends on actual patient overlap, which the design does not characterize. The preprocessing normalization concern is acknowledged as a minor directional bias. The core patient-level split flaw cannot be assumed away by speculating about dataset properties—it must be explicitly enforced in the design. The experiment as written does not meet the standard for a clean held-out patient evaluation.",
+            },
+        ],
+        "all_issues_adjudicated": [
+            "Patient-level data leakage: split by week rather than patient ID not enforced",
+            "Preprocessing leakage: image normalization statistics fit on full dataset",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 2: eval_scenario_704
@@ -204,26 +212,32 @@ The defender acknowledges the temporal split problem but argues the random split
 
 **Verdict**: The temporal split violation remains unresolved. The experiment's reported AUROC values will be optimistically biased relative to real deployment performance."""
 
-debates.append({
-    "case_id": "eval_scenario_704",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 2,
-    "critic_raw": c2_r1_critic,
-    "all_issues_raised": [
-        "Stratified random split on 60-month temporal EHR data violates causal order",
-        "Preprocessing leakage concern (largely mitigated by design)",
-        "Missing single-task DL baseline to isolate multi-task contribution"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c2_r1_critic, "defender": c2_r1_defender},
-        {"round": 2, "critic": c2_r2_critic, "defender": "The defender accepts the temporal split critique as unresolved. A random split across 60 months violates causal order in temporal EHR data. The seasonal balance argument is acknowledged as a valid consideration but does not justify the current design—temporal splits with within-window stratification are feasible and preferable. The experiment's reported metrics will be optimistic relative to true deployment performance. The missing single-task baseline is a real limitation on interpretability but not a validity-threatening flaw. The temporal split is the one issue that cannot be explained away."}
-    ],
-    "all_issues_adjudicated": [
-        "Stratified random split on temporal EHR data violates causal order and inflates reported metrics"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_704",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 2,
+        "critic_raw": c2_r1_critic,
+        "all_issues_raised": [
+            "Stratified random split on 60-month temporal EHR data violates causal order",
+            "Preprocessing leakage concern (largely mitigated by design)",
+            "Missing single-task DL baseline to isolate multi-task contribution",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c2_r1_critic, "defender": c2_r1_defender},
+            {
+                "round": 2,
+                "critic": c2_r2_critic,
+                "defender": "The defender accepts the temporal split critique as unresolved. A random split across 60 months violates causal order in temporal EHR data. The seasonal balance argument is acknowledged as a valid consideration but does not justify the current design—temporal splits with within-window stratification are feasible and preferable. The experiment's reported metrics will be optimistic relative to true deployment performance. The missing single-task baseline is a real limitation on interpretability but not a validity-threatening flaw. The temporal split is the one issue that cannot be explained away.",
+            },
+        ],
+        "all_issues_adjudicated": [
+            "Stratified random split on temporal EHR data violates causal order and inflates reported metrics"
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 3: eval_scenario_770
@@ -257,26 +271,28 @@ The composite metric is an unconventional choice, and the defense concedes this 
 
 **Conceded**: Temporal split is the main unresolved issue. Composite metric is a secondary concern."""
 
-debates.append({
-    "case_id": "eval_scenario_770",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 1,
-    "critic_raw": c3_r1_critic,
-    "all_issues_raised": [
-        "Stratified random split on 36-month temporal EHR data violates causal order",
-        "Composite primary metric (AUC-ROC × 0.6 + LoS RMSE rank × 0.4) has unclear statistical properties",
-        "Preprocessing leakage for derived features not fully documented"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c3_r1_critic, "defender": c3_r1_defender}
-    ],
-    "all_issues_adjudicated": [
-        "Stratified random split on temporal EHR data violates causal order",
-        "Composite primary metric statistical validity not established"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_770",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 1,
+        "critic_raw": c3_r1_critic,
+        "all_issues_raised": [
+            "Stratified random split on 36-month temporal EHR data violates causal order",
+            "Composite primary metric (AUC-ROC × 0.6 + LoS RMSE rank × 0.4) has unclear statistical properties",
+            "Preprocessing leakage for derived features not fully documented",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c3_r1_critic, "defender": c3_r1_defender}
+        ],
+        "all_issues_adjudicated": [
+            "Stratified random split on temporal EHR data violates causal order",
+            "Composite primary metric statistical validity not established",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 4: eval_scenario_764
@@ -313,25 +329,27 @@ The temporal leakage, while a genuine best-practice concern, applies symmetrical
 
 **Net Assessment**: This design has one correctable split methodology concern and two minor secondary issues, all of which affect both models symmetrically. The core comparative question is validly addressed."""
 
-debates.append({
-    "case_id": "eval_scenario_764",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 1,
-    "critic_raw": c4_r1_critic,
-    "all_issues_raised": [
-        "Stratified random split on 36-month temporal data with acknowledged future leakage not remedied",
-        "Retrain on combined train+val creates selection environment mismatch (minor)",
-        "F1-score threshold not specified for model selection — threshold-dependent metric used for selection"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c4_r1_critic, "defender": c4_r1_defender}
-    ],
-    "all_issues_adjudicated": [
-        "Stratified random split with acknowledged temporal leakage — affects both models symmetrically, relative comparison survives"
-    ],
-    "verdict": "defense_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_764",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 1,
+        "critic_raw": c4_r1_critic,
+        "all_issues_raised": [
+            "Stratified random split on 36-month temporal data with acknowledged future leakage not remedied",
+            "Retrain on combined train+val creates selection environment mismatch (minor)",
+            "F1-score threshold not specified for model selection — threshold-dependent metric used for selection",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c4_r1_critic, "defender": c4_r1_defender}
+        ],
+        "all_issues_adjudicated": [
+            "Stratified random split with acknowledged temporal leakage — affects both models symmetrically, relative comparison survives"
+        ],
+        "verdict": "defense_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 5: eval_scenario_738
@@ -366,25 +384,27 @@ This is a valid design constraint with clinical justification: fine-tuning clini
 
 **Conceded**: Structured data preprocessing leakage is a genuine flaw. Subgroup criterion should be revised. Frozen encoders are a defensible design choice."""
 
-debates.append({
-    "case_id": "eval_scenario_738",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 1,
-    "critic_raw": c5_r1_critic,
-    "all_issues_raised": [
-        "Structured data preprocessing fit on full dataset despite otherwise-correct temporal split",
-        "Subgroup stopping criterion requiring consistency across all subgroups is overly stringent",
-        "Frozen pretrained encoders may limit task-specific adaptation (design choice, noted as limitation)"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c5_r1_critic, "defender": c5_r1_defender}
-    ],
-    "all_issues_adjudicated": [
-        "Structured data preprocessing fit on full dataset — acknowledged as best-practice gap, bounded in practical impact"
-    ],
-    "verdict": "defense_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_738",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 1,
+        "critic_raw": c5_r1_critic,
+        "all_issues_raised": [
+            "Structured data preprocessing fit on full dataset despite otherwise-correct temporal split",
+            "Subgroup stopping criterion requiring consistency across all subgroups is overly stringent",
+            "Frozen pretrained encoders may limit task-specific adaptation (design choice, noted as limitation)",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c5_r1_critic, "defender": c5_r1_defender}
+        ],
+        "all_issues_adjudicated": [
+            "Structured data preprocessing fit on full dataset — acknowledged as best-practice gap, bounded in practical impact"
+        ],
+        "verdict": "defense_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 6: eval_scenario_735
@@ -416,26 +436,28 @@ This is a valid scientific framing concern. The design correctly acknowledges in
 
 **Conceded**: Preprocessing leakage and split inconsistency are genuine flaws that need correction. The hypothesis scope is a framing issue."""
 
-debates.append({
-    "case_id": "eval_scenario_735",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 1,
-    "critic_raw": c6_r1_critic,
-    "all_issues_raised": [
-        "Preprocessing leakage: all transformers fit on full dataset before splitting",
-        "Internal inconsistency between random split (Section 2) and temporal structure (Section 6)",
-        "Hypothesis claims 25% downtime reduction which requires deployment study, not historical F1 analysis"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c6_r1_critic, "defender": c6_r1_defender}
-    ],
-    "all_issues_adjudicated": [
-        "Preprocessing leakage: all transformers fit on full dataset before splitting",
-        "Internal inconsistency in split strategy (random vs. temporal) not resolved"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_735",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 1,
+        "critic_raw": c6_r1_critic,
+        "all_issues_raised": [
+            "Preprocessing leakage: all transformers fit on full dataset before splitting",
+            "Internal inconsistency between random split (Section 2) and temporal structure (Section 6)",
+            "Hypothesis claims 25% downtime reduction which requires deployment study, not historical F1 analysis",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c6_r1_critic, "defender": c6_r1_defender}
+        ],
+        "all_issues_adjudicated": [
+            "Preprocessing leakage: all transformers fit on full dataset before splitting",
+            "Internal inconsistency in split strategy (random vs. temporal) not resolved",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 7: eval_scenario_773
@@ -476,28 +498,34 @@ The design does not merely "check" the test set—it explicitly states the check
 
 The compound effect of three concurrent flaws—preprocessing leakage, temporal leakage, and test set peeking—means that no reported metric from this experiment can be interpreted as an unbiased estimate of real-world performance. The experiment requires complete redesign of the evaluation protocol."""
 
-debates.append({
-    "case_id": "eval_scenario_773",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 2,
-    "critic_raw": c7_r1_critic,
-    "all_issues_raised": [
-        "Test set peeking: test set used to fine-tune model architecture based on discrepancies observed",
-        "Preprocessing leakage: vocabulary builders and scalers fit on full dataset before splitting",
-        "Stratified random split on 5-year temporal EHR data violates causal order"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c7_r1_critic, "defender": c7_r1_defender},
-        {"round": 2, "critic": c7_r2_critic, "defender": "The defender fully accepts all three flaws and cannot rebut the test set peeking. The phrase 'fine-tune model architecture if discrepancies are observed' is an explicit description of using test feedback for architecture decisions, which invalidates the test metrics. Combined with preprocessing leakage and temporal split violations, the experiment's evaluation protocol is compromised at multiple levels. A complete redesign is required: temporal split, training-set-only preprocessing, and a strictly locked test set with no pre-evaluation inspection."}
-    ],
-    "all_issues_adjudicated": [
-        "Test set peeking: active feedback from test performance to architecture decisions invalidates test metrics",
-        "Preprocessing leakage: vocabulary builders fit on full dataset",
-        "Stratified random split on temporal EHR data violates causal order"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_773",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 2,
+        "critic_raw": c7_r1_critic,
+        "all_issues_raised": [
+            "Test set peeking: test set used to fine-tune model architecture based on discrepancies observed",
+            "Preprocessing leakage: vocabulary builders and scalers fit on full dataset before splitting",
+            "Stratified random split on 5-year temporal EHR data violates causal order",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c7_r1_critic, "defender": c7_r1_defender},
+            {
+                "round": 2,
+                "critic": c7_r2_critic,
+                "defender": "The defender fully accepts all three flaws and cannot rebut the test set peeking. The phrase 'fine-tune model architecture if discrepancies are observed' is an explicit description of using test feedback for architecture decisions, which invalidates the test metrics. Combined with preprocessing leakage and temporal split violations, the experiment's evaluation protocol is compromised at multiple levels. A complete redesign is required: temporal split, training-set-only preprocessing, and a strictly locked test set with no pre-evaluation inspection.",
+            },
+        ],
+        "all_issues_adjudicated": [
+            "Test set peeking: active feedback from test performance to architecture decisions invalidates test metrics",
+            "Preprocessing leakage: vocabulary builders fit on full dataset",
+            "Stratified random split on temporal EHR data violates causal order",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 8: eval_scenario_774
@@ -535,27 +563,29 @@ The comparison tests whether imaging adds value over structured features. This i
 
 **Conceded**: Preprocessing leakage and MAPE as primary metric are genuine flaws. Small sample size concern is valid."""
 
-debates.append({
-    "case_id": "eval_scenario_774",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 1,
-    "critic_raw": c8_r1_critic,
-    "all_issues_raised": [
-        "Preprocessing leakage: MRI normalization fit on full dataset before splitting",
-        "Cohort restricted to age 60+ from 24-month window — likely small N for CNN training",
-        "MAPE as primary metric is unstable (undefined for zero values, asymmetric penalties)",
-        "CNN receives MRI input that XGBoost does not — no ablation to isolate MRI vs. architectural contribution"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c8_r1_critic, "defender": c8_r1_defender}
-    ],
-    "all_issues_adjudicated": [
-        "Preprocessing leakage: MRI normalization fit on full dataset",
-        "MAPE as primary metric is unstable for clinical recovery scores"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_774",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 1,
+        "critic_raw": c8_r1_critic,
+        "all_issues_raised": [
+            "Preprocessing leakage: MRI normalization fit on full dataset before splitting",
+            "Cohort restricted to age 60+ from 24-month window — likely small N for CNN training",
+            "MAPE as primary metric is unstable (undefined for zero values, asymmetric penalties)",
+            "CNN receives MRI input that XGBoost does not — no ablation to isolate MRI vs. architectural contribution",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c8_r1_critic, "defender": c8_r1_defender}
+        ],
+        "all_issues_adjudicated": [
+            "Preprocessing leakage: MRI normalization fit on full dataset",
+            "MAPE as primary metric is unstable for clinical recovery scores",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 9: eval_scenario_752
@@ -602,28 +632,34 @@ The defender raises the possibility that RL captures sequential scheduling dynam
 2. Metric mismatch between RL reward training and AUPRC evaluation
 3. Baselines tuned for point metric while evaluation uses curve metric"""
 
-debates.append({
-    "case_id": "eval_scenario_752",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 2,
-    "critic_raw": c9_r1_critic,
-    "all_issues_raised": [
-        "Deep RL is architecturally overcomplicated for binary failure prediction on static records",
-        "Metric mismatch: RL trained to maximize cost-weighted reward but evaluated on AUPRC",
-        "Baselines tuned for FNR at precision >= 0.70 but evaluated on AUPRC creates asymmetric optimization"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c9_r1_critic, "defender": c9_r1_defender},
-        {"round": 2, "critic": c9_r2_critic, "defender": "The defender concedes all three issues remain unresolved. The RL framing lacks evidence of genuine sequential state modeling—the design describes static feature vectors, not episode-based state transitions. The metric mismatch between reward-based training and AUPRC evaluation means the RL model is being evaluated on a criterion it was not trained to optimize. The baseline tuning asymmetry further disadvantages fair comparison. These are collective methodological validity concerns that cannot be dismissed."}
-    ],
-    "all_issues_adjudicated": [
-        "Deep RL framing is architecturally overcomplicated for binary classification without demonstrated sequential benefit",
-        "Metric mismatch between RL training objective and AUPRC evaluation metric",
-        "Asymmetric optimization targets between RL and baselines"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_752",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 2,
+        "critic_raw": c9_r1_critic,
+        "all_issues_raised": [
+            "Deep RL is architecturally overcomplicated for binary failure prediction on static records",
+            "Metric mismatch: RL trained to maximize cost-weighted reward but evaluated on AUPRC",
+            "Baselines tuned for FNR at precision >= 0.70 but evaluated on AUPRC creates asymmetric optimization",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c9_r1_critic, "defender": c9_r1_defender},
+            {
+                "round": 2,
+                "critic": c9_r2_critic,
+                "defender": "The defender concedes all three issues remain unresolved. The RL framing lacks evidence of genuine sequential state modeling—the design describes static feature vectors, not episode-based state transitions. The metric mismatch between reward-based training and AUPRC evaluation means the RL model is being evaluated on a criterion it was not trained to optimize. The baseline tuning asymmetry further disadvantages fair comparison. These are collective methodological validity concerns that cannot be dismissed.",
+            },
+        ],
+        "all_issues_adjudicated": [
+            "Deep RL framing is architecturally overcomplicated for binary classification without demonstrated sequential benefit",
+            "Metric mismatch between RL training objective and AUPRC evaluation metric",
+            "Asymmetric optimization targets between RL and baselines",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 10: eval_scenario_716
@@ -667,27 +703,33 @@ The temporal split remains unresolved. For a 5-year hospital EHR dataset, this i
 **On Feature Modality:**
 The defense's reframing as "testing whether text adds value" is reasonable if the hypothesis is scoped accordingly. The hypothesis as stated is "transformer outperforms logistic regression"—a hybrid claim that bundles architecture and modality. The experiment can support a narrower claim but should be careful not to attribute gains solely to architecture when text features are also different."""
 
-debates.append({
-    "case_id": "eval_scenario_716",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 2,
-    "critic_raw": c10_r1_critic,
-    "all_issues_raised": [
-        "Preprocessing leakage: imputation, scaling, text tokenizers fit on combined dataset before splitting",
-        "Stratified random split on 5-year temporal EHR data violates causal order",
-        "Feature modality asymmetry: transformer uses text + structured, LR uses structured only — conflates architecture and modality"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c10_r1_critic, "defender": c10_r1_defender},
-        {"round": 2, "critic": c10_r2_critic, "defender": "The defender accepts that imputation and scaling statistics being fit on the full dataset is a best-practice violation beyond just the tokenizer. The practical magnitude is bounded but the principle is violated. The temporal split remains unresolved and is the more serious concern. The feature modality point is acknowledged as a scope clarification issue—the experiment tests 'text + architecture' as a package, not architecture alone. Both sides should acknowledge this framing explicitly in any published claims."}
-    ],
-    "all_issues_adjudicated": [
-        "Preprocessing leakage: imputation and scaling statistics fit on full dataset",
-        "Stratified random split on 5-year temporal EHR data violates causal order"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_716",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 2,
+        "critic_raw": c10_r1_critic,
+        "all_issues_raised": [
+            "Preprocessing leakage: imputation, scaling, text tokenizers fit on combined dataset before splitting",
+            "Stratified random split on 5-year temporal EHR data violates causal order",
+            "Feature modality asymmetry: transformer uses text + structured, LR uses structured only — conflates architecture and modality",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c10_r1_critic, "defender": c10_r1_defender},
+            {
+                "round": 2,
+                "critic": c10_r2_critic,
+                "defender": "The defender accepts that imputation and scaling statistics being fit on the full dataset is a best-practice violation beyond just the tokenizer. The practical magnitude is bounded but the principle is violated. The temporal split remains unresolved and is the more serious concern. The feature modality point is acknowledged as a scope clarification issue—the experiment tests 'text + architecture' as a package, not architecture alone. Both sides should acknowledge this framing explicitly in any published claims.",
+            },
+        ],
+        "all_issues_adjudicated": [
+            "Preprocessing leakage: imputation and scaling statistics fit on full dataset",
+            "Stratified random split on 5-year temporal EHR data violates causal order",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 11: eval_scenario_720
@@ -721,26 +763,28 @@ The design's chronological split is the right approach for temporal EHR data. Th
 
 **Conceded**: Both preprocessing and test set issues are genuine. The temporal split is sound. The test set peeking makes reported metrics unreliable."""
 
-debates.append({
-    "case_id": "eval_scenario_720",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 1,
-    "critic_raw": c11_r1_critic,
-    "all_issues_raised": [
-        "Test set actively used to guide training decisions — test set peeking invalidates metrics",
-        "Preprocessing fit on combined train+validation set, not training set only — validation set leakage",
-        "Auxiliary efficacy label derived from composite post-discharge assessments — potential label noise"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c11_r1_critic, "defender": c11_r1_defender}
-    ],
-    "all_issues_adjudicated": [
-        "Test set peeking: test results explicitly used to guide training decisions invalidates all test metrics",
-        "Preprocessing leakage: fit on combined train+val rather than training set only"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_720",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 1,
+        "critic_raw": c11_r1_critic,
+        "all_issues_raised": [
+            "Test set actively used to guide training decisions — test set peeking invalidates metrics",
+            "Preprocessing fit on combined train+validation set, not training set only — validation set leakage",
+            "Auxiliary efficacy label derived from composite post-discharge assessments — potential label noise",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c11_r1_critic, "defender": c11_r1_defender}
+        ],
+        "all_issues_adjudicated": [
+            "Test set peeking: test results explicitly used to guide training decisions invalidates all test metrics",
+            "Preprocessing leakage: fit on combined train+val rather than training set only",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 12: eval_scenario_750
@@ -774,26 +818,28 @@ This is a genuine specification error. One of two approaches governs—either te
 
 **Conceded**: Temporal split and internal inconsistency are genuine flaws. Preprocessing leakage is marginal given architecture choices."""
 
-debates.append({
-    "case_id": "eval_scenario_750",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 1,
-    "critic_raw": c12_r1_critic,
-    "all_issues_raised": [
-        "Preprocessing leakage: normalization fit on full dataset before splitting",
-        "Stratified random split on 24-month temporal review data violates temporal ordering",
-        "Internal inconsistency: Section 2 specifies no temporal ordering but Section 6 references specific month windows"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c12_r1_critic, "defender": c12_r1_defender}
-    ],
-    "all_issues_adjudicated": [
-        "Stratified random split on temporal review data violates deployment reality",
-        "Internal inconsistency between temporal agnostic split (Section 2) and month-specific validation (Section 6)"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_750",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 1,
+        "critic_raw": c12_r1_critic,
+        "all_issues_raised": [
+            "Preprocessing leakage: normalization fit on full dataset before splitting",
+            "Stratified random split on 24-month temporal review data violates temporal ordering",
+            "Internal inconsistency: Section 2 specifies no temporal ordering but Section 6 references specific month windows",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c12_r1_critic, "defender": c12_r1_defender}
+        ],
+        "all_issues_adjudicated": [
+            "Stratified random split on temporal review data violates deployment reality",
+            "Internal inconsistency between temporal agnostic split (Section 2) and month-specific validation (Section 6)",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 13: hyp_025
@@ -827,27 +873,29 @@ The F1-Score choice may be clinically motivated (threshold-specific performance)
 
 **Conceded**: All three issues are genuine. The metric mismatch is particularly clear-cut."""
 
-debates.append({
-    "case_id": "hyp_025",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 1,
-    "critic_raw": c13_r1_critic,
-    "all_issues_raised": [
-        "Preprocessing leakage: normalization fit on full dataset before splitting",
-        "Random split on longitudinal patient data — baseline and follow-up from same patient may appear in different splits",
-        "Metric mismatch: hypothesis specifies AUC but design uses Macro-Averaged F1-Score as primary metric"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c13_r1_critic, "defender": c13_r1_defender}
-    ],
-    "all_issues_adjudicated": [
-        "Metric mismatch: hypothesis specifies AUC but design evaluates on Macro-Averaged F1-Score",
-        "Preprocessing leakage: normalization fit on full dataset",
-        "Random split does not enforce patient-level separation for longitudinal data"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "hyp_025",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 1,
+        "critic_raw": c13_r1_critic,
+        "all_issues_raised": [
+            "Preprocessing leakage: normalization fit on full dataset before splitting",
+            "Random split on longitudinal patient data — baseline and follow-up from same patient may appear in different splits",
+            "Metric mismatch: hypothesis specifies AUC but design uses Macro-Averaged F1-Score as primary metric",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c13_r1_critic, "defender": c13_r1_defender}
+        ],
+        "all_issues_adjudicated": [
+            "Metric mismatch: hypothesis specifies AUC but design evaluates on Macro-Averaged F1-Score",
+            "Preprocessing leakage: normalization fit on full dataset",
+            "Random split does not enforce patient-level separation for longitudinal data",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 14: eval_scenario_754
@@ -886,23 +934,29 @@ The preprocessing leakage is real, even if small. The design explicitly states t
 
 **Net Assessment**: This experiment is methodologically sound in its core structure. The preprocessing leakage is the one genuine flaw. Given the otherwise strong design (temporal split, patient integrity, clear outcome definition), this experiment's flaws are correctable and do not invalidate the comparative findings if the practical preprocessing impact is indeed marginal."""
 
-debates.append({
-    "case_id": "eval_scenario_754",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 2,
-    "critic_raw": c14_r1_critic,
-    "all_issues_raised": [
-        "Preprocessing leakage: vocabulary and demographic scalers fit on full dataset despite sufficient training set size",
-        "VADER baseline may be too weak — clinical lexicon would be more appropriate for mental health sentiment"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c14_r1_critic, "defender": c14_r1_defender},
-        {"round": 2, "critic": c14_r2_critic, "defender": "The defender accepts that the preprocessing leakage is a genuine best-practice violation, even if practically bounded. The mischaracterization of 'limited training data' is noted — it should be acknowledged that the training set is sufficient for stable vocabulary estimation. The VADER baseline selection is a design limitation worth noting in the scope of claims. The temporal split, patient-level integrity, and outcome definition make this one of the stronger designs. The preprocessing issue is correctable and its practical impact is marginal given the architectural constraints."}
-    ],
-    "all_issues_adjudicated": [],
-    "verdict": "defense_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_754",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 2,
+        "critic_raw": c14_r1_critic,
+        "all_issues_raised": [
+            "Preprocessing leakage: vocabulary and demographic scalers fit on full dataset despite sufficient training set size",
+            "VADER baseline may be too weak — clinical lexicon would be more appropriate for mental health sentiment",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c14_r1_critic, "defender": c14_r1_defender},
+            {
+                "round": 2,
+                "critic": c14_r2_critic,
+                "defender": "The defender accepts that the preprocessing leakage is a genuine best-practice violation, even if practically bounded. The mischaracterization of 'limited training data' is noted — it should be acknowledged that the training set is sufficient for stable vocabulary estimation. The VADER baseline selection is a design limitation worth noting in the scope of claims. The temporal split, patient-level integrity, and outcome definition make this one of the stronger designs. The preprocessing issue is correctable and its practical impact is marginal given the architectural constraints.",
+            },
+        ],
+        "all_issues_adjudicated": [],
+        "verdict": "defense_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 15: eval_scenario_759
@@ -936,27 +990,29 @@ The inconsistency between random sampling (Section 3) and month-specific windows
 
 **Fully conceded**: Test set peeking is the most severe issue and cannot be defended. The primary metric conditionality should be pre-resolved. The temporal split inconsistency should be corrected."""
 
-debates.append({
-    "case_id": "eval_scenario_759",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 1,
-    "critic_raw": c15_r1_critic,
-    "all_issues_raised": [
-        "Test set metrics consulted during model training before finalizing model — test set peeking",
-        "Random split on 36-month temporal sensor data vs. month-specific validation windows — internal inconsistency",
-        "Primary metric conditioned on cost data availability introduces researcher degrees of freedom"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c15_r1_critic, "defender": c15_r1_defender}
-    ],
-    "all_issues_adjudicated": [
-        "Test set peeking: metrics consulted before model finalization invalidates test set as unbiased estimator",
-        "Conditional primary metric not pre-specified unconditionally",
-        "Internal inconsistency in split strategy between random sampling and temporal month windows"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_759",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 1,
+        "critic_raw": c15_r1_critic,
+        "all_issues_raised": [
+            "Test set metrics consulted during model training before finalizing model — test set peeking",
+            "Random split on 36-month temporal sensor data vs. month-specific validation windows — internal inconsistency",
+            "Primary metric conditioned on cost data availability introduces researcher degrees of freedom",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c15_r1_critic, "defender": c15_r1_defender}
+        ],
+        "all_issues_adjudicated": [
+            "Test set peeking: metrics consulted before model finalization invalidates test set as unbiased estimator",
+            "Conditional primary metric not pre-specified unconditionally",
+            "Internal inconsistency in split strategy between random sampling and temporal month windows",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 16: eval_scenario_730
@@ -997,27 +1053,33 @@ The explicit rationale—"without the confound of manual hyperparameter tuning"�
 **Interaction Effect:**
 The untuned baseline combined with accuracy as the primary metric means the baseline may fail on minority classes (underfitting from strong regularization), and this failure is hidden by accuracy. The two flaws compound each other systematically in the CNN's favor."""
 
-debates.append({
-    "case_id": "eval_scenario_730",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 2,
-    "critic_raw": c16_r1_critic,
-    "all_issues_raised": [
-        "Accuracy as primary metric for imbalanced multi-class histopathology classification — masks minority class failures",
-        "Unfair baseline: logistic regression uses default C=1.0 with no tuning while CNN receives full optimization",
-        "Untuned baseline and accuracy metric interact to systematically favor CNN in comparison"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c16_r1_critic, "defender": c16_r1_defender},
-        {"round": 2, "critic": c16_r2_critic, "defender": "The defender fully concedes both flaws and their compound interaction. The explicit rationale for using an untuned baseline ('without the confound of manual hyperparameter tuning') reflects a fundamental misunderstanding of fair comparison methodology. An untuned baseline is not more rigorous — it is biased. Combined with accuracy as the primary metric hiding minority class failures, the comparison is systematically constructed to favor the CNN regardless of whether learned features genuinely outperform hand-crafted ones. Both issues must be corrected for the comparison to be scientifically valid."}
-    ],
-    "all_issues_adjudicated": [
-        "Accuracy as primary metric inappropriate for imbalanced multi-class histopathology classification",
-        "Logistic regression baseline deliberately untuned while CNN receives full optimization — systematic bias"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_730",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 2,
+        "critic_raw": c16_r1_critic,
+        "all_issues_raised": [
+            "Accuracy as primary metric for imbalanced multi-class histopathology classification — masks minority class failures",
+            "Unfair baseline: logistic regression uses default C=1.0 with no tuning while CNN receives full optimization",
+            "Untuned baseline and accuracy metric interact to systematically favor CNN in comparison",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c16_r1_critic, "defender": c16_r1_defender},
+            {
+                "round": 2,
+                "critic": c16_r2_critic,
+                "defender": "The defender fully concedes both flaws and their compound interaction. The explicit rationale for using an untuned baseline ('without the confound of manual hyperparameter tuning') reflects a fundamental misunderstanding of fair comparison methodology. An untuned baseline is not more rigorous — it is biased. Combined with accuracy as the primary metric hiding minority class failures, the comparison is systematically constructed to favor the CNN regardless of whether learned features genuinely outperform hand-crafted ones. Both issues must be corrected for the comparison to be scientifically valid.",
+            },
+        ],
+        "all_issues_adjudicated": [
+            "Accuracy as primary metric inappropriate for imbalanced multi-class histopathology classification",
+            "Logistic regression baseline deliberately untuned while CNN receives full optimization — systematic bias",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 17: eval_scenario_742
@@ -1052,26 +1114,28 @@ This is a valid concern. The design does not specify image count per disease cla
 
 **Conceded**: Preprocessing leakage and temporal split are genuine flaws. CNN sample size is a risk worth flagging in the design scope."""
 
-debates.append({
-    "case_id": "eval_scenario_742",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 1,
-    "critic_raw": c17_r1_critic,
-    "all_issues_raised": [
-        "Preprocessing leakage: all transformers (TF-IDF, image normalization, imputation) fit on full dataset",
-        "Stratified random split on 24-month temporal EHR data violates causal order",
-        "ResNet-50 fine-tuning on potentially small per-class image counts risks overfitting"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c17_r1_critic, "defender": c17_r1_defender}
-    ],
-    "all_issues_adjudicated": [
-        "Preprocessing leakage: full-dataset fit for all preprocessing transformers",
-        "Stratified random split on temporal EHR data violates deployment causal structure"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_742",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 1,
+        "critic_raw": c17_r1_critic,
+        "all_issues_raised": [
+            "Preprocessing leakage: all transformers (TF-IDF, image normalization, imputation) fit on full dataset",
+            "Stratified random split on 24-month temporal EHR data violates causal order",
+            "ResNet-50 fine-tuning on potentially small per-class image counts risks overfitting",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c17_r1_critic, "defender": c17_r1_defender}
+        ],
+        "all_issues_adjudicated": [
+            "Preprocessing leakage: full-dataset fit for all preprocessing transformers",
+            "Stratified random split on temporal EHR data violates deployment causal structure",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 18: hyp_078
@@ -1117,27 +1181,33 @@ The split structure must be fully specified. "Fit exclusively on training set" i
 
 **Net Assessment**: The experiment has sound components (LSTM architecture, recall constraint, equipment stratification) but the temporal split violation and preprocessing ambiguity remain unaddressed."""
 
-debates.append({
-    "case_id": "hyp_078",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 2,
-    "critic_raw": c18_r1_critic,
-    "all_issues_raised": [
-        "Stratified random split on 36-month temporal sensor data violates causal order",
-        "Split structure ambiguity: 15% test holdout but training/validation split not specified",
-        "Baseline feature asymmetry: LR receives sensor statistics only while RNN receives sensor + operator logs + context"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c18_r1_critic, "defender": c18_r1_defender},
-        {"round": 2, "critic": c18_r2_critic, "defender": "The defender accepts the temporal split as the primary unresolved issue. Equipment stratification controls for machine-type heterogeneity but not temporal aging dynamics within machine types. The preprocessing ambiguity is also accepted as a correctable gap that must be resolved to confirm no validation-set leakage into preprocessing. The baseline asymmetry is acknowledged as intentional hypothesis design. The experiment is conceptually sound but requires temporal split and split specification corrections for valid evaluation."}
-    ],
-    "all_issues_adjudicated": [
-        "Stratified random split on temporal sensor data violates causal order",
-        "Split structure not fully specified — potential validation-set leakage into preprocessing"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "hyp_078",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 2,
+        "critic_raw": c18_r1_critic,
+        "all_issues_raised": [
+            "Stratified random split on 36-month temporal sensor data violates causal order",
+            "Split structure ambiguity: 15% test holdout but training/validation split not specified",
+            "Baseline feature asymmetry: LR receives sensor statistics only while RNN receives sensor + operator logs + context",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c18_r1_critic, "defender": c18_r1_defender},
+            {
+                "round": 2,
+                "critic": c18_r2_critic,
+                "defender": "The defender accepts the temporal split as the primary unresolved issue. Equipment stratification controls for machine-type heterogeneity but not temporal aging dynamics within machine types. The preprocessing ambiguity is also accepted as a correctable gap that must be resolved to confirm no validation-set leakage into preprocessing. The baseline asymmetry is acknowledged as intentional hypothesis design. The experiment is conceptually sound but requires temporal split and split specification corrections for valid evaluation.",
+            },
+        ],
+        "all_issues_adjudicated": [
+            "Stratified random split on temporal sensor data violates causal order",
+            "Split structure not fully specified — potential validation-set leakage into preprocessing",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # -----------------------------------------------------------
 # Case 19: eval_scenario_756
@@ -1181,32 +1251,38 @@ I want to add specificity: the phrase "This step acts as a safeguard against get
 **Preprocessing Contradiction Resolution Needed:**
 The inconsistency between Section 4 (full-dataset fit) and Section 5 (training-only TF-IDF fit) must be resolved explicitly. If Section 5 governs, the LR baseline is methodologically sound. If Section 4 governs, there is leakage in the LR preprocessing. The design as written cannot be evaluated without this clarification."""
 
-debates.append({
-    "case_id": "eval_scenario_756",
-    "condition": "multiround",
-    "run_idx": 1,
-    "num_rounds": 2,
-    "critic_raw": c19_r1_critic,
-    "all_issues_raised": [
-        "Test set cross-verification during hyperparameter tuning — test results inform configuration selection, invalidating test metrics",
-        "Preprocessing inconsistency: Section 4 states full-dataset fit, Section 5 states training-only TF-IDF fit"
-    ],
-    "round_transcripts": [
-        {"round": 1, "critic": c19_r1_critic, "defender": c19_r1_defender},
-        {"round": 2, "critic": c19_r2_critic, "defender": "The defender fully concedes the test set peeking as a fatal flaw. The phrase 'safeguard against getting trapped in local optima during tuning' explicitly describes iterative optimization using test feedback, not passive verification. The preprocessing inconsistency between Sections 4 and 5 must be explicitly resolved—Section 5's training-only approach is correct and should govern. The temporal split design is the one genuine strength of this experiment. The test set contamination, regardless of its framing, invalidates the reported test metrics."}
-    ],
-    "all_issues_adjudicated": [
-        "Test set cross-verification during hyperparameter tuning invalidates test metrics as unbiased estimates",
-        "Preprocessing specification inconsistency between Section 4 (full-dataset) and Section 5 (training-only)"
-    ],
-    "verdict": "critique_wins"
-})
+debates.append(
+    {
+        "case_id": "eval_scenario_756",
+        "condition": "multiround",
+        "run_idx": 1,
+        "num_rounds": 2,
+        "critic_raw": c19_r1_critic,
+        "all_issues_raised": [
+            "Test set cross-verification during hyperparameter tuning — test results inform configuration selection, invalidating test metrics",
+            "Preprocessing inconsistency: Section 4 states full-dataset fit, Section 5 states training-only TF-IDF fit",
+        ],
+        "round_transcripts": [
+            {"round": 1, "critic": c19_r1_critic, "defender": c19_r1_defender},
+            {
+                "round": 2,
+                "critic": c19_r2_critic,
+                "defender": "The defender fully concedes the test set peeking as a fatal flaw. The phrase 'safeguard against getting trapped in local optima during tuning' explicitly describes iterative optimization using test feedback, not passive verification. The preprocessing inconsistency between Sections 4 and 5 must be explicitly resolved—Section 5's training-only approach is correct and should govern. The temporal split design is the one genuine strength of this experiment. The test set contamination, regardless of its framing, invalidates the reported test metrics.",
+            },
+        ],
+        "all_issues_adjudicated": [
+            "Test set cross-verification during hyperparameter tuning invalidates test metrics as unbiased estimates",
+            "Preprocessing specification inconsistency between Section 4 (full-dataset) and Section 5 (training-only)",
+        ],
+        "verdict": "critique_wins",
+    }
+)
 
 # ============================================================
 # WRITE OUTPUT
 # ============================================================
 
-output_path = "/Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/self_debate_experiment_v6/v6_interim_multiround/chunk_2_run1.json"
+output_path = "/Users/chrissantiago/Dropbox/GitHub/ml-lab/self_debate_experiment_v6/v6_interim_multiround/chunk_2_run1.json"
 
 with open(output_path, "w") as f:
     json.dump(debates, f, indent=2)
@@ -1242,4 +1318,5 @@ print("All validations passed.")
 
 verdicts = [d["verdict"] for d in debates]
 from collections import Counter
+
 print(f"Verdict distribution: {Counter(verdicts)}")

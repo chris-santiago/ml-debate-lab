@@ -1,6 +1,6 @@
 # Claude Code Execution Plan — Self-Debate Protocol v4
 
-**Purpose:** Run the redesigned experiment with all v3 post-mortem issues remediated. Execute inside the ml-debate-lab repo.
+**Purpose:** Run the redesigned experiment with all v3 post-mortem issues remediated. Execute inside the ml-lab repo.
 
 **Prerequisites:**
 - `uv` installed (Python 3.10+ resolved automatically via PEP 723 inline script metadata)

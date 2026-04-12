@@ -6,8 +6,8 @@ Produces chunk_2_run1_adjudicated.json with per-case verdicts and surviving issu
 
 import json
 
-INPUT_PATH = "/Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/self_debate_experiment_v6/v6_interim_biased/chunk_2_run1.json"
-OUTPUT_PATH = "/Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/self_debate_experiment_v6/v6_interim_biased/chunk_2_run1_adjudicated.json"
+INPUT_PATH = "/Users/chrissantiago/Dropbox/GitHub/ml-lab/self_debate_experiment_v6/v6_interim_biased/chunk_2_run1.json"
+OUTPUT_PATH = "/Users/chrissantiago/Dropbox/GitHub/ml-lab/self_debate_experiment_v6/v6_interim_biased/chunk_2_run1_adjudicated.json"
 
 # Per-case adjudication decisions.
 # Keys are case_id values.
@@ -38,7 +38,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 1: eval_scenario_776
     # Defense argues: multi-rater grading with kappa is strong; weekly stratification preserves prevalence;
     # macro-AUROC is appropriate; center-specific sensitivity analysis is a strength.
@@ -55,7 +54,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 2: eval_scenario_704
     # Defense argues: rolling 60-day windows prevent double-counting; conservative imputation is correct;
     # multi-task is mechanistically justified; evaluation is clinically anchored; dept stratification addresses
@@ -76,7 +74,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 3: eval_scenario_770
     # Defense argues: MTL is mechanistically justified; outcome locked at discharge; sample size appropriate
     # for cohort; scope statement is narrow; fairness analysis is thorough.
@@ -97,7 +94,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 4: eval_scenario_764
     # Defense argues: single-system restriction is principled; imputation fit on training only; SES included
     # as feature; sensitivity analysis for out-of-system readmissions; narrow scope statement.
@@ -118,7 +114,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 5: eval_scenario_738
     # Defense argues: temporal split with patient-level integrity is used; frozen BioBERT is correct for
     # 20k records; multi-modal architecture mechanistically justified; consistency requirement is high
@@ -144,7 +139,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3],
         "verdict": "critique_wins",
     },
-
     # CASE 6: eval_scenario_735
     # Defense argues: failure label excludes non-equipment root causes; 5% manual review for labeling;
     # 1008-observation window is principled; forward-fill within 60 min is conservative; model selection
@@ -166,7 +160,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 7: eval_scenario_773
     # Defense argues: PR-AUC is appropriate for imbalanced data; parallel feature construction isolates
     # sequence modeling; patient-level stratification prevents leakage; exclusion of <1 prior visit is
@@ -196,7 +189,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 8: eval_scenario_774
     # Defense argues: MRI captures structural information not in structured features; age 60+ is clinical
     # population spec; single-institution ensures consistent imaging; ResNet-18 + ImageNet pretraining is
@@ -221,7 +213,6 @@ DECISIONS = {
         "surviving_indices": [1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 9: eval_scenario_752
     # Defense argues: 30-month training window is justified for RL value function learning; sensor exclusion
     # is transparent; 30-day horizon aligns with maintenance cycles; equipment-group stratification;
@@ -244,7 +235,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 10: eval_scenario_716
     # Defense argues: filtering planned readmissions is principled; vocabulary tokenization on full dataset
     # justified for coverage; 100k-patient scale provides power; conditional interpretation framework is
@@ -266,7 +256,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 11: eval_scenario_720
     # Defense argues: efficiency hypothesis is practical; auxiliary task is mechanistically motivated;
     # chronological split with patient-level integrity; missing efficacy labels retained with sensitivity
@@ -289,7 +278,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 12: eval_scenario_750
     # Defense argues: product images provide genuine value text cannot; continuous scores preserve ordinal
     # info; 60k records adequate for BERT fine-tuning; seasonal/promotional features equalize temporal
@@ -311,7 +299,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 13: hyp_025
     # Defense argues: progression prediction is more clinically valuable; grader blinding prevents bias;
     # facility/interval as both stratification and features handles confounding; macro-F1 is correct;
@@ -335,7 +322,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 14: eval_scenario_754
     # Defense argues: adherence label is defined independently from text; test set is genuinely new
     # patients; stratification by treatment type and risk; retraining on combined data is standard;
@@ -355,7 +341,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 15: eval_scenario_759
     # Defense argues: 168-hour horizon aligns with maintenance cycles; failure label excludes scheduled
     # shutdowns; rolling stats at 3 scales reflect domain knowledge; equipment age/type as features;
@@ -377,7 +362,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 16: eval_scenario_730
     # Defense argues: inter-rater review with kappa is strong label quality; Macenko normalization applied
     # consistently; temporal split not appropriate for histopathology; institution stratification in split;
@@ -400,7 +384,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 17: eval_scenario_742
     # Defense argues: post-hoc confirmed diagnoses are more reliable; single-institution minimizes
     # protocol variation; stratification by clinician/department is appropriate confound control;
@@ -427,7 +410,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 18: hyp_078
     # Defense argues: operator logs are genuine leading indicators; modality-specific imputation is careful;
     # imputation statistics fit on training only; both models receive structured context features; per-
@@ -454,7 +436,6 @@ DECISIONS = {
         "surviving_indices": [0, 1, 2, 3, 4],
         "verdict": "critique_wins",
     },
-
     # CASE 19: eval_scenario_756
     # Defense argues: multi-class complication prediction is clinically informative; labels from structured
     # records prevent input-label leakage; temporal split reflects deployment reality; stratification
@@ -494,16 +475,18 @@ def build_output():
         all_issues = case["all_issues_raised"]
         surviving_issues = [all_issues[i] for i in surviving_indices]
 
-        output.append({
-            "case_id": cid,
-            "condition": "biased_debate",
-            "run_idx": case["run_idx"],
-            "critic_raw": case["critic_raw"],
-            "defender_raw": case["defender_raw"],
-            "all_issues_raised": all_issues,
-            "all_issues_adjudicated": surviving_issues,
-            "verdict": verdict,
-        })
+        output.append(
+            {
+                "case_id": cid,
+                "condition": "biased_debate",
+                "run_idx": case["run_idx"],
+                "critic_raw": case["critic_raw"],
+                "defender_raw": case["defender_raw"],
+                "all_issues_raised": all_issues,
+                "all_issues_adjudicated": surviving_issues,
+                "verdict": verdict,
+            }
+        )
 
     with open(OUTPUT_PATH, "w") as f:
         json.dump(output, f, indent=2)
@@ -512,7 +495,9 @@ def build_output():
     for item in output:
         n_raised = len(item["all_issues_raised"])
         n_survived = len(item["all_issues_adjudicated"])
-        print(f"  {item['case_id']}: {n_survived}/{n_raised} issues survived -> {item['verdict']}")
+        print(
+            f"  {item['case_id']}: {n_survived}/{n_raised} issues survived -> {item['verdict']}"
+        )
 
 
 if __name__ == "__main__":

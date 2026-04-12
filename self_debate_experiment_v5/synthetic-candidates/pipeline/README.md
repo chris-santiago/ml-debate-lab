@@ -45,7 +45,7 @@ Assembled cases are written one level up (in `synthetic-candidates/`) as `cases_
 ```bash
 cd self_debate_experiment_v5/synthetic-candidates
 
-uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-lab/UV.env \
   pipeline/orchestrator.py \
   --batch-size 100 \
   --start-case-id 200
@@ -56,7 +56,7 @@ Writes `cases_200-299.json` when complete.
 ### With all options
 
 ```bash
-uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-lab/UV.env \
   pipeline/orchestrator.py \
   --batch-size 100 \
   --start-case-id 200 \
@@ -70,7 +70,7 @@ uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
 If the run was interrupted after some cases completed Stage 4, resume picks up where it left off:
 
 ```bash
-uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-lab/UV.env \
   pipeline/orchestrator.py \
   --batch-size 100 \
   --start-case-id 200 \
@@ -82,7 +82,7 @@ uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
 Verifies prompt construction and placeholder filling without spending tokens:
 
 ```bash
-uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-lab/UV.env \
   pipeline/orchestrator.py \
   --batch-size 5 \
   --start-case-id 1 \
@@ -92,7 +92,7 @@ uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
 ### Override a model for a specific stage
 
 ```bash
-uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-lab/UV.env \
   pipeline/orchestrator.py \
   --batch-size 20 \
   --start-case-id 1 \
@@ -102,7 +102,7 @@ uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
 ### Skip smoke test (debug Stages 2–4 only)
 
 ```bash
-uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-lab/UV.env \
   pipeline/orchestrator.py \
   --batch-size 10 \
   --start-case-id 1 \
@@ -143,7 +143,7 @@ uv run pipeline/select_cases.py \
 ### Select by total N (balanced across strata)
 
 ```bash
-uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-lab/UV.env \
   pipeline/select_cases.py \
   --n 60 \
   --seed 42
@@ -152,7 +152,7 @@ uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
 ### Single batch
 
 ```bash
-uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-lab/UV.env \
   pipeline/select_cases.py \
   --input cases_300-499.json \
   --per-stratum 15 \
@@ -164,7 +164,7 @@ uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
 No `--input` needed — the script globs `cases_*.json` from `synthetic-candidates/` automatically:
 
 ```bash
-uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-lab/UV.env \
   pipeline/select_cases.py \
   --per-stratum 20 \
   --max-proxy 0.83 \
@@ -179,7 +179,7 @@ Override the default `--per-stratum` for specific tiers, or skip a tier entirely
 
 ```bash
 # Fewer defense_wins, skip 3+ flaw cases
-uv --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+uv --env-file /Users/chrissantiago/Dropbox/GitHub/ml-lab/UV.env \
   run pipeline/select_cases.py \
   --per-stratum 25 \
   --tier-0 10 \
@@ -187,7 +187,7 @@ uv --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
   --max-proxy 0.83
 
 # Only critique cases, custom targets per tier
-uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-debate-lab/UV.env \
+uv run --env-file /Users/chrissantiago/Dropbox/GitHub/ml-lab/UV.env \
   pipeline/select_cases.py \
   --tier-0 0 \
   --tier-1 30 \

@@ -1,6 +1,6 @@
 # Claude Code Execution Plan — Self-Debate Protocol v3 (From Scratch)
 
-**Purpose:** Run the full redesigned experiment, faithful to the original multi-agent prompt with all v2 improvements incorporated. Execute inside the ml-debate-lab repo.
+**Purpose:** Run the full redesigned experiment, faithful to the original multi-agent prompt with all v2 improvements incorporated. Execute inside the ml-lab repo.
 
 **Prerequisites:**
 - `uv` installed (Python 3.10+ resolved automatically via PEP 723 inline script metadata)
