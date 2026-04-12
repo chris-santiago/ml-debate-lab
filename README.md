@@ -2,6 +2,8 @@
 
 `ml-lab` is a Claude Code agent that runs structured ML hypothesis investigations using an ensemble of independent critics (default) or an adversarial critic-defender debate (opt-in). It enforces rigor at every step — pre-specified metrics, confidence-tiered review findings, agreed experiments only — and produces a self-contained report with a production re-evaluation. The methodology has been empirically validated; see [Part 2](#part-2-the-experiment-behind-ml-lab) for results.
 
+**Jump to:** [Part 1 — Using ml-lab](#part-1-using-ml-lab) · [Part 2 — The Experiment](#part-2-the-experiment-behind-ml-lab) · [FAQ](#faq) · [Artifact Index](#artifact-index) · [ml-journal](#ml-journal--session-audit-trail)
+
 ---
 
 ## Part 1: Using ml-lab
