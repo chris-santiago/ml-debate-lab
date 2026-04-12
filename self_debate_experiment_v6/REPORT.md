@@ -179,7 +179,7 @@ The strongest positive finding in the experiment is descriptive rather than hypo
 | isolated_debate | 0.6603 | 0.9444 |
 | ensemble_3x | **0.7717** | **0.9861** |
 
-Ensemble union-of-issues pooling provides a +0.1005 IDR advantage over baseline and +0.1114 over isolated debate. Simultaneously, ensemble achieves the highest IDP of all conditions (0.9861). Three independent assessors with union-of-issues recall aggregation and majority-vote verdict aggregation outperform adversarial debate on both recall and precision. This finding was not formally tested against baseline (the pre-registered H2 tests ensemble vs. isolated_debate), but the descriptive gap is the largest observed effect in the experiment.
+Ensemble union-of-issues pooling provides a +0.1005 IDR advantage over baseline and +0.1114 over isolated debate. Simultaneously, ensemble achieves the highest IDP of all conditions (0.9861). Three independent assessors with union-of-issues recall aggregation and majority-vote verdict aggregation outperform adversarial debate on both recall and precision. This finding was not formally tested against baseline (the pre-registered H2 tests ensemble vs. isolated_debate), but the descriptive gap is the largest observed effect in the experiment. *(Per-tier precision follow-up, `v6_minority_precision.py`: minority-flagged precision = 0.946 vs unanimous 0.929, diff = +0.017, CI [−0.028, +0.068] — no significant precision penalty for minority-flagged issues. ENSEMBLE_ANALYSIS.md §7.)*
 
 ### Conditional FM Gate Behavior
 

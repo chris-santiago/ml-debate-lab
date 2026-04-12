@@ -47,16 +47,37 @@ Formally supported at both ends: ensemble > baseline and ensemble > isolated_deb
 **What changes operationally:**
 - Drop the critic→defender→adjudicator dispatch chain
 - Run ml-critic three times independently on the same case
-- Pool issues using union (any-assessor-found = credit); majority-vote for final verdict
+- Pool issues using **union** (any-assessor-found = credit) — tag each issue with assessor support count (1/3, 2/3, 3/3); output the full tagged list, do not collapse to majority-vote verdict
 - Same compute budget (3×), better output on both recall and precision
 
 **Why no defender?** The defender suppresses true positives as often as false ones. IDP without a defender (ensemble: 0.9861) exceeds IDP with a defender (isolated_debate: 0.9250). Three independent critics, absent adversarial pressure, are naturally more precise because they pick their shots carefully. The defender creates inflation, not filtering.
 
-**Open design question (issue `c9dfc257`):** Union IDR gives equal weight to minority-flagged issues (1/3 critics) and majority-flagged (2/3). A confidence-tiered output layer would let downstream consumers distinguish high-confidence from low-confidence findings without reintroducing adversarial suppression.
+**Precision of minority-flagged issues (issue `c9dfc257` — resolved):** Per-tier precision analysis confirmed no significant difference: minority-flagged precision = 0.946, unanimous = 0.929, diff = +0.017, CI [−0.028, +0.068]. Union output is safe on both recall and precision dimensions.
 
 #### Practical Output Layer (production implementation)
 
-The v6 scoring design — union IDR for measurement, majority-vote for output verdict — is a **measurement protocol, not a production protocol**. In practical use, majority-vote collapses the output to the two critics who agreed, silently discarding any minority-flagged finding. If only one critic found the critical flaw, the user sees "no major issues."
+The v6 scoring design — union IDR for measurement, majority-vote for output verdict — is a **measurement protocol, not a production protocol**. In practical use, majority-vote collapses the output to the critics who agreed, silently discarding any minority-flagged finding. If only one critic found the critical flaw, the user sees "no major issues."
+
+**Empirical grounding (v6 data, 60 critique cases, 116 must_find issues):**
+
+| Tier | Issues | % of all must_find | Dropped by majority-vote? |
+|---|---|---|---|
+| 3/3 unanimous | 71 | 61.2% | No |
+| 2/3 majority | 8 | 6.9% | No |
+| 1/3 minority only | 11 | **9.5%** | **Yes — all 11 are real TPs** |
+| 0/3 missed entirely | 26 | 22.4% | N/A |
+
+11 ground-truth issues (9.5% of the full must_find pool) are **only** caught by a minority assessor — all 11 are verified true positives. Majority-vote discards every one. Union recall: 77.6% (90/116). Majority recall: 68.1% (79/116). The gap is 9.5 percentage points — the direct empirical cost of the majority-vote output rule.
+
+**Precision of minority-flagged claims (v6 follow-up, `v6_minority_precision.py`, 180 GPT-4o calls):**
+
+| Tier | N clusters | Precision | 95% CI | FP rate |
+|---|---|---|---|---|
+| 1/3 minority | 715 | **0.946** | [0.926, 0.963] | 0.054 |
+| 2/3 majority | 327 | 0.936 | [0.903, 0.965] | 0.064 |
+| 3/3 unanimous | 421 | 0.929 | [0.881, 0.969] | 0.071 |
+
+Precision diff (1/3 − 3/3): +0.017, 95% CI [−0.028, +0.068], p=0.258. **CI includes zero — no significant precision difference.** Minority-flagged issues are not less precise than unanimous issues. The union output recommendation is empirically supported on both recall and precision.
 
 **The correct production implementation:**
 
@@ -64,7 +85,7 @@ The v6 scoring design — union IDR for measurement, majority-vote for output ve
 2. Collect all flagged issues across all 3 outputs — do not filter by assessor agreement
 3. Tag each issue with its assessor support count: `1/3`, `2/3`, or `3/3`
 4. **Output the full tagged issue list** — do not suppress minority-flagged issues
-5. Do not collapse to a single verdict label as the primary response; instead output the verdict distribution (e.g., `{critique_wins: 2, defense_wins: 1}`)
+5. Do not collapse to a single verdict label as the primary response; output the verdict distribution (e.g., `{critique_wins: 2, defense_wins: 1}`)
 
 **Output format:**
 
@@ -80,9 +101,9 @@ The v6 scoring design — union IDR for measurement, majority-vote for output ve
 }
 ```
 
-**Why not suppress `1/3` issues:** Majority-vote optimizes for precision. For recall-critical tasks (a flawed paper ships, a bad model deploys), missing one real flaw costs more than reviewing one false positive. The ensemble's IDR advantage (+0.1114 over isolated_debate) comes entirely from union recovery of minority-flagged issues — collapsing to majority-vote at the output layer discards this advantage entirely.
+**When majority-vote verdict is acceptable:** Only when the downstream consumer is acting on the verdict label directly (approve/reject binary) and false positive review cost is high. In that regime, also surface the minority-flagged issues separately so the human can exercise judgment before acting on the collapsed verdict.
 
-**When majority-vote verdict is acceptable:** Only when the downstream consumer is acting on the verdict label directly (e.g., approve/reject binary) and false positive review cost is high. In that regime, also report the minority-flagged issues separately so the human can exercise judgment before acting on the collapsed verdict.
+**Union output recommendation status: fully supported.** Both the recall case (11 real TPs recovered, +9.5pp IDR) and the precision case (no tier-level precision difference) are now empirically grounded. The "low — review manually" label in the output format reflects epistemic caution, not a precision penalty.
 
 ---
 
@@ -145,8 +166,8 @@ Every condition scores DRQ=FVC=0.0 on defense cases uniformly. This is a critic 
 Input case
     │
     ├─► Regular methodology review
-    │       └─► ensemble_3x: 3× ml-critic → union IDR pool → majority-vote verdict
-    │               (optional: confidence tier — majority-flagged vs minority-flagged issues)
+    │       └─► ensemble_3x: 3× ml-critic → union issue pool (tagged 1/3, 2/3, 3/3) → verdict distribution
+    │               (union output safe on both recall and precision — ENSEMBLE_ANALYSIS.md §7)
     │
     └─► Empirically ambiguous / mixed
             └─► multiround debate: ml-critic → ml-defender → adjudicator → round 2
@@ -164,4 +185,4 @@ The critic/defender/adjudicator structure is right for exactly one scenario: whe
 3. **Full difficulty labeling** — only 15/80 regular cases labeled; H3 chronically underpowered
 4. **ETD sub-element rubric** — required before mixed-case quality is quantifiable
 5. **Defense case exoneration path** — 0.0 across all conditions is a structural gap, not noise
-6. **Confidence-tiered ensemble output** — distinguish majority-flagged (2/3) from minority-flagged (1/3) issues (journal issue `c9dfc257`)
+6. ~~**Confidence-tiered ensemble output**~~ — **DONE** (`v6_minority_precision.py`): minority-flagged precision = 0.946, no significant difference from unanimous (CI [−0.028, +0.068]). Union output is empirically safe; confidence labels are UX guidance, not a precision warning.

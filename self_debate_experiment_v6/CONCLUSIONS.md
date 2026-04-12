@@ -32,6 +32,8 @@ The paired bootstrap CI for regular cases excludes zero entirely in the ensemble
 
 **ensemble_3x has the highest IDR (0.7717) and IDP (0.9861) of all conditions.** The union-of-issues pooling provides a +0.1005 recall advantage over baseline that is now formally distinguishable from the isolated_debate result. Compute spent on independent redundancy outperforms compute spent on adversarial structure.
 
+*Precision by support tier (follow-up, `v6_minority_precision.py`, 180 GPT-4o calls):* minority-flagged issues (1/3 assessors) precision = 0.946, unanimous precision = 0.929; diff = +0.017, 95% CI [−0.028, +0.068], p=0.258. No significant precision difference across tiers. See ENSEMBLE_ANALYSIS.md §7.*
+
 *Note: This result was originally reported as INCONCLUSIVE when an unpaired bootstrap was used (CI = [−0.1567, +0.0976]). Correcting to a paired bootstrap (case-level differences) narrowed the CI 18× to [−0.0434, −0.0154], excluding zero.*
 
 ---

@@ -25,7 +25,7 @@ The experiment provides no evidence that the critic-defender-adjudicator debate 
 - IDP = 0.9861 vs. baseline 0.9472 (highest precision of all conditions)
 - FC = 0.7046 vs. baseline 0.6785
 
-At matched compute (3x baseline), independent redundancy outperforms adversarial structure on both recall and precision. The intuition is straightforward: three independent critics raise different issues from different analytical angles; union pooling recovers all of them. One critic trying to persuade another does not add a new analytical perspective — it routes the same perspective through a debate structure.
+At matched compute (3x baseline), independent redundancy outperforms adversarial structure on both recall and precision. The intuition is straightforward: three independent critics raise different issues from different analytical angles; union pooling recovers all of them. One critic trying to persuade another does not add a new analytical perspective — it routes the same perspective through a debate structure. *(Per-tier precision analysis, `v6_minority_precision.py`: minority-flagged issues precision = 0.946, unanimous = 0.929, diff = +0.017, CI [−0.028, +0.068] — no significant difference. ENSEMBLE_ANALYSIS.md §7.)*
 
 **Compute cost:** 3× baseline per review. Suitable for any use case where baseline compute is acceptable and recall matters.
 

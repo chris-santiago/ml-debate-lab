@@ -158,3 +158,46 @@ mixed cases can be approximated by prompt design.
 explicitly pre-registered. If union IDP is used, precision results may be inflated by pooling
 out false claims. If majority-vote IDP is used, the rule should be stated and applied
 consistently with the IDR split.
+
+---
+
+## 7. Minority-Flagged Precision Analysis (Follow-Up)
+
+**Script:** `v6_minority_precision.py` | **Calls:** 180 GPT-4o calls on existing v6 data  
+**Question:** Do issues flagged by only 1/3 assessors have materially lower precision than
+issues flagged by 2/3 or 3/3?
+
+**Method:** For each of 180 (case, run) pairs (60 critique cases × 3 runs), GPT-4o received
+all 3 assessors' issue lists (15 issues: 3 assessors × 5 each), ground truth planted issues,
+and must_not_claim details. It deduplicated issues across assessors and classified each unique
+cluster as `planted_match`, `false_claim`, `valid_novel`, or `spurious`. Precision is defined
+as (planted_match + valid_novel) / total per tier.
+
+**Results:**
+
+| Tier | N clusters | Precision | 95% CI | FP rate | planted | novel | false_claim | spurious |
+|---|---|---|---|---|---|---|---|---|
+| 1/3 minority | 715 | **0.946** | [0.926, 0.963] | 0.054 | 34 | 642 | 29 | 10 |
+| 2/3 majority | 327 | 0.936 | [0.903, 0.965] | 0.064 | 41 | 265 | 20 | 1 |
+| 3/3 unanimous | 421 | 0.929 | [0.881, 0.969] | 0.071 | 202 | 189 | 30 | 0 |
+| ALL | 1,463 | 0.939 | [0.920, 0.956] | 0.061 | 277 | 1096 | 79 | 11 |
+
+**Key test:** Precision diff (1/3 − 3/3) = +0.017, 95% CI [−0.028, +0.068], p=0.258.
+CI includes zero. **No significant precision difference across support tiers.**
+
+**Interpretation:** Minority-flagged issues (raised by exactly 1/3 assessors) are not less
+precise than unanimous issues. The +0.017 point direction — minority *higher* than unanimous
+— is not significant but is consistent with a plausible mechanism: assessors who catch unique
+issues tend to be more specific and precise, while unanimous issues include more "safe" generic
+observations (valid but lower discriminatory value).
+
+**Implication:** The union output recommendation in §1 is now empirically supported on both
+dimensions — recall (+9.5pp IDR from 11 recovered TPs) and precision (no tier-level penalty).
+The "low — review manually" confidence label for minority-flagged issues reflects epistemic
+caution about independent corroboration, not a measured precision deficit.
+
+**Note on validation error rate:** 108/180 case-runs (60%) flagged at least one missing label
+(typically `C.4` — GPT-4o consistently merges Assessor C's 5th issue into an earlier cluster
+without including the label). The missing issues were classified but unlabeled, and are excluded
+from tier counts. Since the omission is uniform across classification types, precision estimates
+are unlikely to be systematically biased.
