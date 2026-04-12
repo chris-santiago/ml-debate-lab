@@ -22,7 +22,7 @@ invalidates pre-registration.
 ### 4.1 Write and commit `HYPOTHESIS.md`
 
 `HYPOTHESIS.md` must contain:
-- **P1** — IDR: ensemble_3x > multiround_2r (regular, n=120). One-sided bootstrap CI lower bound > 0.
+- **P1** — IDR: ensemble_3x > multiround_2r (regular, n=160). One-sided bootstrap CI lower bound > 0.
 - **P2** — FVC_mixed: multiround_2r > ensemble_3x (mixed cases, n≥60). One-sided bootstrap CI lower bound > 0.
 - **H1a** — TOST: isolated_debate vs baseline (regular). Bounds: ±{bound from Phase 3} FC. Both one-sided tests must pass.
 - **H2** — Two-sided: ensemble_3x vs isolated_debate on FC (regular) and FVC_mixed (mixed).

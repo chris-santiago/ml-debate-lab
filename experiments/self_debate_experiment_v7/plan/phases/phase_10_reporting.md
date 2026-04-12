@@ -54,6 +54,33 @@ Update all three paper versions (`paper/arxiv/`, `paper/emnlp2026/`, `paper/neur
 - §3.3 (Method): add TOST subsection
 - §4 (Results): add `multiround_2r` row to all tables
 
+**Four required edits from v6_issues.md peer review (MUST DO):**
+
+**a) Abstract: concept before numbers**
+Current abstract leads with five specific deltas in the first three lines. Rewrite to lead
+with the conceptual claim, then numbers:
+> "Independent ensembles outperform adversarial debate at matched compute for divergent
+> detection; task type moderates this advantage. [Then: ∆ IDR = ..., FC ∆ = ...]"
+
+**b) IDR as co-primary metric throughout**
+§5.2 makes the case that IDR is the signal metric for detection tasks and FC composites
+dilute it. Apply consistently:
+- Abstract: report IDR delta prominently, not buried after FC
+- §1 (Introduction): state IDR alongside FC as co-primary
+- §6 (Conclusion): lead conclusion with IDR advantage, not FC composite
+
+**c) AI disclosure → title page footnote**
+Current placement as a standalone section before References is unusual at ACL venues.
+Move to `\thanks{}` footnote on title page (same approach as preprint `\thanks{Preprint.
+Under review.}`). Keep the reflexive disclosure text — it's intellectually honest and
+appropriate — just change placement.
+
+**d) Benchmark as releasable artifact in Introduction**
+The 260-case benchmark with ground-truth labels is a concrete contribution independent
+of the experiment. Mention release in §1 (Introduction), not only in the reproducibility
+section. One sentence is sufficient: "We release the benchmark and all experimental
+artifacts at [repo URL]." ACL Findings reviewers weight released resources positively.
+
 ### 10.4 Final coherence audit
 
 Run three checks manually:

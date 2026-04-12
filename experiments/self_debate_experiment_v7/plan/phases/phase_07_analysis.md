@@ -31,10 +31,10 @@ For each test, `v7_results.json` must contain: `point_estimate`, `ci_lower`, `ci
 
 | Test | Subset | Metric | Type |
 |---|---|---|---|
-| P1 | Regular (n≥120) | IDR: ensemble_3x vs multiround_2r | One-sided bootstrap |
+| P1 | Regular (n≥160) | IDR: ensemble_3x vs multiround_2r | One-sided bootstrap |
 | P2 | Mixed (n≥60) | FVC_mixed: multiround_2r vs ensemble_3x | One-sided bootstrap |
-| H1a | Regular (n≥120) | FC: isolated_debate vs baseline (TOST) | TOST |
-| H2_regular | Regular (n≥120) | FC: ensemble_3x vs isolated_debate | Two-sided bootstrap |
+| H1a | Regular (n≥160) | FC: isolated_debate vs baseline (TOST) | TOST |
+| H2_regular | Regular (n≥160) | FC: ensemble_3x vs isolated_debate | Two-sided bootstrap |
 | H2_mixed | Mixed (n≥60) | FVC_mixed: ensemble_3x vs isolated_debate | Two-sided bootstrap |
 | H3 | Mixed (n≥60) | FVC_mixed: multiround_2r vs isolated_debate | One-sided bootstrap |
 

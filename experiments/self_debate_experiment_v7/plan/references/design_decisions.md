@@ -22,14 +22,14 @@ adjudicator. No stop-detection. No conditional branching. Clean 3× matching aga
 
 ---
 
-## 2. Case Composition: Target N = 220
+## 2. Case Composition: Target N = 260
 
-| Stratum | v6 count | v7 target | Source |
-|---|---|---|---|
-| Regular (planted flaws) | 80 | 120 | RC reports + synthetic |
-| Mixed (ambiguous) | 40 | 80 | Synthetic + RC natural |
-| Defense (valid work) | 0 | 20 | RC successful replications or synthetic no-flaw |
-| **Total** | **120** | **220** | |
+| Stratum | v6 count | v7 target | Source | Rationale |
+|---|---|---|---|---|
+| Regular (planted flaws) | 80 | 160 | RC reports + synthetic | ≥160 required; n=80 is desk-reject risk at ACL Findings (v6_issues.md) |
+| Mixed (ambiguous) | 40 | 80 | Synthetic + RC natural | Double convergent task evidence |
+| Defense (valid work) | 0 | 20 | RC successful replications or synthetic no-flaw | Exoneration rate analysis |
+| **Total** | **120** | **260** | | |
 
 **Defense case sourcing (open question):**
 Options: (a) sample ReScience C replications that succeeded without raised concerns,
@@ -39,7 +39,7 @@ based on RC yield.
 **Difficulty calibration gate (Phase 3):**
 - Run baseline on ~40 candidate cases per stratum
 - Discard cases where `baseline_fc_mean > 0.80` (insufficient headroom)
-- Final N may exceed 220 targets if pilot yield is high
+- Final N may exceed 260 targets if pilot yield is high
 
 **Case sourcing:** All freshly generated. No reuse of v5 or v6 cases. v5 candidate pool
 (728 cases) is available as a supplement but all items have `type: unknown` — require

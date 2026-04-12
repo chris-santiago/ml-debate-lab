@@ -3,7 +3,7 @@
 > **Reminders:** `uv run` only. CWD: repo root. `cd experiments/self_debate_experiment_v7 &&` prefix.
 
 ## Required Reading
-- [design_decisions.md §2](../references/design_decisions.md#2-case-composition-target-n--220) — case targets + defense case sourcing decision
+- [design_decisions.md §2](../references/design_decisions.md#2-case-composition-target-n--260) — case targets + defense case sourcing decision
 - [v6_lessons.md L5](../references/v6_lessons.md) — cross-vendor scoring requirement
 
 ---

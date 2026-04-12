@@ -15,7 +15,7 @@ Both must hold for the framework to be prospectively confirmed.
 
 **P1 — Divergent detection (ensemble wins):**
 ```
-IDR: ensemble_3x > multiround_2r  [regular cases, n=120]
+IDR: ensemble_3x > multiround_2r  [regular cases, n=160]
 95% CI lower bound > 0  (one-sided bootstrap)
 ```
 Rationale: independent redundancy with union pooling should find more issues than adversarial
@@ -42,7 +42,7 @@ Rationale: iterative adversarial exchange structurally enables recognizing empir
 **Test:** TOST equivalence test + standard two-sided bootstrap
 
 ```
-FC: isolated_debate  vs  baseline  [regular cases, n=120]
+FC: isolated_debate  vs  baseline  [regular cases, n=160]
 Bootstrap 95% CI, two-sided
 TOST equivalence bounds: ±0.05 FC (set before Phase 5)
 ```
@@ -60,7 +60,7 @@ Note: TOST bounds must be committed to `HYPOTHESIS.md` before Phase 5. If pilot 
 **Test:** Two-sided bootstrap
 
 ```
-FC: ensemble_3x  vs  isolated_debate  [regular cases, n=120]
+FC: ensemble_3x  vs  isolated_debate  [regular cases, n=160]
 FVC_mixed: ensemble_3x  vs  isolated_debate  [mixed cases, n=80]
 ```
 
@@ -94,6 +94,6 @@ information-passing is necessary for convergent judgment.
 
 - All CIs: paired bootstrap, n=10,000, seed=42
 - Report: point estimate + 95% CI for every hypothesis test
-- Primary analysis: regular cases (n=120) for IDR/IDP/DRQ/FVC/FC
+- Primary analysis: regular cases (n=160) for IDR/IDP/DRQ/FVC/FC
 - Convergent analysis: mixed cases (n=80) for FVC_mixed
 - Cross-stratum comparisons (RC vs synthetic subgroup) reported as secondary

@@ -3,7 +3,7 @@
 > **Reminders:** `uv run` only. CWD: repo root.
 
 ## Required Reading
-- [design_decisions.md §2](../references/design_decisions.md#2-case-composition-target-n--220) — difficulty calibration gate
+- [design_decisions.md §2](../references/design_decisions.md#2-case-composition-target-n--260) — difficulty calibration gate
 - [hypotheses.md](../references/hypotheses.md) — TOST bound review after pilot
 
 ---
@@ -74,7 +74,7 @@ Filter full `benchmark_cases_v7_raw.json` to cases passing the difficulty gate.
 Update `v7_cases_sanitized.json` to reflect the filtered set.
 
 Confirm final N per stratum meets minimums:
-- Regular: ≥ 120
+- Regular: ≥ 160
 - Mixed: ≥ 60 (target 80)
 - Defense: ≥ 15 (target 20)
 
@@ -82,7 +82,7 @@ Confirm final N per stratum meets minimums:
 
 ## Verification
 - [ ] `baseline_fc_mean < 0.80` on pilot regular cases
-- [ ] Final regular N ≥ 120, mixed N ≥ 60
+- [ ] Final regular N ≥ 160, mixed N ≥ 60
 - [ ] TOST bound decision recorded before Phase 4
 
 ## Outputs

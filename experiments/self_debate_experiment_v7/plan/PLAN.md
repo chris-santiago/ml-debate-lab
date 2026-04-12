@@ -46,8 +46,8 @@ CI [+0.0154, +0.0434]); debate ≈ baseline; multiround advantage on convergent 
 |---|---|---|---|
 | 0 | Setup | [phase_00_setup.md](phases/phase_00_setup.md) | `multiround_2r` system prompts committed; scoring engine updated (ETD removed); API dispatch script scaffolded |
 | 1 | RC Data Acquisition | [phase_01_rc_acquisition.md](phases/phase_01_rc_acquisition.md) | `rc_cases_raw.json` with ≥30 ReScience C papers |
-| 2 | Case Library Assembly | [phase_02_case_assembly.md](phases/phase_02_case_assembly.md) | `benchmark_cases_v7_raw.json` passes Schema B; 220 cases (120 regular / 80 mixed / 20 defense) |
-| 3 | Pilot & Calibration | [phase_03_pilot.md](phases/phase_03_pilot.md) | `baseline_fc_mean < 0.80`; ≥120 regular + ≥60 mixed pass filter |
+| 2 | Case Library Assembly | [phase_02_case_assembly.md](phases/phase_02_case_assembly.md) | `benchmark_cases_v7_raw.json` passes Schema B; 260 cases (160 regular / 80 mixed / 20 defense) |
+| 3 | Pilot & Calibration | [phase_03_pilot.md](phases/phase_03_pilot.md) | `baseline_fc_mean < 0.80`; ≥160 regular + ≥60 mixed pass filter |
 | 4 | Pre-Experiment Self-Review | [phase_04_self_review.md](phases/phase_04_self_review.md) | `HYPOTHESIS.md` committed with P1/P2 + TOST bounds; coherence audit passes as named gate |
 | 5 | Benchmark Run | [phase_05_benchmark.md](phases/phase_05_benchmark.md) | All output files pass schema + zero-variance check |
 | 6 | Cross-Model Scoring | [phase_06_scoring.md](phases/phase_06_scoring.md) | `v7_rescored_idr_idp.json` complete |

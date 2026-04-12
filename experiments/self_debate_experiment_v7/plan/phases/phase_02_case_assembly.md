@@ -3,7 +3,7 @@
 > **Reminders:** `uv run` only. CWD: repo root.
 
 ## Required Reading
-- [design_decisions.md §2](../references/design_decisions.md#2-case-composition-target-n--220) — stratum targets
+- [design_decisions.md §2](../references/design_decisions.md#2-case-composition-target-n--260) — stratum targets
 - [schema_b.md](../references/schema_b.md) — Schema B field table + format constraints
 - [v6_lessons.md L7](../references/v6_lessons.md) — defense case ground truth requirement
 
@@ -17,7 +17,7 @@
 ```bash
 cd experiments/self_debate_experiment_v7 && \
 uv run pipeline/orchestrator.py --mode regular \
-  --target 120 --output synthetic_regular_raw.json
+  --target 160 --output synthetic_regular_raw.json
 ```
 
 **Mixed cases:**
@@ -99,7 +99,7 @@ uv run pipeline/select_cases.py \
 ---
 
 ## Verification
-- [ ] 220 cases total: 120 regular, 80 mixed, 20 defense
+- [ ] 260 cases total: 160 regular, 80 mixed, 20 defense
 - [ ] All Schema B required fields present in `benchmark_cases_v7_raw.json`
 - [ ] All defense cases have `correct_position = "defense_wins"`
 - [ ] `v7_cases_sanitized.json` contains no ground truth fields (`must_find`, `acceptable_resolutions`, `correct_position`)
@@ -109,4 +109,4 @@ uv run pipeline/select_cases.py \
 - `v7_cases_sanitized.json` — stripped cases for benchmark runner
 
 ## Gate
-`benchmark_cases_v7_raw.json` passes Schema B validation. 220 cases in correct stratum counts. `v7_cases_sanitized.json` has no ground truth leakage.
+`benchmark_cases_v7_raw.json` passes Schema B validation. 260 cases in correct stratum counts. `v7_cases_sanitized.json` has no ground truth leakage.
