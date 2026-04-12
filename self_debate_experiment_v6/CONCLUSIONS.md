@@ -77,6 +77,8 @@ H6: 2/3 tested dimensions have CI excluding 0 → **PASS** (pre-registered crite
 
 **Baseline ceiling on regular cases:** Baseline FC = 0.6785. Most regular cases (eval_scenario category) score near the ceiling under baseline, leaving little room for debate to add value. The RC (ReScience) cases score near the floor. This bimodal pattern compresses the effective range for H1a.
 
+**RC-stratified subgroup analysis (post-hoc, journal `61ee949b`):** Slicing results by `is_real_paper_case` shows the ensemble IDR advantage is ~3× larger on the 25 RC cases (+0.172: ensemble_3x IDR=0.4545 vs baseline 0.2828) than on the 55 synthetic regular cases (+0.059: 0.9553 vs 0.8961). The aggregate reported gap (+0.1005) was diluted by the easier synthetic subset where baseline is near ceiling. No debate protocol outperforms ensemble_3x in either subset. The ensemble recommendation is strongest on the hardest, most ecologically valid cases — those derived from real papers. See ENSEMBLE_ANALYSIS.md §8 for full stratified tables.
+
 **Conditional FM gate saturation:** A 94.7% gate-fire rate means the FM gate is not functioning as a selective filter — it fires on almost all cases. The PRR after round 1 is rarely sufficient to stop (mean PRR = 0.418 across all CFM files). Redesigning the gate trigger (e.g., lower PRR threshold, different stopping criterion) is recommended for future runs.
 
 ---

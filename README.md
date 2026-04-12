@@ -306,6 +306,8 @@ The ranking is `ensemble_3x > {baseline ≈ isolated_debate}`. Isolated debate i
 
 Diff (1/3 − 3/3): +0.017, CI [−0.028, +0.068], p=0.258. Union output recovers 11 additional ground-truth issues (+9.5pp IDR) at no precision cost. See [`ENSEMBLE_ANALYSIS.md §7`](self_debate_experiment_v6/ENSEMBLE_ANALYSIS.md).
 
+**RC-stratified subgroup (2026-04-12, journal `61ee949b`):** The 80 regular cases pool 25 real ReScience C papers with 55 synthetic planted-corruption cases. Slicing by source shows the ensemble IDR advantage is ~3× larger on real papers (ensemble_3x IDR=0.4545 vs baseline 0.2828, **+0.172**) than on synthetic cases (+0.059). The aggregate +0.1005 gap reported above was diluted by the easier synthetic subset where baseline IDR is already near ceiling (0.896). No debate protocol outperforms ensemble_3x in either subset. The recommendation is strongest on the hardest, most ecologically valid cases. See [`ENSEMBLE_ANALYSIS.md §8`](self_debate_experiment_v6/ENSEMBLE_ANALYSIS.md).
+
 ---
 
 ### Why This Matters

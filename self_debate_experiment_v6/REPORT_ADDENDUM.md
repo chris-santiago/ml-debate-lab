@@ -31,6 +31,8 @@ At matched compute (3x baseline), independent redundancy outperforms adversarial
 
 **Deployment note:** The majority-vote verdict in ensemble_3x is correct in 75% of regular cases — identical to baseline. The ensemble's advantage is entirely in issue detection recall and precision, not in final verdict accuracy. The ensemble should be deployed for issue identification, not verdict generation.
 
+**RC subgroup confirmation (post-hoc, journal `61ee949b`):** On the 25 real-paper cases (ReScience C), ensemble_3x IDR = 0.4545 vs baseline 0.2828 (+0.172 gap). This is ~3× larger than the synthetic-case gap (+0.059). The aggregate +0.1005 IDR advantage was diluted by easier synthetic cases where baseline is near ceiling. The recommendation is strongest on the hardest, most ecologically valid subset. See ENSEMBLE_ANALYSIS.md §8.
+
 ---
 
 ### Mixed / Empirically Ambiguous Cases
@@ -95,6 +97,6 @@ A redesigned gate with a lower PRR threshold (e.g., PRR ≥ 0.7 triggers stop ra
 
 3. **Redesign the ETD metric.** ETD = 1.0 for all debate conditions provides no discrimination. A sub-element quality rubric (specificity of condition, falsifiability of supports_critique_if, orthogonality of supports_defense_if) would restore discriminative power.
 
-4. **Benchmark ensemble_3x against baseline formally.** H2 tested debate vs. ensemble, not ensemble vs. baseline. A direct formal test of whether union-IDR ensemble outperforms baseline would confirm the descriptive +0.1005 IDR advantage with statistical rigor.
+4. ~~**Benchmark ensemble_3x against baseline formally.**~~ **RESOLVED** (journal `542251e1`). Paired bootstrap test: ensemble_3x IDR=0.7717 vs baseline IDR=0.6712, diff=+0.1005, 95% CI=[+0.0426, +0.1648], p=0.0000. CI excludes zero. The union-IDR ensemble formally outperforms single-pass baseline. RC-stratified follow-up (journal `61ee949b`) shows the gap is ~3× larger on real papers (+0.172) than synthetic (+0.059).
 
 5. **Expand hard case sample.** H3 ran on n=8 hard cases. Expanding to n=30+ would give the conditional FM gate test adequate statistical power and clarify whether the FM advantage is real or noise.

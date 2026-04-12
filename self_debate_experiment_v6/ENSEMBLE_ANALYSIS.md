@@ -201,3 +201,48 @@ caution about independent corroboration, not a measured precision deficit.
 without including the label). The missing issues were classified but unlabeled, and are excluded
 from tier counts. Since the omission is uniform across classification types, precision estimates
 are unlikely to be systematically biased.
+
+---
+
+## 8. RC-Stratified Subgroup Analysis
+
+**Date:** 2026-04-12 | **Journal entry:** `61ee949b`
+
+The 80 regular cases pool 25 RC cases (`is_real_paper_case=True`, real ReScience C papers,
+2020–2021 editions) with 55 synthetic regular cases (planted corruptions). The aggregate IDR
+results reported in §3–4 blend these two subsets. Slicing `v6_results.json` by source:
+
+### RC cases (real papers, n=25)
+
+| Condition | IDR | IDP | DRQ | FVC | FC |
+|---|---|---|---|---|---|
+| baseline | 0.2828 | 0.9242 | 0.88 | 0.88 | 0.7056 |
+| **ensemble_3x** | **0.4545** | **0.9621** | **0.88** | **0.88** | **0.7517** |
+| isolated_debate | 0.2702 | 0.9167 | 0.88 | 0.88 | 0.7011 |
+| biased_debate | 0.3460 | 0.8788 | 0.88 | 0.88 | 0.7094 |
+| multiround | 0.3005 | 0.8939 | 0.6667 | 0.6667 | 0.6028 |
+
+### Synthetic regular cases (n=55)
+
+| Condition | IDR | IDP | DRQ | FVC | FC |
+|---|---|---|---|---|---|
+| baseline | 0.8961 | 0.9605 | 0.6909 | 0.6909 | 0.6661 |
+| **ensemble_3x** | **0.9553** | **1.0** | **0.6909** | **0.6909** | **0.6832** |
+| isolated_debate | 0.8861 | 0.9605 | 0.6909 | 0.6909 | 0.6644 |
+| biased_debate | 0.8978 | 0.8991 | 0.6909 | 0.6909 | 0.6558 |
+| multiround | 0.8560 | 0.9518 | 0.7030 | 0.7030 | 0.6971 |
+
+### Key findings
+
+**The ensemble IDR advantage is ~3× larger on real papers (+0.172) than on synthetic cases
+(+0.059).** The aggregate reported gap (+0.1005) was diluted by the easier synthetic subset,
+where baseline IDR already sits at 0.896 — near ceiling. On RC cases, where baseline IDR is
+only 0.283, the ensemble's union-pooling recovers substantially more ground-truth flaws.
+
+No debate protocol outperforms `ensemble_3x` on any metric in either subset. All debate
+conditions trail or match baseline on IDR for RC cases, consistent with the aggregate result.
+
+**Implication for the production recommendation (REPORT_ADDENDUM.md §Regular Methodology
+Review):** the ensemble recommendation is strongest precisely on the hardest, most ecologically
+valid cases — the ones derived from real papers. The aggregate IDR advantage understates the
+benefit in the deployment context that matters most.

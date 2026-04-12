@@ -262,6 +262,7 @@ ETD = 1.0 for all debate conditions on all mixed cases. Every debate transcript 
 | Method A vs B aggregation | PASS | Zero divergence; balanced design ensures equivalence |
 | H1a threshold sensitivity | PASS | FAIL at thresholds 0.08, 0.10, 0.12; null result is robust |
 | Difficulty stratification (PM3) | PASS (limited n) | Spearman ρ = −0.5649 (correct direction, n=15 labeled cases) |
+| RC vs synthetic source stratification | CONFIRMED | ensemble_3x IDR gap: RC cases +0.172 vs synthetic +0.059; recommendation holds in both subsets (ENSEMBLE_ANALYSIS.md §8, journal `61ee949b`) |
 | IDP diagnostic | PASS | biased_debate IDP_raw = 0.8917 (lower); extraction path functioning correctly |
 | CFM hollow rate | PASS | Proxy 2.2% < 10% threshold |
 
