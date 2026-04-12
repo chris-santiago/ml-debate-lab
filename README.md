@@ -548,14 +548,14 @@ This was a known limitation in v2 (all roles including scorer used Claude). v6 p
 | Location | Contents |
 |----------|----------|
 | [`self_debate_experiment_v6/FINAL_SYNTHESIS.md`](self_debate_experiment_v6/FINAL_SYNTHESIS.md) | **Authoritative v6 summary** — all hypothesis verdicts (paired bootstrap), peer review corrections, production recommendation |
-| [`self_debate_experiment_v6/RESEARCH_REPORT.md`](self_debate_experiment_v6/RESEARCH_REPORT.md) | v1–v6 research arc synthesis — 270 journal entries, 381 commits |
+| [`self_debate_experiment_v6/RESEARCH_REPORT.md`](self_debate_experiment_v6/RESEARCH_REPORT.md) | v1–v6 research arc synthesis — 290+ journal entries, 400+ commits |
 | [`self_debate_experiment_v6/ENSEMBLE_ANALYSIS.md`](self_debate_experiment_v6/ENSEMBLE_ANALYSIS.md) | Ensemble design, H2 results, minority-flagged precision follow-up (§7) |
 | [`self_debate_experiment_v6/CONCLUSIONS.md`](self_debate_experiment_v6/CONCLUSIONS.md) | v6 per-hypothesis conclusions (Q1–Q4) |
 | [`self_debate_experiment_v6/REPORT.md`](self_debate_experiment_v6/REPORT.md) | v6 full technical report — 120-case benchmark results |
 | [`self_debate_experiment_v6/plan/PLAN.md`](self_debate_experiment_v6/plan/PLAN.md) | v6 10-phase experimental design, reference documents |
 | [`self_debate_experiment_v2/TECHNICAL_REPORT.md`](self_debate_experiment_v2/TECHNICAL_REPORT.md) | **v2 technical report** — all v2 findings, decomposition, external validation, limitations |
 | [`plugins/ml-lab/`](plugins/ml-lab/) | Plugin source: all seven agent definitions, install config, and flow diagram |
-| [`multi-agent-prompt.md`](multi-agent-prompt.md) | Bootstrap prompt for the full multi-agent harness |
+| [`multi-agent-prompt.md`](self_debate_experiment/multi-agent-prompt.md) | Bootstrap prompt for the full multi-agent harness (v1) |
 | [`self_debate_experiment/`](self_debate_experiment/) | Phase 1: frozen transcripts, contaminated + isolated protocol, 11–15 cases |
 | [`self_debate_experiment_v2/`](self_debate_experiment_v2/) | Phase 2: live API, isolated protocol, 20 cases, full results |
 | [`self_debate_experiment_v2/README.md`](self_debate_experiment_v2/README.md) | Full experimental design, rubric, benchmark case breakdown |
