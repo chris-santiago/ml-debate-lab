@@ -14,7 +14,7 @@ Claude Code sessions are stateless. When context compacts or a new session start
 
 ```bash
 # Install the plugin (once, user-scoped)
-claude plugin install ml-journal@ml-debate-lab
+claude plugin install ml-journal@ml-lab
 
 # Initialize in any git repo (once per repo)
 /log-init

@@ -11,8 +11,8 @@
 **Via plugin (recommended):**
 
 ```shell
-/plugin marketplace add chris-santiago/ml-debate-lab
-/plugin install ml-lab@ml-debate-lab
+/plugin marketplace add chris-santiago/ml-lab
+/plugin install ml-lab@ml-lab
 ```
 
 This installs all seven agent files to `~/.claude/agents/` automatically.
@@ -428,7 +428,7 @@ Yes. ml-lab is a Claude Code agent — it requires Claude Code to be installed. 
 
 **Is manual installation equivalent to the plugin?**
 
-Yes — both copy the same seven agent files to `~/.claude/agents/`. The plugin method automates the copy and surfaces updates when you run `/plugin marketplace update ml-debate-lab`. Manual install gives you direct control but requires manual updates.
+Yes — both copy the same seven agent files to `~/.claude/agents/`. The plugin method automates the copy and surfaces updates when you run `/plugin marketplace update ml-lab`. Manual install gives you direct control but requires manual updates.
 
 **If I uninstall the plugin, what happens to my investigation data?**
 
@@ -568,7 +568,7 @@ A compute-matched ensemble — three independent assessors plus a synthesizer, n
 **Install:**
 
 ```shell
-/plugin install ml-journal@ml-debate-lab
+/plugin install ml-journal@ml-lab
 ```
 
 **Agents (1):** `report-drafter` — dispatched by `/research-report` to handle full journal + git history ingestion in an isolated subcontext. Optional hooks enable auto-checkpoint before `/compact` and auto-resume on session start. See the [plugin README](plugins/ml-journal/README.md) for full setup, entry types, and hook configuration.

@@ -1,6 +1,6 @@
 ---
 name: preflight
-description: Pre-execution readiness check for any ml-debate-lab experiment version. Verifies uv installation, PEP 723 headers, phase file completeness, step-number consistency, agent installation, script syntax, and operator prerequisites. Reports a structured PASS/WARN/FAIL table and a final READY or BLOCKED verdict.
+description: Pre-execution readiness check for any ml-lab experiment version. Verifies uv installation, PEP 723 headers, phase file completeness, step-number consistency, agent installation, script syntax, and operator prerequisites. Reports a structured PASS/WARN/FAIL table and a final READY or BLOCKED verdict.
 user-invocable: true
 ---
 

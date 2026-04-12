@@ -1,9 +1,9 @@
 ---
 name: artifact-sync
-description: Sync all artifacts after any experiment, analysis step, or issue resolution in ml-debate-lab — updates open issues, ensemble analysis, conclusions, report, and README, then runs a coherence audit
+description: Sync all artifacts after any experiment, analysis step, or issue resolution in ml-lab — updates open issues, ensemble analysis, conclusions, report, and README, then runs a coherence audit
 ---
 
-After any experiment, analysis step, or issue resolution in ml-debate-lab, run this full sync before marking work complete.
+After any experiment, analysis step, or issue resolution in ml-lab, run this full sync before marking work complete.
 
 ## Step 1 — Identify What Changed
 

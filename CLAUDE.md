@@ -1,4 +1,4 @@
-# ml-debate-lab
+# ml-lab
 
 ## Project Origin
 

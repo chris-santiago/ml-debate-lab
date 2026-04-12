@@ -1,6 +1,6 @@
 # Agent Definitions
 
-This directory contains reference copies of the Claude Code agents that power the ml-debate-lab investigation workflow.
+This directory contains reference copies of the Claude Code agents that power the ml-lab investigation workflow.
 
 ## Agents
 
