@@ -21,31 +21,41 @@ with open("self_debate_experiment_v6/v6_hypothesis_results.json") as f:
 
 desc = results["descriptive"]
 
-# Conditions for main figures (conditional_fm excluded — n_regular=8, not comparable)
-CONDITIONS = ["baseline", "isolated_debate", "ensemble_3x", "biased_debate", "multiround"]
-LABELS = ["Baseline\n(1×)", "Isolated\nDebate\n(3×)", "Ensemble\n3×\n(3×)", "Biased\nDebate\n(3×)", "Multiround\n(~5×)"]
-COLORS = ["#6baed6", "#fd8d3c", "#31a354", "#e6550d", "#756bb1"]
-HIGHLIGHT = [False, False, True, False, False]  # ensemble_3x highlighted
+# Conditions for main figures — compute-ordered: 1× → 3× (debate variants then ensemble) → ~5×
+# (conditional_fm excluded — n_regular=8, not comparable)
+CONDITIONS = ["baseline", "isolated_debate", "biased_debate", "ensemble_3x", "multiround"]
+LABELS = ["Baseline\n(1×)", "Isolated\nDebate\n(3×)", "Biased\nDebate\n(3×)", "Ensemble\n3×\n(3×)", "Multiround\n(~5×)"]
 
 out_dir = Path("figures")
 out_dir.mkdir(exist_ok=True)
 
+# Shared color constants (mirrors Figure 3 palette)
+BAR_COLOR   = "#2c7bb6"   # teal — standard conditions
+ENS_COLOR   = "#e08214"   # amber — ensemble_3x (same as RC series in Figure 3)
+ENS_IDX     = 3           # ensemble_3x position in compute-ordered list
+
 # ── Figure 1: IDR bar chart ───────────────────────────────────────────────────
 idr_vals = [desc[c]["dim_means_regular"]["IDR"] for c in CONDITIONS]
+bar_colors = [ENS_COLOR if i == ENS_IDX else BAR_COLOR for i in range(len(CONDITIONS))]
 
 fig, ax = plt.subplots(figsize=(8, 5))
-bars = ax.bar(range(len(CONDITIONS)), idr_vals, color=COLORS, width=0.6,
+bars = ax.bar(range(len(CONDITIONS)), idr_vals, color=bar_colors, width=0.6,
               edgecolor="white", linewidth=1.2)
-
-# Highlight ensemble_3x with bold edge
-bars[2].set_edgecolor("#1a7a2e")
-bars[2].set_linewidth(2.5)
 
 # Value labels on bars
 for i, (bar, val) in enumerate(zip(bars, idr_vals)):
     ax.text(bar.get_x() + bar.get_width() / 2, val + 0.008,
             f"{val:.3f}", ha="center", va="bottom",
-            fontsize=9, fontweight="bold" if i == 2 else "normal")
+            fontsize=9, fontweight="bold" if i == ENS_IDX else "normal")
+
+# Ensemble annotation box (matches Figure 3 style)
+ens_x = ENS_IDX
+ax.text(
+    ens_x, idr_vals[ENS_IDX] + 0.055,
+    "★ Best condition\nat matched compute",
+    ha="center", va="bottom", fontsize=8.5, fontweight="bold", color="#222222",
+    bbox=dict(boxstyle="round,pad=0.3", facecolor="#fff9c4", edgecolor="#c8a000", linewidth=1.2),
+)
 
 ax.set_xticks(range(len(CONDITIONS)))
 ax.set_xticklabels(LABELS, fontsize=9)
@@ -53,8 +63,8 @@ ax.set_ylabel("Issue Detection Recall (IDR)", fontsize=11)
 ax.set_title("Figure 1. IDR by Condition — Regular Cases (n = 80)\n"
              "Paired bootstrap; all conditions use 3× compute except Baseline (1×) and Multiround (~5×)",
              fontsize=10)
-ax.set_ylim(0, 0.88)
-ax.axhline(idr_vals[0], color="#6baed6", linestyle="--", linewidth=0.8, alpha=0.6,
+ax.set_ylim(0, 0.96)
+ax.axhline(idr_vals[0], color="#888888", linestyle="--", linewidth=0.8, alpha=0.6,
            label=f"Baseline IDR = {idr_vals[0]:.4f}")
 ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
