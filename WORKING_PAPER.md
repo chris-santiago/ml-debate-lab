@@ -269,6 +269,16 @@ The central insight is that the compute-matching control changes the conclusion.
 
 ---
 
+## AI Assistance Statement
+
+This manuscript was drafted and edited with the assistance of Claude Code (Anthropic). All claims, interpretive framing, and conclusions were reviewed and approved by the human author(s).
+
+A reflexive disclosure is warranted: the principal AI tool used for writing assistance (Claude, Anthropic) is also the subject of the experimental study. The experiment evaluates Claude instances as debate agents, ensemble assessors, and methodology reviewers. To guard against implicit bias in how findings about Claude's capabilities and limitations are presented — including the defense-case failure (§5.5) and the sycophancy mechanism (§5.1) — all framing of results was independently reviewed by the human author(s) before finalization.
+
+AI use in the *experiment* is separate from AI use in *writing* and is documented in §3 (experimental agents, cross-vendor scorer) and Appendix B (benchmark generation pipeline with full model assignments). Readers should consult those sections for the experimental AI disclosure; this statement covers manuscript authorship only.
+
+---
+
 ## References
 
 Chan, C.-M. et al. (2024). ChatEval: Towards Better LLM-based Evaluators through Multi-Agent Debate. *ICLR 2024.* arXiv:2308.07201.
