@@ -314,7 +314,7 @@ Chan, C.-M. et al. (2024). ChatEval: Towards Better LLM-based Evaluators through
 
 Choi, H.K., Zhu, X., & Li, S. (2025). Debate or Vote: Which Yields Better Decisions in Multi-Agent Large Language Models? *NeurIPS 2025 Spotlight.* arXiv:2508.17536.
 
-DeepReview (2025). DeepReview: Improving LLM-based Paper Review with Human-like Deep Thinking Process. *ACL 2025.* arXiv:2503.08569.
+Zhu, M., Weng, Y., Yang, L., & Zhang, Y. (2025). DeepReview: Improving LLM-based Paper Review with Human-like Deep Thinking Process. *ACL 2025.* arXiv:2503.08569.
 
 Du, Y., Li, S., Torralba, A., Tenenbaum, J.B., & Mordatch, I. (2024). Improving Factuality and Reasoning in Language Models through Multiagent Debate. *ICML 2024.* arXiv:2305.14325.
 
@@ -338,7 +338,7 @@ Parrish, A. et al. (2022). Two-Turn Debate Doesn't Help Humans Answer Hard Readi
 
 Saunders, W. et al. (2022). Self-critiquing models for assisting human evaluators. arXiv:2206.05802.
 
-Smit, A.P., Grinsztajn, N., Duckworth, P., Barrett, T.D., & Pretorius, A. (2024). Should we be going MAD? A Look at Multi-Agent Debate Strategies for LLMs. *ICML 2024.* PMLR 235:45883-45905. arXiv:2311.17371.
+Smit, A.P., Duckworth, P., Grinsztajn, N., Barrett, T.D., & Pretorius, A. (2024). Should we be going MAD? A Look at Multi-Agent Debate Strategies for LLMs. *ICML 2024.* PMLR 235:45883-45905. arXiv:2311.17371.
 
 Wang, X. et al. (2023). Self-Consistency Improves Chain of Thought Reasoning in Language Models. *ICLR 2023.* arXiv:2203.11171.
 
