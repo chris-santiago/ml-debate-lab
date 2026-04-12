@@ -44,7 +44,7 @@ OPTIONAL_FIELDS = {
     "post_mortem": ["contributing_factors", "lessons", "linked_issue_id",
                     "severity", "scope", "remediation", "detail"],
     "lesson":      ["context", "applies_to", "linked_id"],
-    "memo":        ["tags"],
+    "memo":        ["tags", "context", "detail", "linked_issue_id", "linked_id"],
     "summary":     ["key_decisions", "open_threads"],
     "checkpoint":  ["pending_decisions", "recently_completed", "key_context", "git_state", "open_threads"],
     "git":         ["files_changed", "diff_summary"],
