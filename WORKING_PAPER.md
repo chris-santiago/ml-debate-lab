@@ -121,7 +121,7 @@ Table 1 presents per-condition means across 80 regular cases (60 critique + 20 d
 | biased_debate | 0.6955 | 0.9250 | 0.75 | 0.75 | 0.6726 |
 | multiround | 0.6523 | 0.9750 | 0.6917 | 0.6917 | 0.6676 |
 
-*Note: multiround uses variable compute (3x+, typically 2 full rounds), exceeding the 3x budget of isolated_debate and ensemble_3x. Direct comparison between multiround and the 3x conditions is not compute-matched.*
+*Note: multiround uses variable compute (3x+). Each round consists of a critic call followed by a defender call; the adjudicator fires once at the end. With the observed median of 2 rounds, the typical multiround run involves approximately 5 agent calls (critic + defender + critic + defender + adjudicator), or roughly 5x baseline compute — exceeding the 3x budget of isolated_debate and ensemble_3x. Direct comparison between multiround and the 3x conditions is not compute-matched; multiround's FVC_mixed advantage (0.3667 vs. 0.025 for ensemble) should be interpreted with this additional compute cost in mind.*
 
 Ensemble_3x achieves the highest IDR (0.7717) and IDP_adj (0.9861) of all conditions. The IDR advantage over isolated_debate (+0.1114) is the largest single-dimension effect in the experiment. DRQ and FVC are flat at 0.75 across all non-multiround conditions, contributing no signal to the FC comparison — the effective discrimination rests on IDR and IDP. The 0.75 values are a composition artifact: critique cases (n = 60) score DRQ = FVC = 1.0 while defense cases (n = 20) score 0.0, and the 60:20 ratio produces the aggregate. Multiround's lower DRQ/FVC (0.6917) reflects cases where its verdict flipped incorrectly.
 
@@ -134,8 +134,12 @@ Ensemble_3x achieves the highest IDR (0.7717) and IDP_adj (0.9861) of all condit
 | Test | Comparison | Delta | 95% CI | Verdict |
 |---|---|---|---|---|
 | H1a | debate vs. baseline (FC, regular) | -0.0026 | [-0.0108, +0.0059] | NOT SIGNIFICANT |
-| H1b | debate vs. baseline (FVC, mixed) | +0.0083 | [0.0, 0.025] | FAIL |
-| H2 | debate vs. ensemble (FC, regular) | -0.0287 | [-0.0434, -0.0154] | **FAIL (ensemble superior)** |
+| H1b | debate vs. baseline (FVC, mixed) | +0.0083 | [0.0, 0.025] | NOT SIGNIFICANT |
+| H2 regular | debate vs. ensemble (FC, regular) | -0.0287 | [-0.0434, -0.0154] | **FAIL (ensemble superior)** |
+| H2 mixed | debate vs. ensemble (FVC, mixed) | -0.0167 | [-0.075, +0.025] | INCONCLUSIVE |
+| H5 | cross-model scorer agreement | — | — | N/A — pre-empted by design‡ |
+
+‡*H5 was pre-registered to measure IDR/IDP agreement between GPT-4o and a secondary scorer. The decision to adopt GPT-4o as the sole primary scorer (Section 3.4) eliminated the closed-loop confound that H5 was designed to detect, making the test moot. Cross-model scorer validity is addressed by construction rather than by measurement.*
 
 **Table 2b: Post-hoc follow-up test (paired bootstrap, n = 10,000, seed = 42, critique cases n = 60)**
 
@@ -147,7 +151,7 @@ Ensemble_3x achieves the highest IDR (0.7717) and IDP_adj (0.9861) of all condit
 
 The three-way ordering is: `ensemble_3x > {baseline ≈ isolated_debate}`. The H2 CI excludes zero entirely in the ensemble-favored direction. Debate spends 3x compute to achieve a result not significantly different from the 1x baseline; ensemble spends the same 3x and formally outperforms both.
 
-**Multiple comparisons.** The pre-registered battery includes 8 tests (H1a, H1b, H2 regular, H2 mixed, H3, H4, H6 across 3 dimensions). We report uncorrected CIs throughout. Under Bonferroni correction at the 8-test level (α = 0.05/8 = 0.00625), the primary results are unaffected: the null findings (H1a, H1b) remain non-significant, and H2 regular (CI fully excluding zero) and H6 FVC_mixed (p = 0.0000) both survive correction. The post-hoc ensemble-vs-baseline test (Table 2b) is reported separately and should be interpreted with the additional test noted.
+**Multiple comparisons.** The pre-registered battery includes 9 statistical tests: H1a, H1b, H2 regular, H2 mixed, H3, H4, and 3 H6 sub-dimensions (IDR, IDP_adj, FVC_mixed). H5 was pre-registered but pre-empted by design (Table 2a, footnote ‡) and is excluded from the correction count. We report uncorrected CIs throughout. Under Bonferroni correction at the 9-test level (α = 0.05/9 = 0.0056), the primary results are unaffected: the null findings (H1a, H1b, H2 mixed) remain non-significant, and H2 regular (CI fully excluding zero) and H6 FVC_mixed (p = 0.0000) both survive correction. The post-hoc ensemble-vs-baseline test (Table 2b) is reported separately and should be interpreted with the additional test noted.
 
 ### 4.3 Mixed-Case Results
 
@@ -201,7 +205,7 @@ Stratifying the 80 regular cases by source reveals that the ensemble advantage i
 | Real papers (ReScience C) | 25 | 0.4545 | 0.2828 | +0.172 |
 | Synthetic | 55 | 0.9553 | 0.8961 | +0.059 |
 
-The ensemble advantage is approximately 3x larger on real papers than on synthetic cases. Baseline IDR on real papers is only 0.283 — well below ceiling — leaving substantial room for the ensemble's union pooling to recover additional ground-truth flaws. On synthetic cases, baseline is already near ceiling (0.896), compressing the improvement margin. The aggregate IDR advantage (+0.1005) understates the benefit in the deployment context that matters most.
+Descriptively, the ensemble IDR advantage is approximately 3x larger on real papers (+0.172) than on synthetic cases (+0.059), though the RC subgroup (n = 25) is too small for formal significance testing (no CIs are reported for subgroup deltas). The pattern is consistent with a ceiling effect on synthetic cases — baseline IDR is already 0.896, compressing the margin for improvement — while real-paper baseline IDR (0.283) leaves substantial room for union pooling to recover additional ground-truth flaws. If replicated at larger N, this would suggest the aggregate IDR advantage (+0.1005) understates the benefit in the most ecologically valid deployment context.
 
 ### 5.4 Union Pooling: Precision Validation
 
@@ -219,7 +223,7 @@ Precision difference (1/3 - 3/3): +0.017, 95% CI [-0.028, +0.068], p = 0.258. Th
 
 Union pooling recovers 11 ground-truth issues (9.5% of the 116-issue `must_find` pool) that would be discarded by majority vote — all 11 verified true positives. The recall gain is +9.5 percentage points (union IDR 77.6% vs. majority-vote IDR 68.1%) at no measured precision cost.
 
-**Data quality note.** The precision analysis relies on GPT-4o's classification of issue clusters across assessors. In 108 of 180 case-runs (60%), GPT-4o merged at least one issue across assessors without preserving the original label — typically Assessor C's 5th issue was folded into an earlier cluster. These issues were classified (planted_match, false_claim, etc.) but excluded from tier counts because tier assignment requires an assessor label. Since the label omission is uniform across classification types and assessors, it is unlikely to introduce systematic bias across tiers. However, the precision estimates in Table 5 should be interpreted with this caveat: a 60% missing-label rate means the effective sample of fully-labeled clusters is smaller than the 1,463 reported, and a systematic relationship between label omission and precision — though not observed — cannot be ruled out.
+**Data quality note.** The precision analysis relies on GPT-4o's classification of issue clusters across assessors. In 108 of 180 case-runs (60%), GPT-4o merged at least one issue across assessors without preserving the original label — typically Assessor C's 5th issue was folded into an earlier cluster. These issues were classified (planted_match, false_claim, etc.) but excluded from tier counts because tier assignment requires an assessor label. The 1,463 clusters in Table 5 represent the fully-labeled subset; the count of excluded unlabeled clusters is not available from the analysis pipeline. We assume the label omission is independent of classification type and tier — this assumption is consistent with the uniform pattern of omission (consistently Assessor C's 5th issue across runs) but is not formally tested. Precision estimates in Table 5 should be interpreted with this caveat: a systematic relationship between label omission and precision, though not observed, cannot be ruled out.
 
 ### 5.5 Defense Case Failure
 
@@ -276,6 +280,12 @@ This manuscript was drafted and edited with the assistance of Claude Code (Anthr
 A reflexive disclosure is warranted: the principal AI tool used for writing assistance (Claude, Anthropic) is also the subject of the experimental study. The experiment evaluates Claude instances as debate agents, ensemble assessors, and methodology reviewers. To guard against implicit bias in how findings about Claude's capabilities and limitations are presented — including the defense-case failure (§5.5) and the sycophancy mechanism (§5.1) — all framing of results was independently reviewed by the human author(s) before finalization.
 
 AI use in the *experiment* is separate from AI use in *writing* and is documented in §3 (experimental agents, cross-vendor scorer) and Appendix B (benchmark generation pipeline with full model assignments). Readers should consult those sections for the experimental AI disclosure; this statement covers manuscript authorship only.
+
+---
+
+## Reproducibility
+
+The benchmark cases (120 cases with ground-truth must_find issues, acceptable_resolutions, and correct_position labels), scoring scripts, analysis scripts (including `v6_analysis.py`, `ensemble_vs_baseline_test.py`, and `v6_minority_precision.py`), and full experiment results JSON are available in the project repository. Agent definitions (ml-critic, ml-defender, ml-adjudicator) are included as installable Claude Code plugins. Instructions for replicating the full experiment pipeline are in `self_debate_experiment_v6/plan/PLAN.md`.
 
 ---
 
