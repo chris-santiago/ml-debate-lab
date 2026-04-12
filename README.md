@@ -337,7 +337,7 @@ v6 ran six conditions against a 120-case benchmark with a cross-vendor (GPT-4o) 
 **`isolated_debate`** — the original ml-lab protocol (critic → defender → adjudicator):
 - H1a FAIL: lift over baseline = −0.0026, CI [−0.0108, +0.0059]. The debate structure adds no recall; IDR_debate = 0.6603 vs. IDR_baseline = 0.6712.
 - H2 FAIL (ensemble superior): isolated_debate − ensemble_3x = −0.0287, CI [−0.0434, −0.0154]. Independent redundancy outperforms adversarial structure at matched compute.
-- Precision cost: the adjudicator filters some true positives alongside false ones. IDP_debate = 0.9639 vs. IDP_ensemble = 0.9861.
+- Precision gap: the debate critic generates more false claims than independent assessors; the adjudicator recovers some but not all (IDP_raw = 0.9444 → IDP_adj = 0.9639 vs. IDP_ensemble = 0.9861).
 
 No formal test goes in isolated_debate's favor. It is strictly dominated.
 
@@ -502,13 +502,13 @@ ml-lab halts and surfaces the unresolved issues to the user with a "human interv
 
 ### Results & Evidence
 
-**Why does the raw lift (+0.586) differ from the "honest corrected" range (+0.335 to +0.441)?**
+**Why does the v2 raw lift (+0.586) differ from the "honest corrected" range (+0.335 to +0.441)?**
 
-Two rubric dimensions score structurally differently for the debate vs. baseline. Defense Calibration (DC) measures whether the correct verdict was reached *via a defense role* — the baseline has no Defender, so it scores 0.0 on DC by design, not because it reasoned poorly. Debate Resolution Quality (DRQ) measures whether positions were resolved through structured exchange; a single-pass system is capped at 0.5. These reflect real structural differences, but they inflate the raw gap. The corrected range neutralizes those structural penalties to isolate pure reasoning quality — that's the number to use when comparing evaluation approaches.
+Two v2 rubric dimensions score structurally differently for the debate vs. baseline. Defense Calibration (DC) measures whether the correct verdict was reached *via a defense role* — the baseline has no Defender, so it scores 0.0 on DC by design, not because it reasoned poorly. Debate Resolution Quality (DRQ) measures whether positions were resolved through structured exchange; a single-pass system is capped at 0.5. These reflect real structural differences, but they inflate the raw gap. The corrected range neutralizes those structural penalties to isolate pure reasoning quality. The v6 rubric was redesigned to avoid this problem: FC = mean(IDR, IDP, DRQ, FVC) — no dimension structurally penalizes the baseline.
 
-**The experiment had one failed case — what happened, and has it been fixed?**
+**The v2 experiment had one failed case — what happened?**
 
-A healthcare triage scenario where the Defender correctly identified all critical flaws in its analysis but then labeled the verdict "the work is valid." Correct reasoning, wrong label — a calibration failure in output structure, not a reasoning failure. Fixed by restructuring the Defender prompt into two mandatory passes: complete the full analysis before selecting any verdict labels. The fix is in [`plugins/ml-lab/ml-defender.md`](plugins/ml-lab/ml-defender.md).
+A healthcare triage scenario where the Defender correctly identified all critical flaws in its analysis but then labeled the verdict "the work is valid." Correct reasoning, wrong label — a calibration failure in output structure, not a reasoning failure. Fixed by restructuring the Defender prompt into two mandatory passes: complete the full analysis before selecting any verdict labels. The fix is in [`plugins/ml-lab/ml-defender.md`](plugins/ml-lab/ml-defender.md). At v6 scale, the more significant failure mode is defense cases broadly — see the next question.
 
 **Did any condition correctly handle valid work (defense cases)?**
 
@@ -518,11 +518,11 @@ This is a direct contradiction of a v2 finding (debate 5/5, ensemble 4/5 on 5 in
 
 **Would results change significantly with a cheaper or different model?**
 
-Possibly. All Phase 2 agent dispatches used `claude-sonnet-4-6`. A cross-capability scorer validation using Haiku showed IDR delta = 0.0 across 15 cases, suggesting the scoring rubric itself is robust to capability tier within the same model family. Running the Critic and Defender on a significantly weaker model would likely affect reasoning quality on harder cases. Cross-vendor validation (GPT-4o, Gemini) remains future work — results should be treated as specific to the claude-sonnet-4-6 capability tier until replicated elsewhere.
+v6 addressed the most critical model concern: detection metrics (IDR, IDP, ETD) are scored by GPT-4o via OpenRouter, not by the same Claude model that generated the outputs. This cross-vendor scoring eliminated the closed-loop confound that inflated v5 results (cross-vendor IDR delta = −0.7737 in v5). FVC and DRQ use rule-based internal scoring (no LLM involved). Running the Critic and Defender agents on a significantly weaker model would likely affect reasoning quality on harder cases — results should be treated as specific to the capability tier used for agent dispatches.
 
 **Could using the same model family across all roles bias the results?**
 
-Yes — this is a known limitation. All agents (Critic, Defender, Judge, Scorer, and Baseline) used Claude. Systematic patterns in how the model processes prompts could inflate agreement rates or scoring consistency in ways that wouldn't generalize to other model families. The Haiku scorer validation showed no IDR bias at a different capability tier within the same family, but cross-vendor validation is still pending. The [technical report](self_debate_experiment_v2/TECHNICAL_REPORT.md) lists this explicitly under remaining limitations.
+This was a known limitation in v2 (all roles including scorer used Claude). v6 partially addresses it: detection metrics (IDR, IDP, ETD) are scored by GPT-4o, breaking the closed loop. The agent roles (Critic, Defender, Adjudicator) still use Claude, so systematic patterns in how Claude processes prompts could affect reasoning behavior in ways that wouldn't generalize. FVC and DRQ use rule-based scoring (no LLM). Cross-model agent validation (running the same protocol with a different model family for agent dispatches) remains future work. The [technical report](self_debate_experiment_v2/TECHNICAL_REPORT.md) discusses the original v2 limitation.
 
 ---
 

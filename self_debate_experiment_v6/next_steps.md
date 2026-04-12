@@ -38,7 +38,7 @@ Scripts: `ensemble_vs_baseline_test.py` (new), `v6_analysis.py` (H1a, H2)
 
 Formally supported at both ends: ensemble > baseline and ensemble > isolated_debate.
 
-| | IDR | IDP | FC |
+| | IDR | IDP (adj) | FC |
 |---|---|---|---|
 | isolated_debate (current) | 0.6603 | 0.9639 | 0.6759 |
 | baseline | 0.6712 | 0.9472 | 0.6785 |

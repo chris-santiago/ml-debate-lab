@@ -75,7 +75,8 @@ Correcting to paired bootstrap (CONCLUSIONS.md Q2, journal `08b523f8`) narrowed 
 
 ## 4. IDR-vs-FC Discrepancy
 
-The INCONCLUSIVE verdict on H2 masks a large descriptive difference on IDR:
+The H2 regular verdict (FAIL, ensemble superior; FC CI = [−0.0434, −0.0154]) understates
+a large descriptive difference on IDR:
 
 | Condition | IDR | IDP | DRQ | FVC | FC (mean) |
 |---|---|---|---|---|---|
@@ -91,8 +92,8 @@ IDP contributes only +0.0417. The IDR advantage of +0.1114 is diluted when avera
 three other dimensions that show minimal or no separation.
 
 This means: **if IDR were the sole evaluation metric, ensemble_3x would clearly outperform
-isolated_debate.** The INCONCLUSIVE H2 verdict is a consequence of metric averaging, not
-evidence that the two conditions are equivalent on recall. For tasks where missing planted
+isolated_debate.** The modest FC delta (+0.0287) is a consequence of metric averaging, not
+evidence that the two conditions are close on recall. For tasks where missing planted
 flaws is the primary failure mode, the ensemble's IDR advantage is practically meaningful
 regardless of the FC composite result.
 
