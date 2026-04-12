@@ -132,38 +132,61 @@ print("Figure 2 saved.")
 
 # ── Figure 3: RC-stratified IDR ───────────────────────────────────────────────
 # Data from ENSEMBLE_ANALYSIS.md §8 (verified against session read)
-rc_idr    = [0.2828, 0.2702, 0.4545, 0.3460, 0.3005]
-synth_idr = [0.8961, 0.8861, 0.9553, 0.8978, 0.8560]
-labels_fig3 = ["Baseline\n(1×)", "Isolated\nDebate\n(3×)", "Ensemble\n3×\n(3×)",
-               "Biased\nDebate\n(3×)", "Multiround\n(~5×)"]
+# Sorted by compute budget: 1× → 3× (debate variants, then ensemble) → ~5×
+# Within 3×: debate conditions first, ensemble last — tells the "ensemble wins at matched compute" story
+data_fig3 = [
+    # (condition_label, rc_idr, synth_idr)
+    ("Baseline\n(1×)",         0.2828, 0.8961),
+    ("Isolated\nDebate (3×)",  0.2702, 0.8861),
+    ("Biased\nDebate (3×)",    0.3460, 0.8978),
+    ("Ensemble 3×\n(3×)",      0.4545, 0.9553),  # 3× winner — rightmost among 3× group
+    ("Multiround\n(~5×)",      0.3005, 0.8560),
+]
+labels_fig3 = [d[0] for d in data_fig3]
+rc_idr     = [d[1] for d in data_fig3]
+synth_idr  = [d[2] for d in data_fig3]
+ens_idx    = 3  # ensemble_3x position in compute-ordered list
 
-x = np.arange(len(CONDITIONS))
+# Distinct colors: amber for RC, teal for synthetic
+RC_COLOR    = "#e08214"   # amber/orange — clearly different from teal
+SYNTH_COLOR = "#2c7bb6"   # teal/medium blue
+
+x = np.arange(len(data_fig3))
 width = 0.35
 
-fig, ax = plt.subplots(figsize=(9, 5))
+fig, ax = plt.subplots(figsize=(9, 5.2))
 b1 = ax.bar(x - width / 2, rc_idr,    width, label="Real papers (RC, n=25)",
-            color="#2171b5", edgecolor="white")
+            color=RC_COLOR, edgecolor="white")
 b2 = ax.bar(x + width / 2, synth_idr, width, label="Synthetic (n=55)",
-            color="#6baed6", edgecolor="white", alpha=0.85)
+            color=SYNTH_COLOR, edgecolor="white")
 
-# Highlight ensemble bars
-b1[2].set_edgecolor("#084594"); b1[2].set_linewidth(2.2)
-b2[2].set_edgecolor("#084594"); b2[2].set_linewidth(2.2)
-
-# Value labels
+# Value labels — all conditions
 for bars in [b1, b2]:
-    for bar in bars:
+    for i, bar in enumerate(bars):
+        weight = "bold" if i == ens_idx else "normal"
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.012,
-                f"{bar.get_height():.3f}", ha="center", va="bottom", fontsize=7.5)
+                f"{bar.get_height():.3f}", ha="center", va="bottom",
+                fontsize=7.5, fontweight=weight)
+
+# Ensemble annotation: text box above the two ensemble bars
+ens_x = x[ens_idx]
+top_val = max(rc_idr[ens_idx], synth_idr[ens_idx])
+ax.text(
+    ens_x, top_val + 0.09,
+    "★ Highest IDR\nboth subsets",
+    ha="center", va="bottom", fontsize=8.5, fontweight="bold", color="#222222",
+    bbox=dict(boxstyle="round,pad=0.3", facecolor="#fff9c4", edgecolor="#c8a000", linewidth=1.2),
+)
 
 ax.set_xticks(x)
 ax.set_xticklabels(labels_fig3, fontsize=9)
 ax.set_ylabel("Issue Detection Recall (IDR)", fontsize=11)
-ax.set_title("Figure 3. IDR by Condition, Stratified by Case Source (n = 80 regular cases)\n"
-             "RC = real ReScience C papers (2020–2021); Synthetic = planted-corruption cases.\n"
-             "Ensemble IDR advantage: +0.172 on real papers vs +0.059 on synthetic (n=25 — underpowered for formal testing).",
-             fontsize=9)
-ax.set_ylim(0, 1.08)
+ax.set_title(
+    "Figure 3. IDR by Condition, Stratified by Case Source — ordered by compute budget (n = 80 regular cases)\n"
+    "RC = real ReScience C papers (2020–2021); Synthetic = planted-corruption cases.\n"
+    "Ensemble IDR advantage: +0.172 on real papers vs +0.059 on synthetic  (RC n=25 — descriptive only, underpowered for formal testing).",
+    fontsize=9)
+ax.set_ylim(0, 1.12)
 ax.spines["top"].set_visible(False)
 ax.spines["right"].set_visible(False)
 ax.legend(fontsize=9, loc="upper left")
