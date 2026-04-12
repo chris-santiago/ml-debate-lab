@@ -1,5 +1,7 @@
 # ml-lab Protocol: Recommended Changes Based on v6 Results
 
+> **Note:** Frozen snapshot — post-experiment protocol recommendations locked at v6 close. Not updated by artifact-sync.
+
 **Date:** 2026-04-11 (updated 2026-04-12)
 **Source:** self_debate_experiment_v6 full results synthesis + post-session analysis
 
