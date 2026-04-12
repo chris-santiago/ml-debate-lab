@@ -260,154 +260,151 @@ Full trace and spec validation notes are in [`seq_fraud_experiment/TEST2_FINDING
 
 ## Part 2: The Experiment Behind ml-lab
 
-> Have a question about the methodology or results? Check the [FAQ](#faq) at the bottom of this page.
+> Have questions about the methodology or results? Check the [FAQ](#faq) at the bottom of this page.
 
-This project asks a simple question: **when an AI evaluates a piece of work, does it actually catch real problems?**
+### The Protocol Decision
 
-The context is ML research — model results, statistical claims, deployment decisions. These are exactly the situations where evaluation matters most and where confident-sounding-but-wrong answers are most dangerous.
+**Current default: three independent `ml-critic` calls (`ensemble_3x`) with union-of-issues output.** The original critic-defender-adjudicator debate structure is now opt-in — reserved for empirically ambiguous cases where iterative exchange adds value. The switch is grounded in formal evidence from v6, a 120-case benchmark with a cross-vendor (GPT-4o) scorer.
 
-Two things are distinct here: the **self-debate protocol** (the evaluation method — Critic, Defender, Judge) and **`ml-lab`** (the agent that *uses* that protocol as one step in a broader workflow). The experiment benchmarks the debate protocol directly. ml-lab is what packages it for real use.
+Three-way ordering, all formally supported at matched compute (paired bootstrap, n=10,000 resamples, seed=42):
 
-The self-debate protocol was chosen as the domain for a specific reason: it's testable. Unlike most ML research questions, we can construct scenarios with known correct answers and measure whether the agent found the right one. This makes it possible to ask not just "did `ml-lab` follow the process?" but "did following the process actually produce correct verdicts?" The self-debate experiment is, in that sense, `ml-lab` investigating itself — the protocol is both the tool and the subject.
+| Comparison | n | Δ | 95% CI | Verdict |
+|---|---|---|---|---|
+| ensemble_3x vs. baseline (IDR) | 60 critique cases | +0.1005 | [+0.0426, +0.1648] | **ensemble formally superior** |
+| ensemble_3x vs. isolated_debate (FC) | 80 regular cases | +0.0287 | [+0.0154, +0.0434] | **ensemble formally superior** |
+| baseline vs. isolated_debate (FC) | 80 regular cases | −0.0026 | [−0.0108, +0.0059] | **indistinguishable** |
 
----
+The ranking is `ensemble_3x > {baseline ≈ isolated_debate}`. Isolated debate is strictly dominated: it matches a single-pass baseline at 3× compute and loses to ensemble at the same compute. Three independent critics approaching the same case from different angles find more issues than one critic arguing with a defender.
 
-### The Setup
+**Union output is empirically safe on both recall and precision.** A follow-up precision analysis (180 GPT-4o calls) confirmed that issues raised by only 1/3 assessors carry no precision penalty:
 
-The system under test is a **self-debate protocol**: one agent plays Critic, one plays Defender, the orchestrating session adjudicates as Judge (inline — not a separate subagent). The key architectural choice *in this benchmark* is that Critic and Defender receive the same scenario with no shared context — each produces an independent assessment before either sees the other's output.
+| Tier | Precision | 95% CI |
+|---|---|---|
+| 1/3 minority | 0.946 | [0.926, 0.963] |
+| 2/3 majority | 0.936 | [0.903, 0.965] |
+| 3/3 unanimous | 0.929 | [0.881, 0.969] |
 
-This isolation is not a technicality. It's what makes the disagreement meaningful. When both agents independently find the same flaw, you have convergent evidence. When they disagree, you have a genuinely contested claim that requires an empirical test to resolve — not a confident guess.
-
-The comparison is a **trivial baseline**: one AI agent, one pass, no debate structure.
-
-To make the comparison meaningful, we needed cases with known correct answers. We built a **benchmark of 20 synthetic ML reasoning scenarios**, each with a planted flaw (or deliberate absence of one), a ground-truth verdict, and specific issues the evaluation had to find. Examples:
-
-- A team claiming a 4-point model improvement, evaluated on 1/10th the data with no confidence intervals
-- A loyalty program reporting a 22% sales lift that launched November 1st — right before Black Friday
-- A fine-tuned model beating zero-shot, with the team concluding their architecture is superior (the real cause: training regime difference)
-- Methodologically *sound* work, presented under adversarial framing — to test whether the protocol would wrongly condemn it
-
-Pass criteria were set before running anything: benchmark mean ≥ 0.65, ≥ 75% of cases pass, lift ≥ +0.10 over baseline. The benchmark has 20 cases — enough to support bootstrap CIs and a paired Wilcoxon test on the primary comparison, but too small for subgroup analysis (the n=5 exoneration finding, for example, is below conventional statistical thresholds). Expanding the benchmark is a known limitation; each case requires authoring, independent verification, and a ground-truth label, which makes them expensive to produce.
-
----
-
-### What We Found
-
-**Debate protocol: 0.970. Single-pass baseline: 0.384. Honest corrected lift: +0.335 to +0.441.**
-
-The protocol cleared every pre-registered benchmark criterion. 19 of 20 cases passed; the pre-specified lift threshold of +0.10 was exceeded by 3–4×.
-
-A note on the raw gap of +0.586: two rubric dimensions score structurally differently for the debate vs. baseline. Defense Calibration (DC) measures whether the correct verdict was reached *via a defense role* — the baseline has no Defender, so it scores 0.0 on DC by design, not because it reasoned poorly. Debate Resolution Quality (DRQ) similarly measures whether positions were resolved through exchange; a single-pass system is capped at 0.5. These aren't thumb-on-the-scale choices — they reflect real structural differences — but they do inflate the raw gap. Recomputing with DC=0.5 and DRQ uncapped for the baseline gives the honest corrected lift of **+0.335 to +0.441**, confirmed by post-experiment adversarial review. That's the number we use when comparing reasoning quality rather than structural completeness.
-
-We ran two baselines to understand where the lift actually comes from:
-
-| Condition | Score | What it isolates |
-|-----------|-------|-----------------|
-| Single-pass baseline | 0.38 | One agent, one call, no structure — the floor |
-| Compute-matched ensemble | 0.75 | Three independent assessors + synthesizer, no roles — what more compute alone buys |
-| ml-lab debate protocol | 0.97 | Adversarial role separation on top of compute |
-
-The gap from floor to ensemble (+0.37) is mostly explained by additional compute and multiple perspectives. The gap from ensemble to debate (+0.22, p=0.004, r=0.758) is real and statistically significant — but it is not cleanly attributable to adversarial role structure. Ablations decomposed it into three components:
-
-- **ETD (empirical test design):** The unconstrained ensemble scored ETD=0.0 on 9 of 20 cases because the synthesizer wasn't instructed to specify empirical tests. Adding one explicit output instruction closes this nearly entirely (ensemble ETD mean 0.962 vs. debate 1.0). ETD is a prompt-constraint effect, not an architecture effect — it's portable to any multi-agent configuration.
-- **DRQ (debate resolution quality):** The ensemble cannot produce typed point-by-point resolutions from a parallel assessment. This is structural, but it reflects how the debate *works* rather than whether it finds the right answer.
-- **Mixed-position case handling:** The ensemble failed catastrophically on `metric_mismatch_002` (the one genuinely two-sided case), scoring near zero. Parallel assessors tend to independently converge on one side of a two-sided question; the adversarial structure forces engagement with both sides.
-
-On the detection-quality dimensions where both systems have equal agency — IDR (issue detection rate), IDP (issue detection precision), and FVC (final verdict correctness) — the ensemble matches or approaches the debate protocol on nearly every case. The genuine role-structure advantage is narrower than the headline +0.22 suggests: it lives in contested cases and in structured argumentation, which matter most when the correct answer is ambiguous rather than salient.
-
-Systematic ablations after the initial run confirmed what is and is not uniquely provided by role separation:
-
-**What debate does not uniquely provide:**
-
-- **Empirical test design (ETD).** Explained above — a prompt-constraint effect, not a role-structure effect. The instruction is portable.
-
-- **Exoneration of valid work (exclusively).** A clean ensemble correctly exonerated valid work in 4/5 false-positive trap cases without context isolation. The benchmark's isolation design is not uniquely necessary for reaching the right verdict. (Note: context isolation — Defender never seeing the Critic's output — is a benchmark-specific experimental choice, not a permanent property of the ml-defender agent in production use.)
-
-**What debate does provide:**
-
-- **Structured argumentation and contested-position resolution.** The Critic/Defender structure forces point-by-point rebuttal — each claim conceded, rebutted, or flagged as empirically open. More importantly, it forces engagement with both sides of a genuinely two-sided question. A parallel ensemble cannot produce either structure by design: assessors have no shared reference point for disagreement and no role mandate to argue a specific side.
-
-- **A tendency toward cleaner exoneration** *(directional, n=5, internal only).* The debate's isolated Defender raised zero concerns on 3 of 5 exoneration cases. The ensemble raised caveats alongside 2 of its 4 correct exonerations ("this looks valid, but..."). This distinction is real in the internal data — but n=5 is too small for a conventional statistical test, the mean-score advantage disappears under harmonized scoring, and the pattern did not replicate in the external exoneration benchmark (critics raised concerns on all 3 external cases). Treat this as a qualitative observation, not a confirmed structural finding.
-
-The clearest illustration is the five *false-positive critique traps* — valid work, correctly designed, presented under adversarial framing. The single-pass baseline scored **0.000 on all five**: it accepted the adversarial premise entirely and condemned sound work. The ensemble got 4/5 correct verdicts. The debate protocol got 5/5 and raised no spurious concerns on 3 of 5 cases (the ensemble raised caveats on 2 of its 4 correct exonerations). This 5/5 vs. 4/5 distinction is suggestive but not statistically confirmed at n=5.
-
-> **Statistics:** Bootstrap CIs (10,000 resamples) and paired Wilcoxon signed-rank tests. Debate vs. baseline: +0.586 [95% CI: 0.486–0.691], p < 0.0001, r = 1.0 — debate outperforms baseline on every single case. Debate vs. ensemble: +0.216 [95% CI: 0.098–0.352], p = 0.004, r = 0.758. Both effects are statistically significant. These CIs reflect cross-case sampling variance only. Within-case LLM stochasticity was estimated by 3-run repetition on 8 cases: debate_std=0.0 on 7/8 cases; the one exception is `metric_mismatch_002` (the mixed-position case, std=0.048 from DC variation when the Defender stochastically tips to defense_wins — Judge verdict was stable in all runs). See [`stats_results.json`](self_debate_experiment_v2/stats_results.json), [`within_case_variance_results.json`](self_debate_experiment_v2/within_case_variance_results.json), and [`within_case_variance_nonconverging.json`](self_debate_experiment_v2/within_case_variance_nonconverging.json).
-
-> **External validity (two separate benchmarks, testing different things):**
-> - *Fault detection (IDR):* 10 cases drawn from published ML evaluation failures (Dacrema 2019, Obermeyer 2019, DeGrave 2021, and others) — real papers with real flaws, ground truth from the published record, no designer involvement in case construction. Tests whether the protocol finds issues it wasn't designed around. Result: debate IDR = 0.95, meeting the ≥ 0.85 pre-specified threshold. The ensemble was not re-run on these cases; this benchmark specifically validates issue detection, not the full scoring rubric. See [`external_benchmark/`](external_benchmark/).
-> - *Exoneration (defense_wins):* 3 cases from peer-reviewed ML work (BERT/SQuAD 1.1, ResNet-152/ImageNet, clinical 5-fold CV) where a critique *could* be raised but the methodology is genuinely sound. Tests whether the protocol avoids wrongly condemning valid work when external ground truth says it's correct. Result: debate 3/3 pass (mean 0.875); baseline 0/3 rubric pass (DC=0.0 structural rule) but 3/3 correct verdict label. Note: critics raised plausible-but-wrong concerns (IDP=0.5) on all 3 external cases — the "clean exoneration" tendency observed on 3/5 internal cases did not replicate. See [`self_debate_experiment_v2/external_exoneration_results.json`](self_debate_experiment_v2/external_exoneration_results.json).
-
-One case failed: a healthcare triage scenario where the Defender correctly identified all critical flaws in its analysis but then labeled the verdict "the work is valid." Correct reasoning, wrong label — a calibration failure in output structure, not a reasoning failure. Fixed by a two-pass Defender prompt (analysis before verdict selection). See [`plugins/ml-lab/ml-defender.md`](plugins/ml-lab/ml-defender.md).
-
-Full results, per-case scores, and post-experiment analyses are in [`self_debate_experiment_v2/`](self_debate_experiment_v2/).
+Diff (1/3 − 3/3): +0.017, CI [−0.028, +0.068], p=0.258. Union output recovers 11 additional ground-truth issues (+9.5pp IDR) at no precision cost. See [`ENSEMBLE_ANALYSIS.md §7`](self_debate_experiment_v6/ENSEMBLE_ANALYSIS.md).
 
 ---
 
 ### Why This Matters
 
-The standard approach to AI evaluation is single-pass: give a model some work, ask it what it thinks, get an answer. This works when the flaw is explicit. It breaks down in three situations where the stakes are often highest:
+This project asks a fundamental question: **when an AI evaluates a piece of work, does it actually catch real problems?**
+
+The context is ML research — model results, statistical claims, deployment decisions. These are exactly the situations where evaluation matters most and where confident-sounding-but-wrong answers are most dangerous. The self-debate protocol was chosen as the domain because it's testable: we can construct scenarios with known correct answers and measure whether the agent found the right one.
+
+The standard approach is single-pass: give a model some work, ask it what it thinks, get an answer. This works when the flaw is explicit. It breaks down in three situations where the stakes are often highest:
 
 - The flaw requires independently questioning the framing (not just processing it)
 - The work is actually valid but *sounds* questionable — and the evaluator has no structural incentive to push back
 - The correct answer is "run this specific test first" rather than a binary verdict
 
-The single-pass baseline scored 0.000 on all five false-positive trap cases — not because it reasoned incorrectly, but because it had no mechanism to challenge the premise it was given. A simple ensemble (multiple independent views) gets 4/5 correct verdicts. The debate protocol gets 5/5.
+**The clearest illustration:** five *false-positive critique traps* — valid work, correctly designed, presented under adversarial framing. The single-pass baseline scored 0.000 on all five: it accepted the adversarial premise entirely and condemned sound work. The ensemble got 4/5 correct verdicts. The debate protocol got 5/5.
 
-The subtler lesson is about *what structure buys and what it doesn't*. Adversarial role separation is not magic: empirical test design turns out to be a prompt instruction effect, not an architecture effect. More compute and more perspectives solve most of the problem. What role structure specifically and demonstrably adds is a mechanism for resolving genuinely two-sided disagreements: when independent assessors face a prompt where both positions are defensible, they converge on the same intuitive answer and miss the contested point entirely. Forced role assignment — one agent required to argue for the work, one required to challenge it — surfaces the disagreement and forces resolution. That structural property cannot be replicated by adding more parallel assessors.
+The deeper lesson is about *what structure buys and what it doesn't*. The v6 experiment showed that more compute and more independent perspectives solve most of the problem. The adversarial debate structure turned out to be either replicated by the ensemble or not valuable enough to justify the added latency and complexity — for regular methodology review.
 
 ---
 
-### How the Experiment Was Built
+### What Failed
 
-The experiment ran in two phases.
+v6 ran six conditions against a 120-case benchmark with a cross-vendor (GPT-4o) scorer. The following did not work:
 
-**Phase 1** (`self_debate_experiment/`) established the protocol and tested a first version of the benchmark. This phase was orchestrated entirely by a multi-agent team — a Lead coordinating four specialized agents: CASE_AUTHOR (created benchmark cases), CASE_VERIFIER (validated them), META_EXPERIMENT_RUNNER (executed the workflow and wrote all artifacts), and EVALUATOR (scored outputs against a fixed rubric defined before execution). The orchestration prompt is in [`multi-agent-prompt.md`](multi-agent-prompt.md).
+**`isolated_debate`** — the original ml-lab protocol (critic → defender → adjudicator):
+- H1a FAIL: lift over baseline = −0.0026, CI [−0.0108, +0.0059]. The debate structure adds no recall; IDR_debate = 0.6603 vs. IDR_baseline = 0.6712.
+- H2 FAIL (ensemble superior): isolated_debate − ensemble_3x = −0.0287, CI [−0.0434, −0.0154]. Independent redundancy outperforms adversarial structure at matched compute.
+- Precision cost: the adjudicator filters some true positives alongside false ones. IDP_debate = 0.9250 vs. IDP_ensemble = 0.9861.
 
-One important detail: in Phase 1, the debate transcripts were generated by Claude agents during the authoring session, then embedded as hardcoded data in the Python scripts. Re-running the script replays static text — it doesn't re-invoke the LLM. This was intentional: the point was to build and score the protocol, not to build a live inference pipeline.
+No formal test goes in isolated_debate's favor. It is strictly dominated.
 
-Phase 1 identified two open problems — which is the reason it's included rather than skipped. First, a rubric gap: `issue_discovery_precision` was undefined for cases where the Critique's premise was intentionally false — you can't measure "fraction of valid claims" when all claims are supposed to be invalid. Second, the contaminated protocol (Defense reads Critique before responding) made genuine `defense_wins` verdicts structurally impossible: the Defender was reacting to the Critic's framing rather than forming an independent view, so a "defense wins" outcome could never be a clean signal.
+**`biased_debate`** — aggressive critic persona, strong defender, designed to force harder engagement:
+- On regular cases: IDP_adj = 0.8917, the lowest of all conditions. FC_biased < FC_baseline (0.6726 vs. 0.6785).
+- H6 technically passes the pre-registered criterion (2/3 CI dimensions exclude zero) but in *opposite* directions: FVC_mixed improved (+0.2417), IDP_adj degraded (−0.0389). A precision tradeoff, not a clean improvement.
 
-**Phase 2** (`self_debate_experiment_v2/`) fixed both. The rubric was extended with a redefined IDP dimension for `defense_wins` cases. The Defense was fully isolated — it receives only the original scenario, never the Critic's output. And critically, Phase 2's transcripts were generated through the full `ml-lab` workflow: each agent role (Critique, Defense, Judge, Scorer, Baseline) was dispatched as an isolated subagent via Claude Code, producing genuinely independent outputs before they were embedded in the script. This directly tested whether the structured investigation process produced correct verdicts when run end-to-end. It did, and then some.
+**Conditional FM gate** — adaptive stopping designed to skip round 2 when debate converges early:
+- Gate-fire rate = 94.7% (341/360 cases required round 2). Mean PRR after round 1 = 0.418. The gate is functionally equivalent to full multiround and provides no compute savings.
 
-For the full experimental design, scoring rubric, and benchmark case descriptions, see [`self_debate_experiment_v2/README.md`](self_debate_experiment_v2/README.md).
+---
+
+### Where Debate Still Matters
+
+The adversarial structure earns its keep in exactly one scenario: when the question is whether a methodology is empirically testable, not whether it's flawed.
+
+| Condition | FVC_mixed |
+|---|---|
+| baseline | 0.00 |
+| isolated_debate | 0.008 |
+| ensemble_3x | 0.025 |
+| biased_debate | 0.25 |
+| **multiround** | **0.3667** |
+
+On empirically ambiguous cases — where "run this test first" is the right answer rather than a binary verdict — iterative exchange pushes agents toward `empirical_test_agreed` in ~37% of cases. Parallel assessors cannot generate this resolution: they make binary verdicts independently, and majority-vote over binary verdicts still produces a binary verdict. Recognizing empirical ambiguity requires back-and-forth.
+
+**Caveat:** multiround has the highest within-case variance of all conditions (20 of 23 high-variance pairs are multiround). The aggregate signal is real; per-case reliability is not. Temperature reduction and a structured adjudicator stopping criterion are required before deployment.
+
+---
+
+### Experiment Arc (v1–v6)
+
+Each version was a response to a specific failure mode in the one before it.
+
+| Version | What it tested | What failed / what changed | Key document |
+|---|---|---|---|
+| v1 | Protocol proof-of-concept; 11–15 cases, static transcripts | Rubric gap on `defense_wins`; contaminated protocol (Defender saw Critique before responding) | [`self_debate_experiment/`](self_debate_experiment/) |
+| v2 | Fixed protocol (isolated Defender); 20 cases; live agent dispatches | Headline lift (debate 0.970 vs. baseline 0.384) included DC and DRQ dimensions that structurally penalized the baseline; honest corrected lift: +0.335–+0.441 | [`self_debate_experiment_v2/REPORT.md`](self_debate_experiment_v2/REPORT.md) · [`SENSITIVITY_ANALYSIS.md`](self_debate_experiment_v2/SENSITIVITY_ANALYSIS.md) |
+| v3 | Harder cases; ETD ablation | All lift came from ETD; IDR/IDP/FVC debate delta = 0.0. ETD is a prompt-constraint effect, not an architecture effect | [`self_debate_experiment_v3/CONCLUSIONS.md`](self_debate_experiment_v3/CONCLUSIONS.md) · [`POST_MORTEM.md`](self_debate_experiment_v3/POST_MORTEM.md) |
+| v4 | ETD-removed rubric; pure detection metrics | Baseline ceiling effect (FC = 0.9452); ≤0.05 headroom. Halted after Phase 7 | [`self_debate_experiment_v4/`](self_debate_experiment_v4/) |
+| v5 | Harder synthetic case library; GPT-4o pilot scorer | Closed-loop confound (cross-vendor IDR delta = −0.7737). Majority-vote suppressed ensemble IDR vs. union | [`self_debate_experiment_v5/CONCLUSIONS.md`](self_debate_experiment_v5/CONCLUSIONS.md) · [`POST_MORTEM.md`](self_debate_experiment_v5/POST_MORTEM.md) |
+| **v6** | RC-sourced benchmark; 120 cases; GPT-4o scorer; 6 conditions × 3 runs | All debate hypotheses FAIL. Formal result: `ensemble_3x > {baseline ≈ isolated_debate}` | [`FINAL_SYNTHESIS.md`](self_debate_experiment_v6/FINAL_SYNTHESIS.md) · [`RESEARCH_REPORT.md`](self_debate_experiment_v6/RESEARCH_REPORT.md) |
+
+The v2 numbers (debate 0.970 vs. baseline 0.384) are not wrong — they answered a different question with a smaller benchmark and a rubric that measured structural completeness alongside reasoning quality. v6 used a harder benchmark, cross-vendor scoring, and a rubric designed to isolate detection quality only. Read them together, not in place of each other.
+
+---
+
+### How v6 Was Built
+
+v6 was designed to close every confound that had prevented a clean answer in v1–v5:
+
+**Case library (120 cases).** 80 regular (critique/defense) + 40 mixed (empirically ambiguous). Cases were sourced from ReScience C replications and peer-reviewed ML evaluation failures with documented ground truth, filtered through a difficulty gate (baseline FC < 0.80) to prevent ceiling effects. Five prior-version confounds explicitly addressed: closed-loop scoring, majority-vote IDR suppression, missing mixed cases, hollow forced rounds, and baseline ceiling. See [`v5_mitigations.md`](self_debate_experiment_v6/plan/references/v5_mitigations.md).
+
+**Cross-vendor scorer (GPT-4o).** IDR, IDP, and ETD scored by GPT-4o via OpenRouter — removing the closed-loop confound that invalidated v5 (cross-vendor IDR delta = −0.7737 in v5). FVC and DRQ use internal rule-based scoring. See [`schema_b.md`](self_debate_experiment_v6/plan/references/schema_b.md).
+
+**Six conditions at matched compute.** `baseline`, `isolated_debate`, `biased_debate`, `multiround`, `conditional_fm`, `ensemble_3x`. All hypotheses pre-registered before Phase 5. See [`HYPOTHESIS.md`](self_debate_experiment_v6/HYPOTHESIS.md) and [`hypotheses.md`](self_debate_experiment_v6/plan/references/hypotheses.md).
+
+**Scale.** 120 cases × 6 conditions × 3 runs = 2,160 outputs. Within-case variance quantified across runs; high-variance pairs flagged.
+
+**Paired bootstrap correction.** All hypothesis tests use `bootstrap_paired_mean_diff` on case-level differences. An unpaired bootstrap in Phase 7 (CI ~18× too wide) was corrected during peer review — converting H2 from INCONCLUSIVE to formally supported.
+
+The full 10-phase pipeline and all design decisions are at [`self_debate_experiment_v6/plan/PLAN.md`](self_debate_experiment_v6/plan/PLAN.md).
 
 ---
 
 ### Running the Experiment
 
-Both Phase 1 and Phase 2 scripts score pre-embedded transcripts — no API key or external calls required at runtime. The transcripts were generated during the investigation sessions (via Claude Code agent dispatches) and baked into the scripts. Running the scripts just scores them and writes results JSON.
+**Analysis and statistical tests — no API key required:**
 
-**Phase 2:**
+```bash
+cd self_debate_experiment_v6/
+uv run v6_analysis.py                    # All hypothesis tests (H1a, H1b, H2, H3, H4, H6)
+uv run ensemble_vs_baseline_test.py      # Paired bootstrap: ensemble_3x vs. baseline on IDR
+```
+
+Zero dependencies beyond Python 3.10+. Produces `v6_hypothesis_results.json`.
+
+**Full benchmark run — requires API keys:**
+
+Phases 5 and 6 require `OPENROUTER_API_KEY` (GPT-4o scoring via OpenRouter). Phase 9 additionally requires `CROSS_VENDOR_API_KEY`, `CROSS_VENDOR_BASE_URL`, and `CROSS_VENDOR_MODEL`. Set in `.claude/settings.local.json` (gitignored) or `UV.env` (loaded automatically by `uv run`). Entry point: [`self_debate_experiment_v6/plan/PLAN.md`](self_debate_experiment_v6/plan/PLAN.md).
+
+**v2 (historical, no API key required):**
+
+The v2 scripts score pre-embedded transcripts — useful for understanding the contaminated vs. isolated protocol distinction and the v2 rubric structure:
 
 ```bash
 cd self_debate_experiment_v2/
-python self_debate_poc.py
+uv run self_debate_poc.py
 ```
 
-Produces `self_debate_results.json`.
-
-**Phase 1:**
-
-```bash
-cd self_debate_experiment/
-python self_debate_poc.py       # Experiment 1: contaminated protocol, 11 cases
-python self_debate_experiment2.py  # Experiment 2: isolated protocol, 15 cases
-```
-
-Standard library only. No dependencies beyond Python 3.8+.
-
-**Model used:** All Phase 2 agent dispatches (Critic, Defender, Baseline, Scorer) used `claude-sonnet-4-6`. Judge adjudicates inline in the orchestrating session — not a separate subagent dispatch. Results are tied to this model family — a different model or significantly different capability tier would require re-running the benchmark to confirm findings hold.
-
-**Running the full multi-agent harness from scratch:**
-
-The bootstrap prompt in [`multi-agent-prompt.md`](multi-agent-prompt.md) will recreate the entire Phase 1 experiment using a team of Claude Code agents. Requires agent teams enabled:
-
-```bash
-export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
-claude --teammate-mode in-process
-```
-
-Then paste the contents of `multi-agent-prompt.md` as your first message.
+See [`self_debate_experiment_v2/README.md`](self_debate_experiment_v2/README.md) for the full case breakdown.
 
 ---
 
@@ -494,33 +491,17 @@ Possibly. All Phase 2 agent dispatches used `claude-sonnet-4-6`. A cross-capabil
 
 **Could using the same model family across all roles bias the results?**
 
-Yes — this is a known limitation. All agents (Critic, Defender, Judge, Scorer, and Baseline) used Claude. Systematic patterns in how the model processes prompts could inflate agreement rates or scoring consistency in ways that wouldn't generalize to other model families. The Haiku scorer validation showed no IDR bias at a different capability tier within the same family, but cross-vendor validation is still pending. The [technical report](TECHNICAL_REPORT.md) lists this explicitly under remaining limitations.
+Yes — this is a known limitation. All agents (Critic, Defender, Judge, Scorer, and Baseline) used Claude. Systematic patterns in how the model processes prompts could inflate agreement rates or scoring consistency in ways that wouldn't generalize to other model families. The Haiku scorer validation showed no IDR bias at a different capability tier within the same family, but cross-vendor validation is still pending. The [technical report](self_debate_experiment_v2/TECHNICAL_REPORT.md) lists this explicitly under remaining limitations.
 
 ---
 
 ### Should I Use ml-lab or Just Run an Ensemble?
 
-> **As of v2.0, ml-lab's default review mode is ensemble.** When you invoke ml-lab without specifying a review mode, it runs 3 independent `ml-critic` dispatches with union pooling — not the debate chain. The question below is about using a standalone external ensemble vs. invoking ml-lab at all, which provides the full investigation framework (agreed experiments, Gate 1, production re-evaluation, peer review, coherence audit) on top of whichever review mode you choose.
+**ml-lab's default review mode is ensemble** — when you invoke ml-lab, it runs 3 independent `ml-critic` dispatches with union pooling. The debate chain is opt-in. See [Part 2](#part-2-the-experiment-behind-ml-lab) for the formal evidence behind this decision.
 
-**It depends on what output you need.**
+**Use ensemble mode (default) when** you need a verdict on whether something is methodologically broken. Three independent critics at 3× compute formally outperform both single-pass baseline and the original debate protocol on issue detection recall and precision.
 
-A compute-matched ensemble — three independent assessors plus a synthesizer, no role differentiation — scores 0.754 vs. ml-lab's 0.970 on the same benchmark (p=0.004, r=0.758). For detecting whether something is broken, an ensemble gets you most of the way there at lower complexity and latency.
-
-**ml-lab has two structural properties that ensembles cannot replicate, and one portable one:**
-
-1. **Resolving genuinely two-sided disagreements** *(confirmed).* When both positions in an evaluation are defensible, parallel assessors converge on the intuitive answer — they don't argue. The debate's Critic/Defender assignment forces engagement with both sides. The clearest example: a case where an offline NDCG improvement was challenged by a reviewer's concern about offline-online correlation validity. The ensemble scored 0.000 (all three assessors ignored the reviewer's concern and agreed to run an A/B test). The debate correctly identified that a calibration study was needed first. This failure mode is structural to parallel ensemble design and cannot be fixed by adding more assessors.
-
-2. **Exoneration of valid work** *(5/5 correct, directional vs. ensemble 4/5).* ml-lab correctly exonerated valid work in all 5 false-positive trap cases; the ensemble exonerated 4 of 5. The 5/5 vs. 4/5 gap is below statistical threshold at n=5, and the mean-score advantage disappears under harmonized scoring. Treat the count advantage as directional, not confirmed.
-
-3. **Empirical test design** *(replicable with output constraint).* The debate reliably produces well-specified empirical tests; an unconstrained ensemble almost never does. But an ETD ablation showed that adding one explicit instruction to the ensemble synthesizer achieves ETD mean 0.962. ml-lab produces ETD because its prompt requires it, not because of adversarial role structure. You can get the same output from an ensemble by adding the same constraint.
-
-**Use ml-lab when** the output you need is *what experiment to run next*, or when you're evaluating work that might be valid and you need a dissenting voice that argues for it, not just against it.
-
-**Use an ensemble when** you need a verdict on whether something is broken and don't need a test specification. Simpler, faster, and empirically nearly as good for straightforward fault detection.
-
-> **v6 update (2026-04-11):** A subsequent larger experiment (v6, 120 cases, harder benchmark, GPT-4o scorer) formally tested ensemble vs. debate at matched compute using fair-comparison scoring (IDR, IDP, DRQ, FVC — no DC). Result: ensemble_3x formally outperforms isolated_debate, paired bootstrap CI = [−0.0434, −0.0154], excluding zero. The v2 fair-comparison gap (+0.076 after ETD ablation) was effectively zero; v6 on harder cases with more statistical power shows it is formally negative. **For fault detection on critique/defense cases, ensemble is the recommended approach.** The debate protocol's mixed-case structural advantage (FVC on empirically ambiguous cases) was confirmed in v6: multiround FVC_mixed = 0.3667 vs. baseline = 0.0. Use debate when you expect genuinely two-sided cases. See `self_debate_experiment_v6/FINAL_SYNTHESIS.md`.
->
-> **v6 follow-up (2026-04-11):** Per-tier precision analysis (`v6_minority_precision.py`, 180 GPT-4o calls) confirmed that minority-flagged issues (raised by 1/3 assessors) are not less precise than unanimous issues: precision 0.946 vs. 0.929, diff = +0.017, 95% CI [−0.028, +0.068]. **Union output is empirically safe on both recall (+9.5pp IDR) and precision (no tier-level penalty).** Deploy ensemble with union issue output, not majority-vote verdict collapse. See `self_debate_experiment_v6/ENSEMBLE_ANALYSIS.md §7`.
+**Use debate mode when** the hypothesis involves genuine empirical ambiguity — where the right answer is "run this test first" rather than a binary verdict. Multiround iterative exchange achieves FVC_mixed = 0.3667 vs. baseline 0.0; ensemble is structurally incapable of producing `empirical_test_agreed` resolutions.
 
 **Honest caveats:** The structural advantage evidence is primarily from synthetic benchmarks. An external exoneration benchmark was subsequently run: 3 defense_wins-type cases from peer-reviewed ML work (BERT/SQuAD 1.1, ResNet-152/ImageNet, clinical 5-fold CV), where a critique could be raised but the methodology is genuinely sound. Debate protocol passed all 3 (mean 0.875); baseline passed 0/3 on rubric (DC=0.0 structural rule) but reached correct verdict label in all 3. The exoneration pattern holds on externally grounded cases. The ETD advantage is confirmed as an output-constraint prompt effect (not an architecture effect) by ablation. See [`external_exoneration_results.json`](self_debate_experiment_v2/external_exoneration_results.json).
 
@@ -535,7 +516,13 @@ A compute-matched ensemble — three independent assessors plus a synthesizer, n
 
 | Location | Contents |
 |----------|----------|
-| [`TECHNICAL_REPORT.md`](TECHNICAL_REPORT.md) | **Definitive technical report** — all findings, decomposition, external validation, limitations |
+| [`self_debate_experiment_v6/FINAL_SYNTHESIS.md`](self_debate_experiment_v6/FINAL_SYNTHESIS.md) | **Authoritative v6 summary** — all hypothesis verdicts (paired bootstrap), peer review corrections, production recommendation |
+| [`self_debate_experiment_v6/RESEARCH_REPORT.md`](self_debate_experiment_v6/RESEARCH_REPORT.md) | v1–v6 research arc synthesis — 270 journal entries, 381 commits |
+| [`self_debate_experiment_v6/ENSEMBLE_ANALYSIS.md`](self_debate_experiment_v6/ENSEMBLE_ANALYSIS.md) | Ensemble design, H2 results, minority-flagged precision follow-up (§7) |
+| [`self_debate_experiment_v6/CONCLUSIONS.md`](self_debate_experiment_v6/CONCLUSIONS.md) | v6 per-hypothesis conclusions (Q1–Q4) |
+| [`self_debate_experiment_v6/REPORT.md`](self_debate_experiment_v6/REPORT.md) | v6 full technical report — 120-case benchmark results |
+| [`self_debate_experiment_v6/plan/PLAN.md`](self_debate_experiment_v6/plan/PLAN.md) | v6 10-phase experimental design, reference documents |
+| [`self_debate_experiment_v2/TECHNICAL_REPORT.md`](self_debate_experiment_v2/TECHNICAL_REPORT.md) | **v2 technical report** — all v2 findings, decomposition, external validation, limitations |
 | [`plugins/ml-lab/`](plugins/ml-lab/) | Plugin source: all seven agent definitions, install config, and flow diagram |
 | [`multi-agent-prompt.md`](multi-agent-prompt.md) | Bootstrap prompt for the full multi-agent harness |
 | [`self_debate_experiment/`](self_debate_experiment/) | Phase 1: frozen transcripts, contaminated + isolated protocol, 11–15 cases |
