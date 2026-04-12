@@ -361,13 +361,21 @@ The conditional forced-multiround (CFM) gate fires on 94.7% of cases (341/360). 
 
 ---
 
-*Figure placeholders:*
+![Figure 1. IDR by condition on regular cases (n = 80). Ensemble_3x (green, bold edge) is the only condition to formally outperform all others. Baseline reference line at IDR = 0.6712. All conditions use 3× compute except Baseline (1×) and Multiround (~5×).](figures/figure1_idr_by_condition.png)
 
-**Figure 1 (suggested).** Bar chart of IDR by condition on regular cases (n = 80). Highlights the ensemble_3x advantage over all other conditions and the near-equivalence of baseline and isolated_debate.
+**Figure 1.** IDR by condition on regular cases (n = 80). Ensemble_3x achieves IDR = 0.7717, the highest of all conditions. Isolated_debate (0.6603) falls below the 1× baseline (0.6712). Source: `v6_hypothesis_results.json` descriptive means.
 
-**Figure 2 (suggested).** 2x2 matrix: task type (convergent/divergent) x method (debate/ensemble). Cells contain primary metric and direction of effect. Illustrates the task-type interaction framework.
+---
 
-**Figure 3 (optional).** IDR by condition, stratified by case source (RC real papers vs. synthetic). Shows the ensemble advantage is 3x larger on real papers.
+![Figure 2. 2×2 convergent/divergent task-type interaction matrix. Green cells = method wins; red cells = method fails. Post-hoc framework — not pre-registered.](figures/figure2_task_type_matrix.png)
+
+**Figure 2.** Convergent/divergent task-type interaction. Ensemble dominates divergent detection (IDR = 0.7717, H2 CI [−0.0434, −0.0154]); multiround dominates convergent judgment (FVC_mixed = 0.3667 vs. ensemble 0.025). The interaction is post-hoc and awaits prospective confirmation.
+
+---
+
+![Figure 3. IDR by condition stratified by case source. Dark blue = real ReScience C papers (RC, n=25); light blue = synthetic planted-corruption cases (n=55). Ensemble IDR advantage is ~3× larger on real papers (+0.172) than synthetic (+0.059). RC subgroup underpowered for formal significance testing.](figures/figure3_rc_stratified_idr.png)
+
+**Figure 3.** IDR by condition, stratified by case source. Source: `ENSEMBLE_ANALYSIS.md` §8. RC subgroup (n = 25) results are descriptive only; no CIs reported.
 
 ---
 
