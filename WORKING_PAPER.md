@@ -194,9 +194,12 @@ The results reveal a task-type interaction that explains the apparent contradict
 
 We note that this convergent/divergent distinction is a post-hoc interpretive framework consistent with the data, not a pre-registered contrast. The pattern is suggestive and reconciles the debate literature, but should be tested prospectively. Du et al.'s (2024) math tasks and ChatEval's (Chan et al., 2024) evaluation tasks are convergent — debate helps agents converge on correct answers. The methodology flaw detection in our benchmark is divergent — debate's adversarial pressure suppresses independent discovery. The key variable is whether the goal is to find one right answer (convergent) or to find all problems (divergent).
 
-![Figure 2. 2×2 convergent/divergent task-type interaction matrix. Green = method wins on that cell's primary metric; red = method fails. Post-hoc framework — not pre-registered.](figures/figure2_task_type_matrix.png)
+**Table 6. Convergent/divergent task-type interaction** *(post-hoc framework — not pre-registered)*
 
-**Figure 2.** Task-type interaction. Ensemble wins on divergent detection (top-left); multiround wins on convergent judgment (bottom-right). Both methods fail in the off-diagonal cells.
+| | **Ensemble / Independent** | **Debate / Adversarial** |
+|---|---|---|
+| **Divergent detection** *(find all flaws)* | **Ensemble 3×** — IDR = 0.7717 ✓ H2: CI [−0.0434, −0.0154] excludes zero | **Isolated Debate** — IDR = 0.6603 ✗ CI spans zero; 3× compute, no recall gain over baseline |
+| **Convergent judgment** *(assess testability)* | **Ensemble 3×** — FVC_mixed = 0.025 ✗ Structurally bounded near zero; binary verdicts cannot produce ambiguity recognition | **Multiround (~5×)** — FVC_mixed = 0.3667 ✓ Iterative exchange required for `empirical_test_agreed` resolution |
 
 ### 5.2 Dimension Decomposition
 
