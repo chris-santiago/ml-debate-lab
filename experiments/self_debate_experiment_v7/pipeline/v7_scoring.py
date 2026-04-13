@@ -881,13 +881,15 @@ def run_analysis():
             mixed_score_lists[condition][cid].append(score_dict)
 
         # H5: extract per-case issue classification for ensemble_3x (Phase 6 data)
+        # Paired test — require both tiers present and non-None for the same case
         if condition == "ensemble_3x" and category == "regular":
             issue_map = file_rescore.get("per_case_issue_map", {})
             tier_precisions = issue_map.get("tier_precisions", {})
-            if "1of3" in tier_precisions:
-                h5_precision_1of3.append(tier_precisions["1of3"])
-            if "3of3" in tier_precisions:
-                h5_precision_3of3.append(tier_precisions["3of3"])
+            p_1of3 = tier_precisions.get("1of3")
+            p_3of3 = tier_precisions.get("3of3")
+            if isinstance(p_1of3, (int, float)) and isinstance(p_3of3, (int, float)):
+                h5_precision_1of3.append(p_1of3)
+                h5_precision_3of3.append(p_3of3)
 
     # Average accumulated runs into final per-case dicts
     def _avg_score_lists(score_lists, dims):
@@ -937,6 +939,71 @@ def run_analysis():
         framework = "NOT CONFIRMED"
     results["framework_verdict"] = framework
 
+    # H4 secondary: RC vs synthetic subgroup (descriptive only)
+    rc_case_ids = {c["case_id"] for c in cases_list if c.get("is_real_paper_case")}
+    ensemble_reg = regular_scores.get("ensemble_3x", {})
+    baseline_reg = regular_scores.get("baseline", {})
+    common_reg = sorted(set(ensemble_reg) & set(baseline_reg))
+
+    rc_deltas, synth_deltas = [], []
+    for cid in common_reg:
+        e_idr = ensemble_reg[cid].get("IDR")
+        b_idr = baseline_reg[cid].get("IDR")
+        if e_idr is not None and b_idr is not None:
+            delta = e_idr - b_idr
+            if cid in rc_case_ids:
+                rc_deltas.append(delta)
+            else:
+                synth_deltas.append(delta)
+
+    rc_mean = round(sum(rc_deltas) / len(rc_deltas), 6) if rc_deltas else None
+    synth_mean = round(sum(synth_deltas) / len(synth_deltas), 6) if synth_deltas else None
+    results["H4_secondary"] = {
+        "test": "H4_secondary",
+        "description": "IDR delta (ensemble-baseline) by source type",
+        "rc_n": len(rc_deltas),
+        "rc_delta_mean": rc_mean,
+        "synthetic_n": len(synth_deltas),
+        "synthetic_delta_mean": synth_mean,
+        "rc_larger": (rc_mean or 0) > (synth_mean or 0),
+        "note": "descriptive only — n too small for formal test",
+    }
+
+    # idr_novel per condition (plan step 7.7, paper footnote)
+    idr_novel_by_condition = defaultdict(list)
+    for fname, score in rescored.items():
+        if score.get("idr_novel") is not None:
+            parts = fname.split("__")
+            cond = parts[1] if len(parts) >= 2 else "unknown"
+            idr_novel_by_condition[cond].append(score["idr_novel"])
+    results["idr_novel"] = {
+        cond: {
+            "n": len(vals),
+            "mean": round(sum(vals) / len(vals), 4) if vals else None,
+        }
+        for cond, vals in sorted(idr_novel_by_condition.items())
+    }
+
+    # Per-condition summary stats (plan step 7.3)
+    summary = {}
+    for cond in CONDITIONS:
+        cond_scores = regular_scores.get(cond, {})
+        cond_mixed = mixed_scores.get(cond, {})
+        row = {}
+        for dim in FAIR_COMPARISON_DIMS + ["FC"]:
+            vals = [cs[dim] for cs in cond_scores.values() if cs.get(dim) is not None]
+            row[dim] = {
+                "n": len(vals),
+                "mean": round(sum(vals) / len(vals), 4) if vals else None,
+            }
+        fvc_mixed_vals = [cs["FVC"] for cs in cond_mixed.values() if cs.get("FVC") is not None]
+        row["FVC_mixed"] = {
+            "n": len(fvc_mixed_vals),
+            "mean": round(sum(fvc_mixed_vals) / len(fvc_mixed_vals), 4) if fvc_mixed_vals else None,
+        }
+        summary[cond] = row
+    results["condition_summary"] = summary
+
     # Write results
     json.dump(results, open(output_path, "w"), indent=2)
     print(f"\nResults written to {output_path}")
@@ -946,6 +1013,15 @@ def run_analysis():
             pe = test_result.get("point_estimate", "N/A")
             v = test_result["verdict"]
             print(f"  {test_name}: {v} (delta={pe})")
+
+    # Print condition summary table
+    print("\nCondition Summary (regular cases):")
+    print(f"{'Condition':<20} {'IDR':>8} {'IDP':>8} {'DRQ':>8} {'FVC':>8} {'FC':>8} {'FVC_mx':>8}")
+    for cond in CONDITIONS:
+        row = summary.get(cond, {})
+        vals = [f"{row.get(d, {}).get('mean', 0) or 0:.4f}" for d in ["IDR", "IDP", "DRQ", "FVC", "FC"]]
+        fvc_mx = f"{row.get('FVC_mixed', {}).get('mean', 0) or 0:.4f}"
+        print(f"  {cond:<18} {'  '.join(vals)}  {fvc_mx}")
 
 
 # ===========================================================================
