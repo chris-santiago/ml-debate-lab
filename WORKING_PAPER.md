@@ -1,4 +1,4 @@
-# Independent Redundancy Outperforms Adversarial Debate for LLM-Based Methodology Review
+# When Does Debate Help? A Pre-Registered Test of the Convergent/Divergent Framework for Multi-Agent LLM Evaluation
 
 **Draft — not for distribution**
 
@@ -6,7 +6,7 @@
 
 ## Abstract
 
-Multi-agent debate is increasingly adopted for LLM-based evaluation, but recent work questions whether adversarial structure adds value beyond additional compute. We present a controlled comparison on 120 ML methodology review cases (80 regular, 40 mixed) scored by a cross-vendor evaluator (GPT-4o scoring Claude outputs). At matched compute (3x baseline), an ensemble of three independent critics with union-of-issues pooling formally outperforms structured critic-defender-adjudicator debate on both issue detection recall (IDR delta = +0.1114, the largest single-dimension effect in the experiment) and fair-comparison composite (FC delta = +0.0287, 95% CI [+0.0154, +0.0434], paired bootstrap). The FC composite understates the effect because two of four dimensions (DRQ, FVC) are flat across conditions; the IDR advantage is the primary driver. Debate is not significantly different from single-pass baseline (FC delta = -0.0026, CI [-0.0108, +0.0059]; note: this is non-significance, not formal equivalence — a TOST equivalence test was not conducted). However, iterative multi-round debate produces correct empirical-ambiguity recognition on 36.7% of mixed cases versus 0% for baseline and 2.5% for ensemble — a capability that independent sampling cannot replicate. Union pooling recovers 11 additional ground-truth issues (+9.5 percentage points recall) with no significant precision difference across support tiers (minority-flagged precision 0.946 vs. unanimous 0.929, p = 0.258, n = 1,463 clusters). These results motivate a post-hoc hypothesis: task type (convergent vs. divergent) predicts when debate helps. Ensemble dominates for divergent detection (find all flaws), while debate retains structural value for convergent judgment (assess empirical testability) — though the mixed-case comparison remains formally inconclusive (FVC_mixed CI spans zero, n = 40). If confirmed prospectively, this framework would reconcile conflicting findings in the multi-agent debate literature.
+Multi-agent debate is increasingly used for LLM-based evaluation, but whether adversarial structure or independent redundancy better serves different evaluation tasks remains unclear. We propose and test a framework: **divergent detection** (finding issues) benefits from independent redundancy, while **convergent judgment** (recognizing ambiguity) benefits from iterative adversarial exchange. In a pilot study (Study 1: 120 cases, 6 conditions), a compute-matched ensemble of three independent critics outperforms structured debate on issue detection, while multi-round debate uniquely enables correct ambiguity recognition — motivating the framework as a post-hoc hypothesis. In a pre-registered confirmatory study (Study 2: 280 cases, 4 conditions, cross-vendor scorer), both predictions hold at matched 3× compute. Ensemble achieves IDR 0.803 vs. multiround IDR 0.634 (Δ = +0.169, CI [+0.139, +∞)). Multiround achieves FVC_mixed 0.731 vs. ensemble 0.506 (Δ = +0.225, CI [+0.192, +∞)). Six of eight hypotheses pass. Two fail informatively: isolated debate degrades verdict quality versus baseline (−0.050 FC), and minority-flagged issues carry a precision penalty (−0.080). The practical recommendation: use ensemble for detection, multiround with information-passing for judgment, and neither for defense-case exoneration.
 
 ---
 
@@ -16,15 +16,17 @@ Multi-agent debate — where LLM instances argue opposing positions before a jud
 
 Recent empirical work, however, challenges this assumption. Smit et al. (2024) show that multi-agent debate does not reliably outperform self-consistency and ensembling on math and reasoning benchmarks. Zhang et al. (2025) systematically evaluate five debate methods across nine benchmarks and four models, finding that debate fails to outperform Chain-of-Thought and Self-Consistency at matched compute. Most strikingly, Choi et al. (2025) prove that debate induces a *martingale* over agents' belief trajectories — the debate mechanism itself does not improve expected correctness, and majority voting alone accounts for most gains attributed to multi-agent debate.
 
-These findings share a limitation: they evaluate debate on **convergent** tasks with single correct answers — mathematical reasoning, factual question answering, and logical deduction. Applied evaluation domains present a fundamentally different challenge. In ML methodology review, the task is **divergent**: identify *all* flaws in a research methodology, not converge on a single right answer. Whether debate's adversarial structure helps or hurts in this regime is an open empirical question that cannot be resolved by extrapolation from convergent benchmarks.
+These findings share a limitation: they evaluate debate on **convergent** tasks with single correct answers — mathematical reasoning, factual question answering, and logical deduction. Applied evaluation domains present a fundamentally different challenge. In ML methodology review, the task is **divergent**: identify *all* flaws in a research methodology, not converge on a single right answer. Whether debate's adversarial structure helps or hurts in this regime is an open empirical question.
 
-We address this gap with a controlled experiment comparing six conditions on 120 ML methodology review cases with planted ground-truth flaws, scored by GPT-4o (breaking the closed-loop confound of same-model evaluation). Our contributions are:
+We address this gap with a two-study investigation. Study 1 (pilot, 120 cases, 6 conditions) establishes the pattern: at matched compute, ensemble outperforms debate for issue detection, but multi-round debate uniquely enables ambiguity recognition. This motivates a post-hoc framework: **divergent detection** benefits from independent redundancy, **convergent judgment** benefits from iterative exchange. Study 2 (confirmatory, 280 cases, 4 conditions, pre-registered hypotheses, cross-vendor scorer) tests both predictions prospectively and confirms both with large effects.
 
-1. **Compute-matched comparison.** At 3x baseline compute, three independent critics with union-of-issues pooling formally outperform structured debate (critic + defender + adjudicator). Debate is not significantly different from a 1x baseline (CI spans zero), meaning the adversarial structure spends 3x compute to achieve no measurable benefit on methodology review.
+Our contributions are:
 
-2. **Convergent/divergent task-type interaction.** We observe that the same experimental setup produces opposite patterns depending on task type. On divergent detection (find all flaws), ensemble dominates. On convergent judgment (assess empirical testability of ambiguous cases), multi-round debate produces correct ambiguity recognition at 36.7% versus 0% for baseline — a capability structurally absent from independent sampling. We propose this as a post-hoc framework for reconciling conflicting results in the debate literature; the mixed-case comparison is descriptive (the formal test remains inconclusive at n = 40).
+1. **A convergent/divergent framework for compute allocation.** We formalize the observation that task type determines which multi-agent architecture wins: ensemble for divergent detection, multiround debate for convergent judgment. Both predictions are prospectively confirmed in Study 2 (P1: Δ = +0.169 IDR; P2: Δ = +0.225 FVC_mixed).
 
-3. **Union-of-issues pooling with precision validation.** We invert Wang et al.'s (2023) majority-vote aggregation for detection tasks and validate that minority-flagged findings (raised by only 1 of 3 assessors) carry equal precision to unanimously flagged findings (0.946 vs. 0.929, p = 0.258, n = 1,463 issue clusters), recovering +9.5 percentage points of recall at no measured precision cost.
+2. **Pilot-to-confirmation progression.** Study 1's post-hoc framework (inconclusive at n = 40 mixed cases, unmatched compute for multiround) becomes Study 2's pre-registered prediction (significant at n = 80, compute-matched at 3×). Two Study 1 conclusions are revised: precision parity is overturned (minority-flagged issues carry a −0.080 penalty at larger scale) and debate-baseline equivalence is overturned (debate is actively worse: −0.050 FC).
+
+3. **Information-passing as binding mechanism.** Study 2 isolates defender visibility into the critique as the causal variable for convergent judgment (H3: Δ = +0.125 FVC_mixed, CI [+0.088, +∞)). The mechanism is not adversarial structure per se — it is the defender's ability to engage with specific claims.
 
 ---
 
@@ -38,11 +40,11 @@ However, a growing body of work finds debate underperforms simpler alternatives.
 
 La Malfa et al. (2025) argue that current multi-agent LLM implementations lack genuine multi-agent characteristics — autonomy, structured environments, and social interaction. Parrish et al. (2022) provide an early negative result in a different modality: two-turn debate does not help humans answer hard reading comprehension questions.
 
-Critically, Kenton et al. (2024) show debate robustly outperforms consultancy (a 1x-compute alternative) across all tasks. This is consistent with our finding: debate wins uncontrolled comparisons against lower-compute baselines but loses the compute-matched comparison. The compute-matching control is what changes the conclusion.
+Critically, Kenton et al. (2024) show debate robustly outperforms consultancy (a 1x-compute alternative) across all tasks. This is consistent with a pattern we formalize here: debate wins uncontrolled comparisons against lower-compute baselines but the picture changes under compute-matched comparison with independent redundancy.
 
 ### LLM-Based Scientific Review
 
-AgentReview (Jin et al., 2024) simulates peer review with LLM agents, finding 37.1% variation in decisions due to reviewer biases. LimitGen (Xu et al., 2025) establishes that current LLMs struggle with scientific limitation identification. DeepReview (2025) uses a multi-stage retrieval-and-argumentation pipeline. ReViewGraph (Li et al., 2025) encodes reviewer-author debates as heterogeneous graphs. None of these include compute-matched ensemble baselines or planted ground-truth methodology flaws.
+AgentReview (Jin et al., 2024) simulates peer review with LLM agents, finding 37.1% variation in decisions due to reviewer biases. LimitGen (Xu et al., 2025) establishes that current LLMs struggle with scientific limitation identification. DeepReview (2025) uses a multi-stage retrieval-and-argumentation pipeline. ReViewGraph (Li et al., 2025) encodes reviewer-author debates as heterogeneous graphs. None include compute-matched ensemble baselines or planted ground-truth methodology flaws.
 
 ### Self-Consistency and Ensemble Methods
 
@@ -50,7 +52,7 @@ Wang et al. (2023) introduce self-consistency: sample diverse reasoning paths, t
 
 ### Evaluation Bias
 
-Zheng et al. (2023) establish the LLM-as-judge paradigm with MT-Bench, documenting position bias, verbosity bias, and self-enhancement bias. Panickssery et al. (2024) sharpen this to self-preference bias specifically — LLM evaluators recognize and favor their own generations. Prior work in our experimental series measured a cross-vendor IDR delta of -0.7737 when comparing Claude-scoring-Claude against GPT-4o-mini-scoring-Claude on identical outputs, confirming the closed-loop confound is severe in methodology review. This motivated our use of GPT-4o as the primary scorer for all semantic dimensions.
+Zheng et al. (2023) establish the LLM-as-judge paradigm with MT-Bench, documenting position bias, verbosity bias, and self-enhancement bias. Panickssery et al. (2024) sharpen this to self-preference bias specifically — LLM evaluators recognize and favor their own generations. Prior work in our experimental series measured a cross-vendor IDR delta of −0.7737 when comparing same-model against cross-vendor scoring on identical outputs, confirming the closed-loop confound is severe in methodology review. Both studies use cross-vendor scorers: GPT-4o (Study 1) and gpt-5.4-mini (Study 2).
 
 ### Sycophancy and Conformity in Debate
 
@@ -62,233 +64,244 @@ Wynn et al. (2025) demonstrate that debate corrupts correct answers through syco
 
 ### 3.1 Benchmark Design
 
-We constructed a benchmark of 120 ML methodology review cases in three categories:
+The confirmatory study (Study 2) uses a benchmark of 280 ML methodology review cases in three strata:
 
-- **Critique cases (n = 60):** Each case presents an ML methodology with 1-5 planted flaws. Ground truth includes `must_find` issues (flaws the reviewer must identify), `acceptable_resolutions`, and `correct_position = critique_wins`.
-- **Mixed cases (n = 40):** Cases where the methodology is empirically ambiguous — the correct resolution is `empirical_test_agreed`, requiring the reviewer to recognize that a definitive verdict cannot be reached without further evidence.
-- **Defense cases (n = 20):** Cases with valid methodology where the correct verdict is `defense_wins` — the reviewer should identify no critical flaws.
+- **Regular (n = 160):** Planted methodology flaws where `critique_wins` is correct. 5 extracted from ReScience C (RC) publications, 155 synthetic.
+- **Mixed (n = 80):** Empirically ambiguous designs where `empirical_test_agreed` is correct — the reviewer must recognize that a definitive verdict requires further evidence. 50 RC-sourced, 30 synthetic.
+- **Defense (n = 40):** Sound methodologies where `defense_wins` is correct — the reviewer should identify no critical flaws. 18 RC, 22 synthetic.
 
-Of the 80 regular cases (critique + defense), 25 are derived from real ReScience C reproducibility papers (2020-2021 editions) and 55 are synthetically generated with planted corruptions. All 40 mixed cases are synthetically generated via an ambiguity taxonomy pipeline (see Appendix B.4) — the real-paper grounding applies only to the critique and defense strata. The benchmark underwent five prior calibration rounds (v1-v5) that progressively increased difficulty and addressed scoring artifacts. Full benchmark construction methodology — including pipeline architecture, model assignments, contamination prevention, and difficulty calibration — is described in Appendix B.
+Cases are generated via a multi-stage pipeline with cross-family model assignments at each stage to prevent same-family calibration bias (see Appendix B). The RC papers are drawn from ReScience C 2020–2021 reproducibility reports. The benchmark underwent seven prior calibration rounds that progressively increased difficulty and addressed scoring artifacts; Study 1 used a 120-case subset (80 regular, 40 mixed) from an earlier pipeline generation.
 
-### 3.2 Conditions
+### 3.2 Pilot Study (Study 1)
 
-We evaluate six conditions at varying compute budgets:
+Study 1 evaluated six conditions on 120 cases (80 regular, 40 mixed) scored by GPT-4o (cross-vendor):
 
 | Condition | Architecture | Compute |
 |---|---|---|
-| **baseline** | Single-pass critic | 1x |
-| **isolated_debate** | Critic -> Defender -> Adjudicator | 3x |
-| **ensemble_3x** | 3 independent critics (no cross-visibility) | 3x |
-| **biased_debate** | Persona-biased critic -> Defender -> Adjudicator | 3x |
-| **multiround** | Iterative critic-defender exchange (2+ rounds) | 3x+ |
-| **conditional_fm** | Gate-controlled multiround (stops if round 1 resolves issues) | variable |
+| baseline | Single-pass critic | 1× |
+| isolated_debate | Critic → Defender → Adjudicator | 3× |
+| ensemble_3x | 3 independent critics, union pooling | 3× |
+| biased_debate | Persona-biased Critic → Defender → Adjudicator | 3× |
+| multiround | Iterative critic-defender exchange (2+ rounds) | ~5× |
+| conditional_fm | Gate-controlled multiround | variable |
 
-The critical comparison is **isolated_debate** vs. **ensemble_3x**: both use approximately 3x baseline compute, but the structural difference is complete. Isolated debate routes compute through adversarial exchange (critic argues with defender, adjudicator synthesizes). Ensemble routes compute through independent redundancy (three critics assess independently, with no cross-assessor visibility). Conditional_fm is a variant of multiround with an early-stopping gate; its results are reported in Appendix A.3 and excluded from the main results tables as it is functionally equivalent to multiround (the gate fires on 94.7% of cases).
+**Four motivating findings:**
 
-### 3.3 Scoring
+1. **Ensemble outperforms debate on detection.** At matched 3× compute, ensemble IDR (0.772) exceeds isolated debate (0.660). The ensemble-vs-baseline test (post-hoc) showed IDR Δ = +0.100, CI [+0.043, +0.165] — the only formally significant effect involving ensemble.
 
-All outputs are scored by GPT-4o via OpenRouter, breaking the closed-loop confound of same-model evaluation. Scoring spans five dimensions:
+2. **Debate is not significantly different from baseline.** Isolated debate FC Δ = −0.003, CI [−0.011, +0.006]. The CI spans zero; debate spends 3× compute with no measurable benefit on regular-case composite score.
 
-- **IDR (Issue Detection Recall):** Fraction of planted `must_find` issues correctly identified.
-- **IDP (Issue Detection Precision):** Fraction of flagged issues that are valid (not false positives). For debate conditions, IDP_adj reflects adjudicator-filtered precision.
-- **DRQ (Design Resolution Quality):** Quality of the reviewer's design-level recommendations.
-- **FVC (Finding-Verdict Consistency):** Alignment between identified issues and the overall verdict.
-- **ETD (Empirical Test Design):** Quality of proposed empirical tests (mixed cases only).
+3. **Multiround uniquely enables ambiguity recognition.** Multiround achieves FVC_mixed = 0.367, while baseline and ensemble score near zero. Iterative adversarial exchange is structurally necessary for agents to recognize empirical ambiguity — a capability absent from independent sampling over binary verdicts.
 
-**Fair Comparison (FC)** is the per-case mean of IDR, IDP_adj, DRQ, and FVC (ETD excluded for regular cases). Each case-condition pair is scored across 3 independent runs. All confidence intervals use paired bootstrap on case-level differences (n = 10,000 resamples, seed = 42).
+4. **No precision penalty for minority-flagged issues.** In a follow-up analysis (180 GPT-4o classification calls), minority (1/3) precision = 0.946 vs. unanimous (3/3) = 0.929; Δ = +0.017, CI [−0.028, +0.068], p = 0.258.
 
-**Ensemble aggregation** uses a split rule: **union** for IDR (credit if *any* assessor found the issue, maximizing recall) and **majority vote** for verdict dimensions (2-of-3 agreement, preserving verdict precision). This asymmetry is intentional: the most recall-favorable rule for recall metrics, and the most conservative rule for verdict metrics. IDP for ensemble conditions reports the mean per-assessor precision (each assessor's precision averaged across runs and assessors); it was not explicitly assigned to either aggregation rule in the design documents — the high value (0.9861) reflects baseline-style assessors' low false-positive rate rather than an aggregation effect. The separate tier-level precision analysis in Section 5.4 uses a different method (GPT-4o cluster classification) and produces a pooled precision of 0.939, consistent with including novel-but-unplanted findings in the denominator.
+**Four weaknesses motivating Study 2:**
 
-### 3.4 Cross-Vendor Scoring Motivation
+1. **Post-hoc framework.** The convergent/divergent distinction was proposed after observing the data, not before.
+2. **Compute mismatch.** Multiround used ~5× compute (median 2 full rounds × 2 agents + adjudicator), not the 3× budget of ensemble. The FVC_mixed advantage could reflect compute surplus, not structural superiority.
+3. **Underpowered mixed-case test.** The formal debate-vs-ensemble test on mixed FVC was inconclusive (CI spans zero, n = 40).
+4. **No equivalence test for H1a.** Non-significance does not imply equivalence; a TOST procedure was not pre-specified.
 
-In the preceding experimental series (v5), we measured a cross-vendor IDR delta of -0.7737 between Claude scoring its own outputs and GPT-4o-mini scoring the same outputs. This is substantially larger than self-preference effects reported in the general literature (Panickssery et al., 2024) and likely reflects domain-specific amplification: in methodology review, critic and scorer share systematic biases about what constitutes a valid concern. All v6 semantic scoring uses GPT-4o to eliminate this confound.
+These weaknesses directly shaped Study 2's design: pre-registered hypotheses, compute-matched multiround (3× budget, 2 rounds), larger mixed stratum (n = 80), and TOST equivalence test for H1a.
+
+### 3.3 Confirmatory Study (Study 2)
+
+Study 2 evaluates four conditions at matched compute:
+
+| Condition | Architecture | Compute |
+|---|---|---|
+| **baseline** | Single-pass critic | 1× |
+| **isolated_debate** | Critic + blind Defender + Adjudicator | 3× |
+| **ensemble_3x** | 3 independent critics, union pooling | 3× |
+| **multiround_2r** | Critic + informed Defender + Adjudicator | 3× |
+
+All conditions use Claude Sonnet 4.6 as the generation model. Each case is evaluated 3 times per condition (3,360 total outputs). The critical structural difference between isolated_debate and multiround_2r is whether the defender sees the critique: in isolated_debate, the defender argues methodology in the abstract; in multiround_2r, the defender responds to the specific critique.
+
+**Scoring.** All semantic scoring uses gpt-5.4-mini via OpenRouter (cross-vendor):
+
+- **IDR (Issue Detection Recall):** Proportion of planted `must_find` issues found. Cross-vendor scored.
+- **IDP (Issue Detection Precision):** Proportion of raised issues that are genuine. Cross-vendor scored.
+- **DRQ/FVC (Verdict Quality):** Rule-based scoring against ground-truth verdicts. DRQ = FVC on regular cases (where `acceptable_resolutions = [correct_position]`).
+- **FC (Fair Comparison):** mean(IDR, IDP, DRQ, FVC). Note: FC double-weights the verdict dimension on regular cases since DRQ = FVC.
+- **FVC_mixed:** FVC on mixed stratum only.
+
+**Pre-registration.** Eight hypotheses were registered before data collection:
+
+| ID | Prediction | Type |
+|---|---|---|
+| **P1** | Ensemble IDR > Multiround IDR (regular) | One-sided |
+| **P2** | Multiround FVC_mixed > Ensemble FVC_mixed (mixed) | One-sided |
+| H1a | Isolated debate ≈ Baseline (FC, equivalence ±0.015) | TOST |
+| H2 | Ensemble vs. Isolated debate (FC regular; FVC mixed) | Two-sided |
+| H3 | Multiround > Isolated debate (FVC_mixed) | One-sided |
+| H4 | Ensemble > Baseline (IDR, replication of Study 1) | One-sided |
+| H5 | 1/3-flagged precision ≈ 3/3-flagged precision (±0.03) | TOST |
+
+**Equivalence bounds.** The H1a bound (±0.015 FC) was set between the Study 1 CI half-width (~0.010, the noise floor) and half the Study 1 ensemble FC advantage (0.029 / 2 ≈ 0.014), ensuring it exceeds measurement noise without being vacuously wide. The H5 bound (±0.03 precision) was set above the Study 1 observed tier difference (+0.017), representing ~3 percentage points on a scale where both tiers exceeded 0.92 — practically negligible for a pooling recommendation.
+
+### 3.4 Statistical Methods
+
+All hypothesis tests use paired bootstrap (n = 10,000, seed = 42, α = 0.05). Case-level differences are resampled with replacement. One-sided tests for directional predictions (P1, P2, H3, H4); two-sided for non-directional (H1a, H2, H5). Stability verified at seed = 99 (7/8 tests within ±0.001 CI drift; H2_mix upper bound drifted 0.002 — verdict unaffected). No multiple comparison correction; pre-registration controls family-wise error rate by binding the analysis to the specified tests.
 
 ---
 
 ## 4. Results
 
-### 4.1 Main Results
+### 4.1 Framework Confirmation
 
-Table 1 presents per-condition means across 80 regular cases (60 critique + 20 defense). All debate conditions use 3 runs per case.
+Both primary predictions pass with large, non-overlapping effects:
 
-**Table 1: Main results on regular cases (n = 80)**
+**P1 — Divergent Detection (Ensemble Wins).** Ensemble IDR (0.803) exceeds multiround IDR (0.634): Δ = +0.169, 95% CI lower bound = +0.139. Three independent critics with union pooling find substantially more planted issues than iterative adversarial exchange at matched compute.
 
-| Condition | IDR | IDP_adj | DRQ | FVC | FC |
-|---|---|---|---|---|---|
-| baseline | 0.6712 | 0.9472 | 0.75 | 0.75 | 0.6785 |
-| isolated_debate | 0.6603 | 0.9639 | 0.75 | 0.75 | 0.6759 |
-| **ensemble_3x** | **0.7717** | **0.9861** | **0.75** | **0.75** | **0.7046** |
-| biased_debate | 0.6955 | 0.9250 | 0.75 | 0.75 | 0.6726 |
-| multiround | 0.6523 | 0.9750 | 0.6917 | 0.6917 | 0.6676 |
+**P2 — Convergent Judgment (Multiround Wins).** Multiround FVC_mixed (0.731) exceeds ensemble FVC_mixed (0.506): Δ = +0.225, 95% CI lower bound = +0.192. Iterative exchange with information-passing enables correct ambiguity recognition that independent critics cannot replicate. Multiround produces `empirical_test_agreed` on 46.3% of mixed runs; ensemble produces it on 1.3%.
 
-*Note: multiround uses variable compute (3x+). Each round consists of a critic call followed by a defender call; the adjudicator fires once at the end. With the observed median of 2 rounds, the typical multiround run involves approximately 5 agent calls (critic + defender + critic + defender + adjudicator), or roughly 5x baseline compute — exceeding the 3x budget of isolated_debate and ensemble_3x. Direct comparison between multiround and the 3x conditions is not compute-matched; multiround's FVC_mixed advantage (0.3667 vs. 0.025 for ensemble) should be interpreted with this additional compute cost in mind.*
+**Table 4. Framework confirmation (Study 2)**
 
-Ensemble_3x achieves the highest IDR (0.7717) and IDP_adj (0.9861) of all conditions. The IDR advantage over isolated_debate (+0.1114) is the largest single-dimension effect in the experiment. DRQ and FVC are flat at 0.75 across all non-multiround conditions, contributing no signal to the FC comparison — the effective discrimination rests on IDR and IDP. The 0.75 values are a composition artifact: critique cases (n = 60) score DRQ = FVC = 1.0 while defense cases (n = 20) score 0.0, and the 60:20 ratio produces the aggregate. Multiround's lower DRQ/FVC (0.6917) reflects cases where its verdict flipped incorrectly.
-
-*Note: IDP_adj equals IDP for non-debate conditions (baseline, ensemble_3x), which have no adjudicator stage.*
-
-![Figure 1. IDR by condition on regular cases (n = 80). Ensemble_3x (green, bold edge) achieves IDR = 0.7717, the highest of all conditions. Dashed line at baseline IDR = 0.6712. All conditions use 3× compute except Baseline (1×) and Multiround (~5×).](figures/figure1_idr_by_condition.png)
-
-**Figure 1.** IDR by condition, regular cases (n = 80). Source: `v6_hypothesis_results.json`.
-
-### 4.2 Hypothesis Tests
-
-**Table 2a: Pre-registered hypothesis tests (paired bootstrap, n = 10,000, seed = 42, regular cases n = 80, mixed cases n = 40)**
-
-| Test | Comparison | Delta | 95% CI | Verdict |
-|---|---|---|---|---|
-| H1a | debate vs. baseline (FC, regular) | -0.0026 | [-0.0108, +0.0059] | NOT SIGNIFICANT |
-| H1b | debate vs. baseline (FVC, mixed) | +0.0083 | [0.0, 0.025] | NOT SIGNIFICANT |
-| H2 regular | debate vs. ensemble (FC, regular) | -0.0287 | [-0.0434, -0.0154] | **FAIL (ensemble superior)** |
-| H2 mixed | debate vs. ensemble (FVC, mixed) | -0.0167 | [-0.075, +0.025] | INCONCLUSIVE |
-| H5 | cross-model scorer agreement | — | — | N/A — pre-empted by design‡ |
-
-‡*H5 was pre-registered to measure IDR/IDP agreement between GPT-4o and a secondary scorer. The decision to adopt GPT-4o as the sole primary scorer (Section 3.4) eliminated the closed-loop confound that H5 was designed to detect, making the test moot. Cross-model scorer validity is addressed by construction rather than by measurement.*
-
-**Table 2b: Post-hoc follow-up test (paired bootstrap, n = 10,000, seed = 42, critique cases n = 60)**
-
-| Test | Comparison | Delta | 95% CI | Verdict |
-|---|---|---|---|---|
-| Ens > Base† | ensemble vs. baseline (IDR) | +0.1005 | [+0.0426, +0.1648] | **PASS** |
-
-†*Post-hoc test on critique cases only (n = 60), not part of the pre-registered hypothesis battery. Conducted after H2 established ensemble superiority, to test whether the advantage extends to the ensemble-vs-baseline comparison on IDR specifically.*
-
-The three-way ordering is: `ensemble_3x > {baseline ≈ isolated_debate}`. The H2 CI excludes zero entirely in the ensemble-favored direction. Debate spends 3x compute to achieve a result not significantly different from the 1x baseline; ensemble spends the same 3x and formally outperforms both.
-
-**Multiple comparisons.** The pre-registered battery includes 9 statistical tests: H1a, H1b, H2 regular, H2 mixed, H3, H4, and 3 H6 sub-dimensions (IDR, IDP_adj, FVC_mixed). H5 was pre-registered but pre-empted by design (Table 2a, footnote ‡) and is excluded from the correction count. We report uncorrected CIs throughout. Under Bonferroni correction at the 9-test level (α = 0.05/9 = 0.0056), the primary results are unaffected: the null findings (H1a, H1b, H2 mixed) remain non-significant, and H2 regular (CI fully excluding zero) and H6 FVC_mixed (p = 0.0000) both survive correction. The post-hoc ensemble-vs-baseline test (Table 2b) is reported separately and should be interpreted with the additional test noted.
-
-### 4.3 Mixed-Case Results
-
-**Table 3: Finding-verdict consistency on mixed cases (FVC_mixed)**
-
-| Condition | FVC_mixed |
-|---|---|
-| baseline | 0.0 |
-| isolated_debate | 0.0083 |
-| ensemble_3x | 0.025 |
-| biased_debate | 0.25 |
-| **multiround** | **0.3667** |
-
-On mixed cases, the ranking inverts. Baseline and ensemble score near zero — they produce binary verdicts without recognizing empirical ambiguity. Multiround achieves FVC_mixed = 0.3667, meaning iterative adversarial exchange produces the correct `empirical_test_agreed` resolution in approximately 37% of mixed cases. Biased debate is second at 0.25. This capability is structurally absent from independent sampling: each ensemble assessor makes a binary verdict, and no amount of majority voting across binary verdicts can produce an ambiguity-recognition resolution.
-
-### 4.4 Persona-Biasing Effects
-
-Persona-biasing (biased_debate vs. isolated_debate) produces a formally significant effect on two of three tested dimensions, but in opposite directions:
-
-- **FVC_mixed:** +0.2417, CI [+0.1583, +0.3417] — biased debate substantially improves mixed-case verdict quality
-- **IDP_adj:** -0.0389, CI [-0.0722, -0.0083] — biased debate statistically degrades adjudicated precision
-
-The aggressive-critic persona generates more false claims (IDP_raw = 0.8917, the lowest of all conditions), and the adjudicator does not fully recover them (IDP_adj = 0.9250 vs. 0.9639 for isolated_debate). Persona-biasing trades precision for mixed-case verdict quality — a domain-specific tradeoff, not a uniform improvement.
-
----
-
-## 5. Analysis
-
-### 5.1 Convergent vs. Divergent Task-Type Interaction
-
-The results reveal a task-type interaction that explains the apparent contradiction between our findings and prior work reporting debate benefits:
-
-- **Divergent detection** (find all methodology flaws): Ensemble dominates. IDR_ensemble = 0.7717 vs. IDR_baseline = 0.6712, a formally significant advantage (CI [+0.0426, +0.1648]). Isolated debate IDR (0.6603) is directionally *lower* than baseline, consistent with Wynn et al.'s (2025) finding that debate corrupts correct assessments through sycophancy — the defender argues away valid critiques that a single-pass reviewer would have flagged.
-
-- **Convergent judgment** (assess empirical testability): Debate dominates. Multiround FVC_mixed = 0.3667 vs. baseline/ensemble near zero. Iterative exchange is structurally necessary for agents to recognize that a methodology is empirically ambiguous — neither clearly flawed nor clearly sound. This cannot emerge from independent sampling over binary verdicts.
-
-We note that this convergent/divergent distinction is a post-hoc interpretive framework consistent with the data, not a pre-registered contrast. The pattern is suggestive and reconciles the debate literature, but should be tested prospectively. Du et al.'s (2024) math tasks and ChatEval's (Chan et al., 2024) evaluation tasks are convergent — debate helps agents converge on correct answers. The methodology flaw detection in our benchmark is divergent — debate's adversarial pressure suppresses independent discovery. The key variable is whether the goal is to find one right answer (convergent) or to find all problems (divergent).
-
-**Table 6. Convergent/divergent task-type interaction** *(post-hoc framework — not pre-registered)*
-
-| | **Ensemble / Independent** | **Debate / Adversarial** |
+| | **Ensemble / Independent** | **Multiround / Adversarial** |
 |---|---|---|
-| **Divergent detection** *(find all flaws)* | **Ensemble 3×** — IDR = 0.7717 ✓ H2: CI [−0.0434, −0.0154] excludes zero | **Isolated Debate** — IDR = 0.6603 ✗ CI spans zero; 3× compute, no recall gain over baseline |
-| **Convergent judgment** *(assess testability)* | **Ensemble 3×** — FVC_mixed = 0.025 ✗ Structurally bounded near zero; binary verdicts cannot produce ambiguity recognition | **Multiround (~5×)** — FVC_mixed = 0.3667 ✓ Iterative exchange required for `empirical_test_agreed` resolution |
+| **Divergent detection** *(find all flaws)* | **IDR = 0.803** ✓ (P1 PASS: Δ = +0.169) | IDR = 0.634 |
+| **Convergent judgment** *(assess ambiguity)* | FVC_mixed = 0.506 | **FVC_mixed = 0.731** ✓ (P2 PASS: Δ = +0.225) |
 
-### 5.2 Dimension Decomposition
+**Framework verdict: CONFIRMED.** Detection and judgment are structurally different tasks that benefit from different compute allocation strategies.
 
-The ensemble IDR advantage over isolated_debate (+0.1114) is 4x larger than the FC composite difference (+0.0287). Three of four FC dimensions show minimal or no separation: DRQ and FVC are flat at 0.75 for all non-multiround conditions, and IDP contributes only +0.0417. The IDR signal is diluted when averaged with non-discriminating dimensions. This suggests that for detection-prioritized evaluation, IDR should be reported as a primary metric alongside composite scores, as composites can obscure large effects on the dimension that matters most.
+### 4.2 Main Results
 
-### 5.3 Ecological Validity: RC Subgroup Analysis
+Table 5 presents per-condition means on Study 2's regular cases (n = 160) and mixed cases (n = 80).
 
-Stratifying the 80 regular cases by source reveals that the ensemble advantage is strongest on the hardest, most ecologically valid cases.
+**Table 5: Study 2 condition summary**
 
-**Table 4: IDR by case source**
+| Condition | IDR | IDP | DRQ | FVC | FC | FVC_mixed (n=80) |
+|---|---|---|---|---|---|---|
+| baseline | 0.636 | 0.910 | 0.993 | 0.993 | 0.883 | 0.513 |
+| isolated_debate | 0.626 | 0.923 | 0.891 | 0.891 | 0.833 | 0.606 |
+| **ensemble_3x** | **0.803** | **0.963** | **0.994** | **0.994** | **0.938** | 0.506 |
+| multiround_2r | 0.634 | 0.919 | 0.773 | 0.773 | 0.775 | **0.731** |
 
-| Subset | n | IDR_ensemble | IDR_baseline | Delta |
-|---|---|---|---|---|
-| Real papers (ReScience C) | 25 | 0.4545 | 0.2828 | +0.172 |
-| Synthetic | 55 | 0.9553 | 0.8961 | +0.059 |
+Ensemble_3x achieves the highest IDR (0.803), IDP (0.963), and FC (0.938). Multiround_2r achieves the highest FVC_mixed (0.731) but the lowest FC (0.775) — the multiround advantage on mixed cases comes at the cost of verdict flips on regular cases, where the defender occasionally argues the adjudicator away from correct `critique_wins` verdicts (DRQ/FVC = 0.773 vs. baseline 0.993).
 
-Descriptively, the ensemble IDR advantage is approximately 3x larger on real papers (+0.172) than on synthetic cases (+0.059), though the RC subgroup (n = 25) is too small for formal significance testing (no CIs are reported for subgroup deltas). The pattern is consistent with a ceiling effect on synthetic cases — baseline IDR is already 0.896, compressing the margin for improvement — while real-paper baseline IDR (0.283) leaves substantial room for union pooling to recover additional ground-truth flaws. If replicated at larger N, this would suggest the aggregate IDR advantage (+0.1005) understates the benefit in the most ecologically valid deployment context.
+### 4.3 Hypothesis Tests
 
-![Figure 3. IDR by condition stratified by case source. Dark blue = real ReScience C papers (RC, n=25); light blue = synthetic cases (n=55). Ensemble 3× has the highest IDR in both subsets. RC subgroup is descriptive only — underpowered for formal significance testing.](figures/figure3_rc_stratified_idr.png)
+**Table 6: Study 2 pre-registered hypothesis tests (paired bootstrap, n = 10,000, seed = 42)**
 
-**Figure 3.** IDR by condition, stratified by case source. Source: `ENSEMBLE_ANALYSIS.md` §8. No CIs reported for RC subgroup (n = 25).
+| ID | Prediction | Point Est. | 95% CI | n | Verdict |
+|----|-----------|:---:|--------|---|---------|
+| P1 | ensemble > multiround (IDR) | +0.169 | [+0.139, +∞) | 160 | **PASS** |
+| P2 | multiround > ensemble (FVC_mixed) | +0.225 | [+0.192, +∞) | 80 | **PASS** |
+| H1a | isolated ≈ baseline (FC, ±0.015) | −0.050 | [−0.065, −0.036] | 160 | **FAIL** |
+| H2_reg | ensemble vs. isolated (FC) | +0.106 | [+0.092, +0.120] | 160 | **PASS** |
+| H2_mix | ensemble vs. isolated (FVC) | −0.100 | [−0.131, −0.067] | 80 | **PASS** |
+| H3 | multiround > isolated (FVC_mixed) | +0.125 | [+0.088, +∞) | 80 | **PASS** |
+| H4 | ensemble > baseline (IDR) | +0.168 | [+0.140, +∞) | 160 | **PASS** |
+| H5 | 1/3 precision ≈ 3/3 precision (±0.03) | −0.080 | [−0.108, −0.052] | 432 | **FAIL** |
 
-### 5.4 Union Pooling: Precision Validation
+**Score: 6/8.** Both primary predictions pass. H3 and H4 pass as secondary confirmations. H1a and H5 fail — both informatively (§4.4).
 
-A concern with union-of-issues pooling is that minority-flagged findings (raised by only 1 of 3 assessors) might be disproportionately false positives. We tested this directly using GPT-4o to classify 1,463 deduplicated issue clusters from 180 case-run pairs.
+**H3 (Information-Passing): PASS.** The +0.125 FVC_mixed delta between multiround and isolated debate isolates information-passing as the binding mechanism. The two conditions are structurally identical except whether the defender sees the critique. Without visibility into the opposing argument, the defender cannot mount effective rebuttals on genuinely ambiguous cases.
 
-**Table 5: Precision by assessor support tier (1,463 issue clusters)**
+**H4 (Replication): PASS.** Prospectively replicates Study 1's strongest post-hoc finding. The Study 2 effect (+0.168) exceeds the Study 1 effect (+0.100) with a higher CI floor (+0.140 vs. +0.043).
 
-| Tier | N clusters | Precision | 95% CI | FP rate |
-|---|---|---|---|---|
-| 1/3 (minority) | 715 | 0.946 | [0.926, 0.963] | 0.054 |
-| 2/3 (majority) | 327 | 0.936 | [0.903, 0.965] | 0.064 |
-| 3/3 (unanimous) | 421 | 0.929 | [0.881, 0.969] | 0.071 |
+### 4.4 Informative Failures
 
-Precision difference (1/3 - 3/3): +0.017, 95% CI [-0.028, +0.068], p = 0.258. The CI includes zero — there is no significant precision difference across support tiers. Minority-flagged issues are not less precise than unanimous issues. The slight positive direction (+0.017) is consistent with a plausible mechanism: assessors who catch unique issues tend to be more specific, while unanimous issues include more generic observations.
+**H1a — Isolated Debate Is Worse, Not Equivalent.** Study 1 found non-significance (FC Δ = −0.003, CI spans zero) and could not distinguish equivalence from non-equivalence — the narrow CI was suggestive of equivalence, but a TOST procedure was not pre-specified. Study 2 pre-specified a TOST equivalence test at ±0.015. The result: FC Δ = −0.050, CI [−0.065, −0.036] — entirely below −0.015. Isolated debate is not merely non-equivalent to baseline; it is significantly *worse*.
 
-Union pooling recovers 11 ground-truth issues (9.5% of the 116-issue `must_find` pool) that would be discarded by majority vote — all 11 verified true positives. The recall gain is +9.5 percentage points (union IDR 77.6% vs. majority-vote IDR 68.1%) at no measured precision cost.
+The mechanism: adding a blind defender (who argues methodology in the abstract without seeing the critique) introduces noise that causes the adjudicator to reject valid critiques approximately 10% of the time. DRQ/FVC drops from 0.993 (baseline) to 0.891 (isolated debate). IDR is unaffected (0.636 vs. 0.626), so the damage is purely to verdict quality.
 
-**Data quality note.** The precision analysis relies on GPT-4o's classification of issue clusters across assessors. In 108 of 180 case-runs (60%), GPT-4o merged at least one issue across assessors without preserving the original label — typically Assessor C's 5th issue was folded into an earlier cluster. These issues were classified (planted_match, false_claim, etc.) but excluded from tier counts because tier assignment requires an assessor label. The 1,463 clusters in Table 5 represent the fully-labeled subset; the count of excluded unlabeled clusters is not available from the analysis pipeline. We assume the label omission is independent of classification type and tier — this assumption is consistent with the uniform pattern of omission (consistently Assessor C's 5th issue across runs) but is not formally tested. Precision estimates in Table 5 should be interpreted with this caveat: a systematic relationship between label omission and precision, though not observed, cannot be ruled out.
+This overturns Study 1's null finding and reveals an active cost of debate structure on straightforward detection tasks — a cost that was below Study 1's detection threshold at n = 80.
 
-### 5.5 Defense Case Failure
+**H5 — Minority-Flagged Issues Carry a Precision Penalty.** Study 1 found precision parity across support tiers (1/3: 0.946, 3/3: 0.929, Δ = +0.017, CI spans zero). Study 2 finds the opposite: Δ = −0.080, CI [−0.108, −0.052], entirely outside the ±0.03 equivalence bound.
 
-On the 20 defense cases (correct verdict: `defense_wins`), baseline, isolated_debate, ensemble_3x, and biased_debate each produce 0/60 correct verdicts — a uniform failure. Every critic, regardless of condition, identifies flaws in valid work and never concludes `defense_wins`. Multiround is the only condition to produce any correct defense verdicts: 12/60 individual runs (20%) across 9 of 20 cases, but with high within-case variance (no case achieves unanimous correct verdicts across 3 runs). Conditional_fm was not evaluated on defense cases (it was added to the experimental matrix for the multiround-gate analysis in H3, which tested only regular cases).
+The primary driver is a **tier composition effect**. At Study 2's scale (n = 432 issue-level observations), the content asymmetry becomes visible: 3/3 (unanimous) issues are 55% planted_match — high precision by definition, since they correspond exactly to ground-truth flaws. 1/3 (minority) issues carry 15% spurious noise from edge cases and subjective concerns that only one assessor flags. This composition asymmetry was invisible at Study 1's smaller scale (n = 180 issue clusters).
 
-This connects to Saunders et al.'s (2022) generator-discriminator-critique framework: if the discrimination-critique gap is asymmetric — models find it easier to articulate criticism than to articulate validation — then LLM critics may be structurally incapable of exoneration regardless of protocol design. The defense-case failure is a structural gap in current LLM evaluation capabilities, not a protocol-specific shortcoming.
+**Recommendation:** Union pooling with tier weighting. Weight 1/3-flagged issues lower than 3/3-flagged issues. The recall advantage (P1, H4) is real; the precision cost (H5) qualifies how that recall should be consumed.
 
-**Implication for FC interpretation.** Because all non-multiround conditions score DRQ = FVC = 0.0 uniformly on defense cases and DRQ = FVC = 1.0 uniformly on critique cases, the 20 defense cases contribute identical values across conditions. The between-condition FC comparison on 80 regular cases is effectively driven by the 60 critique cases — specifically by IDR and IDP on those cases, since DRQ and FVC are flat. Reporting FC on critique cases alone (n = 60) as a robustness check yields a larger and more interpretable effect size, since it eliminates the compositional artifact from defense-case zeros.
+### 4.5 Defense Case Exoneration
+
+**Table 7: Defense case performance (Study 2, n = 40 cases × 3 runs = 120 per condition)**
+
+| Condition | Exoneration (defense_wins) | Adjacent (empirical_test_agreed) | Defense FVC |
+|---|:---:|:---:|:---:|
+| baseline | 0/120 (0%) | 1/120 (0.8%) | 0.004 |
+| isolated_debate | 0/120 (0%) | 13/120 (10.8%) | 0.054 |
+| ensemble_3x | 0/120 (0%) | 0/120 (0%) | 0.000 |
+| multiround_2r | 0/120 (0%) | 60/120 (50.0%) | 0.250 |
+
+Zero full exoneration across all conditions. The strongest concession is `empirical_test_agreed` (adjacent, scored 0.5), achieved on 50% of multiround defense runs. The generation model is systematically critique-biased: even with a well-argued defense and iterative exchange, the adjudicator at most concedes ambiguity but never fully exonerates.
+
+Study 1 observed 20% exoneration on multiround defense cases. Multiple variables changed simultaneously between studies — generation model version, compute budget (~5× → 3×), prompt design, and benchmark composition — so the decline cannot be attributed to a single factor. The consistent finding across studies is that defense-case exoneration remains an unsolved problem.
 
 ---
 
-## 6. Discussion
+## 5. Discussion
 
-**Why does debate fail on divergent detection?** The structural mechanism is suppression, not noise. In isolated_debate, the critic flags a flaw, the defender is instructed to rebut it, and the adjudicator synthesizes — a pipeline in which every stage after the initial critique applies pressure to *reduce* the issue count. Wynn et al. (2025) document this pattern directly: models shift from correct to incorrect assessments under adversarial pressure even when the correct answer is accessible. In our data, isolated_debate IDR (0.6603) falls directionally below single-pass baseline (0.6712) — consistent with the defender successfully arguing away valid critiques that a solo assessor would have retained. Independent ensemble assessors face no such pressure: each critic reports independently, and union pooling takes the maximum rather than the adjudicated minimum. The recall advantage (+0.1114 over debate) is the measured cost of routing detection through an adversarial funnel designed to suppress rather than accumulate findings.
+### 5.1 The Framework
 
-**The compute-matching control changes the conclusion.** Kenton et al. (2024) show debate robustly outperforms consultancy at matched compute. Our result is not a contradiction — it extends the comparison to the 3x regime. Debate wins the 1x-vs-1x comparison (against baseline); it loses the 3x-vs-3x comparison (against ensemble). The lesson is not that debate is weak but that its advantage relative to lower-compute baselines does not survive when the comparison condition is given equivalent resources. Most prior work showing debate benefits implicitly tests whether debate justifies its compute cost by comparing to 1x alternatives. Our result suggests the correct question is always "does adversarial structure outperform independent redundancy at matched compute?" — a harder bar that the existing literature has rarely applied. Heterogeneous ensembles (e.g., Claude + GPT-4o + Gemini as independent critics) represent an unexamined dimension that may amplify the recall advantage further; Zhang et al. (2025) show model heterogeneity significantly improves multi-agent outcomes.
+The convergent/divergent framework provides a principled basis for compute allocation in LLM-based evaluation:
 
-**Generalization of the convergent/divergent framework.** If adversarial structure suppresses recall on divergent detection tasks, the pattern should extend to any domain where the goal is comprehensive enumeration rather than convergence on a single verdict. Code review (find all bugs), safety auditing (find all policy violations), and legal document review (find all compliance issues) are structurally divergent: missing one item is a failure, and adversarial pressure toward fewer items is counterproductive. Conversely, tasks requiring a final binary judgment — does this argument hold? is this claim supported by evidence? — are structurally convergent, and debate's ability to surface counterarguments and force explicit resolution should help rather than hurt. We present this as a testable prediction: ensemble IDR advantage over debate should replicate on other divergent evaluation tasks, and multiround FVC advantage over ensemble should replicate on other convergent judgment tasks.
+- **For issue detection:** use ensemble (3 independent critics, union pooling). The ensemble IDR advantage is the most robust finding across both studies (Study 1: +0.100 post-hoc, Study 2: +0.168 pre-registered), with the CI floor rising from +0.043 to +0.140 under pre-registration.
 
-**Limits of the convergent/divergent binary.** The framework assumes tasks can be cleanly categorized, but many real evaluation tasks require both detection and judgment simultaneously. A thorough code review requires enumerating all bugs (divergent) *and* judging which are critical versus cosmetic (convergent). A scientific peer review requires identifying all limitations (divergent) *and* rendering an accept/reject verdict (convergent). For such mixed-mode tasks, neither pure ensemble nor pure debate is obviously optimal. Our 40 mixed cases approximate this regime — they require identifying individual methodology issues *and* reaching a meta-judgment about empirical testability — and the results (multiround dominant, ensemble near zero on FVC_mixed) suggest the judgment component requires adversarial structure even when the detection component benefits from ensemble. A protocol that separates these stages — detect with ensemble, adjudicate with debate — is a natural candidate for future evaluation.
+- **For ambiguity recognition:** use multiround with information-passing. The multiround FVC_mixed advantage (+0.225 over ensemble) is the largest single effect in Study 2. The mechanism is the defender's ability to engage with specific claims (H3: Δ = +0.125), not adversarial structure per se.
+
+- **For defense-case exoneration:** neither architecture succeeds. This is a model limitation, not a protocol limitation.
+
+### 5.2 The Suppression Mechanism
+
+Why does isolated debate fail on divergent detection? In isolated debate, the critic flags a flaw, the defender is instructed to rebut it (without seeing the specific critique), and the adjudicator synthesizes — a pipeline where every stage after the initial critique applies pressure to *reduce* the issue count. Wynn et al. (2025) document this directly: models shift from correct to incorrect under adversarial pressure. Study 2 quantifies the cost: isolated debate DRQ/FVC (0.891) falls significantly below baseline (0.993), meaning ~10% of valid critiques are suppressed by the adjudication process. Study 1's narrow CI could not detect this; Study 2's pre-specified TOST reveals it as a real and meaningful degradation.
+
+Independent ensemble assessors face no such pressure: each critic reports independently, and union pooling takes the maximum rather than the adjudicated minimum. The recall advantage (IDR = 0.803 for ensemble vs. 0.634 for multiround, 0.626 for isolated debate) is the measured cost of routing detection through an adversarial funnel.
+
+### 5.3 Compute-Matching Changes the Conclusion
+
+Kenton et al. (2024) show debate robustly outperforms consultancy at matched compute. Our result extends the comparison: debate wins uncontrolled comparisons against lower-compute baselines but loses the compute-matched comparison against independent redundancy. Study 1's multiround advantage on mixed cases was observed at ~5× compute — confounded with the additional budget. Study 2 resolves this: multiround_2r is compute-matched at 3× (critic + defender + adjudicator), and the FVC_mixed advantage (+0.225) persists. The correct question is always "does adversarial structure outperform independent redundancy at matched compute?" — and the answer depends on the task type.
+
+### 5.4 Cross-Study Stability
+
+**Table 8: Cross-study comparison**
+
+| Finding | Study 1 | Study 2 |
+|---------|---------|---------|
+| Ensemble > baseline IDR | +0.100 (post-hoc) | +0.168 (pre-registered) |
+| Multiround FVC_mixed advantage | 0.367 (descriptive, ~5×) | +0.225 (pre-registered, 3×) |
+| Isolated debate vs. baseline | −0.003 (null) | −0.050 (worse) |
+| Precision parity | +0.017 (parity) | −0.080 (penalty) |
+| Defense exoneration | 20% (multiround only) | 0% all; 50% adjacent (multiround) |
+
+The ensemble IDR advantage is stable and strengthens with pre-registration. The multiround FVC_mixed advantage is confirmed at matched compute (Study 1 multiround was not compute-matched). The H1a and H5 reversals are informative: a larger study with pre-specified equivalence tests can detect effects that a smaller study's non-significant result cannot distinguish from absence of effect.
+
+### 5.5 Generalization
+
+If adversarial structure suppresses recall on divergent detection tasks, the pattern should extend to any domain where the goal is comprehensive enumeration: code review (find all bugs), safety auditing (find all violations), legal document review (find all compliance issues). Conversely, tasks requiring a final judgment under genuine uncertainty should benefit from iterative exchange. The framework predicts: ensemble IDR advantage over debate should replicate on other divergent tasks, and multiround FVC advantage should replicate on other convergent tasks.
+
+The limits of the convergent/divergent binary deserve acknowledgment. Many real evaluation tasks require both detection and judgment simultaneously — a thorough code review requires enumerating all bugs (divergent) *and* judging which are critical (convergent). For such mixed-mode tasks, a protocol that separates stages — detect with ensemble, adjudicate with multiround — is a natural candidate for future work. H3's isolation of information-passing as the binding mechanism provides a specific prediction: the defender must see the specific critique, not merely argue in the abstract.
 
 ---
 
 ## Limitations
 
-**Single-vendor agents.** All debate agents (critic, defender, adjudicator) and all ensemble assessors use Claude. Scoring is cross-vendor (GPT-4o), eliminating same-model evaluation bias, but the agent population itself is homogeneous. Zhang et al. (2025) show that model heterogeneity (Heter-MAD) significantly improves multi-agent outcomes — debate dynamics may differ with heterogeneous agent populations, and heterogeneous ensembles may yield further IDR gains.
+1. **Single generation model.** All conditions in both studies use Claude models. The framework predictions may not generalize to other model families. Zhang et al. (2025) show model heterogeneity significantly improves multi-agent outcomes — heterogeneous ensembles remain unexamined.
 
-**Multiround variance.** Multiround produces the highest FVC_mixed (0.3667) but also the highest within-case variance: 20 of 23 high-variance case-condition pairs in the experiment are multiround. The same case can flip between FC = 0.0 and FC = 1.0 across runs. Temperature reduction or structured stopping criteria are required before multiround is deployment-ready.
+2. **Scorer change between studies.** Study 1 uses GPT-4o; Study 2 uses gpt-5.4-mini. The H5 reversal (precision parity → penalty) could be partially confounded by scorer differences. We present the tier composition effect as the primary mechanism (§4.4), but the scorer change is a secondary confound that cannot be fully ruled out.
 
-**ETD metric ceiling.** ETD = 1.0 for 100% of debate outputs — the metric measures presence of empirical-test structure, not its quality. This limits our ability to quantify *quality* of mixed-case reasoning. A sub-element rubric (specificity, falsifiability, orthogonality) is needed.
+3. **Planted-flaw benchmark.** Regular cases have synthetic planted flaws. Real-world methodology review involves subtler, less cleanly categorized issues. The RC subgroup (n = 5 regular in Study 2) provides suggestive ecological validity (P1 delta +0.261 vs. synthetic +0.166) but is too small for formal inference.
 
-**Defense cases.** The 0/60 failure for baseline, isolated_debate, ensemble_3x, and biased_debate (and 12/60 with high variance for multiround alone) limits conclusions about debate's full diagnostic scope. A critic prompt that includes a "no significant issues found" output path would change this constraint.
+4. **Within-case variance.** Multiround (60.7% verdict flip rate) and isolated debate (44.3%) exceed the 30% stability threshold. Individual runs are unreliable; 3-run averaging is mandatory for stable estimates. Ensemble (0.7%) and baseline (2.5%) are single-run reliable.
 
-**Benchmark scale.** 120 cases is moderate for the primary comparisons but underpowered for subgroup analyses. The RC subgroup (n = 25) provides suggestive evidence that the ensemble advantage is largest on real papers, but formal testing at this sample size is not possible. Only 15 of 80 regular cases have difficulty labels, leaving difficulty-stratified analysis chronically underpowered.
+5. **Defense-case exoneration.** Zero full exoneration across all Study 2 conditions limits conclusions about the framework's defense-case applicability. Current models are systematically critique-biased.
 
-**Equivalence testing.** The H1a non-significance result (debate vs. baseline CI spans zero) demonstrates failure to reject the null, not formal equivalence. A TOST (Two One-Sided Tests) procedure with a pre-specified equivalence bound would be needed to formally claim the two conditions are equivalent. The narrow CI ([−0.0108, +0.0059]) is suggestive but not dispositive.
+6. **Cross-vendor scorer dependency.** IDR and IDP depend on the scorer model's extraction accuracy (~90% exact agreement on a 10% stratified spot-check). Scorer noise does not threaten primary verdicts given the wide margins (P1 CI floor +0.139, P2 CI floor +0.192), but scorer fidelity remains an external dependency.
 
 ---
 
 ## 7. Conclusion
 
-We present a controlled comparison of adversarial debate and independent ensemble methods for LLM-based ML methodology review. Three findings emerge:
+We present a two-study investigation of compute allocation for LLM-based methodology review. Three findings emerge:
 
-First, at matched compute, independent redundancy outperforms adversarial structure. Three independent critics with union-of-issues pooling achieve formally superior issue detection recall (IDR +0.1114 over debate, +0.1005 over baseline) and composite score (FC CI [+0.0154, +0.0434]) compared to structured debate, while debate is not significantly different from single-pass baseline (CI spans zero). The adversarial mechanism spends 3x compute for no measurable benefit on divergent detection.
+First, the convergent/divergent framework is prospectively confirmed. At matched 3× compute, independent redundancy with union pooling outperforms adversarial debate for issue detection (Δ = +0.169 IDR), while iterative exchange with information-passing outperforms independence for ambiguity recognition (Δ = +0.225 FVC_mixed). Both predictions, motivated by a post-hoc observation in Study 1 and pre-registered in Study 2, hold with large effects.
 
-Second, the data suggest a task-type interaction that warrants prospective testing. Debate's only measurable advantage is on convergent judgment — recognizing empirical ambiguity in mixed cases (FVC_mixed = 0.3667 vs. baseline 0.0), a capability structurally absent from ensemble sampling. However, the formal debate-vs-ensemble test on mixed cases remains inconclusive (CI spans zero, n = 40). We propose a convergent/divergent framework as a post-hoc hypothesis that, if confirmed, would reconcile conflicting findings in the debate literature — debate helps on convergent reasoning benchmarks (Du et al., 2024) but fails on our divergent detection task.
+Second, the informative failures refine the practical recommendations. Isolated debate is not merely equivalent to baseline — it is actively worse (−0.050 FC), revealing a suppression mechanism where blind defenders corrupt valid critiques. Union pooling carries a real precision cost (−0.080 for minority-flagged issues), requiring tier-weighted aggregation rather than unqualified union.
 
-Third, union-of-issues pooling shows no significant precision penalty. Minority-flagged findings are not significantly less precise than unanimous findings (0.946 vs. 0.929, p = 0.258), recovering +9.5 percentage points of recall with no measured precision difference across support tiers. This inverts Wang et al.'s (2023) majority-vote self-consistency for detection tasks, providing a validated aggregation strategy for any LLM-based system where the goal is comprehensive issue identification.
+Third, defense-case exoneration remains unsolved. No condition produces full `defense_wins` verdicts. The strongest concession is partial ambiguity recognition (50% adjacent in multiround), suggesting current models are systematically critique-biased.
 
-The central insight is that the compute-matching control changes the conclusion. Debate robustly outperforms lower-compute alternatives — consistent with Kenton et al.'s (2024) finding that debate beats consultancy. But when the same compute is spent on independent redundancy, the adversarial structure provides no additional benefit for detection. **Additional compute helps; debate structure does not — for divergent tasks.** Recognizing this task-type dependency is essential for the principled deployment of multi-agent LLM systems.
+The practical recommendation: use ensemble for detection, multiround for judgment, and neither for exoneration. Individual multiround runs should not be trusted without replicate averaging.
 
 ---
 
@@ -296,15 +309,15 @@ The central insight is that the compute-matching control changes the conclusion.
 
 This manuscript was drafted and edited with the assistance of Claude Code (Anthropic). All claims, interpretive framing, and conclusions were reviewed and approved by the human author(s).
 
-A reflexive disclosure is warranted: the principal AI tool used for writing assistance (Claude, Anthropic) is also the subject of the experimental study. The experiment evaluates Claude instances as debate agents, ensemble assessors, and methodology reviewers. To guard against implicit bias in how findings about Claude's capabilities and limitations are presented — including the defense-case failure (§5.5) and the sycophancy mechanism (§5.1) — all framing of results was independently reviewed by the human author(s) before finalization.
+A reflexive disclosure is warranted: the principal AI tool used for writing assistance (Claude, Anthropic) is also the subject of the experimental study. The experiment evaluates Claude instances as debate agents, ensemble assessors, and methodology reviewers. To guard against implicit bias in how findings about Claude's capabilities and limitations are presented — including defense-case failure (§4.5) and the suppression mechanism (§5.2) — all framing of results was independently reviewed by the human author(s) before finalization.
 
-AI use in the *experiment* is separate from AI use in *writing* and is documented in §3 (experimental agents, cross-vendor scorer) and Appendix B (benchmark generation pipeline with full model assignments). Readers should consult those sections for the experimental AI disclosure; this statement covers manuscript authorship only.
+AI use in the *experiment* is separate from AI use in *writing* and is documented in §3 (experimental agents, cross-vendor scorer) and Appendix B (benchmark generation pipeline). Readers should consult those sections for the experimental AI disclosure; this statement covers manuscript authorship only.
 
 ---
 
 ## Reproducibility
 
-The benchmark cases (120 cases with ground-truth must_find issues, acceptable_resolutions, and correct_position labels), scoring scripts, analysis scripts (including `v6_analysis.py`, `ensemble_vs_baseline_test.py`, and `v6_minority_precision.py`), and full experiment results JSON are available in the project repository. Agent definitions (ml-critic, ml-defender, ml-adjudicator) are included as installable Claude Code plugins. Instructions for replicating the full experiment pipeline are in `experiments/self_debate_experiment_v6/plan/PLAN.md`.
+The benchmark cases (280 cases with ground-truth labels), scoring scripts, analysis scripts, and full experiment results are available in the project repository. Agent definitions (critic, defender, adjudicator) are included as installable plugins. The Study 1 (120-case) benchmark and results are also available for replication of the pilot findings.
 
 ---
 
@@ -354,116 +367,109 @@ Zheng, L. et al. (2023). Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena.
 
 ---
 
-## Appendix A: Additional Tables
+## Appendix A: Study 1 Supplementary Results
 
-### A.1 Full H6 Hypothesis Test (Persona-Biasing)
+### A.1 Persona-Biasing Effects (H6)
 
-| Dimension | Delta (biased - isolated) | 95% CI | CI excludes 0? |
-|---|---|---|---|
-| IDR | +0.0352 | [-0.0093, +0.0787] | No |
-| IDP_adj | -0.0389 | [-0.0722, -0.0083] | Yes (negative) |
-| FVC_mixed | +0.2417 | [+0.1583, +0.3417] | Yes (positive) |
+Study 1 tested persona-biased debate (combative critic + selective defender) against isolated debate. The effect is mixed-direction: FVC_mixed improves (+0.242, CI [+0.158, +0.342]) while IDP_adj degrades (−0.039, CI [−0.072, −0.008]). Persona-biasing trades precision for mixed-case verdict quality. These conditions were not carried forward to Study 2 because the convergent/divergent framework subsumes the persona effect: multiround with information-passing achieves higher FVC_mixed than biased debate without the precision cost.
 
-Verdict: PASS (2/3 dimensions exclude zero), but with mixed direction.
+### A.2 Conditional FM Gate Analysis (H3)
 
-### A.2 Within-Case Variance
+Study 1's conditional forced-multiround gate fires on 94.7% of cases, making CFM functionally equivalent to full multiround. H3_Study1 (CFM vs. multiround on hard cases): Δ = +0.031, W = 16.0, p = 0.368 — FAIL. The gate does not function as a selective filter. This condition was not included in Study 2.
 
-23 case-condition pairs exceed the high-variance threshold (FC variance > 0.05). Of these, 20 are multiround. Individual multiround cases can score FC = 0.0 on one run and FC = 1.0 on another, indicating that the multiround mechanism introduces substantial stochasticity.
+### A.3 ETD Metric Ceiling (H4)
 
-### A.3 Conditional FM Gate Analysis
-
-The conditional forced-multiround (CFM) gate fires on 94.7% of cases (341/360). Mean point resolution rate (PRR) after round 1 is 0.418; the gate requires PRR = 1.0 to stop. H3 (CFM vs. multiround on hard cases): diff = +0.0313, W = 16.0, p = 0.3677, n_eff = 7 — FAIL. The gate does not function as a selective filter.
-
----
-
+All debate conditions in Study 1 achieve ETD = 1.0 on 100% of mixed cases — the metric measures presence of empirical-test structure, not quality. ETD was dropped from Study 2's scoring dimensions as it provides no discrimination.
 
 ---
 
 ## Appendix B: Benchmark Construction
 
-### B.1 Three-Source Architecture
+### B.1 Pipeline Architecture
 
-The 120-case benchmark was assembled from three independent pipelines that converge at a shared normalization step before stratified selection. This multi-source design was motivated by two problems in prior versions: (1) purely synthetic planted-corruption benchmarks measure corruption detection rather than methodology review, and (2) same-family difficulty calibration (using the same model family to calibrate that is used to evaluate) produces proxy scores that do not generalize to cross-family scoring (Spearman ρ = +0.046 in the preceding experimental series).
+Both studies use a multi-stage pipeline with cross-family model assignments to prevent same-family calibration bias. Cases are generated through sequential stages: hypothesis generation → sound design writing → corruption insertion (regular) or ambiguous choice embedding (mixed) → ground truth assembly → cross-family validation.
 
-The three pipelines are:
+The synthetic regular pipeline uses a 9-type flaw taxonomy: data leakage, evaluation mismatch, baseline omission, distribution shift, metric mismatch, hyperparameter selection bias, scope overclaim, reproducibility gap, and statistical validity. The synthetic mixed pipeline uses a 6-type ambiguity taxonomy: split ambiguity, metric ambiguity, complexity ambiguity, lookback ambiguity, proxy ambiguity, and regularization ambiguity.
 
-- **RC Extraction Pipeline**: Extracts documented methodology flaws from published ML Reproducibility Challenge (RC) reports, yielding 25 cases (22 critique, 3 defense) from ReScience C (2020-2021 editions).
-- **Synthetic Regular Pipeline**: Generates methodologically sound designs and introduces planted corruptions using a 9-type flaw taxonomy, yielding 55 cases (38 critique, 17 defense).
-- **Synthetic Mixed Pipeline**: Generates designs with exactly one empirically contingent choice using a 6-type ambiguity taxonomy, yielding 40 mixed cases.
+**Study 2 benchmark composition:**
 
-All three pipelines produce a unified Schema B representation before case selection. Stratified selection targets 60 critique, 20 defense, and 40 mixed cases, with difficulty filtering applied after a Phase 3 pilot run (see §B.5).
+| Source | Regular | Mixed | Defense | Total |
+|---|---|---|---|---|
+| RC (ReScience C) | 5 | 50 | 18 | 73 |
+| Synthetic | 155 | 30 | 22 | 207 |
+| **Total** | **160** | **80** | **40** | **280** |
 
-**Final benchmark composition:**
+**Study 1 benchmark composition (pilot):**
 
 | Source | Critique | Defense | Mixed | Total |
 |---|---|---|---|---|
 | RC (ReScience C) | 22 | 3 | 0 | 25 |
-| Synthetic regular | 38 | 17 | 0 | 55 |
-| Synthetic mixed | 0 | 0 | 40 | 40 |
+| Synthetic | 38 | 17 | 40 | 95 |
 | **Total** | **60** | **20** | **40** | **120** |
 
-The real-paper grounding (RC cases) applies exclusively to the critique and defense strata. All 40 mixed cases are synthetically generated — no RC reports were classified as mixed in the final selection, because the pilot gating step removed ceiling cases and the remaining RC mixed pool was not sampled given the synthetic mixed pipeline's precise control over ambiguity structure.
+*Note: Study 1 combined critique (n=60) and defense (n=20) into a single "regular" stratum (n=80). Study 2 separates defense cases into their own stratum, so the regular stratum (n=160) contains only critique-wins cases. This explains the DRQ/FVC difference: Study 1 reports DRQ = FVC = 0.75 (composition artifact from 60/80 critique scoring 1.0 and 20/80 defense scoring 0.0), while Study 2 reports DRQ = FVC ≈ 1.0 on regular cases.*
 
-### B.2 Synthetic Regular Pipeline — Model Assignments and Flaw Taxonomy
+### B.2 Cross-Vendor Scoring Motivation
 
-The synthetic regular pipeline produces each case through four sequential LLM stages followed by a cross-family smoke test. Model assignments were chosen to prevent same-family bias accumulating across stages.
+Same-model scoring introduces a closed-loop confound: in methodology review, critic and scorer share systematic biases about what constitutes a valid concern. A prior experiment measured a cross-vendor IDR delta of −0.7737, substantially larger than self-preference effects reported in the general literature (Panickssery et al., 2024). Study 1 uses GPT-4o; Study 2 uses gpt-5.4-mini. Both are cross-vendor relative to the Claude generation model.
 
-**Table B1: Model assignments by pipeline stage**
+### B.3 RC Extraction — Contamination Prevention
 
-| Stage | Role | Model | Rationale |
-|---|---|---|---|
-| Stage 1 | Hypothesis generator | GPT-4o-mini | Lightweight; broad domain coverage |
-| Stage 2 | Sound design writer | Claude Haiku 4.5 | Generates realistic ML methodology narratives |
-| Stage 3 | Corruption node | GPT-4o | Inserts flaws from 9-type taxonomy; separate family from Stage 2 |
-| Stage 4 | Ground truth assembler | Qwen3-235B-A22B | Assembles `must_find`, `must_not_claim`, and `acceptable_resolutions` |
-| Stage 5 | Smoke test | Gemini 2.5 Flash | **Cross-family validator** — independent of Claude (Stage 2) |
-| RC-2 | Flaw extractor | GPT-4o | Extracts structured flaws from RC report text |
-| RC-3 | `must_not_claim` extractor | GPT-4o | Identifies sound design choices that pattern-matching critics might wrongly challenge |
-| Stage 2M | Ambiguous design writer | GPT-4o | Generates designs with empirically contingent choices (mixed pipeline) |
-| Stage 3M | Mixed ground truth assembler | Qwen3-235B-A22B | Assembles mixed-case ground truth with concrete empirical test specification |
-| Phase 3 pilot | Difficulty calibration | GPT-4o | Cross-family pilot scorer; no Claude involvement (see §B.5) |
+RC papers (ReScience C 2020–2021 editions) contain both the original methodology description and the reproducer's critique. If the task prompt presented to evaluation agents includes reproducer-language text, agents receive the answer through the data channel. The pipeline addresses this through: (1) extraction prompts that separate "what the paper claims" from "what the reproducer found," constructing task prompts from methodology descriptions only; (2) a keyword contamination gate rejecting cases whose task prompts match 10 reproducer-language patterns (e.g., "failed to reproduce," "our reproduction," "could not replicate").
 
-The Stage 5 smoke model switch from Claude Sonnet (used in v5) to Gemini 2.5 Flash is the most consequential model assignment change. Stage 2 uses Claude Haiku to write designs. Using Claude Sonnet as the smoke validator creates same-family calibration bias: both models share Anthropic RLHF fine-tuning conventions, so Sonnet approval/rejection scores are systematically correlated with Haiku's output patterns in ways that do not generalize to cross-family evaluation. The v5 post-mortem confirmed this: proxy scores from Sonnet smoke tests had Spearman ρ = +0.046 against GPT-4o rubric performance. Gemini 2.5 Flash eliminates this dependency. The smoke model result (`proxy_mean`) is retained in case metadata for traceability but is not used as a gating criterion (see §B.5).
+---
 
-The 9-type flaw taxonomy covers: data leakage, evaluation mismatch, baseline omission, distribution shift, metric mismatch, hyperparameter selection bias, scope overclaim, reproducibility gap, and statistical validity. Corruption counts are sampled per case from a distribution targeting [0, 1, 2, many] flaws with probabilities [0.25, 0.35, 0.25, 0.15].
+## Appendix C: Cross-Study Results
 
-### B.3 RC Extraction Pipeline — Contamination Prevention
+Study 1 used six conditions on 80 regular cases (60 critique + 20 defense) scored by GPT-4o. Study 2 used four conditions on 160 regular cases (all critique-wins) scored by gpt-5.4-mini. Scoring dimensions differ slightly between studies (Study 1 includes IDP_adj and ETD; Study 2 uses IDP directly and drops ETD). FVC_mixed scoring also differs: Study 2 awards adjacency credit (0.5) for verdicts adjacent to the correct resolution, while Study 1 used stricter scoring. Cross-study comparison of absolute FVC_mixed values should be interpreted with caution.
 
-The RC pipeline extracts methodology flaws from ReScience C reproducibility reports using four sequential stages. ReScience C papers (2020-2021 editions) were selected because they provide editorial-reviewed, post-hoc documented flaws from an independent reproducer who did not know the answer in advance — a ground-truth provenance that planted-corruption benchmarks cannot replicate.
+**Table C1: Study 1 condition summary (regular, n = 80)**
 
-A structural contamination risk arises from the RC source: reproducibility reports contain both the original methodology description and the reproducer's critique. If the task prompt presented to debate agents includes critique-language text, agents receive the answer key through the data channel — the same structural failure that corrupted scoring in v3 (PM1). The RC pipeline addresses this through:
+| Condition | IDR | IDP_adj | DRQ | FVC | FC |
+|---|---|---|---|---|---|
+| baseline | 0.671 | 0.947 | 0.750 | 0.750 | 0.679 |
+| isolated_debate | 0.660 | 0.964 | 0.750 | 0.750 | 0.676 |
+| ensemble_3x | 0.772 | 0.986 | 0.750 | 0.750 | 0.705 |
+| biased_debate | 0.696 | 0.925 | 0.750 | 0.750 | 0.673 |
+| multiround (~5×) | 0.652 | 0.975 | 0.692 | 0.692 | 0.668 |
 
-1. **Extraction prompt design (RC-2):** The GPT-4o extraction pass explicitly separates "what the paper claims" from "what the reproducer found," constructing the task prompt from the paper's methodology description only.
-2. **RC-4 contamination gate:** Any case whose task prompt matches any of 10 reproducer-language keywords is rejected. Keywords: *"we found that," "failed to reproduce," "the reported results," "our reproduction," "could not replicate," "we were unable to," "reproduction failed," "reproducer found," "reproducibility report," "could not be reproduced."*
+**Table C2: Study 2 condition summary (regular, n = 160)**
 
-Current yield after RC-4 filtering: 25 cases (from 80 fetched). The 55-case gap reflects cases excluded for environment-only failures, vague flaw descriptions, contaminated task prompts, or no documented root cause.
+| Condition | IDR | IDP | DRQ | FVC | FC |
+|---|---|---|---|---|---|
+| baseline | 0.636 | 0.910 | 0.993 | 0.993 | 0.883 |
+| isolated_debate | 0.626 | 0.923 | 0.891 | 0.891 | 0.833 |
+| ensemble_3x | 0.803 | 0.963 | 0.994 | 0.994 | 0.938 |
+| multiround_2r | 0.634 | 0.919 | 0.773 | 0.773 | 0.775 |
 
-### B.4 Synthetic Mixed Pipeline — Ambiguity Taxonomy
+---
 
-All 40 mixed cases in the benchmark are synthetically generated. Each case presents a methodologically sound design with exactly one empirically contingent design choice — a decision that is genuinely defensible, genuinely challengeable, and unresolvable from the design document alone without empirical measurement. The ambiguity is not flagged or hedged in the narrative; the critic must trace the full methodology logic to identify the contestable dimension.
+## Appendix D: Sensitivity Analysis (Study 2)
 
-The 6-type ambiguity taxonomy:
+### D.1 Within-Case Variance
 
-| Type | Core Pattern |
-|---|---|
-| `split_ambiguity` | Train/test split applied to data with plausible but unconfirmed temporal autocorrelation |
-| `metric_ambiguity` | Ranking metric appropriate for task type but potentially misaligned with tail-threshold operational objective |
-| `complexity_ambiguity` | Model capacity appropriate for stated data size but unknown interaction structure |
-| `lookback_ambiguity` | Fixed behavioral lookback window of unknown predictive horizon |
-| `proxy_ambiguity` | Proxy outcome strongly correlated with target but diverges at conversion tail |
-| `regularization_ambiguity` | Regularization strength chosen by convention; optimal depends on actual signal-to-noise ratio |
+| Condition | Verdict Flip Rate | FVC Variance |
+|---|---|---|
+| baseline | 2.5% | 0.002 |
+| isolated_debate | 44.3% | 0.037 |
+| ensemble_3x | 0.7% | 0.001 |
+| multiround_2r | 60.7% | 0.051 |
 
-Ground truth for mixed cases specifies `correct_position = mixed` and `acceptable_resolutions = ["empirical_test_agreed"]`. The ground truth also encodes a concrete empirical test condition (what to measure, on what data, and the threshold or comparison that determines the outcome), enabling FVC scoring: a response that commits to critique_wins or defense_wins scores FVC = 0.0-0.5; a response that correctly identifies the ambiguity and specifies an empirical test scores FVC = 1.0.
+Multiround and isolated debate exceed the 30% stability threshold. This is inherent to adversarial exchange — the 3-run means used in hypothesis tests are stable (bootstrap CIs are tight); individual runs are not. Ensemble and baseline are single-run reliable (< 3% flip rate).
 
-### B.5 Difficulty Calibration — Cross-Family Gating
+### D.2 Bootstrap Stability
 
-Difficulty calibration in v5 used proxy scores from a Claude Sonnet smoke test (`proxy_mean`), with cases above a threshold discarded as too easy. The v5 post-mortem established this does not work: same-family proxy scores (Claude Sonnet evaluating Claude Haiku designs) had Spearman ρ = +0.046 against rubric performance, effectively random. Self-calibration is circular when the calibration model shares RLHF conventions with the design model.
+7/8 tests within ±0.001 CI drift between seed = 42 and seed = 99. H2_mix upper bound drifted 0.002 (smallest sample, n = 80); verdict unaffected.
 
-v6 replaces this with a Phase 3 pilot-based approach:
+### D.3 Scorer Sensitivity
 
-1. A random sample of ~30 candidate cases is evaluated by the baseline condition (single-pass critic) using GPT-4o scoring — the same cross-vendor scorer used in the main experiment.
-2. Cases where `baseline_fc_mean > 0.80` are discarded as ceiling cases (too easy to discriminate between conditions).
-3. Remaining cases receive difficulty labels from GPT-4o rubric performance, not from proxy scores.
-4. The H1a effect-size threshold is calibrated from the pilot: `threshold = max(0.03, min(0.10, pilot_fc_mean × 0.25))`. With pilot FC mean = 0.6500, this yields a threshold of 0.10.
+10% stratified spot-check (192 files re-scored with a second scorer run): IDR exact agreement 89.6%, mean absolute difference 0.058, signed mean +0.009 (no systematic bias). Hypothesis verdicts are insulated from scorer noise by 3-run averaging, paired bootstrap, and wide primary margins.
 
-The pilot eliminated 5 ceiling cases from the candidate pool before the final 120-case benchmark was locked. The `proxy_mean` field is retained in case metadata for traceability but plays no role in selection or gating.
+### D.4 RC vs. Synthetic Subgroup
+
+| Test | RC Δ | RC n | Synthetic Δ | Synthetic n |
+|---|---|---|---|---|
+| P1 (IDR) | +0.261 | 5 | +0.166 | 155 |
+| P2 (FVC_mixed) | +0.192 | 46 | +0.270 | 34 |
+
+Both P1 and P2 hold in both subgroups. RC regular (n = 5) is too small for inference but directionally consistent. The RC P1 delta (+0.261) is larger than synthetic (+0.166), consistent with Study 1's observation that ensemble benefits are strongest on harder real-paper cases.
