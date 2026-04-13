@@ -10,12 +10,14 @@ normalize_cases.py — v7 Pipeline Phase 2 (Part 1)
 Reads all synthetic and RC case sources, normalizes to unified Schema B,
 validates every field, and outputs benchmark_cases_raw.json.
 
-Sources read (any combination present):
-  Synthetic: cases_*.json in experiment root (from orchestrator assemble_batch)
-  RC:        pipeline/run/rc_candidates/rc_cases_raw.json (from rc_extractor RC-4)
+Sources (all explicit via CLI flags):
+  --rc                   RC cases from rc_extractor RC-4
+  --synthetic-regular    Regular synthetic cases from orchestrator
+  --synthetic-mixed      Mixed synthetic cases from orchestrator
+  --synthetic-defense    Defense synthetic cases from orchestrator
 
 Output:
-  benchmark_cases_raw.json  — overcomplete candidate pool (~150+ cases)
+  benchmark_cases_v7_raw.json  — overcomplete candidate pool
 
 Schema B fields validated (per PLAN.md "Unified Schema B Definition"):
   case_id, hypothesis, domain, ml_task_type, category, difficulty,
@@ -26,10 +28,12 @@ Schema B fields validated (per PLAN.md "Unified Schema B Definition"):
   _pipeline.case_type, _pipeline.proxy_mean
 
 Usage:
-    uv run pipeline/normalize_cases.py
-    uv run pipeline/normalize_cases.py --output custom_pool.json
-    uv run pipeline/normalize_cases.py --strict  # abort on any validation failure
-    uv run pipeline/normalize_cases.py --dry-run  # show what would be normalized
+    uv run pipeline/normalize_cases.py \\
+      --rc rc_cases_raw.json \\
+      --synthetic-regular synthetic_regular_raw.json \\
+      --synthetic-mixed synthetic_mixed_raw.json \\
+      --synthetic-defense synthetic_defense_raw.json \\
+      --output benchmark_cases_v7_raw.json
 """
 
 import argparse
@@ -222,8 +226,8 @@ def _normalize_synthetic_regular(raw: dict) -> dict | None:
         "task_prompt": raw.get("task_prompt", ""),
         "ground_truth": {
             "correct_position": correct_position,
-            "final_verdict": correct_verdict,
-            "correct_verdict": correct_verdict,
+            "final_verdict": correct_position,
+            "correct_verdict": correct_position,
         },
         "ideal_debate_resolution": {
             "type": idr_type,
@@ -287,11 +291,11 @@ def _normalize_synthetic_mixed(raw: dict) -> dict | None:
         "task_prompt": raw.get("task_prompt", ""),
         "ground_truth": {
             "correct_position": "empirical_test_agreed",
-            "final_verdict": gt.get("final_verdict", "Empirically contested"),
+            "final_verdict": "empirical_test_agreed",
             "required_empirical_test": gt.get("required_empirical_test", {}),
         },
         "ideal_debate_resolution": {
-            "type": idr.get("type", "mixed"),
+            "type": idr.get("type", "empirical_test_agreed"),
             "condition": idr.get("condition", ""),
             "supports_critique_if": idr.get("supports_critique_if", ""),
             "supports_defense_if": idr.get("supports_defense_if", ""),
@@ -434,12 +438,16 @@ def normalize_rc_case(raw: dict) -> dict | None:
         "hypothesis": title,
         "domain": raw.get("domain", ""),  # may be empty — Phase 3 can fill
         "ml_task_type": raw.get("ml_task_type", ""),
-        "category": "mixed" if correct_position == "empirical_test_agreed" else "regular",
+        "category": (
+            "mixed" if correct_position == "empirical_test_agreed"
+            else "defense" if correct_position == "defense_wins"
+            else "regular"
+        ),
         "difficulty": None,
         "task_prompt": raw.get("task_prompt", ""),
         "ground_truth": {
             "correct_position": correct_position,
-            "final_verdict": idr_type,
+            "final_verdict": correct_position,
         },
         "ideal_debate_resolution": ideal_resolution_fields,
         "planted_issues": planted_issues,
@@ -547,6 +555,8 @@ def validate_schema_b(case: dict, _strict: bool = False) -> list[str]:
         issues.append(f"{cid}: correct_position=empirical_test_agreed but category={category!r} (expected 'mixed')")
     if category == "defense" and cp != "defense_wins":
         issues.append(f"{cid}: category=defense but correct_position={cp!r} (expected 'defense_wins')")
+    if cp == "defense_wins" and category != "defense":
+        issues.append(f"{cid}: correct_position=defense_wins but category={category!r} (expected 'defense')")
 
     return issues
 
@@ -556,46 +566,44 @@ def validate_schema_b(case: dict, _strict: bool = False) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def read_synthetic_cases(experiment_dir: Path) -> list[dict]:
-    """
-    Read all cases_*.json batch files from the experiment directory.
-    These are the assembled outputs from orchestrator.py --assemble.
-    """
-    batch_files = sorted(experiment_dir.glob("cases_*.json"))
-    if not batch_files:
-        console.print("  [dim]No cases_*.json batch files found in experiment root.[/dim]")
+def _read_json_array(path: Path, label: str) -> list[dict]:
+    """Read a JSON array file. Returns [] if missing or invalid."""
+    if not path.exists():
+        console.print(f"  [dim]{label}: not found at {path} — skipping[/dim]")
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, list):
+            console.print(f"  [yellow]✗ {label}: not a JSON array, skipping[/yellow]")
+            return []
+        console.print(f"  [green]✓[/green] {label}: {len(data)} cases")
+        return data
+    except (json.JSONDecodeError, OSError) as exc:
+        console.print(f"  [red]✗ {label}: read error — {exc}[/red]")
         return []
 
-    cases = []
-    for f in batch_files:
-        try:
-            batch = json.loads(f.read_text(encoding="utf-8"))
-            if isinstance(batch, list):
-                cases.extend(batch)
-                console.print(f"  [green]✓[/green] {f.name}: {len(batch)} cases")
-            else:
-                console.print(f"  [yellow]✗ {f.name}: not a JSON array, skipping[/yellow]")
-        except (json.JSONDecodeError, OSError) as exc:
-            console.print(f"  [red]✗ {f.name}: read error — {exc}[/red]")
 
+def read_synthetic_cases(
+    regular_path: Path | None,
+    mixed_path: Path | None,
+    defense_path: Path | None,
+) -> list[dict]:
+    """Read per-stratum synthetic case files (explicit paths, no globbing)."""
+    cases: list[dict] = []
+    if regular_path:
+        cases.extend(_read_json_array(regular_path, "synthetic-regular"))
+    if mixed_path:
+        cases.extend(_read_json_array(mixed_path, "synthetic-mixed"))
+    if defense_path:
+        cases.extend(_read_json_array(defense_path, "synthetic-defense"))
     return cases
 
 
-def read_rc_cases(rc_candidates_dir: Path) -> list[dict]:
-    """
-    Read rc_cases_raw.json from the RC candidates directory.
-    """
-    rc_path = rc_candidates_dir / "rc_cases_raw.json"
-    if not rc_path.exists():
-        console.print(f"  [dim]No RC cases found at {rc_path} — skipping.[/dim]")
+def read_rc_cases(rc_path: Path | None) -> list[dict]:
+    """Read RC cases from explicit path."""
+    if not rc_path:
         return []
-    try:
-        cases = json.loads(rc_path.read_text(encoding="utf-8"))
-        console.print(f"  [green]✓[/green] rc_cases_raw.json: {len(cases)} RC cases")
-        return cases
-    except (json.JSONDecodeError, OSError) as exc:
-        console.print(f"  [red]✗ rc_cases_raw.json: read error — {exc}[/red]")
-        return []
+    return _read_json_array(rc_path, "rc")
 
 
 # ---------------------------------------------------------------------------
@@ -604,9 +612,11 @@ def read_rc_cases(rc_candidates_dir: Path) -> list[dict]:
 
 
 def normalize_all(
-    experiment_dir: Path,
-    rc_candidates_dir: Path,
     output_path: Path,
+    rc_path: Path | None = None,
+    synthetic_regular_path: Path | None = None,
+    synthetic_mixed_path: Path | None = None,
+    synthetic_defense_path: Path | None = None,
     strict: bool = False,
     dry_run: bool = False,
 ) -> tuple[list[dict], list[str]]:
@@ -614,19 +624,19 @@ def normalize_all(
     Normalize all sources, validate Schema B, return (cases, all_violations).
     """
     console.rule("[bold blue]normalize_cases.py[/bold blue]")
-    console.print(f"Experiment dir:   {experiment_dir}")
-    console.print(f"RC candidates:    {rc_candidates_dir}")
     console.print(f"Output:           {output_path}")
     console.print()
 
     # --- Read synthetic ---
     console.print("[bold]Reading synthetic cases...[/bold]")
-    raw_synthetic = read_synthetic_cases(experiment_dir)
+    raw_synthetic = read_synthetic_cases(
+        synthetic_regular_path, synthetic_mixed_path, synthetic_defense_path,
+    )
     console.print(f"  Total synthetic raw: {len(raw_synthetic)}")
 
     # --- Read RC ---
     console.print("\n[bold]Reading RC cases...[/bold]")
-    raw_rc = read_rc_cases(rc_candidates_dir)
+    raw_rc = read_rc_cases(rc_path)
     console.print(f"  Total RC raw: {len(raw_rc)}")
 
     if not raw_synthetic and not raw_rc:
@@ -705,28 +715,16 @@ def normalize_all(
     n_rc       = sum(1 for c in valid_cases if c.get("is_real_paper_case", False))
     n_synth    = len(valid_cases) - n_rc
 
-    n_critique = sum(
-        1 for c in valid_cases
-        if c.get("ground_truth", {}).get("correct_position") == "critique_wins"
-    )
-    n_defense_wins = sum(
-        1 for c in valid_cases
-        if c.get("category") == "regular"
-        and c.get("ground_truth", {}).get("correct_position") == "defense_wins"
-    )
-
     table = Table(title="Normalized Pool Composition", show_header=True)
     table.add_column("Dimension")
     table.add_column("Count", justify="right")
     table.add_column("v7 Target")
-    table.add_row("Total cases",              str(len(valid_cases)), "≥ 280")
-    table.add_row("  Regular (critique_wins + defense_wins)", str(n_regular), "≥ 160")
-    table.add_row("    Critique (critique_wins)",  str(n_critique),    "≥ 120")
-    table.add_row("    Defense_wins (regular)",    str(n_defense_wins), "≥ 40")
-    table.add_row("  Mixed",                  str(n_mixed),   "≥ 80")
-    table.add_row("  Defense (category)",     str(n_defense), "≥ 40")
-    table.add_row("  RC (real paper)",        str(n_rc),      "")
-    table.add_row("  Synthetic",              str(n_synth),   "")
+    table.add_row("Total cases",       str(len(valid_cases)), "≥ 280")
+    table.add_row("  Regular",         str(n_regular),        "≥ 160")
+    table.add_row("  Mixed",           str(n_mixed),          "≥ 80")
+    table.add_row("  Defense",         str(n_defense),        "≥ 40")
+    table.add_row("  RC (real paper)", str(n_rc),             "")
+    table.add_row("  Synthetic",       str(n_synth),          "")
     console.print(table)
 
     # Phase 1 decision gate check
@@ -774,6 +772,22 @@ def main():
         description="normalize_cases.py — normalize RC + synthetic to Schema B"
     )
     parser.add_argument(
+        "--rc",
+        help="RC cases JSON file (from rc_extractor RC-4)",
+    )
+    parser.add_argument(
+        "--synthetic-regular",
+        help="Synthetic regular cases JSON file",
+    )
+    parser.add_argument(
+        "--synthetic-mixed",
+        help="Synthetic mixed cases JSON file",
+    )
+    parser.add_argument(
+        "--synthetic-defense",
+        help="Synthetic defense cases JSON file",
+    )
+    parser.add_argument(
         "--output",
         default="benchmark_cases_v7_raw.json",
         help="Output filename in experiment root (default: benchmark_cases_v7_raw.json)",
@@ -790,11 +804,20 @@ def main():
     )
     args = parser.parse_args()
 
+    # Resolve paths relative to experiment dir
+    def _resolve(val: str | None) -> Path | None:
+        if val is None:
+            return None
+        p = Path(val)
+        return p if p.is_absolute() else EXPERIMENT_DIR / p
+
     output_path = EXPERIMENT_DIR / args.output
     _, violations = normalize_all(
-        experiment_dir=EXPERIMENT_DIR,
-        rc_candidates_dir=RC_CANDIDATES_DIR,
         output_path=output_path,
+        rc_path=_resolve(args.rc),
+        synthetic_regular_path=_resolve(args.synthetic_regular),
+        synthetic_mixed_path=_resolve(args.synthetic_mixed),
+        synthetic_defense_path=_resolve(args.synthetic_defense),
         strict=args.strict,
         dry_run=args.dry_run,
     )
