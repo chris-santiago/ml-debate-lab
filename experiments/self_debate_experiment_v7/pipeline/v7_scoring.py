@@ -880,16 +880,33 @@ def run_analysis():
         elif category == "mixed":
             mixed_score_lists[condition][cid].append(score_dict)
 
-        # H5: extract per-case issue classification for ensemble_3x (Phase 6 data)
-        # Paired test — require both tiers present and non-None for the same case
+        # H5: recompute tier precisions from unique_issues (not LLM-reported values)
+        # Paired test — require both tiers present for the same case
         if condition == "ensemble_3x" and category == "regular":
             issue_map = file_rescore.get("per_case_issue_map", {})
-            tier_precisions = issue_map.get("tier_precisions", {})
-            p_1of3 = tier_precisions.get("1of3")
-            p_3of3 = tier_precisions.get("3of3")
-            if isinstance(p_1of3, (int, float)) and isinstance(p_3of3, (int, float)):
-                h5_precision_1of3.append(p_1of3)
-                h5_precision_3of3.append(p_3of3)
+            unique_issues = issue_map.get("unique_issues", [])
+            if unique_issues:
+                tier_valid = {"1of3": 0, "3of3": 0}
+                tier_total = {"1of3": 0, "3of3": 0}
+                for issue in unique_issues:
+                    rb = issue.get("raised_by", [])
+                    if not rb:
+                        continue  # skip phantom issues
+                    n_assessors = len(rb)
+                    if n_assessors == 1:
+                        tier = "1of3"
+                    elif n_assessors == 3:
+                        tier = "3of3"
+                    else:
+                        continue  # 2of3 not used in H5 test
+                    tier_total[tier] += 1
+                    if issue.get("classification") in ("planted_match", "valid_novel"):
+                        tier_valid[tier] += 1
+                p_1of3 = tier_valid["1of3"] / tier_total["1of3"] if tier_total["1of3"] > 0 else None
+                p_3of3 = tier_valid["3of3"] / tier_total["3of3"] if tier_total["3of3"] > 0 else None
+                if p_1of3 is not None and p_3of3 is not None:
+                    h5_precision_1of3.append(p_1of3)
+                    h5_precision_3of3.append(p_3of3)
 
     # Average accumulated runs into final per-case dicts
     def _avg_score_lists(score_lists, dims):

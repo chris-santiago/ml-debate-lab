@@ -120,23 +120,28 @@ small for inference — this is descriptive only.
 ### H5 — Union Pooling Precision Parity: FAIL
 
 ```
-Precision: 1/3-flagged ~ 3/3-flagged  [ensemble outputs, n=433]
-Point estimate: -0.103
-95% CI: [-0.133, -0.073]
+Precision: 1/3-flagged ~ 3/3-flagged  [ensemble outputs, n=432]
+Point estimate: -0.080
+95% CI: [-0.108, -0.052]
 Equivalence bound: +/-0.03
 ```
 
 Minority-flagged issues (1/3 agreement) have meaningfully lower precision than consensus
-issues (3/3 agreement): mean 0.786 vs 0.889. The CI lies entirely below -0.03.
+issues (3/3 agreement). The CI lies entirely below -0.03.
 
 This contradicts v6's finding (v6: +0.017, CI [-0.028, +0.068]) and means union pooling
 carries a precision cost. Recommendation: use union pooling with tier weighting (as
 pre-specified in HYPOTHESIS.md failure mode).
 
-**Methodological note:** H5 is computed at the per-file level (n=433 observations from
+**Audit correction:** Initial H5 values (delta=-0.103) used LLM-reported tier_precisions
+directly. Post-audit recomputation from `unique_issues` arrays in Python (filtering
+phantom issues, recomputing arithmetic) reduced the delta to -0.080. The LLM arithmetic
+had a 20.7% error rate on tier-level precisions. See `H5_AUDIT.md` for full analysis.
+
+**Methodological note:** H5 is computed at the per-file level (n=432 observations from
 160 cases x 3 runs), while all other tests average across runs first (n=160 or n=80
 per-case observations). This asymmetry does not affect the verdict given the point
-estimate is 3.4x the equivalence bound, but is noted for transparency.
+estimate is 2.7x the equivalence bound, but is noted for transparency.
 
 ---
 
@@ -202,7 +207,7 @@ converge on `critique_wins`, even for well-designed methodologies.
 | H2_mix | **PASS** | -0.100 | [-0.131, -0.067] | 80 |
 | H3 | **PASS** | +0.125 | [+0.088, +inf) | 80 |
 | H4 | **PASS** | +0.168 | [+0.140, +inf) | 160 |
-| H5 | **FAIL** | -0.103 | [-0.133, -0.073] | 433 |
+| H5 | **FAIL** | -0.080 | [-0.108, -0.052] | 432 |
 
 **Framework:** CONFIRMED (P1 PASS + P2 PASS)
 **Score:** 6/8 hypotheses as predicted (P1, P2, H2_reg, H2_mix, H3, H4)
