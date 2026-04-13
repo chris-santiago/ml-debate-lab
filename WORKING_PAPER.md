@@ -1,4 +1,4 @@
-# When Does Debate Help? A Pre-Registered Test of the Convergent/Divergent Framework for Multi-Agent LLM Evaluation
+# When Does Debate Help? Divergent Detection and Convergent Judgment in Multi-Agent LLM Evaluation
 
 **Draft — not for distribution**
 
@@ -125,7 +125,7 @@ All conditions use Claude Sonnet 4.6 as the generation model. Each case is evalu
 - **FC (Fair Comparison):** mean(IDR, IDP, DRQ, FVC). Note: FC double-weights the verdict dimension on regular cases since DRQ = FVC.
 - **FVC_mixed:** FVC on mixed stratum only.
 
-**Pre-registration.** Eight hypotheses were registered before data collection:
+**Pre-registration.** Eight hypotheses were registered via version-controlled commit (hash `6fadcc6`) before data collection. The commit hash is tamper-evident; the full hypothesis specification is available in the supplementary materials.
 
 | ID | Prediction | Type |
 |---|---|---|
@@ -141,7 +141,7 @@ All conditions use Claude Sonnet 4.6 as the generation model. Each case is evalu
 
 ### 3.4 Statistical Methods
 
-All hypothesis tests use paired bootstrap (n = 10,000, seed = 42, α = 0.05). Case-level differences are resampled with replacement. One-sided tests for directional predictions (P1, P2, H3, H4); two-sided for non-directional (H1a, H2, H5). Stability verified at seed = 99 (7/8 tests within ±0.001 CI drift; H2_mix upper bound drifted 0.002 — verdict unaffected). No multiple comparison correction; pre-registration controls family-wise error rate by binding the analysis to the specified tests.
+All hypothesis tests use paired bootstrap (n = 10,000, seed = 42, α = 0.05). Case-level differences are resampled with replacement. One-sided tests for directional predictions (P1, P2, H3, H4); two-sided for non-directional (H1a, H2, H5). Stability verified at seed = 99 (7/8 tests within ±0.001 CI drift; H2_mix upper bound drifted 0.002 — verdict unaffected). No multiple comparison correction is applied. Pre-registration eliminates post-hoc test selection but does not formally control FWER across 8 simultaneous tests. We note that all six PASS results have margins far exceeding what multiple testing could explain: the smallest one-sided CI lower bound among PASS verdicts is +0.088 (H3), and Bonferroni correction at α/8 = 0.006 would not change any verdict.
 
 ---
 
@@ -151,7 +151,7 @@ All hypothesis tests use paired bootstrap (n = 10,000, seed = 42, α = 0.05). Ca
 
 Both primary predictions pass with large, non-overlapping effects:
 
-**P1 — Divergent Detection (Ensemble Wins).** Ensemble IDR (0.803) exceeds multiround IDR (0.634): Δ = +0.169, 95% CI lower bound = +0.139. Three independent critics with union pooling find substantially more planted issues than iterative adversarial exchange at matched compute.
+**P1 — Divergent Detection (Ensemble Wins).** Ensemble IDR (0.803) exceeds multiround IDR (0.634): Δ = +0.169, 95% CI lower bound = +0.139. Three independent critics with union pooling find substantially more planted issues than iterative adversarial exchange at matched compute — detecting 80% of planted flaws versus 63%.
 
 **P2 — Convergent Judgment (Multiround Wins).** Multiround FVC_mixed (0.731) exceeds ensemble FVC_mixed (0.506): Δ = +0.225, 95% CI lower bound = +0.192. Iterative exchange with information-passing enables correct ambiguity recognition that independent critics cannot replicate. Multiround produces `empirical_test_agreed` on 46.3% of mixed runs; ensemble produces it on 1.3%.
 
@@ -207,6 +207,8 @@ Ensemble_3x achieves the highest IDR (0.803), IDP (0.963), and FC (0.938). Multi
 The mechanism: adding a blind defender (who argues methodology in the abstract without seeing the critique) introduces noise that causes the adjudicator to reject valid critiques approximately 10% of the time. DRQ/FVC drops from 0.993 (baseline) to 0.891 (isolated debate). IDR is unaffected (0.636 vs. 0.626), so the damage is purely to verdict quality.
 
 This overturns Study 1's null finding and reveals an active cost of debate structure on straightforward detection tasks — a cost that was below Study 1's detection threshold at n = 80.
+
+**Robustness to FC weighting.** Since DRQ = FVC on regular cases, FC mechanically double-weights the verdict dimension: FC = mean(IDR, IDP, 2×FVC)/4. Under equal-weight FC* = mean(IDR, IDP, FVC)/3, the H1a delta reduces from −0.050 to −0.033 — still entirely outside the ±0.015 equivalence bound. H2_reg likewise holds under FC* (+0.107).
 
 **H5 — Minority-Flagged Issues Carry a Precision Penalty.** Study 1 found precision parity across support tiers (1/3: 0.946, 3/3: 0.929, Δ = +0.017, CI spans zero). Study 2 finds the opposite: Δ = −0.080, CI [−0.108, −0.052], entirely outside the ±0.03 equivalence bound.
 
@@ -269,21 +271,21 @@ The ensemble IDR advantage is stable and strengthens with pre-registration. The 
 
 ### 5.5 Generalization
 
-If adversarial structure suppresses recall on divergent detection tasks, the pattern should extend to any domain where the goal is comprehensive enumeration: code review (find all bugs), safety auditing (find all violations), legal document review (find all compliance issues). Conversely, tasks requiring a final judgment under genuine uncertainty should benefit from iterative exchange. The framework predicts: ensemble IDR advantage over debate should replicate on other divergent tasks, and multiround FVC advantage should replicate on other convergent tasks.
+If adversarial structure suppresses recall on divergent detection tasks, we predict the pattern would extend to any domain where the goal is comprehensive enumeration: code review (find all bugs), safety auditing (find all violations), legal document review (find all compliance issues). Conversely, tasks requiring a final judgment under genuine uncertainty should benefit from iterative exchange. The framework predicts: ensemble IDR advantage over debate would replicate on other divergent tasks, and multiround FVC advantage would replicate on other convergent tasks.
 
 The limits of the convergent/divergent binary deserve acknowledgment. Many real evaluation tasks require both detection and judgment simultaneously — a thorough code review requires enumerating all bugs (divergent) *and* judging which are critical (convergent). For such mixed-mode tasks, a protocol that separates stages — detect with ensemble, adjudicate with multiround — is a natural candidate for future work. H3's isolation of information-passing as the binding mechanism provides a specific prediction: the defender must see the specific critique, not merely argue in the abstract.
 
 ---
 
-## Limitations
+## 6. Limitations
 
 1. **Single generation model.** All conditions in both studies use Claude models. The framework predictions may not generalize to other model families. Zhang et al. (2025) show model heterogeneity significantly improves multi-agent outcomes — heterogeneous ensembles remain unexamined.
 
 2. **Scorer change between studies.** Study 1 uses GPT-4o; Study 2 uses gpt-5.4-mini. The H5 reversal (precision parity → penalty) could be partially confounded by scorer differences. We present the tier composition effect as the primary mechanism (§4.4), but the scorer change is a secondary confound that cannot be fully ruled out.
 
-3. **Planted-flaw benchmark.** Regular cases have synthetic planted flaws. Real-world methodology review involves subtler, less cleanly categorized issues. The RC subgroup (n = 5 regular in Study 2) provides suggestive ecological validity (P1 delta +0.261 vs. synthetic +0.166) but is too small for formal inference.
+3. **Planted-flaw benchmark.** Regular cases have synthetic planted flaws. Real-world methodology review involves subtler, less cleanly categorized issues. The RC subgroup (n = 5 regular in Study 2) is directionally consistent with an ecological validity effect (P1 delta +0.261 vs. synthetic +0.166) but not informative at n = 5.
 
-4. **Within-case variance.** Multiround (60.7% verdict flip rate) and isolated debate (44.3%) exceed the 30% stability threshold. Individual runs are unreliable; 3-run averaging is mandatory for stable estimates. Ensemble (0.7%) and baseline (2.5%) are single-run reliable.
+4. **Within-case variance and deployment cost.** Multiround (60.7% verdict flip rate) and isolated debate (44.3%) exceed the 30% stability threshold. Individual runs are unreliable; 3-run averaging is mandatory for stable estimates. This raises multiround's effective deployment cost to ~9× baseline (3 API calls × 3 replicates), compared to 3× for ensemble, which is single-run reliable (0.7% flip rate).
 
 5. **Defense-case exoneration.** Zero full exoneration across all Study 2 conditions limits conclusions about the framework's defense-case applicability. Current models are systematically critique-biased.
 
@@ -301,7 +303,7 @@ Second, the informative failures refine the practical recommendations. Isolated 
 
 Third, defense-case exoneration remains unsolved. No condition produces full `defense_wins` verdicts. The strongest concession is partial ambiguity recognition (50% adjacent in multiround), suggesting current models are systematically critique-biased.
 
-The practical recommendation: use ensemble for detection, multiround for judgment, and neither for exoneration. Individual multiround runs should not be trusted without replicate averaging.
+The practical recommendation: use ensemble for detection, multiround for judgment, and — based on the exploratory defense-case analysis — neither for exoneration. Individual multiround runs should not be trusted without replicate averaging.
 
 ---
 
