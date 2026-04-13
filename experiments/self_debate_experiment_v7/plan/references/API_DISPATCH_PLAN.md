@@ -73,7 +73,7 @@ client = AsyncOpenAI(
     api_key=os.environ["OPENROUTER_API_KEY"],
     base_url="https://openrouter.ai/api/v1",
 )
-sem = asyncio.Semaphore(args.max_concurrent)  # default 20
+sem = asyncio.Semaphore(args.max_concurrent)  # default 100
 
 async def call_api(sem, client, system_prompt, user_msg, model, config):
     for attempt in range(config.retries + 1):
@@ -262,7 +262,7 @@ uv run pipeline/phase5_benchmark.py \
   --cases v7_cases_sanitized.json \
   --output-dir v7_raw_outputs \
   --conditions baseline,isolated_debate,biased_debate \
-  --max-concurrent 20 \
+  --max-concurrent 100 \
   --model anthropic/claude-sonnet-4-20250514 \
   --temperature 1.0 \
   --timeout 180 \
@@ -321,7 +321,7 @@ contamination check to be meaningful.
 ## Design Considerations
 
 ### Advantages over agent dispatch
-- **Higher parallelism:** 20+ concurrent API calls vs agent dispatch limits
+- **Higher parallelism:** 100+ concurrent API calls vs agent dispatch limits
 - **Per-case granularity:** No chunking needed; each (case, condition, run) is independent
 - **Programmatic resume:** Skip completed files automatically on re-run
 - **Version-controlled prompts:** System prompts are constants in the script, not conversation context

@@ -39,7 +39,7 @@ uv run pipeline/phase5_benchmark.py \
   --cases v7_cases_sanitized.json \
   --output-dir v7_raw_outputs \
   --conditions baseline,isolated_debate,ensemble_3x,multiround_2r \
-  --max-concurrent 20 \
+  --max-concurrent 100 \
   --model anthropic/claude-sonnet-4-20250514 \
   --temperature 1.0 \
   --timeout 180 \

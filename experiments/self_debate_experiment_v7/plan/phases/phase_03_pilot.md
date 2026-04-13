@@ -31,7 +31,7 @@ uv run pipeline/phase5_benchmark.py \
   --cases pilot_cases_sanitized.json \
   --output-dir pilot_raw_outputs \
   --conditions baseline \
-  --max-concurrent 10 \
+  --max-concurrent 100 \
   --temperature 1.0
 ```
 

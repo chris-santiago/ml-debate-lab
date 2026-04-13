@@ -32,7 +32,7 @@ Output schema for score mode (keyed by filename):
 Usage:
   uv run pipeline/v7_scoring.py --mode pilot --input pilot_raw_outputs \\
     --cases benchmark_cases_v7_raw.json --output pilot_results.json
-  uv run pipeline/v7_scoring.py --mode score [--dry-run] [--concurrency 20]
+  uv run pipeline/v7_scoring.py --mode score [--dry-run] [--concurrency 100]
   uv run pipeline/v7_scoring.py --mode analyze --raw v7_raw_outputs \\
     --scores v7_rescored_idr_idp.json --cases benchmark_cases_v7_raw.json \\
     --output v7_results.json --bootstrap-n 10000 --seed 42
@@ -60,7 +60,7 @@ parser.add_argument("--mode", choices=["pilot", "score", "analyze"], default=Non
                     help="Operating mode (inferred as 'pilot' when --input is provided)")
 # Score mode args
 parser.add_argument("--dry-run", action="store_true", help="Skip API calls, produce null scores")
-parser.add_argument("--concurrency", type=int, default=20)
+parser.add_argument("--concurrency", type=int, default=100)
 parser.add_argument("--model", default="openai/gpt-5.4-mini",
                     help="OpenRouter model for cross-vendor scoring (default: openai/gpt-5.4-mini)")
 parser.add_argument("--cases", default="benchmark_cases_v7_raw.json")
