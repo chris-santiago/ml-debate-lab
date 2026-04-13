@@ -90,7 +90,8 @@ case "$FILE_PATH" in
     [ -n "$DEST" ] && rsync -a --exclude='.orphaned_at' \
       "$REPO_ROOT/plugins/ml-journal/" "$DEST/"
     BARE="$HOME/.claude/plugins/cache/ml-journal"
-    [ -d "$BARE" ] && rsync -a --exclude='.orphaned_at' \
+    mkdir -p "$BARE"
+    rsync -a --exclude='.orphaned_at' \
       "$REPO_ROOT/plugins/ml-journal/" "$BARE/"
     ;;
   *plugins/ml-lab/*)
@@ -98,7 +99,8 @@ case "$FILE_PATH" in
     [ -n "$DEST" ] && rsync -a --exclude='.orphaned_at' \
       "$REPO_ROOT/plugins/ml-lab/" "$DEST/"
     BARE="$HOME/.claude/plugins/cache/ml-lab"
-    [ -d "$BARE" ] && rsync -a --exclude='.orphaned_at' \
+    mkdir -p "$BARE"
+    rsync -a --exclude='.orphaned_at' \
       "$REPO_ROOT/plugins/ml-lab/" "$BARE/"
     ;;
 esac
