@@ -460,13 +460,11 @@ def _sanitize_case(case: dict) -> dict:
     import copy
     c = copy.deepcopy(case)
     c.pop("planted_issues", None)
-    gt = c.get("ground_truth", {})
-    for field in ("correct_position", "correct_verdict", "final_verdict"):
-        gt.pop(field, None)
-    st = c.get("scoring_targets", {})
-    for field in ("must_find_issue_ids", "acceptable_resolutions",
-                  "must_not_claim", "must_not_claim_details"):
-        st.pop(field, None)
+    c.pop("ground_truth", None)
+    c.pop("scoring_targets", None)
+    c.pop("ideal_debate_resolution", None)
+    c.pop("sound_design_reference", None)
+    c.pop("difficulty_justification", None)
     return c
 
 

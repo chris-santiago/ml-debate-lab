@@ -697,10 +697,8 @@ def run_analysis():
         category = case.get("category", "regular")
         gt = case["ground_truth"]
         st = case["scoring_targets"]
-        idr_obj = case["ideal_debate_resolution"]
         correct_position = gt["correct_position"]
-        ideal_resolution = idr_obj["type"]
-        acceptable = st.get("acceptable_resolutions", [ideal_resolution])
+        acceptable = st.get("acceptable_resolutions", [correct_position])
         must_find_ids = st.get("must_find_issue_ids", [])
 
         # Get rescored values
@@ -725,8 +723,8 @@ def run_analysis():
         else:
             idp_val = 1.0
 
-        drq_val = compute_drq(verdict, acceptable, ideal_resolution)
-        fvc_val = compute_fvc(verdict, acceptable, ideal_resolution)
+        drq_val = compute_drq(verdict, acceptable, correct_position)
+        fvc_val = compute_fvc(verdict, acceptable, correct_position)
 
         score_dict = {"IDR": idr_val, "IDP": idp_val, "DRQ": drq_val, "FVC": fvc_val}
         score_dict["FC"] = compute_fc(score_dict)
@@ -832,15 +830,15 @@ def run_pilot():
             continue
 
         category = case.get("category", "regular")
+        gt = case["ground_truth"]
         st = case["scoring_targets"]
-        idr_obj = case["ideal_debate_resolution"]
-        ideal_resolution = idr_obj["type"]
-        acceptable = st.get("acceptable_resolutions", [ideal_resolution])
+        correct_position = gt["correct_position"]
+        acceptable = st.get("acceptable_resolutions", [correct_position])
 
         verdict = output.get("verdict", "")
 
-        fvc = compute_fvc(verdict, acceptable, ideal_resolution)
-        drq = compute_drq(verdict, acceptable, ideal_resolution)
+        fvc = compute_fvc(verdict, acceptable, correct_position)
+        drq = compute_drq(verdict, acceptable, correct_position)
         fc = round((fvc + drq) / 2, 4)
 
         results.append({
