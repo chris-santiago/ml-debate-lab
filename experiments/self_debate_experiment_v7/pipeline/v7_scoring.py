@@ -56,8 +56,8 @@ except ImportError:
     sys.exit(1)
 
 parser = argparse.ArgumentParser(description="v7 scoring + analysis engine")
-parser.add_argument("--mode", choices=["pilot", "score", "analyze"], default=None,
-                    help="Operating mode (inferred as 'pilot' when --input is provided)")
+parser.add_argument("--mode", choices=["pilot", "score", "rescore", "analyze"], default=None,
+                    help="Operating mode (rescore is alias for score; inferred as 'pilot' when --input is provided)")
 # Score mode args
 parser.add_argument("--dry-run", action="store_true", help="Skip API calls, produce null scores")
 parser.add_argument("--concurrency", type=int, default=100)
@@ -193,7 +193,76 @@ def compute_idp_from_false_claims(false_claim_ids, all_issues_count):
     return 0.0
 
 
-async def call_scorer(client, prompt, semaphore, model, filename=""):
+def build_h5_classification_prompt(assessor_issues_lists, planted_descriptions,
+                                    must_not_claim_details):
+    """Build H5 issue classification prompt for ensemble_3x cases.
+
+    Receives all 3 assessors' issues, deduplicates semantically, classifies each
+    unique issue, and assigns support tiers from the raised_by count.
+    """
+    planted_block = "\n".join(
+        f"  [{iid}] {desc}" for iid, desc in planted_descriptions.items()
+    )
+    false_claims_block = "\n".join(
+        f"  [{d['claim_id']}] {d['claim']}" for d in must_not_claim_details
+    ) if must_not_claim_details else "  (none)"
+
+    assessor_blocks = []
+    for i, issues in enumerate(assessor_issues_lists):
+        items = "\n".join(f"    - {iss}" for iss in (issues or []))
+        assessor_blocks.append(f"  Assessor {i}:\n{items}")
+    all_assessors = "\n".join(assessor_blocks)
+
+    return f"""You are classifying issues raised by 3 independent ML methodology critics.
+
+ASSESSOR ISSUES:
+{all_assessors}
+
+PLANTED ISSUES (ground truth — these are real flaws):
+{planted_block}
+
+FALSE CLAIMS (known incorrect concerns — must NOT match these):
+{false_claims_block}
+
+---
+TASK:
+1. Semantically deduplicate issues across all 3 assessors. Two issues are duplicates if they address substantially the same methodological concern, even with different wording.
+2. For each unique issue, classify it as one of:
+   - planted_match: semantically matches a planted issue (cite the issue_id)
+   - valid_novel: a legitimate methodological concern NOT in the planted list and NOT a false claim
+   - false_claim: matches a known false claim
+   - spurious: not a real methodological concern (vague, generic, or factually wrong)
+3. For each unique issue, list which assessors (0, 1, 2) raised it → this determines the support tier (1/3, 2/3, or 3/3).
+4. Compute precision per tier: precision = (planted_match + valid_novel) / total issues at that tier.
+
+OUTPUT: Respond with JSON only. No prose.
+
+{{
+  "unique_issues": [
+    {{
+      "summary": "<brief description>",
+      "classification": "planted_match | valid_novel | false_claim | spurious",
+      "planted_issue_id": "<issue_id or null>",
+      "raised_by": [0, 1, 2],
+      "tier": "1of3 | 2of3 | 3of3"
+    }}
+  ],
+  "tier_precisions": {{
+    "1of3": <float precision for issues raised by exactly 1 assessor>,
+    "2of3": <float precision for issues raised by exactly 2 assessors>,
+    "3of3": <float precision for issues raised by all 3 assessors>
+  }},
+  "tier_counts": {{
+    "1of3": <int>,
+    "2of3": <int>,
+    "3of3": <int>
+  }}
+}}
+
+If a tier has zero issues, set its precision to null."""
+
+
+async def call_scorer(client, prompt, semaphore, model, filename="", max_tokens=1024):
     """Call cross-vendor scorer via OpenRouter with JSON extraction."""
     async with semaphore:
         try:
@@ -201,7 +270,7 @@ async def call_scorer(client, prompt, semaphore, model, filename=""):
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                max_tokens=1024,
+                max_tokens=max_tokens,
                 response_format={"type": "json_object"},
             )
             text = response.choices[0].message.content
@@ -215,10 +284,17 @@ async def call_scorer(client, prompt, semaphore, model, filename=""):
 
 
 async def score_file(client, output_path, case_meta, semaphore, model, dry_run):
-    """Score a single output file. Returns (filename, score_dict)."""
+    """Score a single output file. Returns (filename, score_dict).
+
+    For ensemble_3x regular cases, additionally produces:
+      - per_assessor_rescored: per-assessor found_booleans for union IDR
+      - per_case_issue_map: H5 issue classification with tier precisions
+    """
     filename = output_path.name
     output_data = json.load(open(output_path))
     correct_position = case_meta.get("correct_position", "critique_wins")
+    condition = output_data.get("condition", "")
+    category = case_meta.get("category", "regular")
 
     score = {
         "idr_documented": None,
@@ -226,6 +302,8 @@ async def score_file(client, output_path, case_meta, semaphore, model, dry_run):
         "idp_raw": None,
         "idp_adj": None,
         "found_booleans": {},
+        "per_assessor_rescored": [],
+        "per_case_issue_map": {},
     }
 
     # Defense or mixed: IDR/IDP are N/A — no planted flaws to match against
@@ -248,8 +326,7 @@ async def score_file(client, output_path, case_meta, semaphore, model, dry_run):
         score["idp_adj"] = 1.0
         return filename, score
 
-    # NOTE: For ensemble_3x, this scores only the top-level merged output.
-    # Phase 6 step 6.4 must add per-assessor scoring for union IDR (H5).
+    # Top-level scoring (all conditions)
     critic_raw = output_data.get("critic_raw", "")
     all_issues_raised = output_data.get("all_issues_raised", [])
     all_issues_adjudicated = output_data.get("all_issues_adjudicated", all_issues_raised)
@@ -260,6 +337,15 @@ async def score_file(client, output_path, case_meta, semaphore, model, dry_run):
         score["idp_raw"] = 1.0
         score["idp_adj"] = 1.0
         score["found_booleans"] = {iid: True for iid in must_find_ids}
+        if condition == "ensemble_3x":
+            score["per_assessor_rescored"] = [
+                {"found_booleans": {iid: True for iid in must_find_ids}}
+                for _ in range(3)
+            ]
+            score["per_case_issue_map"] = {
+                "tier_precisions": {"1of3": 0.95, "2of3": 0.95, "3of3": 0.95},
+                "tier_counts": {"1of3": 2, "2of3": 1, "3of3": 1},
+            }
         return filename, score
 
     prompt = build_idr_idp_prompt(
@@ -300,6 +386,54 @@ async def score_file(client, output_path, case_meta, semaphore, model, dry_run):
         score["idp_adj"] = 1.0
         score["found_booleans"] = {iid: False for iid in must_find_ids}
 
+    # --- Ensemble-specific scoring (per-assessor IDR + H5 classification) ---
+    if condition == "ensemble_3x" and category == "regular":
+        assessor_results = output_data.get("assessor_results", [])
+
+        # Per-assessor IDR: score each assessor independently for union IDR
+        per_assessor = []
+        for ai, assessor in enumerate(assessor_results):
+            a_critic_raw = assessor.get("critic_raw", "")
+            a_issues = assessor.get("issues_raised", []) or []
+            a_prompt = build_idr_idp_prompt(
+                a_critic_raw, a_issues, a_issues,
+                planted_descriptions, must_not_claim_details,
+            )
+            a_result = await call_scorer(
+                client, a_prompt, semaphore, model,
+                f"{filename}:assessor{ai}",
+            )
+            if a_result:
+                a_found = a_result.get("idr_found", {})
+                per_assessor.append({
+                    "found_booleans": {
+                        iid: bool(a_found.get(iid, False)) for iid in must_find_ids
+                    }
+                })
+            else:
+                per_assessor.append({
+                    "found_booleans": {iid: False for iid in must_find_ids}
+                })
+        score["per_assessor_rescored"] = per_assessor
+
+        # H5 issue classification: deduplicate + classify + assign tiers
+        assessor_issues_lists = [
+            (a.get("issues_raised", []) or []) for a in assessor_results
+        ]
+        h5_prompt = build_h5_classification_prompt(
+            assessor_issues_lists, planted_descriptions, must_not_claim_details,
+        )
+        h5_result = await call_scorer(
+            client, h5_prompt, semaphore, model, f"{filename}:h5",
+            max_tokens=4096,
+        )
+        if h5_result:
+            score["per_case_issue_map"] = {
+                "unique_issues": h5_result.get("unique_issues", []),
+                "tier_precisions": h5_result.get("tier_precisions", {}),
+                "tier_counts": h5_result.get("tier_counts", {}),
+            }
+
     return filename, score
 
 
@@ -326,10 +460,11 @@ async def run_scoring():
     if args.dry_run:
         print("DRY RUN — no API calls will be made")
 
-    client = AsyncOpenAI(
-        api_key=os.environ.get("OPENROUTER_API_KEY", ""),
-        base_url="https://openrouter.ai/api/v1",
-    )
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    base_url = "https://openrouter.ai/api/v1"
+    scorer_model = args.model
+    print(f"Scorer: model={scorer_model}, base_url={base_url}")
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     semaphore = asyncio.Semaphore(args.concurrency)
     scores = dict(existing)
@@ -340,11 +475,12 @@ async def run_scoring():
         cid = output_data.get("case_id", "")
         case_meta = case_index.get(cid, {
             "correct_position": "critique_wins",
+            "category": "regular",
             "must_find_ids": [],
             "planted_issues": {},
             "must_not_claim_details": [],
         })
-        tasks.append(score_file(client, f, case_meta, semaphore, args.model, args.dry_run))
+        tasks.append(score_file(client, f, case_meta, semaphore, scorer_model, args.dry_run))
 
     print(f"\nRunning {len(tasks)} scoring tasks with concurrency={args.concurrency}...")
 
@@ -362,7 +498,7 @@ async def run_scoring():
             pbar.update(len(batch))
 
             json.dump(
-                {"scores": scores, "model": args.model, "total": len(scores)},
+                {"scores": scores, "model": scorer_model, "total": len(scores)},
                 open(output_file, "w"), indent=2,
             )
 
@@ -373,7 +509,7 @@ async def run_scoring():
     print(f"IDP raw:        n={len(idp_vals)}, mean={sum(idp_vals)/len(idp_vals):.3f}" if idp_vals else "IDP: none")
 
     json.dump(
-        {"scores": scores, "model": args.model, "total": len(scores)},
+        {"scores": scores, "model": scorer_model, "total": len(scores)},
         open(output_file, "w"), indent=2,
     )
     print(f"Saved to {output_file}")
@@ -908,7 +1044,7 @@ def run_pilot():
 if __name__ == "__main__":
     if args.mode == "pilot":
         run_pilot()
-    elif args.mode == "score":
+    elif args.mode in ("score", "rescore"):
         asyncio.run(run_scoring())
     elif args.mode == "analyze":
         run_analysis()
