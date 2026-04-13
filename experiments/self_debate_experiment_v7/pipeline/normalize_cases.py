@@ -291,11 +291,12 @@ def _normalize_synthetic_mixed(raw: dict) -> dict | None:
         "task_prompt": raw.get("task_prompt", ""),
         "ground_truth": {
             "correct_position": "empirical_test_agreed",
+            "correct_verdict": "empirical_test_agreed",
             "final_verdict": "empirical_test_agreed",
             "required_empirical_test": gt.get("required_empirical_test", {}),
         },
         "ideal_debate_resolution": {
-            "type": idr.get("type", "empirical_test_agreed"),
+            "type": idr.get("type", "mixed"),
             "condition": idr.get("condition", ""),
             "supports_critique_if": idr.get("supports_critique_if", ""),
             "supports_defense_if": idr.get("supports_defense_if", ""),
@@ -447,6 +448,7 @@ def normalize_rc_case(raw: dict) -> dict | None:
         "task_prompt": raw.get("task_prompt", ""),
         "ground_truth": {
             "correct_position": correct_position,
+            "correct_verdict": correct_position,
             "final_verdict": correct_position,
         },
         "ideal_debate_resolution": ideal_resolution_fields,
