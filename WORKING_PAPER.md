@@ -56,7 +56,9 @@ Zheng et al. (2023) establish the LLM-as-judge paradigm with MT-Bench, documenti
 
 ### Sycophancy and Conformity in Debate
 
-Wynn et al. (2025) demonstrate that debate corrupts correct answers through sycophancy and social conformity — models shift from correct to incorrect even when stronger models outnumber weaker ones. Saunders et al. (2022) show models are better at discriminating quality than articulating critiques (the generator-discriminator-critique framework), suggesting the discrimination-critique gap may be asymmetric. These mechanisms are relevant to our finding that debate's defender argues away valid critiques that single-pass review would flag.
+Instruction-tuned LLMs exhibit sycophancy — a tendency to agree with inputs regardless of correctness (Perez et al., 2023; Sharma et al., 2024). Sharma et al. (2024) show this bias exists before RLHF and is amplified by preference optimization, as human evaluators themselves prefer convincingly-written sycophantic responses over correct ones. This compounds in multi-agent settings: Wynn et al. (2025) show debate corrupts correct answers through sycophancy and social conformity, and Yao et al. (2025) formalize "disagreement collapse" — distinct debater-driven and judge-driven sycophancy modes that cause premature convergence below single-agent baselines.
+
+Saunders et al. (2022) show models are better at discriminating quality than articulating critiques, suggesting the discrimination-critique gap may be asymmetric. These mechanisms are directly relevant to our defense-case finding: the defender partially concedes rather than fully rebutting (debater-driven sycophancy), and the adjudicator sides with the more assertive argument (judge-driven sycophancy).
 
 ---
 
@@ -227,7 +229,7 @@ The primary driver is a **tier composition effect**. At Study 2's scale (n = 432
 | ensemble_3x | 0/120 (0%) | 0/120 (0%) | 0.000 |
 | multiround_2r | 0/120 (0%) | 60/120 (50.0%) | 0.250 |
 
-Zero full exoneration across all conditions. The strongest concession is `empirical_test_agreed` (adjacent, scored 0.5), achieved on 50% of multiround defense runs. The generation model is systematically critique-biased: even with a well-argued defense and iterative exchange, the adjudicator at most concedes ambiguity but never fully exonerates.
+Zero full exoneration across all conditions. The strongest concession is `empirical_test_agreed` (adjacent, scored 0.5), achieved on 50% of multiround defense runs. This is consistent with sycophancy-driven disagreement collapse (Sharma et al., 2024; Yao et al., 2025): the defender partially concedes to the critique rather than fully rebutting it, and the adjudicator sides with the more assertive argument. Even with iterative exchange, the strongest concession is ambiguity — never full exoneration.
 
 Study 1 observed 20% exoneration on multiround defense cases. Multiple variables changed simultaneously between studies — generation model version, compute budget (~5× → 3×), prompt design, and benchmark composition — so the decline cannot be attributed to a single factor. The consistent finding across studies is that defense-case exoneration remains an unsolved problem.
 
@@ -243,7 +245,7 @@ The convergent/divergent framework provides a principled basis for compute alloc
 
 - **For ambiguity recognition:** use multiround with information-passing. The multiround FVC_mixed advantage (+0.225 over ensemble) is the largest single effect in Study 2. The mechanism is the defender's ability to engage with specific claims (H3: Δ = +0.125), not adversarial structure per se.
 
-- **For defense-case exoneration:** neither architecture succeeds. This is a model limitation, not a protocol limitation.
+- **For defense-case exoneration:** neither architecture succeeds. This reflects model-level sycophancy (Sharma et al., 2024) that compounds through the adversarial protocol, not a protocol design failure.
 
 ### 5.2 The Suppression Mechanism
 
@@ -287,7 +289,7 @@ The limits of the convergent/divergent binary deserve acknowledgment. Many real 
 
 4. **Within-case variance and deployment cost.** Multiround (60.7% verdict flip rate) and isolated debate (44.3%) exceed the 30% stability threshold. Individual runs are unreliable; 3-run averaging is mandatory for stable estimates. This raises multiround's effective deployment cost to ~9× baseline (3 API calls × 3 replicates), compared to 3× for ensemble, which is single-run reliable (0.7% flip rate).
 
-5. **Defense-case exoneration.** Zero full exoneration across all Study 2 conditions limits conclusions about the framework's defense-case applicability. Current models are systematically critique-biased.
+5. **Defense-case exoneration.** Zero full exoneration across all Study 2 conditions limits conclusions about the framework's defense-case applicability. Current models exhibit sycophancy (Sharma et al., 2024) that compounds through adversarial protocols, preventing full exoneration.
 
 6. **Cross-vendor scorer dependency.** IDR and IDP depend on the scorer model's extraction accuracy (~90% exact agreement on a 10% stratified spot-check). Scorer noise does not threaten primary verdicts given the wide margins (P1 CI floor +0.139, P2 CI floor +0.192), but scorer fidelity remains an external dependency.
 
@@ -301,7 +303,7 @@ First, the convergent/divergent framework is prospectively confirmed. At matched
 
 Second, the informative failures refine the practical recommendations. Isolated debate is not merely equivalent to baseline — it is actively worse (−0.050 FC), revealing a suppression mechanism where blind defenders corrupt valid critiques. Union pooling carries a real precision cost (−0.080 for minority-flagged issues), requiring tier-weighted aggregation rather than unqualified union.
 
-Third, defense-case exoneration remains unsolved. No condition produces full `defense_wins` verdicts. The strongest concession is partial ambiguity recognition (50% adjacent in multiround), suggesting current models are systematically critique-biased.
+Third, defense-case exoneration remains unsolved. No condition produces full `defense_wins` verdicts. The strongest concession is partial ambiguity recognition (50% adjacent in multiround), consistent with sycophancy-driven disagreement collapse documented in recent multi-agent literature (Yao et al., 2025; Wynn et al., 2025).
 
 The practical recommendation: use ensemble for detection, multiround for judgment, and — based on the exploratory defense-case analysis — neither for exoneration. Individual multiround runs should not be trusted without replicate averaging.
 
@@ -351,7 +353,11 @@ Panickssery, A., Bowman, S.R., & Feng, S. (2024). LLM Evaluators Recognize and F
 
 Parrish, A. et al. (2022). Two-Turn Debate Doesn't Help Humans Answer Hard Reading Comprehension Questions. *NeurIPS 2022 Workshop on ML Safety.* arXiv:2210.10860.
 
+Perez, E. et al. (2023). Discovering Language Model Behaviors with Model-Written Evaluations. *ACL Findings 2023.* arXiv:2212.09251.
+
 Saunders, W. et al. (2022). Self-critiquing models for assisting human evaluators. arXiv:2206.05802.
+
+Sharma, M. et al. (2024). Towards Understanding Sycophancy in Language Models. *ICLR 2024.* arXiv:2310.13548.
 
 Smit, A.P., Duckworth, P., Grinsztajn, N., Barrett, T.D., & Pretorius, A. (2024). Should we be going MAD? A Look at Multi-Agent Debate Strategies for LLMs. *ICML 2024.* PMLR 235:45883-45905. arXiv:2311.17371.
 
@@ -360,6 +366,8 @@ Wang, X. et al. (2023). Self-Consistency Improves Chain of Thought Reasoning in 
 Wu, H. et al. (2025). Can LLM Agents Really Debate? A Controlled Study of Multi-Agent Debate in Logical Reasoning. arXiv:2511.07784.
 
 Wynn, A., Satija, H., & Hadfield, G. (2025). Talk Isn't Always Cheap: Understanding Failure Modes in Multi-Agent Debate. *ICML 2025 MAS Workshop.* arXiv:2509.05396.
+
+Yao, B. et al. (2025). Peacemaker or Troublemaker: How Sycophancy Shapes Multi-Agent Debate. arXiv:2509.23055.
 
 Xu, Z. et al. (2025). Can LLMs Identify Critical Limitations within Scientific Research? A Systematic Evaluation on AI Research Papers. arXiv:2507.02694.
 
