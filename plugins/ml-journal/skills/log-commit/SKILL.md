@@ -34,6 +34,8 @@ Otherwise, stage all changes:
 git add -A
 ```
 
+Do not stage `.project-log/journal.jsonl` yet — it will be added after the journal entry is written.
+
 ## Step 3: Synthesize commit message
 
 From the conversation context and the diff stat, write a commit message:
@@ -48,7 +50,7 @@ Do not use generic messages like "update files" or "wip".
 From the same context, prepare `git` entry fields:
 - `message` — same as commit message first line
 - `branch` — from `git branch --show-current`
-- `files_changed` — comma-separated list of changed files
+- `files_changed` — comma-separated list of changed files (excluding journal.jsonl)
 - `diff_summary` — 1–2 sentence prose description of what the commit does
 
 ## Step 5: Show draft and confirm
@@ -63,30 +65,36 @@ Ask: `► Commit and log? (y/n)`
 
 Do not run git or write to journal until confirmed.
 
-## Step 6: Commit
+## Step 6: Log to journal
 
-```bash
-git commit -m "<message>"
-```
-
-Capture the commit hash from the output (format: `[branch abc1234]`).
-
-If commit fails, show the error and stop. Do not log to journal.
-
-## Step 7: Log to journal
+Write the journal entry **before** committing so it can be included in the same commit:
 
 ```bash
 python3 <repo-root>/.project-log/journal_log.py \
   --type git \
-  --commit-hash <hash> \
   --message "<message>" \
   --branch <branch> \
   --files-changed "<file1, file2, ...>" \
   --diff-summary "<summary>"
 ```
 
+Note: `commit_hash` is omitted here — it is not knowable before the commit and is recorded as optional metadata. The journal entry is linked to the commit by being part of it.
+
+## Step 7: Stage journal and commit
+
+Stage the journal file alongside everything else, then commit in one shot:
+
+```bash
+git add .project-log/journal.jsonl
+git commit -m "<message>"
+```
+
+Capture the commit hash from the output (format: `[branch abc1234]`).
+
+If commit fails, show the error and stop. The journal entry was already written — note this to the user so they can manually reset if needed.
+
 ## Step 8: Confirm
 
 Show both confirmations:
 - `[branch abc1234] <message>`
-- `Logged [git] <id> at <timestamp>`
+- `Logged [git] <id> at <timestamp>` (synthesized from the journal_log.py output)
