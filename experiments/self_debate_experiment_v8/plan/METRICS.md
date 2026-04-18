@@ -65,6 +65,15 @@ Formula (raw): `DCR = count(CONCEDE labels) / count(all rebuttal labels on defen
 Formula (severity-weighted): `wDCR = sum(severity_score × 1{CONCEDE}) / sum(severity_score across all findings)`
 Rationale: directly measures whether Intervention B changes the defender's reasoning mid-stream, independent of the final verdict label. Leading indicator for DER. Severity-weighted version prevents gaming — conceding a score-9 finding is not equivalent to conceding a score-2 finding.
 
+**AOR — Adjudicator Override Rate**
+Definition: fraction of defense-case runs where the defender output `defense_wins` but the adjudicator changed it to `empirical_test_agreed` or `critique_wins`.
+Formula: `AOR = count(defender=defense_wins AND adjudicator≠defense_wins on defense cases) / count(defender=defense_wins on defense cases)`
+Rationale: AOR separates the defender bottleneck from the adjudicator bottleneck. After Intervention B, if wDCR drops (defender is dismissing findings) but DER stays flat, AOR diagnoses why:
+- `AOR > 0`: defender is producing correct `defense_wins` verdicts but the adjudicator is overriding them → Intervention C is the next target.
+- `AOR = 0`: defender verdicts are not reaching `defense_wins` at all → Intervention B needs more work.
+
+Without AOR, a flat DER after Intervention B is ambiguous. AOR resolves it.
+
 ---
 
 ## Unified Taxonomy
@@ -221,8 +230,12 @@ Note: ARR rewards hedging on mixed cases (correct behavior) and penalizes confid
 | Intervention | Leading indicator | Lagging indicator | Regression check |
 |---|---|---|---|
 | A (critic threshold) | CER on defense cases ↓, FCE on defense cases ↓ | DER ↑ | CER on regular cases stable, FCE on regular cases stable |
-| B (defender exoneration) | wDCR on defense cases ↓ | DER ↑ | IDR on regular cases stable |
-| C (adjudicator cost model) | Pre-flight checklist length on defense cases ↓ | DER ↑, FHR ↓ | IDR stable |
+| B (defender exoneration) | wDCR on defense cases ↓, defender_brier_defense → 0 | DER ↑ | IDR on regular cases stable |
+| C (adjudicator cost model) | AOR ↓ | DER ↑, FHR ↓ | IDR stable |
+
+**Bottleneck diagnosis after Intervention B:** if wDCR drops but DER stays flat, check AOR.
+- `AOR > 0`: adjudicator overriding correct `defense_wins` verdicts → proceed to Intervention C.
+- `AOR = 0`: defender not reaching `defense_wins` at all → Intervention B needs further refinement.
 
 **FCE as Intervention A's primary diagnostic:** CER tells you whether the severity gate is blocking findings. FCE tells you whether the remaining findings are *correctly confident*. CER could drop because the critic stops reporting everything — FCE confirms whether what remains is well-calibrated. A CER drop without FCE improvement means the critic is removing findings indiscriminately, not applying the severity gate correctly.
 

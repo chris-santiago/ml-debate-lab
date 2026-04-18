@@ -39,16 +39,19 @@ Custom metric names are preserved for communication, but each maps to a standard
 
 | Custom metric | Standard name | sklearn |
 |---|---|---|
-| DER (Defense Exoneration Rate) | Precision on class SOUND | `precision_score(y_true, y_pred, labels=[0], average=None)` |
+| DER (Defense Exoneration Rate) | Recall on class SOUND | `recall_score(y_true, y_pred, labels=[0], average=None)` |
 | IDR (Issue Detection Rate) | Recall on class FLAWED | `recall_score(y_true, y_pred, labels=[2], average=None)` |
-| FAR (False Alarm Rate) | FPR on class SOUND | `1 − precision[0]` from confusion matrix |
+| FAR (False Alarm Rate) | FPR on class SOUND | `1 − recall[0]` from confusion matrix |
 | FHR (False Hedge Rate) | Off-diagonal hedges on clear cases | derived from confusion matrix rows 0 and 2, column 1 |
 | ARR (Ambiguity Recognition Rate) | Recall on class AMBIGUOUS | `recall_score(y_true, y_pred, labels=[1], average=None)` |
-| VS (Verdict Stability) | Inter-rater agreement across 3 runs | `cohen_kappa_score(run_a, run_b)`, averaged over pairs |
+| VS (Verdict Stability) | Per-case majority fraction + global Cohen's Kappa | see note below |
 | FCE (Finding Calibration Error) | Expected Calibration Error on severity scores | `calibration_curve(y_true_binary, severity/10, n_bins=4)` |
 | wDCR (Severity-weighted Concession Rate) | Weighted false positive rate on findings | from taxonomy labels (see METRICS.md) |
+| AOR (Adjudicator Override Rate) | Fraction of defense runs where adj overrode defender's defense_wins | custom — see METRICS.md |
 
 All of DER, IDR, FAR, FHR, ARR fall out of a single `classification_report` call. No custom computation needed.
+
+**Note on DER:** DER is recall on SOUND — fraction of defense cases the system correctly exonerates. Precision on SOUND would measure how many `defense_wins` predictions are actually sound; that is a different (less important) question. The v7 failure is that DER=0.00: the system never exonerates anything. Precision on SOUND is undefined at baseline.
 
 ---
 
@@ -62,7 +65,7 @@ mcc = matthews_corrcoef(y_true, y_pred)
 ```
 
 **Why MCC over DER:**
-- DER is precision on one class. A system that correctly exonerates defense cases but misses all regular flaws has DER = 1.0 and IDR = 0.0 — that's not a good system.
+- DER is recall on one class. A system that correctly exonerates all defense cases but misses all regular flaws has DER = 1.0 and IDR = 0.0 — that's not a good system.
 - MCC accounts for all cells of the confusion matrix simultaneously. It's equivalent to the geometric mean of precision and recall across all classes, corrected for chance agreement.
 - MCC is bounded [−1, +1]. Random guessing gives MCC ≈ 0. A perfect classifier gives MCC = 1.0.
 - MCC is robust to class imbalance — critical here, where defense cases are ~14% of the benchmark.
@@ -132,14 +135,24 @@ brier_sound  = mean((y_true_binary_sound  - y_prob[:, 0]) ** 2)
 brier_flawed = mean((y_true_binary_flawed - y_prob[:, 2]) ** 2)
 ```
 
-**VS as ensemble agreement:** Cohen's Kappa across the 3 pairwise run combinations:
+**VS — two-level computation:**
+
+*Per-case VS* (used as a stability weight on the combined case score):
 ```python
-from sklearn.metrics import cohen_kappa_score
-pairs = [(0,1),(0,2),(1,2)]
-vs = mean([cohen_kappa_score(runs[a], runs[b]) for a,b in pairs])
+majority = max(set(run_verdicts), key=run_verdicts.count)
+vs_case = run_verdicts.count(majority) / len(run_verdicts)
+# 3/3 agree → 1.00 | 2/3 agree → 0.67 | all differ → 0.33
 ```
 
-Kappa corrects for chance agreement, making VS comparable across case distributions with different base rates. Raw agreement (fraction matching majority) overestimates stability when one class dominates.
+*Global VS* (reported summary statistic — Cohen's Kappa across run pairs over all cases):
+```python
+from sklearn.metrics import cohen_kappa_score
+# runs[i] = array of verdicts for run i across all n cases
+pairs = [(0,1),(0,2),(1,2)]
+vs_global = mean([cohen_kappa_score(runs[a], runs[b]) for a,b in pairs])
+```
+
+Kappa requires n > 1 and is undefined when all verdicts in a column are identical (zero variance). Use per-case majority fraction for stability weighting; use global Kappa for the reported VS summary. When all cases agree perfectly across runs, global VS = 1.0 by convention.
 
 ---
 
