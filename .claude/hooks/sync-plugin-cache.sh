@@ -111,3 +111,12 @@ case "$FILE_PATH" in
     check_versions
     ;;
 esac
+
+# Skill edit warning — skill content is snapshotted at session start; edits
+# to SKILL.md take effect in the NEXT session, not the current one.
+case "$FILE_PATH" in
+  */skills/*/SKILL.md)
+    echo "⚠  SKILL.md edited — cache synced, but skill content is loaded once at session start."
+    echo "   Changes take effect in the next session. Invoking this skill now will use the pre-edit version."
+    ;;
+esac
