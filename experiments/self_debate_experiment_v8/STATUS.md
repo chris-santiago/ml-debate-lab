@@ -53,7 +53,7 @@ validated. Canary iteration will determine which changes hold.
 | `canary_difficulty` labeling | ✅ Done | Defense: easy/medium/hard to exonerate; regular: easy/medium/hard flaw detection; mixed: low/medium/high ambiguity |
 | Diversity reshuffle | ✅ Done | Swapped 3 homogeneous `context_dependent` synthetic mixed for 3 RC paper cases; added 2 regular for coverage; added 2 confirmed-hard defense cases |
 | Gate 2 coverage check | ⚠️ Partial | 7 of 9 regular v8 categories covered in canary. **Gaps: `synthetic_data_assump` (zero v7 cases exist — full gap), `implicit_dist_assump` (unassigned in labeling pass)** |
-| Defense difficulty balance | ⚠️ Partial | Current: 10 easy / 7 medium / 5 hard. Target: ~7/9/4. One candidate still pending Gate 1 audit. |
+| Defense difficulty balance | ✅ At target | Current: 10 easy / 7 medium / 6 hard (23 total). Gate 1 audit complete. |
 
 **Gate 1 audit log:**
 
@@ -61,7 +61,7 @@ validated. Canary iteration will determine which changes hold.
 |---|---|---|
 | `eval_scenario_897` | ✅ CONFIRMED SOUND (promoted) | UNCERTAIN → fixed: task_prompt rewritten to eliminate cross-period leakage ambiguity. Added as hard defense case. [→ decision ff5f4f51] |
 | `eval_scenario_068` | ✅ CONFIRMED SOUND (promoted) | UNCERTAIN → fixed: "AUPRC at fixed FPR" was a category error; rewritten to Precision@FPR=10% with ROC-threshold framing. Added as hard defense case. [→ decision efea9209] |
-| `hyp_204_case` | ⬜ Pending | Feature-asymmetric model comparison may be genuinely confounded |
+| `hyp_204_case` | ✅ CONFIRMED SOUND (no rewrite) | Feature asymmetry is intentional — hypothesis tests full system vs. simple classifier; ablation (LambdaMART baseline-features-only) explicitly decomposes contributions. Added as hard defense case. [→ decision 00d25460] |
 
 Also fixed: canary_full.json was out of sync with canary_cases.json (7 additions missing, 5 stale present). Both now at 43 cases. [→ discovery ff3a889d]
 
@@ -91,10 +91,10 @@ Also fixed: canary_full.json was out of sync with canary_cases.json (7 additions
       Determines intervention priority (A vs B vs C first).
       _Pure human-work phase. Cannot be automated._
 
-- [ ] **Gate 1 — Ground truth audit complete** [→ CASES.md §Gate 1]
-      Audit all 20 canary defense cases. Confirm CONFIRMED SOUND / UNCERTAIN / HAS REAL FLAW.
-      Fix or replace any HAS REAL FLAW cases before running.
-      _Priority: audit the 3 deferred flagged cases above._
+- [x] **Gate 1 — Ground truth audit complete** [→ CASES.md §Gate 1]
+      All 3 deferred candidates audited and resolved: eval_scenario_897 (rewrite, promoted),
+      eval_scenario_068 (rewrite, promoted), hyp_204_case (confirmed sound, no rewrite).
+      All added as hard defense cases. Canary now 45 cases: 23 defense / 12 regular / 10 mixed.
 
 - [ ] **Gate 2 — Taxonomy coverage check complete** [→ CASES.md §Gate 2]
       Current gaps: `synthetic_data_assump` (no v7 source — needs new case generation),

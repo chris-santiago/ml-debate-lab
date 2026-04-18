@@ -211,6 +211,19 @@ LABELS = {
         "label_rationale": "Applying influence-style example-importance methods and feature saliency in a fully unsupervised regime without class labels is unusual and critics may claim it's ill-defined, though the paper's framework explicitly defines the explanation target as the learned representation.",
     },
     # --- GATE 1 AUDITED ADDITIONS ---
+    "hyp_204_case": {
+        "flaw_category": None,
+        "canary_difficulty": "hard",
+        "label_rationale": (
+            "Feature asymmetry (ranking model uses extended features LR does not) is intentional: "
+            "hypothesis explicitly tests the full system (ranking + ticket history + text) vs. "
+            "simple classifier. Ablation LambdaMART on baseline features only is included to "
+            "decompose contributions (Sections 4 and 7). Critics will flag feature asymmetry as "
+            "confound; defender points to (1) hypothesis framing the full system comparison and "
+            "(2) explicit ablation decomposing ranking objective vs. feature contribution. "
+            "CONFIRMED SOUND on first read after Gate 1 audit — no rewrite needed."
+        ),
+    },
     "eval_scenario_068": {
         "flaw_category": None,
         "canary_difficulty": "hard",
