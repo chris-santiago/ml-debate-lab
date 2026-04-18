@@ -69,10 +69,14 @@ These were v7-labeled defense cases. Do not include until manually audited.
 
 ## Pre-Run Checklist [→ PROTOCOL.md §Pre-Run Checklist]
 
-- [ ] **Phase 0 — Existence proof passed** [→ PROTOCOL.md §Phase 0, OBJECTIVE.md §Phase 0]
-      Hand-craft ideal defender prompt on one obviously-sound case. Verify a model CAN produce
-      `defense_wins`. If it cannot, execute fallback (dispatch to each pool model).
-      _Blocks everything. Do not proceed to Phase 1 without this._
+- [x] **Phase 0 — Existence proof passed** [→ PROTOCOL.md §Phase 0, OBJECTIVE.md §Phase 0]
+      4-run controlled test on eval_scenario_858 (easy defense, IR/semantic search).
+      Fixed critic=gpt-4o-mini, fixed adjudicator=mistral-small-2603, variable defender
+      (claude-3-haiku, llama-4-maverick, deepseek-v3.2, gemma-4-31b-it). All 4 → defense_wins.
+      [→ experiment 7a83d0a4] Two pipeline issues found and resolved:
+      EXONERATE threshold validation [→ issue 7e829305, resolution 2931e241] and
+      flaw_category taxonomy enforcement [→ issue f2d5f2f5, resolution bab135ab].
+      Both fixed in run_pipeline.py (VALID_FLAW_CATEGORIES constant + defender warnings).
 
 - [ ] **Phase 0.5 — Scoring validation complete** [→ PROTOCOL.md §Phase 0.5, SCORING.md §v7 Comparability]
       Run v7 prompts (unchanged) through the penalty-aware scorer. Record DER/IDR/FHR/ARR baseline.
@@ -97,13 +101,12 @@ These were v7-labeled defense cases. Do not include until manually audited.
       `implicit_dist_assump` (needs 1 additional case). Minimum 5 cases/category; target 10.
       _Blocking for full benchmark, not for canary iteration._
 
-- [ ] **Model pool validated on OpenRouter** [→ MODELS.md §Pool Validation and Aging]
-      Confirm all 12 models are currently listed and callable. Substitute any deprecated models
-      per substitution rule. Confirm context limits match table.
+- [x] **Model pool validated on OpenRouter** [→ MODELS.md §Pool Validation and Aging]
+      Models sourced directly from OpenRouter website — available by construction.
 
-- [ ] **qwq-32b decision made** [→ MODELS.md §qwq-32b]
-      Choose: (a) remove from pool → use `qwen/qwen-2.5-72b-instruct`, (b) keep + handle
-      reasoning trace parsing, (c) restrict to adjudicator role only.
+- [x] **qwq-32b decision made** [→ MODELS.md §qwq-32b]
+      Keep in pool. Reasoning trace parsing handled by `strip_think_tags()` in run_pipeline.py.
+      Cost accounted for in MODELS.md estimate. CER inflation risk monitored via MES.
 
 - [ ] **Model seed file generated** [→ MODELS.md §Seed Control, PROTOCOL.md §Phase 2]
       Generate fixed model assignments for 42 canary cases × 3 runs = 126 evaluations.

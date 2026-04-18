@@ -91,6 +91,16 @@ console = Console()
 
 VALID_VERDICTS = {"critique_wins", "defense_wins", "empirical_test_agreed"}
 
+VALID_FLAW_CATEGORIES = {
+    # regular
+    "signal_leakage", "eval_inflation", "missing_baselines", "distribution_shift",
+    "metric_limitations", "unverified_prereqs", "implicit_dist_assump",
+    "synthetic_data_assump", "silent_misconfig",
+    # mixed
+    "uncertain_significance", "fixable_flaw", "defensible_unconventional",
+    "ambiguous_evidence", "context_dependent", "below_threshold",
+}
+
 
 @dataclass
 class Config:
@@ -190,6 +200,12 @@ def validate_critic_output(data: dict) -> dict:
                 raise ValueError(f"Finding missing required field '{field}': {f}")
         if not isinstance(f["severity"], int) or not (0 <= f["severity"] <= 10):
             raise ValueError(f"Finding severity out of range [0,10]: {f['severity']}")
+        cat = f.get("flaw_category")
+        if cat is not None and not f.get("suppressed", False) and cat not in VALID_FLAW_CATEGORIES:
+            console.print(
+                f"  [yellow]WARN: flaw_category '{cat}' in {f['finding_id']} not in taxonomy "
+                f"— scorer will mark unmatched[/yellow]"
+            )
     return data
 
 
@@ -206,6 +222,27 @@ def validate_defender_output(data: dict) -> dict:
         for field in ("finding_id", "rebuttal_type", "adjusted_severity"):
             if field not in r:
                 raise ValueError(f"Rebuttal missing required field '{field}': {r}")
+    # Constitutional constraint: defense_wins impossible if CONCEDE + adjusted_severity >= 7
+    if v == "defense_wins":
+        fatal_concedes = [
+            r["finding_id"] for r in data["rebuttals"]
+            if r.get("rebuttal_type") == "CONCEDE" and r.get("adjusted_severity", 0) >= 7
+        ]
+        if fatal_concedes:
+            console.print(
+                f"  [red]WARN: CONSTITUTIONAL VIOLATION — defense_wins + CONCEDE "
+                f"with adjusted_severity >= 7: {fatal_concedes}[/red]"
+            )
+        # EXONERATE threshold: defense_wins requires all adjusted_severity <= 3
+        over_threshold = [
+            r["finding_id"] for r in data["rebuttals"]
+            if r.get("adjusted_severity", 0) > 3
+        ]
+        if over_threshold:
+            console.print(
+                f"  [yellow]WARN: defense_wins claimed but finding(s) {over_threshold} "
+                f"have adjusted_severity > 3 (EXONERATE requires all <= 3)[/yellow]"
+            )
     return data
 
 
@@ -313,7 +350,7 @@ async def run_one(
 ) -> dict:
     """Execute one full critic → defender → adjudicator run for a single case."""
     case_id = case["case_id"]
-    stratum = case["stratum"]
+    stratum = case.get("stratum") or case.get("category", "unknown")
     task_prompt = case["task_prompt"]
 
     if dry_run:
@@ -365,7 +402,7 @@ async def run_one(
 def _dry_run_result(case: dict, run_id: int, model_assignment: dict) -> dict:
     return {
         "case_id": case["case_id"],
-        "stratum": case["stratum"],
+        "stratum": case.get("stratum") or case.get("category", "unknown"),
         "flaw_category": case.get("flaw_category"),
         "run_id": run_id,
         "model_assignments": model_assignment,
