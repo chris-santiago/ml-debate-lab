@@ -8,19 +8,20 @@
 """
 run_pipeline.py — v8 Debate Pipeline Runner
 
-Runs the v8 three-stage pipeline (critic → defender → adjudicator) on a set of
-benchmark cases via OpenRouter. Each run draws 3 distinct models from the pool
-without replacement, so critic, defender, and adjudicator are always different
-models — eliminating same-model sycophancy artifacts.
+Runs the v8 two-stage pipeline (critic → defender) on a set of benchmark cases
+via OpenRouter. Verdict derivation is deterministic — applied by derive_verdict()
+from the defender's structured output fields, with no LLM adjudicator call.
 
 PIPELINE STAGES
 ---------------
-  Stage 1 — Critic:     receives task_prompt (hypothesis + PoC code)
-                        outputs structured findings JSON
-  Stage 2 — Defender:   receives task_prompt + critic findings JSON
-                        outputs structured rebuttals JSON
-  Stage 3 — Adjudicator: receives task_prompt + findings + rebuttals JSON
-                         outputs point verdicts + case_verdict JSON
+  Stage 1 — Critic:   receives task_prompt (hypothesis + PoC code)
+                      outputs structured findings JSON
+  Stage 2 — Defender: receives task_prompt + critic findings JSON
+                      outputs structured rebuttals JSON
+  Verdict:            derive_verdict() applies point verdict rules mechanically
+                      from (adjusted_severity, rebuttal_type) per finding.
+                      No LLM call. Output stored as adjudicator_output for
+                      scorer.py schema compatibility.
 
 OUTPUT SCHEMA
 -------------
@@ -31,8 +32,10 @@ MODEL SELECTION
 ---------------
   --seed-file: Fixed model assignments for canary iteration loop (holds model
                draws constant across prompt iterations so metric changes reflect
-               the prompt, not different model draws).
-  No seed file: Fully random draws per run (use for full benchmark run).
+               the prompt, not different model draws). Seed files may contain a
+               third "adjudicator" model slot — it is stored for traceability
+               but never called.
+  No seed file: Draws 2 models per run (critic, defender).
 
 RESUME LOGIC
 ------------
@@ -115,9 +118,13 @@ class Config:
 # ---------------------------------------------------------------------------
 
 def load_prompts() -> dict[str, str]:
-    """Load critic, defender, adjudicator system prompts from prompts/ dir."""
+    """Load critic and defender system prompts from prompts/ dir.
+
+    ADJUDICATOR.md is a verdict derivation spec — it documents the rules
+    implemented in derive_verdict() but is not sent to any model.
+    """
     prompts = {}
-    for name in ["CRITIC", "DEFENDER", "ADJUDICATOR"]:
+    for name in ["CRITIC", "DEFENDER"]:
         path = PROMPTS_DIR / f"{name}.md"
         if not path.exists():
             console.print(f"[red]ERROR: Missing prompt file: {path}[/red]")
@@ -139,8 +146,16 @@ def load_model_pool() -> list[str]:
 
 
 def assign_models(draw: list[str]) -> dict[str, str]:
-    """Map a 3-model draw to named role assignments."""
-    return {"critic": draw[0], "defender": draw[1], "adjudicator": draw[2]}
+    """Map a model draw to named role assignments.
+
+    Only critic and defender are called. The third slot is kept for seed file
+    compatibility and traceability but is never used for an API call.
+    """
+    return {
+        "critic": draw[0],
+        "defender": draw[1],
+        "adjudicator": draw[2] if len(draw) > 2 else "derived",
+    }
 
 
 def load_seed_file(path: Path) -> dict:
@@ -246,18 +261,6 @@ def validate_defender_output(data: dict) -> dict:
     return data
 
 
-def validate_adjudicator_output(data: dict) -> dict:
-    """Validate adjudicator output has required fields."""
-    if "case_verdict" not in data:
-        raise ValueError("Adjudicator output missing 'case_verdict'")
-    v = data["case_verdict"]
-    if v not in VALID_VERDICTS:
-        console.print(f"  [yellow]WARN: case_verdict '{v}' invalid, defaulting to critique_wins[/yellow]")
-        data["case_verdict"] = "critique_wins"
-    if "point_verdicts" not in data:
-        data["point_verdicts"] = []
-    return data
-
 
 # ---------------------------------------------------------------------------
 # API call
@@ -318,20 +321,92 @@ def build_defender_user_msg(task_prompt: str, critic_output: dict) -> str:
     )
 
 
-def build_adjudicator_user_msg(
-    task_prompt: str, critic_output: dict, defender_output: dict
-) -> str:
-    """Build the adjudicator's user message: task + critic findings + defender rebuttals."""
-    advancing = [f for f in critic_output.get("findings", []) if not f.get("suppressed", False)]
-    findings_json = json.dumps(advancing, indent=2)
-    rebuttals_json = json.dumps(defender_output.get("rebuttals", []), indent=2)
-    return (
-        f"## Methodology Under Review\n\n{task_prompt}\n\n"
-        f"## Critic Findings\n\n```json\n{findings_json}\n```\n\n"
-        f"## Defender Rebuttals\n\n```json\n{rebuttals_json}\n```\n\n"
-        f"Defender overall verdict: {defender_output.get('overall_verdict', 'unknown')}\n\n"
-        f"Produce your structured adjudication JSON as specified in your instructions."
-    )
+def derive_verdict(defender_output: dict) -> dict:
+    """Derive case verdict deterministically from defender structured output.
+
+    Implements the point verdict table from prompts/ADJUDICATOR.md.
+    No LLM call — verdict is a pure function of (adjusted_severity, rebuttal_type).
+
+    Point verdict rules (applied in order, constitutional overrides last):
+      adj_sev <= 3          → defense_wins  (any rebuttal_type)
+      adj_sev 4-6, CONCEDE  → critique_wins
+      adj_sev 4-6, REBUT-*  → defense_wins
+      adj_sev 4-6, DEFER    → empirical_test_agreed
+      adj_sev >= 7, CONCEDE → critique_wins
+      adj_sev >= 7, REBUT-* → defense_wins
+      adj_sev >= 7, DEFER   → empirical_test_agreed
+
+    Constitutional overrides:
+      CONCEDE + adj_sev >= 7  → force critique_wins
+      DEFER   + adj_sev <= 3  → override to defense_wins (minor deferred questions
+                                 do not block exoneration)
+
+    Case verdict precedence:
+      Any point critique_wins → case critique_wins
+      No critique_wins, any empirical_test_agreed → empirical_test_agreed
+      All defense_wins → defense_wins
+    """
+    rebuttals = defender_output.get("rebuttals", [])
+    point_verdicts = []
+
+    for rb in rebuttals:
+        adj_sev = rb.get("adjusted_severity", 0)
+        rtype = rb.get("rebuttal_type", "CONCEDE")
+        fid = rb.get("finding_id", "?")
+
+        # Apply table
+        if adj_sev <= 3:
+            pv = "defense_wins"
+            rule = f"adj_sev={adj_sev} ≤ 3 → defense_wins"
+        elif rtype == "CONCEDE":
+            pv = "critique_wins"
+            rule = f"adj_sev={adj_sev}, CONCEDE → critique_wins"
+        elif rtype == "DEFER":
+            pv = "empirical_test_agreed"
+            rule = f"adj_sev={adj_sev}, DEFER → empirical_test_agreed"
+        elif rtype.startswith("REBUT") or rtype == "EXONERATE":
+            pv = "defense_wins"
+            rule = f"adj_sev={adj_sev}, {rtype} → defense_wins"
+        else:
+            pv = "critique_wins"
+            rule = f"adj_sev={adj_sev}, unknown rebuttal_type={rtype} → critique_wins (conservative)"
+
+        # Constitutional overrides
+        if rtype == "CONCEDE" and adj_sev >= 7:
+            pv = "critique_wins"
+            rule = f"constitutional: CONCEDE + adj_sev={adj_sev} ≥ 7 → critique_wins"
+        elif rtype == "DEFER" and adj_sev <= 3:
+            pv = "defense_wins"
+            rule = f"constitutional: DEFER + adj_sev={adj_sev} ≤ 3 → defense_wins"
+
+        point_verdicts.append({
+            "finding_id": fid,
+            "adjusted_severity": adj_sev,
+            "rebuttal_type": rtype,
+            "point_verdict": pv,
+            "rule_applied": rule,
+        })
+
+    # Case verdict by strict precedence
+    if any(pv["point_verdict"] == "critique_wins" for pv in point_verdicts):
+        n = sum(1 for pv in point_verdicts if pv["point_verdict"] == "critique_wins")
+        case_verdict = "critique_wins"
+        rationale = f"{n} point(s) reached critique_wins"
+    elif any(pv["point_verdict"] == "empirical_test_agreed" for pv in point_verdicts):
+        n = sum(1 for pv in point_verdicts if pv["point_verdict"] == "empirical_test_agreed")
+        case_verdict = "empirical_test_agreed"
+        rationale = f"{n} point(s) deferred; no critique_wins"
+    else:
+        case_verdict = "defense_wins"
+        rationale = "all points resolved to defense_wins" if point_verdicts else "no advancing findings"
+
+    return {
+        "point_verdicts": point_verdicts,
+        "case_verdict": case_verdict,
+        "case_rationale": rationale,
+        "preflight_checklist": [],
+        "proposed_experiments": [],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -357,8 +432,7 @@ async def run_one(
         console.print(
             f"  [dim]DRY RUN {case_id} run{run_id} | "
             f"critic={model_assignment['critic'][:20]}... "
-            f"defender={model_assignment['defender'][:20]}... "
-            f"adjudicator={model_assignment['adjudicator'][:20]}...[/dim]"
+            f"defender={model_assignment['defender'][:20]}...[/dim]"
         )
         return _dry_run_result(case, run_id, model_assignment)
 
@@ -377,15 +451,8 @@ async def run_one(
     )
     defender_output = validate_defender_output(defender_raw)
 
-    # Stage 3 — Adjudicator (sees both)
-    adjudicator_user_msg = build_adjudicator_user_msg(
-        task_prompt, critic_output, defender_output
-    )
-    adjudicator_raw = await call_api(
-        sem, client, model_assignment["adjudicator"],
-        prompts["adjudicator"], adjudicator_user_msg, config
-    )
-    adjudicator_output = validate_adjudicator_output(adjudicator_raw)
+    # Verdict — derived deterministically from defender structured output
+    adjudicator_output = derive_verdict(defender_output)
 
     return {
         "case_id": case_id,
@@ -400,6 +467,14 @@ async def run_one(
 
 
 def _dry_run_result(case: dict, run_id: int, model_assignment: dict) -> dict:
+    defender_output = {
+        "rebuttals": [
+            {"finding_id": "F1", "original_severity": 5,
+             "rebuttal_type": "CONCEDE", "severity_adjustment": 0,
+             "adjusted_severity": 5, "justification": "[DRY RUN]"}
+        ],
+        "overall_verdict": "critique_wins",
+    }
     return {
         "case_id": case["case_id"],
         "stratum": case.get("stratum") or case.get("category", "unknown"),
@@ -415,22 +490,8 @@ def _dry_run_result(case: dict, run_id: int, model_assignment: dict) -> dict:
             ],
             "no_material_findings": False,
         },
-        "defender_output": {
-            "rebuttals": [
-                {"finding_id": "F1", "original_severity": 5,
-                 "rebuttal_type": "CONCEDE", "severity_adjustment": 0,
-                 "adjusted_severity": 5, "justification": "[DRY RUN]"}
-            ],
-            "overall_verdict": "critique_wins",
-        },
-        "adjudicator_output": {
-            "point_verdicts": [
-                {"finding_id": "F1", "original_severity": 5, "adjusted_severity": 5,
-                 "rebuttal_type": "CONCEDE", "point_verdict": "critique_wins",
-                 "rationale": "[DRY RUN]"}
-            ],
-            "case_verdict": "critique_wins",
-        },
+        "defender_output": defender_output,
+        "adjudicator_output": derive_verdict(defender_output),
     }
 
 

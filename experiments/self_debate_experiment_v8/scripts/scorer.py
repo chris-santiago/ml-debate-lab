@@ -40,14 +40,20 @@ If the leading indicator doesn't move, the mechanism didn't activate.
               defender_brier_defense → 0  (defender dismissing false alarms)
     Lagging:  DER ↑
 
-  Intervention C — Adjudicator cost model (presumption of soundness):
-    Leading:  AOR ↓  (adjudicator stops overriding correct defender verdicts)
-    Lagging:  DER ↑, FHR ↓
+  Note — no Intervention C (adjudicator):
+    Verdict derivation is deterministic (derive_verdict() in run_pipeline.py).
+    AOR now measures defender self-consistency: how often the defender's claimed
+    overall_verdict disagrees with the verdict derived from its own structured
+    rebuttal fields. AOR > 0 after Intervention B means the defender is producing
+    internally inconsistent output (e.g., claiming defense_wins while CONCEDEing
+    a severity-7 finding) — a signal to tighten the defender's verdict calibration.
 
   Bottleneck diagnosis:
     wDCR drops but DER stays flat → check AOR.
-      AOR > 0: adjudicator overriding correct defense_wins → Intervention C.
-      AOR = 0: defender verdicts not reaching defense_wins → more Intervention B.
+      AOR > 0: defender claiming defense_wins but rebuttals don't support it
+               → tighten defender verdict calibration (more Intervention B).
+      AOR = 0: defender rebuttals not reaching defense_wins threshold
+               → more Intervention B (confidence to use REBUT-IMMATERIAL).
 
 REGRESSION FLOORS (must not be crossed by any accepted change)
 --------------------------------------------------------------
@@ -90,14 +96,14 @@ Input format (one JSON file per run, named arbitrarily):
         ],
         "overall_verdict": str
       },
-      "adjudicator_output": {
+      "adjudicator_output": {           // populated by derive_verdict() — no LLM call
         "point_verdicts": [
           {
             "finding_id": str,
-            "original_severity": int,
             "adjusted_severity": int,
             "rebuttal_type": str,
-            "point_verdict": str      // defense_wins|critique_wins|empirical_test_agreed
+            "point_verdict": str,     // defense_wins|critique_wins|empirical_test_agreed
+            "rule_applied": str       // which row of the verdict table was applied
           }
         ],
         "case_verdict": str           // defense_wins|empirical_test_agreed|critique_wins

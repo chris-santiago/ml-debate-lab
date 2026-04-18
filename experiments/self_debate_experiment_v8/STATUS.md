@@ -17,21 +17,21 @@ penalty-aware scoring. [→ OBJECTIVE.md]
 | `scripts/model_selector.py` | ✅ Done | `load()` + `model_generator()` (independent random draws); N→n bug fixed |
 | `scripts/run_pipeline.py` | ✅ Done | Async critic→defender→adjudicator via OpenRouter; resume, seed file, dry-run, rich progress |
 | `scripts/scorer.py` | ✅ Done | MCC, DER, IDR, FAR, FHR, ARR, VS (per-case majority + global kappa), Brier losses (critic + defender), AOR, wDCR, CER, NIT rate, FCE; penalty-aware scoring |
+| `scripts/run_pipeline.py` | ✅ Updated | **Adjudicator LLM call removed.** Pipeline is now critic → defender → `derive_verdict()`. Verdict derived deterministically from (adjusted_severity, rebuttal_type) per finding; no API call, no sampling variance. [→ decision c93e0fb6] |
 
 ---
 
 ### Prompts [→ PROMPTS.md §Baseline Audit, §Interventions]
 
-All three prompts rewritten from v7 baselines. Root causes addressed:
-
-| Prompt | Status | Key changes from v7 |
+| Prompt | Status | Key changes |
 |---|---|---|
-| `prompts/CRITIC.md` | ✅ Done | NIT filter (exit path for "nothing found"), severity 0–10 scale, `flaw_category` field with 13-slug taxonomy, `no_material_findings` flag |
-| `prompts/DEFENDER.md` | ✅ Done | Removed 5 concession instructions; added EXONERATE path + `defense_wins` MUST rule; presumption of soundness framing; removed implementation soundness pre-check bias |
-| `prompts/ADJUDICATOR.md` | ✅ Done | Presumption of soundness; point verdict threshold rules; significance filter (MINOR → INFORMATIONAL not PENDING); experiment proposal gate |
+| `prompts/CRITIC.md` | ✅ Done | NIT filter, severity 0–10 scale, `flaw_category` taxonomy, `no_material_findings` flag |
+| `prompts/DEFENDER.md` | ✅ Updated | Added critic-exhaustiveness framing block: defender now knows the critic surfaces all issues by design; REBUT-IMMATERIAL is the expected response to minor findings, not partial concession |
+| `prompts/ADJUDICATOR.md` | ✅ Retired as LLM prompt | Now serves as spec document for `derive_verdict()`. Rewritten to pure lookup table (no semantic judgment). No longer sent to any model. [→ decision c93e0fb6] |
 
-These implement Interventions A, B, and C from PROMPTS.md. They are **starting versions** — not yet
-validated. Canary iteration will determine which changes hold.
+**Intervention priority (post Phase 1):** Intervention B only. Intervention A (critic NIT filter)
+already present in CRITIC.md; Intervention C (adjudicator) retired in favor of hard verdict rules.
+AOR now measures defender self-consistency, not LLM override rate.
 
 ---
 

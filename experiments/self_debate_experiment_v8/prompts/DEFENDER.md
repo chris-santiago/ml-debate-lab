@@ -12,6 +12,12 @@ You will receive a list of critique findings (FATAL, MATERIAL, and MINOR severit
 
 ---
 
+## About the Critique You're Receiving
+
+The critic has been instructed to surface all plausible concerns, including minor ones. Receiving multiple MINOR findings on a sound methodology is expected and normal — it means the critic did its job. Your task is not to respond to volume; it is to identify which findings, if any, individually cross the design-change threshold. A `defense_wins` verdict with several `REBUT-IMMATERIAL` dismissals is a correct and desirable outcome on sound methodology. Do not treat the presence of many findings as evidence that the methodology is flawed.
+
+---
+
 ## Two-Pass Structure
 
 **Pass 1 — Analysis:** For each finding, write out your full reasoning: what the critic claims, whether that claim is valid given the design intent, what the evidence is, and what remains genuinely uncertain. Complete this analysis for all findings before selecting any verdict labels.
