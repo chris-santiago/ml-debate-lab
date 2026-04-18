@@ -78,13 +78,13 @@ These were v7-labeled defense cases. Do not include until manually audited.
       flaw_category taxonomy enforcement [→ issue f2d5f2f5, resolution bab135ab].
       Both fixed in run_pipeline.py (VALID_FLAW_CATEGORIES constant + defender warnings).
 
-- [ ] **Phase 0.5 — Scoring validation complete** [→ PROTOCOL.md §Phase 0.5, SCORING.md §v7 Comparability]
-      Run v7 prompts (unchanged) through the penalty-aware scorer. Record DER/IDR/FHR/ARR baseline.
-      This establishes whether v7 DER=0.00 was a scoring artifact or a genuine prompt failure.
-      _Canary baseline is meaningless without this._
-
-- [ ] **IDR confirmed ≥ 0.75 under new scoring** [→ PROTOCOL.md §Phase 0.5]
-      If IDR drops below 0.75 on v7 prompts, recalibrate the penalty function before any prompt work.
+- [~] **Phase 0.5 — SUPERSEDED** [→ decision logged in journal]
+      Original purpose: distinguish scoring artifact from prompt failure as cause of v7 DER=0.00.
+      Superseded because: (1) v7 failure mode is documented — sycophantic concessions, not scorer
+      miscounting; (2) Phase 0 confirms scorer functions correctly on live runs; (3) v7 prompts +
+      v8 scorer is an uninterpretable counterfactual since both changed simultaneously; (4) the
+      IDR ≥ 0.75 gate is better enforced by the first canary run on 12 real regular cases.
+      _IDR floor still applies — checked on first canary iteration, not pre-run._
 
 - [ ] **Phase 1 — Transcript reading complete** [→ PROTOCOL.md §Phase 1]
       Read all v7 defense-case transcripts. Classify failure mode distribution across the 6 types.
