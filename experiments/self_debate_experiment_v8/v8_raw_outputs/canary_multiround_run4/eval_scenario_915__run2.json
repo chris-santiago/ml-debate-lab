@@ -1,0 +1,529 @@
+{
+  "case_id": "eval_scenario_915",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label definition\u2014marking host-days within 7 days of a confirmed malicious interval\u2014measures the model's ability to detect proximity to known incidents rather than detecting actual malicious activity.",
+        "failure_mechanism": "The model can learn temporal proximity signals (e.g., 'this host is likely positive because it's day 4 of a 7-day window') rather than behavioral patterns of actual intrusions. If the graph construction window overlaps with or spans the labeling window, the graph structure itself may encode information about incident timing. This means the GNN could achieve high AUPRC by learning when investigations occur rather than by detecting novel intrusions earlier in their lifecycle.",
+        "evidence_test": "Run an ablation where labels are randomized within each campaign while preserving class balance. If the model still achieves significantly above-random AUPRC, the signal is coming from temporal proximity to labels, not from behavioral detection. Additionally, examine whether feature importance concentrates on temporal features (days-since-last-incident, rolling deltas) versus static behavioral anomalies.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The tabular baseline uses host-day aggregates while the graph model uses raw signals as node/edge attributes, creating an information asymmetry that invalidates the comparison.",
+        "failure_mechanism": "The tabular baseline receives pre-aggregated statistics (e.g., 'authentication anomaly count') while the GNN receives the underlying raw events (individual authentication attempts, process spawns, network connections) with relational structure. The GNN can compute its own aggregates and learn its own representations from raw data, while the GBDT is constrained to fixed aggregations. If the GNN wins, it may be due to richer input representation rather than relational inductive bias.",
+        "evidence_test": "Construct a fair baseline by either (a) giving the GBDT access to the same raw event stream as the GNN with equivalent feature engineering effort, or (b) giving the GNN pre-aggregated features as node attributes to match the tabular baseline's input. The current experiment conflates representation learning capacity with relational modeling.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 7-day graph construction window may overlap with the 7-day labeling window, allowing the graph to encode information about the incident itself rather than pre-incident behavioral signals.",
+        "failure_mechanism": "If the graph built from day T includes edges to events from day T-1 through T-7, and the label for day T depends on whether T falls within 7 days of a confirmed incident, then the graph contains temporal information about the incident window. The GNN could learn to detect the presence of incident-related activity in the graph structure (e.g., unusual connectivity patterns from investigation activities) rather than learning early behavioral warning signs that precede confirmed incidents.",
+        "evidence_test": "Construct graphs from a window that ends strictly before the labeling window begins (e.g., build graphs from days T-14 to T-8 to predict labels for day T). Compare performance between graphs built from pre-incident windows versus incident-proximate windows. If performance drops significantly with temporal separation, the current setup is leaking incident-adjacent information.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The campaign integrity constraint\u2014keeping all windows tied to the same incident in the same split\u2014is essential but the implementation details are unspecified, making the temporal generalization claim unverifiable.",
+        "failure_mechanism": "The hypothesis explicitly targets 'future-time generalization to unseen campaigns.' However, the experiment does not specify how campaigns are identified, how to handle hosts that participate in multiple campaigns, or whether the 7-day labeling window creates partial overlap between campaigns. If a host appears in both a training-campaign and a test-campaign (e.g., as a pivot point), the model could learn host-specific or identity-specific patterns that generalize across campaigns rather than learning campaign-agnostic attack behaviors.",
+        "evidence_test": "Report the number of hosts/identities that appear in both training and test splits. Run a control that holds out all data from any host/identity that appears in training when evaluating on test (pure campaign novelty). Compare performance between the full test set and the held-out-host subset to quantify the contribution of host-level versus campaign-level generalization.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment uses class weighting but does not report the class imbalance ratio or the specific weighting scheme, making reproducibility and result interpretation difficult.",
+        "failure_mechanism": "In security telemetry, positive class rates can range from 0.01% to 1% depending on the environment and labeling definition. The choice of class weighting scheme (balanced, inverse frequency, sqrt-inverse, or custom) significantly impacts model behavior. Without this information, it's impossible to determine whether the reported AUPRC reflects meaningful detection or is an artifact of the weighting scheme. Additionally, the validation set class distribution may differ from test, causing selected models to be miscalibrated for the test period.",
+        "evidence_test": "Report the positive class rate in train/validation/test splits, the weighting scheme used, and the effective sample weights applied to positive versus negative examples. Run a sensitivity analysis varying the class weight from 1:1 to the observed imbalance ratio to verify that relative model rankings are stable.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses a single enterprise environment, limiting external validity, but this is explicitly acknowledged as a deliberate scope limitation.",
+        "failure_mechanism": "The conclusion explicitly states the experiment 'does not by itself prove transfer to other enterprises with different telemetry coverage or investigation practices.' This is appropriately scoped. However, even within this single environment, the 18-month window may not capture seasonal variation, major organizational changes (mergers, restructuring), or evolution in attacker TTPs. The validation and test periods (months 12-18) may not be representative of the full range of conditions the SOC will face.",
+        "evidence_test": "Report summary statistics of the test period (number of incidents, campaign diversity, class distribution) compared to training. If the test period is notably different (e.g., much fewer incidents), note this as a limitation on the confidence in forward-time generalization.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The ablation study removes graph edges while preserving node features, but node features in the GNN may already encode relational information that survives the ablation.",
+        "failure_mechanism": "If node features include aggregates like 'degree centrality,' 'neighbor count,' or 'connection frequency,' these are themselves derived from graph structure. Removing edges while keeping these features does not create a fair node-feature-only baseline\u2014the model still has access to structural information through the node attributes. A proper ablation would use node features computed without any graph context (e.g., per-host behavioral aggregates only).",
+        "evidence_test": "Verify that node features in the ablation condition are computed without graph context (purely from the host's own event stream). If degree or connectivity features are present in the ablation, re-run with truly graph-free node features and report whether the GNN edge contribution persists.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment reports Brier score for calibration but does not address whether the calibration target (probability of intrusion within 7 days) is operationally meaningful.",
+        "failure_mechanism": "Brier score measures calibration of probability predictions against observed outcomes. However, the prediction target ('this host will be within 7 days of a confirmed incident') is an intermediate proxy, not the SOC's actual decision need ('this host is currently compromised'). Well-calibrated probabilities on the wrong target may not be useful for operational decisions like prioritization or resource allocation.",
+        "evidence_test": "Report the calibration curve and evaluate whether the probability outputs can be thresholded to produce operationally useful risk bands (e.g., 'high risk: investigate today' vs. 'low risk: monitor'). If the probability distribution is too concentrated or too diffuse to support triage decisions, note this limitation.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC has two FATAL flaws: (1) the label definition measures proximity to confirmed incidents rather than detection of actual intrusions, creating a risk that models learn temporal proximity signals rather than behavioral attack patterns; (2) the comparison between GNN and GBDT is unfair because the tabular baseline receives aggregated features while the GNN receives raw events with relational structure. These flaws invalidate the core comparison. Additionally, the graph construction window may overlap with the labeling window, allowing incident-adjacent information to leak into the graph structure.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 and F3 both target the 7-day labeling window. The critic claims this allows the model to learn 'proximity to an incident' rather than 'malicious behavior.' However, the design intent of the 7-day window is to align telemetry with forensic scoping (which often identifies activity slightly before or after the official ticket timestamps). Crucially, the design removes all analyst-authored fields, ticket IDs, and post-hoc annotations. The 'proximity' the critic fears is a behavioral state (the intrusion process), not a metadata leak. F3's concern about the graph window (T-7 to T) overlapping the label window (T to T+7) is a misunderstanding of the target: the model predicts if day T is positive. The graph is built from the *prior* 7 days. The label for day T is based on whether T is within 7 days of an incident. This means the graph for day T contains the behavioral lead-up to the incident, which is exactly what the model is intended to detect. \n\nF2 claims information asymmetry because the GNN uses 'raw signals' while the GBDT uses 'aggregates.' This is a misunderstanding of the GNN's input. The methodology states the GNN uses the 'same raw signals as typed node and edge attributes.' In GNNs, these attributes are the features of the entities. The GBDT baseline uses 'host-day aggregates' of these same signals. The GNN is not receiving a raw event stream (like a sequence of logs) but rather a graph where nodes/edges have attributes derived from the same signal set. The ablation (removing edges while keeping node features) specifically addresses this by testing if the relational structure (edges) adds value over the node-level metadata. \n\nF4 concerns campaign integrity. The methodology explicitly states: 'keep all windows tied to the same incident or campaign in the same split based on first observed malicious activity.' This is a strict design control to prevent leakage. The critic's concern about hosts appearing in multiple campaigns is a valid edge case, but the primary control (split by first observation) ensures that the *campaign's* evolution doesn't leak. \n\nF5 (class weighting) and F6 (single environment) are standard reporting omissions or acknowledged scope limits. F7 (ablation features) is a valid point: if node features include graph-derived stats, the ablation is weakened. However, the methodology lists the tabular features (which the GNN uses as node attributes) as 'authentication anomalies, process rarity, etc.'\u2014these are behavioral, not structural (like PageRank). F8 is a minor point about the operational utility of the Brier score, which is a secondary metric. ",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The 7-day window is a labeling convention to account for forensic scoping uncertainty, not a feature. The design explicitly removes all analyst-authored fields and ticket identifiers to prevent the model from learning 'investigation' signals. The 'proximity' the model learns is the behavioral manifestation of the intrusion, which is the intended target."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The GNN does not receive a raw event stream; it receives a graph where node/edge attributes are the same signals used in the tabular baseline. The 'asymmetry' is the relational structure itself, which is the specific hypothesis being tested. The ablation study (removing edges while preserving node features) directly controls for this by isolating the gain from structure versus metadata."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic confuses the prediction target. The graph for day T is built from telemetry [T-7, T]. The label for day T is positive if T is within 7 days of an incident. This means the graph contains the behavioral lead-up to the incident. This is not leakage; it is the definition of detecting an intrusion's early stages."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology specifies a strict control: 'keep all windows tied to the same incident or campaign in the same split based on first observed malicious activity.' This eliminates the possibility of later stages of a campaign leaking into the training set for an earlier stage of the same campaign."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The specific weighting scheme was not detailed. To settle this: report the class imbalance ratio and the weighting formula. If the AUPRC is stable across different weighting schemes (e.g., balanced vs. sqrt-inverse), the design is vindicated. If the GNN's lead disappears under different weighting, the critique is validated. The primary conclusion (GNN vs GBDT) should remain valid as both models use the same weighting."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The methodology explicitly states the experiment does not prove transfer to other enterprises. The use of a single environment is a stated scope limitation to ensure the data generating process matches the SOC's actual face."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The node features are behavioral aggregates (rarity, novelty), not structural metrics (centrality). The ablation is sufficient to distinguish between 'behavioral metadata' and 'relational connectivity'."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Brier score is a secondary diagnostic for calibration; the primary operational metric is AUPRC and Precision@K, which directly map to the SOC's ranked queue process."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most FATAL and MATERIAL findings were rebutted by citing specific design controls (temporal splits, analyst-field removal, and ablation studies). Only the specific class-weighting scheme (F5) remains an empirical uncertainty, necessitating a DEFER."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal is generic. It claims the model learns 'behavioral manifestation of intrusion' but doesn't address the core mechanism: the label itself is defined as temporal proximity to a confirmed incident. Even if the model learns behavioral patterns, those patterns are only labeled as positive because they happen to be near a confirmed incident. The defender doesn't explain how the model distinguishes 'behavioral signs of actual compromise' from 'things that happen near investigations.' The proposed evidence test (randomizing labels within campaigns) would directly test this, but the rebuttal ignores it. The removal of analyst-authored fields is good but doesn't address the fundamental label definition issue."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal directly addresses the mechanism: the GNN receives the same signals as node/edge attributes, not raw events. The asymmetry is the relational structure itself, which is the hypothesis being tested. The ablation study (edges vs. no edges) is a valid control to isolate structural contribution. This is a sound experimental design."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal makes a valid point: capturing the behavioral lead-up to incidents IS the definition of early detection. However, the finding concerns that the graph may contain investigation-related activity (scans, quarantine behaviors, analyst queries) rather than pre-incident warning signs. The defender doesn't distinguish between 'early behavioral warning signs' vs. 'incident-adjacent investigation artifacts.' The proposed evidence test (comparing pre-incident windows vs. incident-proximate windows) would clarify this. The rebuttal partially addresses the concern but leaves the investigation-artifact possibility unresolved."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal correctly addresses the main concern: keeping all windows tied to the same incident in the same split prevents later campaign stages from bleeding into training. However, the finding also raised two other issues the rebuttal doesn't address: (1) how to handle hosts that participate in multiple campaigns, and (2) whether the 7-day labeling window creates partial overlap between campaigns. The rebuttal only addresses one aspect of the campaign integrity concern."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "This is a DEFER rebuttal. The defender acknowledges the information gap and proposes a concrete validation approach: report the weighting scheme and run sensitivity analysis. This is the appropriate response to a missing-detail concern. Both models use the same weighting, so the relative comparison should be valid regardless of the specific scheme chosen."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "This is a REBUT-SCOPE rebuttal. The single-enterprise limitation is explicitly acknowledged in the methodology as a deliberate scope choice to ensure the data generating process matches the SOC's actual conditions. This is appropriately scoped, not a flaw."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal claims node features are 'behavioral aggregates (rarity, novelty), not structural metrics (centrality)' but doesn't specify how these are computed. The methodology mentions 'network connection novelty' and 'destination reputation buckets' - these could be computed with or without graph context. Without explicit confirmation that features are computed independently of graph structure, the ablation may not be fair. The rebuttal is too vague to be conclusive."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "This is a REBUT-IMMATERIAL rebuttal. The defender correctly identifies that AUPRC and Precision@K are the primary operational metrics that map to the SOC's ranked queue workflow. Brier score is a secondary calibration diagnostic. The finding concerns the meaningfulness of the calibration target, but since the primary metrics are operationally appropriate, this is a lower-priority concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining positions on accepted findings (F2, F5, F6, F8). For challenged findings, I am shifting F1 and F3 to DEFER because while the design removes analyst fields, it cannot logically prove the absence of 'investigation-adjacent' behavioral artifacts without the proposed empirical tests. I am strengthening the REBUT-DESIGN for F4 by clarifying the campaign integrity logic. For F7, I am switching to DEFER to explicitly define the feature computation and validate the ablation's fairness.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The design removes analyst-authored fields, but the critic correctly notes that behavioral artifacts of an investigation (e.g., sudden spikes in forensic tool execution) could still correlate with the 7-day label. To settle this: (1) Run the proposed ablation randomizing labels within campaigns. (2) If AUPRC remains significantly above random, the model is learning behavioral patterns of the intrusion. (3) If AUPRC drops to random, the model was relying on temporal proximity to the label. (4) The primary conclusion (GNN vs GBDT) remains valid because both models are exposed to the same labeling noise and temporal signals; the relative gain of the GNN would still indicate whether relational structure helps capture these signals better than aggregates.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The GNN uses the same signals as node/edge attributes as the tabular baseline uses for aggregates. The relational structure is the independent variable. The ablation (removing edges) isolates the structural gain from the metadata gain.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "While the design targets early detection, the critic's point about 'investigation artifacts' (e.g., SOC scans) appearing in the graph is a valid mechanistic concern. To settle this: (1) Compare performance using graphs from [T-14, T-8] vs [T-7, T] to predict labels for day T. (2) If performance is stable, the model is detecting pre-incident signals. (3) If performance drops, it is relying on incident-adjacent artifacts. (4) The primary conclusion remains valid because both GNN and GBDT would be equally susceptible to these artifacts; the relative performance difference still tests the efficacy of relational modeling.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology's constraint to keep all windows tied to the same campaign in the same split based on first observed activity inherently handles the raised concerns: (1) If a host participates in multiple campaigns, the 'first observed' rule for the most recent campaign dictates the split, ensuring no future-campaign data leaks into the past. (2) Overlap is handled by the strict time-split (Months 1-11 vs 12-15 vs 16-18); any campaign spanning the split boundary is assigned to the split containing its first activity, preventing the model from seeing the 'end' of a campaign in training and the 'start' in testing.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The specific weighting scheme was not detailed. To settle this: report the class imbalance ratio and the weighting formula. If the AUPRC is stable across different weighting schemes, the design is vindicated. The primary conclusion remains valid as both models use the same weighting.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The use of a single environment is a stated scope limitation to ensure the data generating process matches the SOC's actual face.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "To resolve the ambiguity regarding feature computation: (1) Explicitly document that 'novelty' and 'rarity' are computed as global frequency counts across the training set, not as local graph metrics (like degree). (2) If the ablation results hold after verifying that no node feature requires a graph adjacency matrix for its calculation, the design is vindicated. (3) If features are found to be structural, the ablation must be re-run with pure behavioral aggregates. (4) The primary conclusion survives because the GBDT baseline also uses these same aggregates; any structural leakage in the features would benefit both models equally.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Brier score is a secondary diagnostic; AUPRC and Precision@K are the primary operational metrics.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several findings (F1, F3, F5, F7) were moved to DEFER. These represent genuine mechanistic uncertainties regarding signal leakage and feature engineering that can be resolved through specific, named empirical tests without invalidating the relative comparison between the GNN and GBDT."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label definition\u2014marking host-days within 7 days of a confirmed malicious interval\u2014measures the model's ability to detect proximity to known incidents rather than detecting actual malicious activity.",
+        "failure_mechanism": "The model can learn temporal proximity signals (e.g., 'this host is likely positive because it's day 4 of a 7-day window') rather than behavioral patterns of actual intrusions. If the graph construction window overlaps with or spans the labeling window, the graph structure itself may encode information about incident timing. This means the GNN could achieve high AUPRC by learning when investigations occur rather than by detecting novel intrusions earlier in their lifecycle.",
+        "evidence_test": "Run an ablation where labels are randomized within each campaign while preserving class balance. If the model still achieves significantly above-random AUPRC, the signal is coming from temporal proximity to labels, not from behavioral detection. Additionally, examine whether feature importance concentrates on temporal features (days-since-last-incident, rolling deltas) versus static behavioral anomalies.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The tabular baseline uses host-day aggregates while the graph model uses raw signals as node/edge attributes, creating an information asymmetry that invalidates the comparison.",
+        "failure_mechanism": "The tabular baseline receives pre-aggregated statistics (e.g., 'authentication anomaly count') while the GNN receives the underlying raw events (individual authentication attempts, process spawns, network connections) with relational structure. The GNN can compute its own aggregates and learn its own representations from raw data, while the GBDT is constrained to fixed aggregations. If the GNN wins, it may be due to richer input representation rather than relational inductive bias.",
+        "evidence_test": "Construct a fair baseline by either (a) giving the GBDT access to the same raw event stream as the GNN with equivalent feature engineering effort, or (b) giving the GNN pre-aggregated features as node attributes to match the tabular baseline's input. The current experiment conflates representation learning capacity with relational modeling.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 7-day graph construction window may overlap with the 7-day labeling window, allowing the graph to encode information about the incident itself rather than pre-incident behavioral signals.",
+        "failure_mechanism": "If the graph built from day T includes edges to events from day T-1 through T-7, and the label for day T depends on whether T falls within 7 days of a confirmed incident, then the graph contains temporal information about the incident window. The GNN could learn to detect the presence of incident-related activity in the graph structure (e.g., unusual connectivity patterns from investigation activities) rather than learning early behavioral warning signs that precede confirmed incidents.",
+        "evidence_test": "Construct graphs from a window that ends strictly before the labeling window begins (e.g., build graphs from days T-14 to T-8 to predict labels for day T). Compare performance between graphs built from pre-incident windows versus incident-proximate windows. If performance drops significantly with temporal separation, the current setup is leaking incident-adjacent information.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The campaign integrity constraint\u2014keeping all windows tied to the same incident in the same split\u2014is essential but the implementation details are unspecified, making the temporal generalization claim unverifiable.",
+        "failure_mechanism": "The hypothesis explicitly targets 'future-time generalization to unseen campaigns.' However, the experiment does not specify how campaigns are identified, how to handle hosts that participate in multiple campaigns, or whether the 7-day labeling window creates partial overlap between campaigns. If a host appears in both a training-campaign and a test-campaign (e.g., as a pivot point), the model could learn host-specific or identity-specific patterns that generalize across campaigns rather than learning campaign-agnostic attack behaviors.",
+        "evidence_test": "Report the number of hosts/identities that appear in both training and test splits. Run a control that holds out all data from any host/identity that appears in training when evaluating on test (pure campaign novelty). Compare performance between the full test set and the held-out-host subset to quantify the contribution of host-level versus campaign-level generalization.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment uses class weighting but does not report the class imbalance ratio or the specific weighting scheme, making reproducibility and result interpretation difficult.",
+        "failure_mechanism": "In security telemetry, positive class rates can range from 0.01% to 1% depending on the environment and labeling definition. The choice of class weighting scheme (balanced, inverse frequency, sqrt-inverse, or custom) significantly impacts model behavior. Without this information, it's impossible to determine whether the reported AUPRC reflects meaningful detection or is an artifact of the weighting scheme. Additionally, the validation set class distribution may differ from test, causing selected models to be miscalibrated for the test period.",
+        "evidence_test": "Report the positive class rate in train/validation/test splits, the weighting scheme used, and the effective sample weights applied to positive versus negative examples. Run a sensitivity analysis varying the class weight from 1:1 to the observed imbalance ratio to verify that relative model rankings are stable.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses a single enterprise environment, limiting external validity, but this is explicitly acknowledged as a deliberate scope limitation.",
+        "failure_mechanism": "The conclusion explicitly states the experiment 'does not by itself prove transfer to other enterprises with different telemetry coverage or investigation practices.' This is appropriately scoped. However, even within this single environment, the 18-month window may not capture seasonal variation, major organizational changes (mergers, restructuring), or evolution in attacker TTPs. The validation and test periods (months 12-18) may not be representative of the full range of conditions the SOC will face.",
+        "evidence_test": "Report summary statistics of the test period (number of incidents, campaign diversity, class distribution) compared to training. If the test period is notably different (e.g., much fewer incidents), note this as a limitation on the confidence in forward-time generalization.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The ablation study removes graph edges while preserving node features, but node features in the GNN may already encode relational information that survives the ablation.",
+        "failure_mechanism": "If node features include aggregates like 'degree centrality,' 'neighbor count,' or 'connection frequency,' these are themselves derived from graph structure. Removing edges while keeping these features does not create a fair node-feature-only baseline\u2014the model still has access to structural information through the node attributes. A proper ablation would use node features computed without any graph context (e.g., per-host behavioral aggregates only).",
+        "evidence_test": "Verify that node features in the ablation condition are computed without graph context (purely from the host's own event stream). If degree or connectivity features are present in the ablation, re-run with truly graph-free node features and report whether the GNN edge contribution persists.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment reports Brier score for calibration but does not address whether the calibration target (probability of intrusion within 7 days) is operationally meaningful.",
+        "failure_mechanism": "Brier score measures calibration of probability predictions against observed outcomes. However, the prediction target ('this host will be within 7 days of a confirmed incident') is an intermediate proxy, not the SOC's actual decision need ('this host is currently compromised'). Well-calibrated probabilities on the wrong target may not be useful for operational decisions like prioritization or resource allocation.",
+        "evidence_test": "Report the calibration curve and evaluate whether the probability outputs can be thresholded to produce operationally useful risk bands (e.g., 'high risk: investigate today' vs. 'low risk: monitor'). If the probability distribution is too concentrated or too diffuse to support triage decisions, note this limitation.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC has two FATAL flaws: (1) the label definition measures proximity to confirmed incidents rather than detection of actual intrusions, creating a risk that models learn temporal proximity signals rather than behavioral attack patterns; (2) the comparison between GNN and GBDT is unfair because the tabular baseline receives aggregated features while the GNN receives raw events with relational structure. These flaws invalidate the core comparison. Additionally, the graph construction window may overlap with the labeling window, allowing incident-adjacent information to leak into the graph structure.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining positions on accepted findings (F2, F5, F6, F8). For challenged findings, I am shifting F1 and F3 to DEFER because while the design removes analyst fields, it cannot logically prove the absence of 'investigation-adjacent' behavioral artifacts without the proposed empirical tests. I am strengthening the REBUT-DESIGN for F4 by clarifying the campaign integrity logic. For F7, I am switching to DEFER to explicitly define the feature computation and validate the ablation's fairness.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The design removes analyst-authored fields, but the critic correctly notes that behavioral artifacts of an investigation (e.g., sudden spikes in forensic tool execution) could still correlate with the 7-day label. To settle this: (1) Run the proposed ablation randomizing labels within campaigns. (2) If AUPRC remains significantly above random, the model is learning behavioral patterns of the intrusion. (3) If AUPRC drops to random, the model was relying on temporal proximity to the label. (4) The primary conclusion (GNN vs GBDT) remains valid because both models are exposed to the same labeling noise and temporal signals; the relative gain of the GNN would still indicate whether relational structure helps capture these signals better than aggregates.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The GNN uses the same signals as node/edge attributes as the tabular baseline uses for aggregates. The relational structure is the independent variable. The ablation (removing edges) isolates the structural gain from the metadata gain.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "While the design targets early detection, the critic's point about 'investigation artifacts' (e.g., SOC scans) appearing in the graph is a valid mechanistic concern. To settle this: (1) Compare performance using graphs from [T-14, T-8] vs [T-7, T] to predict labels for day T. (2) If performance is stable, the model is detecting pre-incident signals. (3) If performance drops, it is relying on incident-adjacent artifacts. (4) The primary conclusion remains valid because both GNN and GBDT would be equally susceptible to these artifacts; the relative performance difference still tests the efficacy of relational modeling.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology's constraint to keep all windows tied to the same campaign in the same split based on first observed activity inherently handles the raised concerns: (1) If a host participates in multiple campaigns, the 'first observed' rule for the most recent campaign dictates the split, ensuring no future-campaign data leaks into the past. (2) Overlap is handled by the strict time-split (Months 1-11 vs 12-15 vs 16-18); any campaign spanning the split boundary is assigned to the split containing its first activity, preventing the model from seeing the 'end' of a campaign in training and the 'start' in testing.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The specific weighting scheme was not detailed. To settle this: report the class imbalance ratio and the weighting formula. If the AUPRC is stable across different weighting schemes, the design is vindicated. The primary conclusion remains valid as both models use the same weighting.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The use of a single environment is a stated scope limitation to ensure the data generating process matches the SOC's actual face.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "To resolve the ambiguity regarding feature computation: (1) Explicitly document that 'novelty' and 'rarity' are computed as global frequency counts across the training set, not as local graph metrics (like degree). (2) If the ablation results hold after verifying that no node feature requires a graph adjacency matrix for its calculation, the design is vindicated. (3) If features are found to be structural, the ablation must be re-run with pure behavioral aggregates. (4) The primary conclusion survives because the GBDT baseline also uses these same aggregates; any structural leakage in the features would benefit both models equally.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Brier score is a secondary diagnostic; AUPRC and Precision@K are the primary operational metrics.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several findings (F1, F3, F5, F7) were moved to DEFER. These represent genuine mechanistic uncertainties regarding signal leakage and feature engineering that can be resolved through specific, named empirical tests without invalidating the relative comparison between the GNN and GBDT."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

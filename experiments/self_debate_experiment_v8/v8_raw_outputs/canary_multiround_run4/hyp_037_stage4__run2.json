@@ -1,0 +1,234 @@
+{
+  "case_id": "hyp_037_stage4",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Preprocessing artifacts (standardization, vocabularies, co-occurrence statistics) are established from the full modeling corpus before training to ensure a consistent feature space.",
+        "failure_mechanism": "This is a classic case of data leakage. By calculating co-occurrence statistics and standardization parameters using the 'full modeling corpus' (which includes the validation and test sets), the model is exposed to the global distribution and relational structure of the future data. In sequence embeddings, co-occurrence statistics are essentially a form of target-adjacent signal; if a specific merchant category becomes highly correlated with churn in the test window, that relationship is leaked into the embeddings used during training.",
+        "evidence_test": "Re-run the experiment where all preprocessing parameters (means, variances, and co-occurrence matrices) are computed strictly on the Training set (months 1-12) and applied to the others. A significant drop in test performance would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model (Logistic Regression) serves as a stable reference point to measure the added value of transaction-sequence information.",
+        "failure_mechanism": "The PoC compares a highly optimized non-linear model (XGBoost/LightGBM with hyperparameter tuning) against a minimally optimized linear model (Logistic Regression with fixed regularization). Any observed improvement may be due to the model's ability to capture non-linear interactions between the *baseline* features (e.g., the interaction between tenure and spend), rather than the addition of the *sequence embeddings*. The experiment fails to isolate the variable being tested (sequence data) from the model architecture (linear vs. boosted trees).",
+        "evidence_test": "Introduce a second baseline: an XGBoost/LightGBM model trained using only the baseline features, tuned with the same rigor as the proposed model. If the proposed model still outperforms this 'Boosted Baseline', the claim about sequence embeddings is supported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (Precision at top 5% recall/budget) reflects operational constraints and measures the quality of the model at the deployment threshold.",
+        "failure_mechanism": "The PoC defines the target as churn if an account closes OR exhibits 60+ days of inactivity within 30 days following the prediction date. However, the '60+ days of inactivity' condition cannot be fully observed within a 30-day prediction horizon. This creates a logical contradiction in the labeling process: you cannot observe 60 days of inactivity in a 30-day window. This suggests the labels are either misdefined or the 'prediction horizon' is actually longer than 30 days, which would invalidate the temporal split logic described in Section 2.",
+        "evidence_test": "Clarify the labeling window. If the label requires 60 days of inactivity, the 'gap' between the feature window and the label observation must be at least 60 days. Verify if the test set (months 16-18) has enough trailing data to actually satisfy the 60-day inactivity condition.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains a fatal signal leakage flaw by using the full corpus for embedding initialization and a flawed baseline comparison that conflates model architecture gains with feature gains. Additionally, there is a logical contradiction in the churn labeling window that suggests a misconfiguration of the temporal horizon.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding in sequence, examining the critic's claim against the documented methodology and design intent.\n\n**F1 Analysis:** The critic claims that establishing preprocessing artifacts (including co-occurrence statistics for embeddings) from the full modeling corpus constitutes data leakage. The methodology explicitly states this is done to 'keep representation drift from the later time windows from being conflated with model effects' and that the same frozen preprocessing is applied unchanged to validation and test sets. This is a deliberate design choice to isolate the effect of model learning from changes in feature representation. The critic misunderstands the intent: the goal is to test whether sequence embeddings improve prediction, not to simulate a production deployment pipeline from scratch. The co-occurrence statistics are derived from transaction data only (not labels), and are used for embedding initialization\u2014a form of transfer learning from the broader corpus. This does not leak future label information because: 1) the statistics are computed on transaction co-occurrence, not correlation with churn; 2) they are computed once before any model sees any labels; 3) the same representation is applied consistently across all splits. This is a REBUT-DESIGN scenario\u2014the design anticipates this concern and addresses it with a specific control (frozen preprocessing to prevent representation drift).\n\n**F2 Analysis:** The critic claims the comparison is unfair because the proposed model uses a more powerful algorithm (boosted trees) with hyperparameter tuning, while the baseline uses logistic regression with fixed regularization. The methodology explicitly states the baseline is kept 'intentionally simple, using a fixed regularization setting selected a priori rather than a full hyperparameter sweep, so it serves as a stable linear reference point.' The hypothesis is specifically about whether transaction-sequence information adds predictive signal beyond standard RFM-style summaries. The design choice is deliberate: the baseline represents a common, interpretable industry standard. Adding a tuned boosted tree baseline would test a different hypothesis (non-linear interactions of RFM features vs. sequence information). However, the critic has a point about isolating the variable. The methodology could be strengthened, but the current design still provides a valid comparison: if the proposed model outperforms, it demonstrates that sequence embeddings + non-linear modeling beat linear RFM. The question is whether the gain is attributable to embeddings or just non-linearity. This is a partial concern\u2014the design mitigates by focusing validation effort on the proposed model, but doesn't fully resolve the isolation question. This warrants DEFER with a specific settling experiment (adding a tuned baseline without sequence features).\n\n**F3 Analysis:** The critic identifies an apparent contradiction: the label definition includes '60+ consecutive days of inactivity within 30 days following a prediction date.' The critic correctly notes you cannot observe 60 days of inactivity in a 30-day window. This appears to be a wording ambiguity in the methodology. Reading carefully: 'an account is labeled as 1 (churned) if it closes or exhibits 60+ consecutive days of inactivity within 30 days following a prediction date.' The phrase 'within 30 days following' likely modifies the observation window for the condition, not the inactivity duration. More precise wording would be: 'exhibits 60+ consecutive days of inactivity, with the inactivity period beginning within the 30-day prediction horizon.' The methodology also states 'churn labels are observed only after the full 30-day prediction horizon has elapsed'\u2014this suggests the label observation point is 30 days after the prediction date, at which point you can look back and see if 60 days of inactivity has occurred (which would require the account to have been inactive for at least 30 days prior to the prediction date plus the 30-day horizon). This is a labeling logic issue, but the temporal split strategy in Section 2 explicitly accounts for this: 'features are observed during a 90-day feature window, and churn labels are observed 30 days after the feature window closes.' The 60-day inactivity condition would use data from both before and after the prediction date, but the label is only observed after the 30-day horizon. This is a valid labeling approach for inactivity-based churn. The critic's claim about invalidating the temporal split is incorrect\u2014the split still prevents leakage because features cannot use information after the prediction date, while the label observation occurs later. This is REBUT-EVIDENCE: the critique makes an empirical claim about invalidated splits that is not supported by the actual design description.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The methodology explicitly addresses this concern in Section 3: 'To keep representation drift from the later time windows from being conflated with model effects, preprocessing artifacts... are established once from the full modeling corpus before training and then frozen.' This is a deliberate design choice to isolate the effect of model learning from changes in feature representation. The co-occurrence statistics are computed on transaction data only (no label information) and used for embedding initialization\u2014a form of transfer learning. The same frozen preprocessing is applied consistently across all splits, preventing leakage of future label distributions. The critic's failure mechanism assumes co-occurrence statistics correlate with churn in the test window, but statistics are computed on the entire corpus before any model sees labels, and measure merchant co-occurrence, not churn correlation."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design choice to use a simple logistic regression baseline is deliberate (Section 4: 'serves as a stable linear reference point'). However, the critic correctly identifies that improved performance could stem from the non-linear modeling capacity rather than sequence embeddings alone. This question is genuinely unresolved by the current design. Settling experiment: Train an XGBoost/LightGBM model using only baseline features, with identical hyperparameter tuning rigor as the proposed model. If the proposed model (baseline + sequence features) outperforms this 'boosted baseline,' the sequence embeddings claim is supported. If performance is similar, the gain is attributable to non-linear interactions of RFM features. The primary conclusion remains valid if the critique is correct? No\u2014if the boosted baseline matches proposed model performance, the sequence embeddings add no incremental value. This requires empirical testing."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critique claims the label definition creates a 'logical contradiction' that would 'invalidate the temporal split logic.' This is based on a misreading of the methodology. Section 1 states labels are observed 'after the full 30-day prediction horizon has elapsed.' The 60+ days inactivity condition can be evaluated at that observation point\u2014looking back at activity both before and after the prediction date. The temporal split in Section 2 explicitly ensures 'no feature encodes information from after the prediction date,' while label observation occurs later. There is no contradiction: features use a 90-day window ending at prediction date; labels are observed 30 days later and can incorporate inactivity periods that span before and after the prediction date. The critic's evidence test requests clarification, but the existing design description already resolves this."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F2 requires empirical testing (DEFER) to isolate whether performance gains come from sequence embeddings or non-linear modeling capacity, while F1 and F3 have been rebutted with adjustments bringing them to severity 4 and 1 respectively."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender's rebuttal fails to address the core mechanism of signal leakage. They argue that because the co-occurrence statistics are computed on transaction data without labels, no leakage occurs. This is incorrect. In ML, leakage is not limited to target labels; it includes any information from the test set that informs the training process. By using the 'full modeling corpus' to build the embedding space, the model's input representation is optimized based on the global distribution of the test set. If the relationship between merchant categories shifts over time (representation drift), the training set's embeddings are 'pre-informed' by the future distribution, artificially inflating performance. The defender's claim that this is 'transfer learning' is a mischaracterization; transfer learning involves moving from a source domain to a target domain, not incorporating the target domain into the source's preprocessing."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 7,
+        "reasoning": "The defender has conceded the point via a DEFER rebuttal and proposed a concrete empirical test (the 'Boosted Baseline') to isolate the effect of the sequence embeddings from the model architecture. No further challenge is needed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender clarifies that the 60-day inactivity window can span across the prediction date. While this resolves the 'logical contradiction' of observing 60 days within a 30-day window, it introduces a new ambiguity: if the label is determined by looking back *before* the prediction date to satisfy the 60-day requirement, the label is partially determined by the same data used for feature engineering. While this is standard for churn (defining a state), the defender does not explicitly state how they ensure the '60-day inactivity' doesn't simply overlap with the '90-day feature window' in a way that makes the target a trivial proxy for the features. The severity is reduced because the temporal split logic remains intact, but the labeling precision remains slightly opaque."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "For F1, the critic's challenge mischaracterizes the design's control for representation drift. The methodology's explicit freezing of preprocessing is a standard, valid technique to isolate model effects from feature-space changes. I will strengthen the REBUT-DESIGN. For F2, the critic accepted my DEFER, so I will maintain it. For F3, the critic's partial acceptance acknowledges the temporal logic is sound but raises a new, minor ambiguity about label-feature overlap. This is a standard churn labeling practice, and the design's temporal ordering prevents leakage. I will maintain a REBUT-EVIDENCE, adjusting the severity to reflect the resolved concern.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge incorrectly equates using the full corpus for preprocessing with target leakage. The methodology's control is explicit: preprocessing artifacts are established *once* from the full corpus *before training* and then **frozen**. This is a deliberate, standard technique to create a consistent, static feature space across all temporal splits. Its purpose is to prevent *representation drift*\u2014where shifting merchant distributions between splits could be misattributed as model gains. The critic's failure mechanism assumes this procedure 'optimizes' the embedding for the test set. This is false. The embeddings are initialized via co-occurrence statistics, which are label-agnostic measures of merchant relationships. This initialization is then frozen; the model cannot update these embeddings based on test-set performance. No information about churn labels or future target-adjacent signals from the validation/test sets is used to train the model parameters. The design successfully isolates the learning of model parameters (on the training set) from the definition of the feature space (established once). The critic's proposed re-run experiment would test a different hypothesis about representation drift, not signal leakage.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "Maintaining DEFER as the critic accepted this position. The design's choice of a simple linear baseline is intentional for stability, but it does not fully isolate the variable of interest (sequence embeddings) from model capacity. This creates genuine ambiguity. The settling experiment is to introduce a 'Boosted Baseline'\u2014an XGBoost/LightGBM model trained and tuned with identical rigor but using only baseline features. If the proposed model (with sequences) outperforms this baseline, the sequence embeddings claim is supported. If performance is similar, the gain is attributable to non-linear interactions of RFM features. The primary conclusion about the value of sequence embeddings would not remain valid if the critique is correct and the boosted baseline matches performance, hence an empirical test is required.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic's partial challenge raises a new point about potential label-feature overlap. This is addressed by the design's explicit temporal ordering. Features are derived from a 90-day window ending at the prediction date (t). The label is observed 30 days later (t+30) and can look back at inactivity starting before t. Standard churn labeling often uses such a 'gap period' to define inactivity. The key guardrail in Section 2 is that 'no feature encodes information from after the prediction date.' The label's 60-day inactivity window can start before t, but the features only see activity up to t. This prevents the label from being a trivial function of the features; the model must predict future inactivity based on past activity patterns. The critic's reduced severity (3) acknowledges the core temporal logic is sound. The remaining 'opacity' is not a design flaw but a standard implementation detail for observational churn prediction.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One finding (F2) requires an empirical test (DEFER) to settle a genuine ambiguity about the source of model improvement, while the other findings have been successfully rebutted to low severity levels."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Preprocessing artifacts (standardization, vocabularies, co-occurrence statistics) are established from the full modeling corpus before training to ensure a consistent feature space.",
+        "failure_mechanism": "This is a classic case of data leakage. By calculating co-occurrence statistics and standardization parameters using the 'full modeling corpus' (which includes the validation and test sets), the model is exposed to the global distribution and relational structure of the future data. In sequence embeddings, co-occurrence statistics are essentially a form of target-adjacent signal; if a specific merchant category becomes highly correlated with churn in the test window, that relationship is leaked into the embeddings used during training.",
+        "evidence_test": "Re-run the experiment where all preprocessing parameters (means, variances, and co-occurrence matrices) are computed strictly on the Training set (months 1-12) and applied to the others. A significant drop in test performance would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model (Logistic Regression) serves as a stable reference point to measure the added value of transaction-sequence information.",
+        "failure_mechanism": "The PoC compares a highly optimized non-linear model (XGBoost/LightGBM with hyperparameter tuning) against a minimally optimized linear model (Logistic Regression with fixed regularization). Any observed improvement may be due to the model's ability to capture non-linear interactions between the *baseline* features (e.g., the interaction between tenure and spend), rather than the addition of the *sequence embeddings*. The experiment fails to isolate the variable being tested (sequence data) from the model architecture (linear vs. boosted trees).",
+        "evidence_test": "Introduce a second baseline: an XGBoost/LightGBM model trained using only the baseline features, tuned with the same rigor as the proposed model. If the proposed model still outperforms this 'Boosted Baseline', the claim about sequence embeddings is supported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (Precision at top 5% recall/budget) reflects operational constraints and measures the quality of the model at the deployment threshold.",
+        "failure_mechanism": "The PoC defines the target as churn if an account closes OR exhibits 60+ days of inactivity within 30 days following the prediction date. However, the '60+ days of inactivity' condition cannot be fully observed within a 30-day prediction horizon. This creates a logical contradiction in the labeling process: you cannot observe 60 days of inactivity in a 30-day window. This suggests the labels are either misdefined or the 'prediction horizon' is actually longer than 30 days, which would invalidate the temporal split logic described in Section 2.",
+        "evidence_test": "Clarify the labeling window. If the label requires 60 days of inactivity, the 'gap' between the feature window and the label observation must be at least 60 days. Verify if the test set (months 16-18) has enough trailing data to actually satisfy the 60-day inactivity condition.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains a fatal signal leakage flaw by using the full corpus for embedding initialization and a flawed baseline comparison that conflates model architecture gains with feature gains. Additionally, there is a logical contradiction in the churn labeling window that suggests a misconfiguration of the temporal horizon.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "For F1, the critic's challenge mischaracterizes the design's control for representation drift. The methodology's explicit freezing of preprocessing is a standard, valid technique to isolate model effects from feature-space changes. I will strengthen the REBUT-DESIGN. For F2, the critic accepted my DEFER, so I will maintain it. For F3, the critic's partial acceptance acknowledges the temporal logic is sound but raises a new, minor ambiguity about label-feature overlap. This is a standard churn labeling practice, and the design's temporal ordering prevents leakage. I will maintain a REBUT-EVIDENCE, adjusting the severity to reflect the resolved concern.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge incorrectly equates using the full corpus for preprocessing with target leakage. The methodology's control is explicit: preprocessing artifacts are established *once* from the full corpus *before training* and then **frozen**. This is a deliberate, standard technique to create a consistent, static feature space across all temporal splits. Its purpose is to prevent *representation drift*\u2014where shifting merchant distributions between splits could be misattributed as model gains. The critic's failure mechanism assumes this procedure 'optimizes' the embedding for the test set. This is false. The embeddings are initialized via co-occurrence statistics, which are label-agnostic measures of merchant relationships. This initialization is then frozen; the model cannot update these embeddings based on test-set performance. No information about churn labels or future target-adjacent signals from the validation/test sets is used to train the model parameters. The design successfully isolates the learning of model parameters (on the training set) from the definition of the feature space (established once). The critic's proposed re-run experiment would test a different hypothesis about representation drift, not signal leakage.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "Maintaining DEFER as the critic accepted this position. The design's choice of a simple linear baseline is intentional for stability, but it does not fully isolate the variable of interest (sequence embeddings) from model capacity. This creates genuine ambiguity. The settling experiment is to introduce a 'Boosted Baseline'\u2014an XGBoost/LightGBM model trained and tuned with identical rigor but using only baseline features. If the proposed model (with sequences) outperforms this baseline, the sequence embeddings claim is supported. If performance is similar, the gain is attributable to non-linear interactions of RFM features. The primary conclusion about the value of sequence embeddings would not remain valid if the critique is correct and the boosted baseline matches performance, hence an empirical test is required.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic's partial challenge raises a new point about potential label-feature overlap. This is addressed by the design's explicit temporal ordering. Features are derived from a 90-day window ending at the prediction date (t). The label is observed 30 days later (t+30) and can look back at inactivity starting before t. Standard churn labeling often uses such a 'gap period' to define inactivity. The key guardrail in Section 2 is that 'no feature encodes information from after the prediction date.' The label's 60-day inactivity window can start before t, but the features only see activity up to t. This prevents the label from being a trivial function of the features; the model must predict future inactivity based on past activity patterns. The critic's reduced severity (3) acknowledges the core temporal logic is sound. The remaining 'opacity' is not a design flaw but a standard implementation detail for observational churn prediction.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One finding (F2) requires an empirical test (DEFER) to settle a genuine ambiguity about the source of model improvement, while the other findings have been successfully rebutted to low severity levels."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

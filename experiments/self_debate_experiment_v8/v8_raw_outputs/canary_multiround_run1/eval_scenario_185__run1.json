@@ -1,0 +1,431 @@
+{
+  "case_id": "eval_scenario_185",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label construction method (escalation within 24 hours = high-relevance, closed as false positive within 10 business days = low-relevance) accurately reflects analyst-actionable truth and is temporally causal.",
+        "failure_mechanism": "This labeling scheme introduces a severe positive class bias. High-relevance alerts are defined by fast escalation (24h), while low-relevance alerts require analyst action within 10 business days. This creates an imbalanced feedback loop: alerts that are truly important but require longer investigation (e.g., slow-burn intrusions, complex fraud) will be excluded from the positive class, while alerts that are noisy but get quick analyst attention for closure will populate the negative class. The model will learn to rank alerts that look like 'quick-close' noise lower, potentially demoting sophisticated attacks that don't trigger immediate escalation. The 30-day exclusion window for undecided alerts further censors ambiguous cases, creating a cleaned dataset that doesn't match the operational reality of delayed or missing feedback.",
+        "evidence_test": "Audit the label distribution against ground truth for a sample period: manually review a stratified sample of alerts excluded for 'no disposition within 30 days' and alerts labeled 'low-relevance' (closed as FP within 10 days) to determine what proportion were actually high-severity incidents that were missed or investigated slowly. Compare the time-to-escalation distribution for confirmed incidents vs. the 24h cutoff.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The entity graph features (from a 'static entity store' of the prior 30 days) and ticket-history features (from the prior 14 days) contain only pre-alert information and do not leak future label information.",
+        "failure_mechanism": "The methodology states features are from a 'static entity store' and 'prior 14 days', but if the entity relationships or ticket histories are updated retroactively (common in SOC tools as investigations progress), they may incorporate information that only becomes available after the alert is generated. For example, a ticket linked to an alert on day T might have its creation timestamp back-dated to day T-1 during investigation reconciliation. The 'audit-check' is mentioned but not specified; without a rigorous point-in-time reconstruction of the feature state exactly as it existed at alert generation time, leakage is probable. This would allow the model to cheat by seeing proxies for the label.",
+        "evidence_test": "Implement a point-in-time feature reconstruction: for each alert, replay the feature generation process using only data that was irrevocably committed before the alert timestamp. Compare the distributions of these point-in-time features with the 'static' features used in the PoC. A significant divergence indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chosen baseline (text-only ranker) is sufficient to isolate the contribution of entity graph and ticket-history features, and any improvement in nDCG@10 is attributable to those features.",
+        "failure_mechanism": "The baseline is underspecified and potentially weaker than necessary. A 'learning-to-rank model trained on alert text alone' could be a simple linear model or a poorly tuned neural ranker. The PoC states it receives 'equivalent hyperparameter tuning effort', but if the search space for the text-only model is not equally rich (e.g., not allowing architectural changes to properly process the text embeddings), the multimodal model's gain may come from better utilization of the text signal, not the added features. The improvement could be an artifact of baseline underfitting rather than feature superiority.",
+        "evidence_test": "Add a stronger baseline: a text-only model with a tuned neural architecture (e.g., fine-tuned transformer) capable of deep text understanding. Also, include a simple heuristic baseline (e.g., ranking by alert severity score or rule priority). Report the performance delta between the proposed model and this strengthened baseline.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "nDCG@10 is the correct primary metric because it aligns with the operational objective of improving triage efficiency where analysts review ~10 alerts per shift.",
+        "failure_mechanism": "nDCG@10 assumes a gain in utility from placing a relevant alert at position 1 vs. position 10, which is appropriate. However, it does not account for the cost of false positives within the top 10. In SOC triage, a single high-confidence false positive can consume disproportionate analyst time and cause alert fatigue, potentially causing them to miss a true positive at position 11. The metric is also insensitive to the absolute number of true positives available; if only 1 relevant alert exists in a batch of 100, a perfect nDCG@10 is still achievable, masking a failure to surface multiple true positives. The operational objective is not just ranking, but maximizing the value of limited analyst attention.",
+        "evidence_test": "Complement nDCG@10 with a cost-sensitive metric such as 'Expected Utility@k' that incorporates estimated investigation time for false positives and value of true positives. Also, report Recall@100 to understand the model's ability to surface all relevant alerts, not just the first few.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratification by quarter within each temporal fold ensures representative coverage of seasonal patterns and that the temporal split is mandatory for non-stationary data.",
+        "failure_mechanism": "While temporal splitting is correct, the split proportions (58%/25%/25%) may create a validation set (months 15-17) that is temporally too close to the test set (months 18-24), especially if drift occurs rapidly. The model selected on validation may overfit to a short-term pattern that does not persist into the more distant test period. The 'stratification by quarter' within folds is ambiguous\u2014it likely means ensuring each fold contains data from all quarters, but this could actually *violate* temporal causality if it involves shuffling data from different times within the fold to achieve balance.",
+        "evidence_test": "Clarify the stratification procedure. Perform a sensitivity analysis: train/validate/test on different temporal windows (e.g., train on months 1-12, validate on 13-15, test on 16-24) and check if model selection and performance are robust. Analyze performance decay across consecutive months in the test set to detect rapid drift.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The frozen pre-trained transformer embedding (e.g., SBERT) is adequate for representing alert text, and not updating it isolates ranking architecture gains.",
+        "failure_mechanism": "SOC alert text often contains domain-specific jargon, acronyms, and log formats that are poorly represented in general-purpose sentence embeddings. A frozen embedding may fail to capture semantic similarities critical for ranking (e.g., 'lateral movement' and 'SMB session enumeration'). The loss in text understanding could cap the performance of both the baseline and the proposed model, making the absolute performance numbers misleading, though the relative comparison might still be valid.",
+        "evidence_test": "Evaluate the embedding quality on a held-out set of SOC alert similarity judgments from analysts. Compare with a domain-adapted embedding (fine-tuned on alert text) as an additional baseline to see if the frozen embedding is a bottleneck.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The ablation study (dropping ticket-history features) is sufficient to confirm the entity graph contributes independent signal.",
+        "failure_mechanism": "An ablation study dropping only ticket-history features does not isolate the entity graph's contribution; it could be that ticket-history and entity graph features are highly correlated, and the model uses the entity graph as a proxy for ticket history. A full ablation (entity graph only, ticket history only, both) is needed to disentangle contributions.",
+        "evidence_test": "Run the full ablation suite: model with text+graph, model with text+ticket, model with all three. Report the performance deltas.",
+        "flaw_category": "below_threshold"
+      }
+    ],
+    "summary": "The PoC has a potentially fatal flaw in its label construction (F1) that could systematically bias the model against slower-burn attacks, and a high-risk signal leakage concern in its feature engineering (F2). The baseline and metric choices (F3, F4) materially weaken the claim's support. The temporal split strategy (F5) has a minor ambiguity.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I have analyzed all six findings against the methodology document. F1 (Label Bias) claims the 24h escalation label excludes slow-burn attacks. The methodology explicitly scopes the experiment to 'triage decision point' (Section 1), defining high-relevance as first-day escalation to align with immediate analyst action. The critique targets a broader detection scope, not the stated triage objective. F2 (Leakage) claims features may leak future info. Section 6 explicitly lists 'Feature timing audit' and 'Metadata leakage check' as controls. The design anticipates this risk. F3 (Baseline) claims the text-only baseline is underspecified. Section 4 defines the baseline to isolate feature contribution (same embedding, same ranking loss, only features differ). The critique misunderstands the isolation goal. F4 (Metric) claims nDCG@10 ignores FP cost. Section 4 justifies nDCG@10 for the 'top-10 window' operational constraint and lists secondary metrics (Precision, nDCG@50) for broader context. F5 (Temporal Split) claims validation/test proximity risks drift. Section 2 explicitly uses chronological splits for non-stationarity, and Section 6 lists 'Temporal distance' as a control. F6 (Embedding) claims frozen SBERT misses jargon. Section 3 explicitly states the embedding is frozen to 'isolate ranking architecture gains'. This is a deliberate design choice. All findings are addressed by design rationale or scope definition.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critique targets a general detection task (slow-burn intrusions), but the PoC is scoped to immediate triage efficiency (Section 1). The 24h escalation label is an intentional design choice to align with the 'triage decision point' objective, not a flaw in label construction for this specific hypothesis."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Section 6 explicitly lists 'Feature timing audit' and 'Metadata leakage check' as confound controls. The methodology anticipates retroactive updates and mandates pre-alert feature construction, addressing the leakage concern through design controls."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The baseline is designed to isolate the contribution of entity/graph features, not compare text architectures (Section 4). Using the same embedding and ranking loss for both ensures any gain is attributable to the added features, not baseline underfitting."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "nDCG@10 is chosen specifically for the 'top-10 window' operational constraint (Section 4). While cost-sensitive metrics are valuable, they fall outside the primary scope of measuring triage efficiency for the immediate review queue."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The temporal split is explicitly mandated for non-stationary data (Section 2), and Section 6 includes 'Temporal distance' as a control. The design anticipates drift and structures the split to measure generalization to unseen future alerts."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The frozen embedding is a deliberate design choice to isolate ranking architecture gains from embedding improvements (Section 3). While domain adaptation could help, it would confound the specific hypothesis being tested."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were addressed by design rationale or scope definition, with adjusted severities reduced to \u22643. The methodology is sound for its stated triage hypothesis, and the critique largely applies to broader detection tasks or misunderstands the isolation controls."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal mischaracterizes the finding as about 'slow-burn intrusions' generally, but the failure mechanism is about systematic label bias in the construction itself. The 24h vs. 10-day asymmetry creates a fundamental sampling bias: alerts that get quick closure populate the negative class, while alerts requiring longer investigation are excluded from the positive class. This biases the model toward patterns associated with 'quick-to-close' alerts regardless of true relevance. The scope defense doesn't address this bias\u2014even for immediate triage, if the positive class systematically excludes some truly urgent alerts that take >24h to escalate (e.g., multi-stage attacks where initial alert context is ambiguous), the model learns incorrect ranking signals. The severity adjustment from FATAL to 3 is disproportionate for an unaddressed sampling bias."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal cites the existence of 'Feature timing audit' and 'Metadata leakage check' controls, but doesn't specify how these controls actually prevent the specific failure mechanism: retroactive updates in SOC tools. A generic mention of controls is insufficient; the methodology needs to describe the point-in-time reconstruction mechanism. However, the inclusion of these controls does reduce severity from FATAL, as the design acknowledges the risk. The residual issue is that without a detailed audit procedure (e.g., using immutable event logs or database snapshots), leakage remains probable. The severity adjustment to 3 is too optimistic; a MATERIAL concern remains."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal states the baseline is designed to 'isolate the contribution' but doesn't address the failure mechanism: baseline underfitting due to an underspecified architecture. Using the same embedding and ranking loss doesn't guarantee equivalent capacity to utilize text signals. If the text-only model has insufficient architectural complexity (e.g., a linear layer on embeddings vs. a deep neural network), it may underfit relative to the multimodal model, creating a false improvement delta. The rebuttal is generic ('ensures any gain is attributable') without explaining how architectural parity is ensured. The severity adjustment to 2 is disproportionate."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal correctly notes that nDCG@10 aligns with the explicitly stated operational scope: measuring triage efficiency for the immediate review queue (~10 alerts). The failure mechanism identified additional operational concerns (false positive cost, recall), but these are acknowledged as outside the primary scope of the hypothesis. The metric choice is appropriate for the stated goal, and the defender's scope defense is valid. The severity reduction is proportionate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal cites the temporal split design and 'Temporal distance' control, but doesn't address the specific failure mechanisms: (1) validation set being temporally too close to test set for rapid drift scenarios, and (2) ambiguous 'stratification by quarter' that might violate temporal causality. The design acknowledges non-stationarity but doesn't defend against these specific risks. However, the overall temporal approach is sound, reducing severity from MATERIAL to MINOR. The adjustment to 1 is too optimistic given the unresolved ambiguity about stratification."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly identifies that the frozen embedding is a deliberate design choice to isolate ranking architecture gains, which directly addresses the failure mechanism. The concern about domain-specific jargon is valid but would confound the hypothesis test. The defender's justification is mechanistically sound: keeping the embedding frozen ensures any improvement comes from the multimodal architecture, not from better text representation. The severity reduction to 0 is appropriate for this MINOR finding."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 and F2 are contested but the design does address the concerns through intentional scope and controls respectively. F3 and F5 are genuine ambiguities requiring empirical resolution (DEFER). F4 and F6 were accepted by the critic and maintain their R1 positions. The presence of DEFER findings on F3 and F5 means the appropriate verdict is empirical_test_agreed, as these represent reasonable disagreements that the experiment should test.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic correctly identifies that the 24h vs 10-day asymmetry creates sampling bias, but this is intentional for the stated scope. Section 1 explicitly defines the hypothesis as measuring 'triage efficiency' at the 'first-day escalation activity' decision point, not general detection capability. The label construction is designed to reflect what analysts actually escalate within the triage window, not all possible high-severity incidents. The 30-day exclusion window for undecided alerts is acknowledged as a limitation (Section 1) but is necessary to avoid speculative labels. The scope defense stands: this is not a flaw in label construction for the specific hypothesis being tested.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Section 3 explicitly states 'All preprocessing transformers... are fit on the training set only and applied without refitting to validation and test sets. Features are audit-checked to ensure no future information (e.g., ticket-resolution dates or escalation outcomes) leaks into the feature values.' Section 6 lists 'Feature timing audit' and 'Metadata leakage check' as confound controls. While the methodology document doesn't specify the exact implementation of these audits, the design does include these controls as mandatory requirements. The critic's concern about retroactive updates is addressed by the requirement that features be constructed using only pre-alert information. The residual uncertainty about implementation details is appropriate for a methodology document; the actual experiment will implement these controls as specified.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "This is a genuine ambiguity where both parties have valid points. The design intent is to isolate feature contribution by using the same embedding and ranking loss, but the critic correctly notes that architectural capacity parity is not guaranteed by this alone. The methodology states 'equivalent hyperparameter tuning effort' but does not specify whether the text-only model uses the same architectural complexity. This cannot be resolved by argument alone - the experiment must empirically test whether the baseline is adequate. I am deferring to empirical evidence to determine if the observed improvement is due to feature contribution or baseline underfitting.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTED my R1 rebuttal. nDCG@10 is chosen specifically for the 'top-10 window' operational constraint (Section 4). While cost-sensitive metrics are valuable for broader operational analysis, they fall outside the primary scope of measuring triage efficiency for the immediate review queue. The methodology explicitly states the experiment will not establish causality of individual features or generalize beyond the stated scope. The metric choice is appropriate for the stated goal.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "This is a genuine ambiguity requiring empirical resolution. The temporal split is correct for non-stationary data, but the critic raises valid concerns about (1) validation set being too close to test set for rapid drift scenarios, and (2) ambiguous 'stratification by quarter' that might violate temporal causality. Section 6 includes 'Temporal distance' as a control, but the methodology doesn't specify how this is measured or what threshold constitutes 'sufficiently distant.' The experiment should test model performance across different temporal windows and analyze performance decay across consecutive months to determine if the validation strategy is adequate. This cannot be resolved by argument alone.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTED my R1 rebuttal. The frozen embedding is a deliberate design choice to isolate ranking architecture gains from embedding improvements (Section 3). While domain adaptation could help absolute performance, it would confound the specific hypothesis being tested. The methodology explicitly states 'The embedding model is not updated during the experiment to isolate ranking architecture gains.' This is a valid design control for the stated hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F3 and F5) are deferred to empirical testing because both parties have valid points and only experiment can resolve the ambiguity. This is the correct outcome for genuinely unresolved questions rather than a failure of the defense. The remaining findings have adjusted severity \u22643, indicating the methodology is sound for its stated scope."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label construction method (escalation within 24 hours = high-relevance, closed as false positive within 10 business days = low-relevance) accurately reflects analyst-actionable truth and is temporally causal.",
+        "failure_mechanism": "This labeling scheme introduces a severe positive class bias. High-relevance alerts are defined by fast escalation (24h), while low-relevance alerts require analyst action within 10 business days. This creates an imbalanced feedback loop: alerts that are truly important but require longer investigation (e.g., slow-burn intrusions, complex fraud) will be excluded from the positive class, while alerts that are noisy but get quick analyst attention for closure will populate the negative class. The model will learn to rank alerts that look like 'quick-close' noise lower, potentially demoting sophisticated attacks that don't trigger immediate escalation. The 30-day exclusion window for undecided alerts further censors ambiguous cases, creating a cleaned dataset that doesn't match the operational reality of delayed or missing feedback.",
+        "evidence_test": "Audit the label distribution against ground truth for a sample period: manually review a stratified sample of alerts excluded for 'no disposition within 30 days' and alerts labeled 'low-relevance' (closed as FP within 10 days) to determine what proportion were actually high-severity incidents that were missed or investigated slowly. Compare the time-to-escalation distribution for confirmed incidents vs. the 24h cutoff.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The entity graph features (from a 'static entity store' of the prior 30 days) and ticket-history features (from the prior 14 days) contain only pre-alert information and do not leak future label information.",
+        "failure_mechanism": "The methodology states features are from a 'static entity store' and 'prior 14 days', but if the entity relationships or ticket histories are updated retroactively (common in SOC tools as investigations progress), they may incorporate information that only becomes available after the alert is generated. For example, a ticket linked to an alert on day T might have its creation timestamp back-dated to day T-1 during investigation reconciliation. The 'audit-check' is mentioned but not specified; without a rigorous point-in-time reconstruction of the feature state exactly as it existed at alert generation time, leakage is probable. This would allow the model to cheat by seeing proxies for the label.",
+        "evidence_test": "Implement a point-in-time feature reconstruction: for each alert, replay the feature generation process using only data that was irrevocably committed before the alert timestamp. Compare the distributions of these point-in-time features with the 'static' features used in the PoC. A significant divergence indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chosen baseline (text-only ranker) is sufficient to isolate the contribution of entity graph and ticket-history features, and any improvement in nDCG@10 is attributable to those features.",
+        "failure_mechanism": "The baseline is underspecified and potentially weaker than necessary. A 'learning-to-rank model trained on alert text alone' could be a simple linear model or a poorly tuned neural ranker. The PoC states it receives 'equivalent hyperparameter tuning effort', but if the search space for the text-only model is not equally rich (e.g., not allowing architectural changes to properly process the text embeddings), the multimodal model's gain may come from better utilization of the text signal, not the added features. The improvement could be an artifact of baseline underfitting rather than feature superiority.",
+        "evidence_test": "Add a stronger baseline: a text-only model with a tuned neural architecture (e.g., fine-tuned transformer) capable of deep text understanding. Also, include a simple heuristic baseline (e.g., ranking by alert severity score or rule priority). Report the performance delta between the proposed model and this strengthened baseline.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "nDCG@10 is the correct primary metric because it aligns with the operational objective of improving triage efficiency where analysts review ~10 alerts per shift.",
+        "failure_mechanism": "nDCG@10 assumes a gain in utility from placing a relevant alert at position 1 vs. position 10, which is appropriate. However, it does not account for the cost of false positives within the top 10. In SOC triage, a single high-confidence false positive can consume disproportionate analyst time and cause alert fatigue, potentially causing them to miss a true positive at position 11. The metric is also insensitive to the absolute number of true positives available; if only 1 relevant alert exists in a batch of 100, a perfect nDCG@10 is still achievable, masking a failure to surface multiple true positives. The operational objective is not just ranking, but maximizing the value of limited analyst attention.",
+        "evidence_test": "Complement nDCG@10 with a cost-sensitive metric such as 'Expected Utility@k' that incorporates estimated investigation time for false positives and value of true positives. Also, report Recall@100 to understand the model's ability to surface all relevant alerts, not just the first few.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratification by quarter within each temporal fold ensures representative coverage of seasonal patterns and that the temporal split is mandatory for non-stationary data.",
+        "failure_mechanism": "While temporal splitting is correct, the split proportions (58%/25%/25%) may create a validation set (months 15-17) that is temporally too close to the test set (months 18-24), especially if drift occurs rapidly. The model selected on validation may overfit to a short-term pattern that does not persist into the more distant test period. The 'stratification by quarter' within folds is ambiguous\u2014it likely means ensuring each fold contains data from all quarters, but this could actually *violate* temporal causality if it involves shuffling data from different times within the fold to achieve balance.",
+        "evidence_test": "Clarify the stratification procedure. Perform a sensitivity analysis: train/validate/test on different temporal windows (e.g., train on months 1-12, validate on 13-15, test on 16-24) and check if model selection and performance are robust. Analyze performance decay across consecutive months in the test set to detect rapid drift.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The frozen pre-trained transformer embedding (e.g., SBERT) is adequate for representing alert text, and not updating it isolates ranking architecture gains.",
+        "failure_mechanism": "SOC alert text often contains domain-specific jargon, acronyms, and log formats that are poorly represented in general-purpose sentence embeddings. A frozen embedding may fail to capture semantic similarities critical for ranking (e.g., 'lateral movement' and 'SMB session enumeration'). The loss in text understanding could cap the performance of both the baseline and the proposed model, making the absolute performance numbers misleading, though the relative comparison might still be valid.",
+        "evidence_test": "Evaluate the embedding quality on a held-out set of SOC alert similarity judgments from analysts. Compare with a domain-adapted embedding (fine-tuned on alert text) as an additional baseline to see if the frozen embedding is a bottleneck.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The ablation study (dropping ticket-history features) is sufficient to confirm the entity graph contributes independent signal.",
+        "failure_mechanism": "An ablation study dropping only ticket-history features does not isolate the entity graph's contribution; it could be that ticket-history and entity graph features are highly correlated, and the model uses the entity graph as a proxy for ticket history. A full ablation (entity graph only, ticket history only, both) is needed to disentangle contributions.",
+        "evidence_test": "Run the full ablation suite: model with text+graph, model with text+ticket, model with all three. Report the performance deltas.",
+        "flaw_category": "below_threshold"
+      }
+    ],
+    "summary": "The PoC has a potentially fatal flaw in its label construction (F1) that could systematically bias the model against slower-burn attacks, and a high-risk signal leakage concern in its feature engineering (F2). The baseline and metric choices (F3, F4) materially weaken the claim's support. The temporal split strategy (F5) has a minor ambiguity.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 and F2 are contested but the design does address the concerns through intentional scope and controls respectively. F3 and F5 are genuine ambiguities requiring empirical resolution (DEFER). F4 and F6 were accepted by the critic and maintain their R1 positions. The presence of DEFER findings on F3 and F5 means the appropriate verdict is empirical_test_agreed, as these represent reasonable disagreements that the experiment should test.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic correctly identifies that the 24h vs 10-day asymmetry creates sampling bias, but this is intentional for the stated scope. Section 1 explicitly defines the hypothesis as measuring 'triage efficiency' at the 'first-day escalation activity' decision point, not general detection capability. The label construction is designed to reflect what analysts actually escalate within the triage window, not all possible high-severity incidents. The 30-day exclusion window for undecided alerts is acknowledged as a limitation (Section 1) but is necessary to avoid speculative labels. The scope defense stands: this is not a flaw in label construction for the specific hypothesis being tested.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Section 3 explicitly states 'All preprocessing transformers... are fit on the training set only and applied without refitting to validation and test sets. Features are audit-checked to ensure no future information (e.g., ticket-resolution dates or escalation outcomes) leaks into the feature values.' Section 6 lists 'Feature timing audit' and 'Metadata leakage check' as confound controls. While the methodology document doesn't specify the exact implementation of these audits, the design does include these controls as mandatory requirements. The critic's concern about retroactive updates is addressed by the requirement that features be constructed using only pre-alert information. The residual uncertainty about implementation details is appropriate for a methodology document; the actual experiment will implement these controls as specified.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "This is a genuine ambiguity where both parties have valid points. The design intent is to isolate feature contribution by using the same embedding and ranking loss, but the critic correctly notes that architectural capacity parity is not guaranteed by this alone. The methodology states 'equivalent hyperparameter tuning effort' but does not specify whether the text-only model uses the same architectural complexity. This cannot be resolved by argument alone - the experiment must empirically test whether the baseline is adequate. I am deferring to empirical evidence to determine if the observed improvement is due to feature contribution or baseline underfitting.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTED my R1 rebuttal. nDCG@10 is chosen specifically for the 'top-10 window' operational constraint (Section 4). While cost-sensitive metrics are valuable for broader operational analysis, they fall outside the primary scope of measuring triage efficiency for the immediate review queue. The methodology explicitly states the experiment will not establish causality of individual features or generalize beyond the stated scope. The metric choice is appropriate for the stated goal.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "This is a genuine ambiguity requiring empirical resolution. The temporal split is correct for non-stationary data, but the critic raises valid concerns about (1) validation set being too close to test set for rapid drift scenarios, and (2) ambiguous 'stratification by quarter' that might violate temporal causality. Section 6 includes 'Temporal distance' as a control, but the methodology doesn't specify how this is measured or what threshold constitutes 'sufficiently distant.' The experiment should test model performance across different temporal windows and analyze performance decay across consecutive months to determine if the validation strategy is adequate. This cannot be resolved by argument alone.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTED my R1 rebuttal. The frozen embedding is a deliberate design choice to isolate ranking architecture gains from embedding improvements (Section 3). While domain adaptation could help absolute performance, it would confound the specific hypothesis being tested. The methodology explicitly states 'The embedding model is not updated during the experiment to isolate ranking architecture gains.' This is a valid design control for the stated hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F3 and F5) are deferred to empirical testing because both parties have valid points and only experiment can resolve the ambiguity. This is the correct outcome for genuinely unresolved questions rather than a failure of the defense. The remaining findings have adjusted severity \u22643, indicating the methodology is sound for its stated scope."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

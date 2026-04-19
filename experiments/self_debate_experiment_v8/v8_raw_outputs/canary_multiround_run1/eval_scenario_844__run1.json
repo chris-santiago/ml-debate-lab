@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_844",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological train/validation/test split ensures no future information leaks into training, preserving the forecasting assumption.",
+        "failure_mechanism": "The split does not account for potential temporal leakage via preprocessing or feature engineering. Specifically, the spatial smoothing kernel is fitted on the training set and applied to validation/test sets. If the spatial kernel's bandwidth or weights are influenced by temporal patterns (e.g., event-driven spatial correlations), the validation/test sets may indirectly inherit temporal information from the training set through the smoothing process. This violates the independence assumption of the test set.",
+        "evidence_test": "Retrain the model with spatial smoothing disabled and compare test MAE. If MAE degrades significantly, the smoothing may be leaking temporal information. Alternatively, refit the spatial kernel on a rolling window (e.g., 30 days) and evaluate whether test performance changes.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model (with lagged counts, time encodings, and holiday indicators) adequately controls for seasonality and holidays, isolating the marginal contribution of events, weather, and spatial smoothing.",
+        "failure_mechanism": "The baseline does not include autoregressive terms beyond lagged ride counts (e.g., no ARMA-style terms or trend components). This may underfit seasonality, leading to an inflated estimate of the proposed model's advantage. The validation set is used for hyperparameter tuning, but the baseline's underfitting could systematically disadvantage it, making the proposed model appear better even if events/weather/smoothing add little value.",
+        "evidence_test": "Add ARMA terms or Fourier features for seasonality to the baseline and retrain. If the baseline's MAE improves significantly, the original comparison is invalid. Alternatively, compare the proposed model to a stronger baseline (e.g., Prophet or ARIMA with exogenous regressors) to contextualize the improvement.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The spatial smoothing kernel (Gaussian with bandwidth fitted on training data) generalizes to the test set without distributional shift.",
+        "failure_mechanism": "Spatial demand patterns may shift over time due to urban development, transit changes, or event infrastructure. A Gaussian kernel fitted on months 1\u201316 may not generalize to months 21\u201324, especially if new zones or event types emerge. The smoothing could introduce noise or bias in the test set, inflating or deflating MAE unpredictably.",
+        "evidence_test": "Evaluate spatial smoothing performance on a holdout validation period (e.g., months 16\u201320) that is temporally distant from the training set. If MAE degrades in later validation months, the kernel is unstable. Alternatively, use a time-aware spatial kernel (e.g., fitted on a rolling window) and compare test MAE.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The test set (months 21\u201324) is representative of deployment conditions and captures seasonal variation adequately.",
+        "failure_mechanism": "The test set may not include rare but critical events (e.g., large-scale transit strikes, extreme weather) that occur in deployment. The stratified evaluation by event presence is post-hoc and may not cover unseen event types. The 4-month window may also miss long-term trends (e.g., platform growth, zoning changes).",
+        "evidence_test": "Expand the test set to include at least one month with a rare event type not present in training/validation. Alternatively, simulate synthetic extreme events in the test set and measure MAE degradation.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (MAE) aligns with the deployment objective of minimizing operational mismatches (under/over-supply).",
+        "failure_mechanism": "MAE assumes equal cost for under- and over-supply, but operational costs may be asymmetric (e.g., over-supply may be cheaper than under-supply during peak demand). The hypothesis does not justify this assumption, and MAE may obscure critical failures in high-cost scenarios.",
+        "evidence_test": "Compare MAE to a weighted MAE where under-supply errors are penalized more heavily (e.g., 2x or 5x). If the proposed model's advantage shrinks or reverses, the metric is misaligned.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ablation study isolating weather's contribution (via validation set) is sufficient to attribute performance gains to the proposed feature set.",
+        "failure_mechanism": "The ablation study does not control for interactions between features. For example, weather may only improve forecasts when combined with spatial smoothing or event features. The validation set ablation may over- or under-estimate weather's isolated contribution.",
+        "evidence_test": "Perform a full factorial ablation: remove weather, events, and spatial smoothing individually and in combination. Measure MAE deltas to quantify interaction effects.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The Gaussian kernel bandwidth fitted on the training set is optimal for spatial smoothing.",
+        "failure_mechanism": "The bandwidth is a hyperparameter but is not tuned alongside model hyperparameters (e.g., in the grid search). It may be suboptimal for the task, leading to subpar performance.",
+        "evidence_test": "Include the spatial kernel bandwidth in the hyperparameter tuning grid and compare test MAE to the original approach.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC has critical flaws in temporal leakage via spatial smoothing (F1), inadequate baseline comparison (F2), and untested generalization of spatial smoothing (F3). These invalidate the core claims about feature contributions. Material issues also include metric misalignment (F5) and incomplete ablations (F6).",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic claims spatial smoothing kernel fitting on training data introduces temporal leakage. However, the methodology explicitly states all preprocessing (including kernel fitting) is fit on training only and applied identically to validation/test\u2014this is standard practice. The kernel captures spatial correlations (which zones are neighbors), not temporal patterns. The critic's claim that spatial correlations could carry temporal information is speculative and conflates spatial with temporal relationships. No evidence is provided that spatial correlations changed meaningfully over the 24-month period.\n\nF2: The critic argues the baseline underfits seasonality by lacking ARMA terms, inflating the proposed model's advantage. However, the baseline includes lagged counts (1h, 2h, 6h, 24h, 7d), time-of-day, day-of-week encodings, and holiday indicators\u2014appropriate for tree-based models. The methodology explicitly states the baseline is 'deliberately restricted to isolate the marginal contribution'\u2014this is a stated design choice, not an oversight.\n\nF3: The critic claims spatial smoothing kernel fitted on months 1-16 may not generalize to months 21-24 due to urban changes. This is a valid distribution-shift concern. However, the methodology includes stratified evaluation by zone volume tier and geographic stratification to detect regional disparities\u2014partial mitigation exists.\n\nF4: The critic argues the test set may miss rare events (transit strikes, extreme weather). This is a scope limitation\u2014the experiment's claim is explicitly limited to 'over months 21-24' without guaranteeing rare event coverage. The methodology acknowledges this through stratified evaluation by event presence.\n\nF5: The critic claims MAE assumes symmetric costs but operational costs may be asymmetric. The methodology explicitly chooses MAE because it 'penalizes both under- and over-supply equally' and is 'robust to rare high-demand outliers'\u2014this is a deliberate design justification, not an oversight.\n\nF6: The critic argues the ablation study doesn't control for feature interactions. However, the primary claim compares the combined proposed feature set vs. baseline\u2014not individual feature attribution. The ablation is a secondary analysis. Full factorial ablation would be nice but isn't required for the primary hypothesis test.\n\nF7: The critic claims the Gaussian kernel bandwidth isn't tuned as a hyperparameter. This is a minor configuration detail. The bandwidth is fitted on training data (standard practice) and both models would be affected equally if suboptimal\u2014which they aren't, since only the proposed model uses spatial smoothing.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic claims the spatial smoothing kernel 'may indirectly inherit temporal information'\u2014this is an empirical claim without evidence. The kernel captures spatial correlations (which zones are neighbors), not temporal patterns. Fitting preprocessing on training and applying to test is standard practice explicitly documented in the methodology. The critic provides no evidence that spatial correlations changed meaningfully between months 1-16 and 21-24."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The baseline includes lagged counts (1h, 2h, 6h, 24h, 7d), time-of-day, day-of-week encodings, and holiday indicators\u2014appropriate for tree-based models. The methodology explicitly states the baseline is 'deliberately restricted to isolate the marginal contribution of the proposed features' (Section 3). This is a stated design choice, not an oversight. Adding ARMA terms would change the model class, not just the baseline strength."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "Valid concern about temporal distribution shift in spatial features. However, the methodology includes stratified evaluation by zone volume tier and geographic stratification to detect regional disparities (Section 7: 'Performance is reported separately by zone volume tier... Geographic stratification checks ensure no regional disparities'). This partially addresses the concern within the stated experiment scope."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic asks for rare event coverage (transit strikes, extreme weather). However, the experiment scope is explicitly limited to 'over months 21-24' without guaranteeing rare event coverage (Section 8). The methodology acknowledges this through stratified evaluation by event presence. This is a scope limitation, not a flaw\u2014the claim doesn't generalize beyond the test period."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly chooses MAE because it 'penalizes both under- and over-supply equally' and is 'robust to rare high-demand outliers' (Section 5). This is a deliberate design justification: symmetric MAE provides operational interpretability (1-unit error = one missed/over-supplied ride). The critic's asymmetric cost concern is a deployment detail, not a hypothesis flaw."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "The primary hypothesis compares the combined proposed feature set vs. baseline\u2014not individual feature attribution. The ablation is a secondary analysis. Full factorial ablation would be informative but isn't required to test the primary hypothesis. This is a minor analysis improvement, not a design flaw affecting the main conclusion."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "The bandwidth is fitted on training data (standard practice) rather than tuned as a hyperparameter. This is a minor configuration detail. If suboptimal, it would affect the proposed model's performance, not the comparison validity\u2014both models use identical preprocessing procedures where applicable. The baseline doesn't use spatial smoothing at all."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All seven findings have been rebutted. After adjustments, the highest adjusted severity is 4 (F1, F2, F3), well below the threshold of 7. F1's temporal leakage claim is speculative without evidence. F2's baseline underfitting is a deliberate design choice documented in the methodology. F3-F5 are scope limitations or design choices with documented justifications. F6 and F7 are minor concerns that don't affect the primary hypothesis test. The methodology is sound for testing whether the proposed feature set reduces forecast error compared to the baseline."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender argues that spatial smoothing captures spatial correlations (not temporal patterns) and that fitting preprocessing on training data is standard practice. However, this does not address the *specific failure mechanism* identified: the spatial smoothing kernel's weights or bandwidth could be influenced by temporal patterns in the training data (e.g., event-driven spatial correlations that vary over time). The defender provides no evidence or mechanism to rule out this possibility. The rebuttal is generic and does not explain why temporal leakage via spatial smoothing cannot occur. The severity adjustment to 4 is disproportionate; the mechanism remains unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "The defender correctly identifies that the baseline includes lagged counts, time encodings, and holiday indicators, which are appropriate for tree-based models. The cited text explicitly states the baseline is 'deliberately restricted to isolate the marginal contribution of the proposed features,' which directly addresses the failure mechanism of underfitting seasonality. The rebuttal is specific and mechanistic."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender partially addresses the concern by noting stratified evaluation by zone volume tier and geographic stratification. However, this does not resolve the core failure mechanism: the spatial smoothing kernel may not generalize due to temporal distribution shift in spatial demand patterns. Stratified evaluation can detect disparities but does not mitigate the risk of kernel misfit. The rebuttal leaves the temporal generalization issue unresolved."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly points out that the experiment scope explicitly limits the claim to months 21\u201324, and rare event coverage is not guaranteed. The cited text states the scope limitation clearly. This is a scope disclaimer, not a flaw in the methodology. The severity adjustment to 3 is proportionate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender provides a mechanistic justification for using MAE: it penalizes under- and over-supply equally and is robust to outliers. This directly addresses the failure mechanism of metric misalignment with operational costs. The rebuttal is specific and well-grounded in the methodology."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender argues that the primary hypothesis compares the combined feature set to the baseline, and the ablation is a secondary analysis. This is a valid scope argument; the primary claim does not require individual feature attribution. The rebuttal is specific and proportionate."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly notes that the bandwidth fitting is standard practice and does not affect the comparison validity, as both models use identical preprocessing. This addresses the minor configuration issue. The rebuttal is specific and proportionate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Of the seven findings, five were ACCEPTed by the critic (F2, F4, F5, F6, F7), confirming my R1 rebuttals were on target. Two findings (F1, F3) were CHALLENGEd/PARTIAL and concern the temporal generalization of the spatial smoothing kernel. After careful analysis: F1 involves a legitimate empirical question about whether temporal patterns in training data could create spurious spatial correlations that fail to generalize\u2014the design doesn't prevent this but can detect it via stratified evaluation. F3 similarly concerns temporal distribution shift in spatial features. Both represent genuine ambiguities where reasonable people can disagree, and only an empirical test can resolve them. These are appropriate for DEFER rather than CONCEDE, as the design has observable controls (stratified evaluation) even if it cannot prevent the failure mode a priori.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies that the specific failure mechanism\u2014temporal patterns in training data influencing the spatial kernel\u2014is not prevented by the design. The methodology fits the Gaussian kernel on training data and applies it to test, which is standard practice but doesn't guarantee temporal stability. The design includes stratified evaluation by zone volume tier and geographic region (Section 7) which can detect generalization failures, but cannot prevent temporal leakage through spatial preprocessing. This is a genuine empirical question: do spatial correlations remain stable across the 5-month gap between training (months 1-16) and test (months 21-24)? The experiment should test this. I cannot rule out the mechanism mechanistically, nor can the critic prove it occurs\u2014both positions are plausible and only empirical evidence can settle it.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "R1 rebuttal confirmed by critic. The baseline is deliberately restricted per Section 3: 'deliberately restricted to isolate the marginal contribution of the proposed features.' This is a stated design choice, not an oversight. The baseline includes appropriate autoregressive features (lagged counts at 1h, 2h, 6h, 24h, 7d) plus time/day encodings and holiday indicators\u2014appropriate for tree-based models.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly notes that stratified evaluation detects disparities but doesn't prevent temporal distribution shift. This is the same core mechanism as F1\u2014the spatial kernel fitted on months 1-16 may not generalize to months 21-24 if spatial demand patterns changed (urban development, transit changes, new event infrastructure). The methodology can observe this failure via zone volume tier and geographic stratification, but cannot prevent it a priori. This is a genuine empirical question about temporal stability of spatial correlations. The design is not flawed for not preventing this\u2014it explicitly includes controls to detect it. However, since the failure mode is not prevented and only observable post-hoc, this remains an empirical uncertainty.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "R1 rebuttal confirmed by critic. The experiment scope is explicitly limited to 'months 21-24' without rare event coverage guarantee (Section 8). The methodology acknowledges this through stratified evaluation by event presence. This is a scope limitation, not a flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "R1 rebuttal confirmed by critic. MAE is deliberately chosen because it 'penalizes both under- and over-supply equally' and is 'robust to rare high-demand outliers' (Section 5). This is a mechanistic justification aligned with operational interpretability.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "R1 rebuttal confirmed by critic. The primary hypothesis compares combined proposed features to baseline\u2014not individual feature attribution. Full factorial ablation would be informative but isn't required to test the primary hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "R1 rebuttal confirmed by critic. Bandwidth fitting is standard practice; if suboptimal, it affects the proposed model equally, not the comparison validity.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two FATAL findings (F1 and F3) concern temporal generalization of spatial smoothing\u2014a legitimate empirical question about whether spatial correlations remain stable across the training-to-test temporal gap. The design includes stratified evaluation to detect this failure but cannot prevent it a priori. Since this is a genuine ambiguity where both positions are reasonable and only empirical evidence can resolve it, DEFER is the correct response. All other findings were either ACCEPTed or appropriately adjusted. The experiment should test whether spatial smoothing generalizes across the temporal split."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological train/validation/test split ensures no future information leaks into training, preserving the forecasting assumption.",
+        "failure_mechanism": "The split does not account for potential temporal leakage via preprocessing or feature engineering. Specifically, the spatial smoothing kernel is fitted on the training set and applied to validation/test sets. If the spatial kernel's bandwidth or weights are influenced by temporal patterns (e.g., event-driven spatial correlations), the validation/test sets may indirectly inherit temporal information from the training set through the smoothing process. This violates the independence assumption of the test set.",
+        "evidence_test": "Retrain the model with spatial smoothing disabled and compare test MAE. If MAE degrades significantly, the smoothing may be leaking temporal information. Alternatively, refit the spatial kernel on a rolling window (e.g., 30 days) and evaluate whether test performance changes.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model (with lagged counts, time encodings, and holiday indicators) adequately controls for seasonality and holidays, isolating the marginal contribution of events, weather, and spatial smoothing.",
+        "failure_mechanism": "The baseline does not include autoregressive terms beyond lagged ride counts (e.g., no ARMA-style terms or trend components). This may underfit seasonality, leading to an inflated estimate of the proposed model's advantage. The validation set is used for hyperparameter tuning, but the baseline's underfitting could systematically disadvantage it, making the proposed model appear better even if events/weather/smoothing add little value.",
+        "evidence_test": "Add ARMA terms or Fourier features for seasonality to the baseline and retrain. If the baseline's MAE improves significantly, the original comparison is invalid. Alternatively, compare the proposed model to a stronger baseline (e.g., Prophet or ARIMA with exogenous regressors) to contextualize the improvement.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The spatial smoothing kernel (Gaussian with bandwidth fitted on training data) generalizes to the test set without distributional shift.",
+        "failure_mechanism": "Spatial demand patterns may shift over time due to urban development, transit changes, or event infrastructure. A Gaussian kernel fitted on months 1\u201316 may not generalize to months 21\u201324, especially if new zones or event types emerge. The smoothing could introduce noise or bias in the test set, inflating or deflating MAE unpredictably.",
+        "evidence_test": "Evaluate spatial smoothing performance on a holdout validation period (e.g., months 16\u201320) that is temporally distant from the training set. If MAE degrades in later validation months, the kernel is unstable. Alternatively, use a time-aware spatial kernel (e.g., fitted on a rolling window) and compare test MAE.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The test set (months 21\u201324) is representative of deployment conditions and captures seasonal variation adequately.",
+        "failure_mechanism": "The test set may not include rare but critical events (e.g., large-scale transit strikes, extreme weather) that occur in deployment. The stratified evaluation by event presence is post-hoc and may not cover unseen event types. The 4-month window may also miss long-term trends (e.g., platform growth, zoning changes).",
+        "evidence_test": "Expand the test set to include at least one month with a rare event type not present in training/validation. Alternatively, simulate synthetic extreme events in the test set and measure MAE degradation.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (MAE) aligns with the deployment objective of minimizing operational mismatches (under/over-supply).",
+        "failure_mechanism": "MAE assumes equal cost for under- and over-supply, but operational costs may be asymmetric (e.g., over-supply may be cheaper than under-supply during peak demand). The hypothesis does not justify this assumption, and MAE may obscure critical failures in high-cost scenarios.",
+        "evidence_test": "Compare MAE to a weighted MAE where under-supply errors are penalized more heavily (e.g., 2x or 5x). If the proposed model's advantage shrinks or reverses, the metric is misaligned.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ablation study isolating weather's contribution (via validation set) is sufficient to attribute performance gains to the proposed feature set.",
+        "failure_mechanism": "The ablation study does not control for interactions between features. For example, weather may only improve forecasts when combined with spatial smoothing or event features. The validation set ablation may over- or under-estimate weather's isolated contribution.",
+        "evidence_test": "Perform a full factorial ablation: remove weather, events, and spatial smoothing individually and in combination. Measure MAE deltas to quantify interaction effects.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The Gaussian kernel bandwidth fitted on the training set is optimal for spatial smoothing.",
+        "failure_mechanism": "The bandwidth is a hyperparameter but is not tuned alongside model hyperparameters (e.g., in the grid search). It may be suboptimal for the task, leading to subpar performance.",
+        "evidence_test": "Include the spatial kernel bandwidth in the hyperparameter tuning grid and compare test MAE to the original approach.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC has critical flaws in temporal leakage via spatial smoothing (F1), inadequate baseline comparison (F2), and untested generalization of spatial smoothing (F3). These invalidate the core claims about feature contributions. Material issues also include metric misalignment (F5) and incomplete ablations (F6).",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Of the seven findings, five were ACCEPTed by the critic (F2, F4, F5, F6, F7), confirming my R1 rebuttals were on target. Two findings (F1, F3) were CHALLENGEd/PARTIAL and concern the temporal generalization of the spatial smoothing kernel. After careful analysis: F1 involves a legitimate empirical question about whether temporal patterns in training data could create spurious spatial correlations that fail to generalize\u2014the design doesn't prevent this but can detect it via stratified evaluation. F3 similarly concerns temporal distribution shift in spatial features. Both represent genuine ambiguities where reasonable people can disagree, and only an empirical test can resolve them. These are appropriate for DEFER rather than CONCEDE, as the design has observable controls (stratified evaluation) even if it cannot prevent the failure mode a priori.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies that the specific failure mechanism\u2014temporal patterns in training data influencing the spatial kernel\u2014is not prevented by the design. The methodology fits the Gaussian kernel on training data and applies it to test, which is standard practice but doesn't guarantee temporal stability. The design includes stratified evaluation by zone volume tier and geographic region (Section 7) which can detect generalization failures, but cannot prevent temporal leakage through spatial preprocessing. This is a genuine empirical question: do spatial correlations remain stable across the 5-month gap between training (months 1-16) and test (months 21-24)? The experiment should test this. I cannot rule out the mechanism mechanistically, nor can the critic prove it occurs\u2014both positions are plausible and only empirical evidence can settle it.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "R1 rebuttal confirmed by critic. The baseline is deliberately restricted per Section 3: 'deliberately restricted to isolate the marginal contribution of the proposed features.' This is a stated design choice, not an oversight. The baseline includes appropriate autoregressive features (lagged counts at 1h, 2h, 6h, 24h, 7d) plus time/day encodings and holiday indicators\u2014appropriate for tree-based models.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly notes that stratified evaluation detects disparities but doesn't prevent temporal distribution shift. This is the same core mechanism as F1\u2014the spatial kernel fitted on months 1-16 may not generalize to months 21-24 if spatial demand patterns changed (urban development, transit changes, new event infrastructure). The methodology can observe this failure via zone volume tier and geographic stratification, but cannot prevent it a priori. This is a genuine empirical question about temporal stability of spatial correlations. The design is not flawed for not preventing this\u2014it explicitly includes controls to detect it. However, since the failure mode is not prevented and only observable post-hoc, this remains an empirical uncertainty.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "R1 rebuttal confirmed by critic. The experiment scope is explicitly limited to 'months 21-24' without rare event coverage guarantee (Section 8). The methodology acknowledges this through stratified evaluation by event presence. This is a scope limitation, not a flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "R1 rebuttal confirmed by critic. MAE is deliberately chosen because it 'penalizes both under- and over-supply equally' and is 'robust to rare high-demand outliers' (Section 5). This is a mechanistic justification aligned with operational interpretability.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "R1 rebuttal confirmed by critic. The primary hypothesis compares combined proposed features to baseline\u2014not individual feature attribution. Full factorial ablation would be informative but isn't required to test the primary hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "R1 rebuttal confirmed by critic. Bandwidth fitting is standard practice; if suboptimal, it affects the proposed model equally, not the comparison validity.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two FATAL findings (F1 and F3) concern temporal generalization of spatial smoothing\u2014a legitimate empirical question about whether spatial correlations remain stable across the training-to-test temporal gap. The design includes stratified evaluation to detect this failure but cannot prevent it a priori. Since this is a genuine ambiguity where both positions are reasonable and only empirical evidence can resolve it, DEFER is the correct response. All other findings were either ACCEPTed or appropriately adjusted. The experiment should test whether spatial smoothing generalizes across the temporal split."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=9, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=8 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

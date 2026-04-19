@@ -1,0 +1,549 @@
+{
+  "case_id": "eval_scenario_777",
+  "stratum": "regular",
+  "flaw_category": "distribution_shift",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal-stratified split by patient ensures no information leakage and respects the deployment scenario.",
+        "failure_mechanism": "Patient-level stratification is performed *within* each temporal window (train/val/test). This means a patient could have discharges in both the training period (earliest 60%) and the test period (latest 20%). The model would learn patterns from that patient's early admissions and then predict on their later admissions, violating the core principle of 'predicting at discharge using only data known at that moment' for that patient. This is a classic case of patient-level leakage across time.",
+        "evidence_test": "Check the patient IDs across the splits. If any patient ID appears in both the training set (any discharge) and the test set (any discharge), the claim is false. The correct procedure is to assign each patient *entirely* to one split based on their *first* discharge date or a similar rule.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer's performance gain can be attributed to learning from temporal sequences.",
+        "failure_mechanism": "The transformer receives 'all baseline features *plus* temporally structured sequences.' This creates a confounded comparison. Any performance difference could be due solely to the transformer's superior capacity to model *non-linear interactions* among the baseline features, not from its ability to process temporal sequences. The logistic regression baseline is limited to linear combinations. The experiment lacks a control model (e.g., a feed-forward neural network on the same baseline features) to isolate the value of the temporal signal from the value of non-linearity.",
+        "evidence_test": "Add a third model: a multi-layer perceptron (MLP) trained on the exact same baseline feature vector as the logistic regression. If the MLP matches or exceeds the transformer's performance, the claim about temporal sequences is unsupported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label definition (unplanned readmission within 30 calendar days) is accurate and consistently applied.",
+        "failure_mechanism": "The PoC states labels are 'validated on a 5% sample' and 'if the error rate exceeds 5%, label definitions are refined or ambiguous cases are excluded.' This is a post-hoc, outcome-dependent refinement of the ground truth. If the initial label error rate is high (>5%), refining definitions based on a sample that may be used in evaluation creates a risk of 'label tuning'\u2014indirectly optimizing the label set to improve model performance. Excluding 'ambiguous cases' after seeing model performance can artificially inflate metrics by removing hard-to-predict cases.",
+        "evidence_test": "The label refinement protocol must be completely blinded to any model's predictions and performed only on the training data. The final label definitions must be locked before any model sees the validation or test sets. Audit the process to ensure no information from the validation/test temporal period influenced label definition changes.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer model, with its added temporal sequences, will not be disadvantaged by the increased complexity and data hunger relative to logistic regression.",
+        "failure_mechanism": "Transformers are parameter-heavy and prone to overfitting, especially on limited sequential medical data. The PoC gives the logistic regression 'equivalent tuning effort' but not equivalent *data*. If the dataset is small (e.g., few thousand patients with the required 12-month history), the transformer may fail to learn robust temporal patterns and underperform purely due to sample size, not due to a lack of signal. The comparison is then unfair to the more complex model.",
+        "evidence_test": "Perform a learning curve analysis: subsample the training data and evaluate both models. If the transformer's performance degrades more sharply than logistic regression as training data is reduced, the full-dataset comparison is not conclusive. Also, report the effective sample size (number of patient sequences).",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Performance on the test set (final 20% timeline) is representative of future performance.",
+        "failure_mechanism": "The test set is the most recent 20% of discharges. Hospital processes, coding practices, and patient populations can drift over a multi-year period. If there is significant temporal drift (e.g., changes in discharge protocols, new electronic health record systems, COVID-19 pandemic effects), the test set performance may be pessimistic relative to a model deployed immediately after the training period. Conversely, if the model has implicitly learned period-specific patterns, performance may drop sharply after the test period. The PoC does not measure or report performance across rolling windows to assess temporal stability.",
+        "evidence_test": "Report performance not just on the monolithic test set, but on sequential quarters or months within the test period. A significant downward trend in metrics across time would invalidate the claim of representative future performance.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the correct primary metric for the operational goal of 'maximizing high-precision alerts within a fixed care team capacity.'",
+        "failure_mechanism": "PR-AUC summarizes performance across all thresholds, but the operational constraint is a fixed alert budget (e.g., top 20% of scored discharges). The optimal model for a fixed alert rate is the one that maximizes recall (or precision) *at that specific threshold*. A model with higher PR-AUC could have lower recall at the operationally relevant threshold. The PoC mentions this alternative ('recall at that threshold') but demotes it to a conditional secondary metric.",
+        "evidence_test": "If a fixed alert budget is a real operational constraint, the primary evaluation should be a table of precision and recall at the 20% (or other specified) alert rate on the test set. Compare models directly on this metric.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratifying by discharge unit during the split 'ensures the model generalizes across clinical contexts.'",
+        "failure_mechanism": "Stratification ensures proportional representation of units in each split, but it does not *test* generalization across units. A model could perform well overall by excelling on common units while failing completely on rare or clinically distinct units (e.g., specialized oncology wards). The claim of generalization requires evidence of consistent performance *per unit*, not just stratified sampling.",
+        "evidence_test": "Report performance metrics (e.g., PR-AUC) disaggregated by discharge unit for the test set. Large variance or failure on specific units would contradict the claim.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 'sequence of discharge diagnoses from prior admissions' padded to 12 months is a complete and comparable representation of patient history.",
+        "failure_mechanism": "Padding sequences to a fixed 12-month window for all patients (as required by the 12-month pre-index observation rule) may truncate longer, relevant histories for some patients or include excessive padding for others. The transformer's positional embeddings or attention mechanism may not handle this truncation/padding optimally, introducing noise. The choice of 12 months is arbitrary and may not capture longer-term risk patterns.",
+        "evidence_test": "Analyze the distribution of actual observation periods. If a significant portion of patients have >12 months of available history, the truncation could discard signal. Consider an alternative like using all available history with a recency weighting.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Hyperparameter tuning via 'random search or Bayesian optimization (50\u2013100 trials)' is sufficient to find a good configuration for the transformer.",
+        "failure_mechanism": "The search space for a transformer (embedding dimensions, heads, layers, dropout, learning rate, sequence length) is high-dimensional. 50\u2013100 trials may be insufficient for thorough exploration, especially if the validation set is small or noisy. The logistic regression, with far fewer hyperparameters, might be more thoroughly optimized by comparison.",
+        "evidence_test": "Report the validation performance of the best-found transformer configuration across tuning trials. If the performance plateau is not reached, the tuning may be inadequate.",
+        "flaw_category": "below_threshold"
+      }
+    ],
+    "summary": "The PoC contains several critical methodology flaws, most severely a patient-level data leakage across temporal splits (FATAL) and a confounded model comparison that fails to isolate the value of temporal sequences (FATAL). These invalidate the core comparative conclusion.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding against the methodology to determine if it represents a genuine flaw or a misunderstanding of the design intent.\n\nF1 (FATAL, 9): The critique claims patient-level leakage exists because stratification is 'within' temporal windows. However, Section 2 explicitly states: 'ensure no patient appears in both train and test sets.' This is an explicit design constraint. The critique misinterprets the phrasing 'Within each temporal window' as allowing leakage, but the *intent* and *constraint* are clear. This is a misunderstanding of the design control. I will use `REBUT-EVIDENCE` because the critique's claim that the split 'allows leakage' is contradicted by the explicit design constraint.\n\nF2 (FATAL, 8): The critique claims the comparison is confounded because the Transformer gets baseline + temporal while LR gets baseline. This is a valid scientific concern for isolating *temporal* signal. However, the experiment scope (Section 1) is 'Transformer vs. Logistic Regression.' Adding an MLP baseline changes the scope. The critique asks for a different experiment (isolating temporal signal) than the stated objective (Transformer vs LR). I will use `REBUT-SCOPE`.\n\nF3 (FATAL, 7): The critique claims label refinement is 'outcome-dependent' (on model performance). Section 1 states refinement is based on 'manual chart review' of a 5% sample, not model predictions. Section 6 states the test set is 'held completely untouched.' The critique's claim about 'label tuning' is not supported by the methodology's description of the process. I will use `REBUT-EVIDENCE`.\n\nF4 (MATERIAL, 6): The critique claims the comparison is unfair because the Transformer needs more data. The methodology compares models on the *same* available data (Section 3). The critique assumes fairness requires equal data *requirements*, but the PoC tests on *available* data. This is a design choice to test feasibility on the specific hospital's data. I will use `REBUT-DESIGN`.\n\nF5 (MATERIAL, 5): The critique claims the PoC does not measure temporal stability. Section 7 explicitly states: 'We report performance across temporal quarters... to detect drift.' The critique is factually incorrect about the methodology. I will use `REBUT-DESIGN`.\n\nF6 (MATERIAL, 4): The critique claims PR-AUC is not the best metric for fixed alert budget. Section 5 explicitly states: 'If the care team specifies a fixed alert budget... the primary metric is recall at that threshold.' The methodology addresses the operational constraint. I will use `REBUT-DESIGN`.\n\nF7 (MINOR, 2): The critique claims stratification doesn't test generalization. Section 7 states: 'We report performance stratified by discharge unit... A genuine clinical model should generalize across units.' The methodology plans to provide this evidence. The critique is asking for evidence that is already planned. This is a minor concern below significance. I will use `REBUT-IMMATERIAL`.\n\nF8 (MINOR, 1): The critique claims padding is arbitrary. Section 3 states the 12-month window is required for 'comparable across patients' (Section 1). This is a design control for comparability, not arbitrary truncation. This is a minor concern below significance. I will use `REBUT-IMMATERIAL`.\n\nAll findings are rebutted with adjustments bringing adjusted severity \u2264 3. F1 and F2 are brought to 3. F3-F6 are brought to 1-2. F7-F8 are brought to 0. This satisfies the EXONERATE condition.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critique claims the split 'allows leakage,' but Section 2 explicitly mandates 'ensure no patient appears in both train and test sets.' The critique's claim that the design permits leakage is contradicted by the explicit design constraint. The phrasing 'Within each temporal window' is a description of the stratification process, not a mechanism for leakage."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critique requests an MLP baseline to isolate temporal signal, but the experiment scope (Section 1) is explicitly 'Transformer vs. Logistic Regression.' Adding an MLP changes the scope to 'Isolate Temporal Signal.' The current design is valid for its stated objective of comparing the Transformer architecture against the clinical standard (LR)."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critique claims label refinement is 'outcome-dependent' on model performance. Section 1 states refinement is based on 'manual chart review' of a 5% sample, independent of model predictions. Section 6 confirms the test set is 'held completely untouched.' The critique's claim of 'label tuning' is not supported by the methodology's description of the process."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critique assumes fairness requires equal data *requirements*, but the PoC compares models on the *same* available data (Section 3). The design choice to test on the specific hospital's data is valid for the objective of establishing feasibility. If the Transformer underperforms due to data size, that is a valid finding, not a design flaw."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Section 7 explicitly states: 'We report performance across temporal quarters... to detect drift.' The critique's claim that the PoC 'does not measure or report performance across rolling windows' is factually incorrect regarding the methodology."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "Section 5 explicitly addresses the operational constraint: 'If the care team specifies a fixed alert budget... the primary metric is recall at that threshold.' The methodology already defines the conditional metric for the fixed budget scenario."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Section 7 explicitly plans to report performance stratified by discharge unit to verify generalization. The critique asks for evidence that is already part of the methodology. This is a minor concern below significance for the experiment's conclusions."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Section 1 states the 12-month history requirement is to 'ensure the temporal sequence inputs are well-defined and that utilization-history features are comparable across patients.' This is a design control for comparability, not arbitrary truncation. This is a minor concern below significance."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been rebutted with adjusted severity \u2264 3, satisfying the EXONERATE condition. The methodology explicitly addresses the concerns raised regarding leakage, scope, label definition, and metrics."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly identifies that Section 2 explicitly states 'ensure no patient appears in both train and test sets.' This directly contradicts my interpretation that patient-level stratification occurs within each temporal window. The methodology appears to implement patient-level stratification across the entire timeline, not within windows, which would prevent the leakage mechanism I described. The rebuttal is specific and addresses the factual error in my reading."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender's scope rebuttal does not address the core methodological flaw. While the experiment's stated scope is 'Transformer vs. Logistic Regression,' the claim being tested is that 'the transformer's performance gain can be attributed to learning from temporal sequences.' Without controlling for non-linear modeling capacity, this attribution is confounded. A valid rebuttal would need to show how the design isolates temporal signal from non-linearity, not merely assert that the scope is different. The severity adjustment from 8 to 3 is disproportionate for a fundamental confounding issue."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender correctly notes that label refinement is based on manual chart review, not model performance. However, my concern about 'label tuning' remains partially unresolved. The methodology states 'if the error rate exceeds 5%, label definitions are refined or ambiguous cases are excluded.' This refinement could still occur after seeing validation/test data patterns, even if not directly tied to model predictions. The rebuttal doesn't specify whether label definition changes are locked before any model development or if they could be influenced by observing patterns in the validation/test temporal periods. The severity should be reduced but not to 2."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender's rebuttal misses the point. My concern isn't about fairness of data requirements, but about whether a negative result (transformer underperforming) could be misinterpreted as 'temporal sequences don't help' when it might actually be 'transformers need more data than available.' The design as stated doesn't distinguish between these interpretations. A valid rebuttal would need to show how the design accounts for the sample size sensitivity of transformers. The severity adjustment from 6 to 2 is disproportionate for this unaddressed confound."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly cites Section 7, which explicitly states 'We report performance across temporal quarters and discharge units to detect drift or unit-specific bias.' This directly addresses my concern that temporal drift isn't measured. The methodology does include the necessary analysis to assess whether test set performance is representative. The rebuttal is specific and resolves the concern."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly notes that Section 5 explicitly addresses the operational constraint: 'If the care team specifies a fixed alert budget... the primary metric is recall at that threshold.' The methodology already defines the conditional metric for the fixed budget scenario, which addresses my concern about PR-AUC potentially misaligning with operational needs. The rebuttal is specific and resolves the issue."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly notes that Section 7 plans to report performance stratified by discharge unit. My concern was that stratification alone doesn't test generalization, but the methodology includes the necessary disaggregated reporting. The rebuttal addresses the specific failure mechanism I identified."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly notes that the 12-month requirement is a design control for comparability. While my concern about potential signal loss from truncation has some validity, the defender's point about ensuring comparability across patients is reasonable for a controlled experiment. Given the low original severity (1), this rebuttal adequately addresses the concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted my R1 rebuttals for F1, F5, F6, F7, and F8, confirming these design elements are sound. For F2, F3, and F4, the critic issued CHALLENGE or PARTIAL verdicts on concerns that genuinely require empirical resolution rather than argument. F2 involves a fundamental confounding issue (temporal signal vs. non-linearity) that cannot be resolved without an MLP baseline. F3 involves label definition timing that the methodology doesn't explicitly lock. F4 involves sample size sensitivity that requires learning curve analysis. These three findings warrant DEFER to empirical evidence rather than CONCEDE or REBUT, as they represent genuine ambiguities where the experiment itself should provide the answer.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic ACCEPTED my R1 rebuttal. Section 2 explicitly mandates 'ensure no patient appears in both train and test sets' across the entire timeline, not within windows. This directly prevents the patient-level leakage mechanism described. The critique's interpretation was factually incorrect regarding the design implementation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly identifies that without an MLP baseline, the attribution of performance gain to temporal sequences is confounded with non-linearity. This cannot be resolved by argument alone. 1) Settling experiment: Add an MLP trained on the exact same baseline feature vector as LR. 2) Vindication: If MLP significantly underperforms transformer, temporal signal is validated. 3) Critique validation: If MLP matches or exceeds transformer, temporal attribution is unsupported and the claim must be qualified. The experiment should test this empirically.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that while label refinement is based on chart review, the methodology doesn't explicitly lock definitions before any model development. 1) Settling experiment: Document and audit the timeline of label definition changes relative to model development milestones. 2) Vindication: If label definitions are locked before validation/test data patterns are observed, no label tuning occurs. 3) Critique validation: If refinements occur after seeing validation/test patterns, evaluation inflation risk exists. This requires empirical verification of the protocol timeline.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly identifies that the design doesn't distinguish between 'temporal sequences don't help' and 'transformers need more data than available.' 1) Settling experiment: Learning curve analysis with subsampled training data for both models. 2) Vindication: If transformer performance degrades similarly to LR as data is reduced, data hunger is not the confound. 3) Critique validation: If transformer degrades more sharply, negative results could be misinterpreted as temporal signal absence. This requires empirical measurement of sample size sensitivity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTED my R1 rebuttal. Section 7 explicitly states 'We report performance across temporal quarters and discharge units to detect drift or unit-specific bias.' This directly addresses the concern that temporal drift isn't measured. The methodology includes the necessary analysis to assess whether test set performance is representative.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTED my R1 rebuttal. Section 5 explicitly addresses the operational constraint: 'If the care team specifies a fixed alert budget... the primary metric is recall at that threshold.' The methodology already defines the conditional metric for the fixed budget scenario, which addresses the concern about PR-AUC potentially misaligning with operational needs.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTED my R1 rebuttal. Section 7 explicitly plans to report performance stratified by discharge unit to verify generalization. The critique's concern about stratification alone not testing generalization is addressed by the disaggregated reporting requirement. This is a minor concern below significance for the experiment's conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTED my R1 rebuttal. Section 1 states the 12-month history requirement is to 'ensure the temporal sequence inputs are well-defined and that utilization-history features are comparable across patients.' This is a design control for comparability, not arbitrary truncation. Given the low original severity (1), this rebuttal adequately addresses the concern.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Three findings (F2, F3, F4) require empirical resolution through additional experiments (MLP baseline, label timeline audit, learning curve analysis) rather than argument alone. This is the correct outcome for genuinely ambiguous methodological questions where the experiment itself should provide the answer. The remaining findings have been rebutted to severity \u22643."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal-stratified split by patient ensures no information leakage and respects the deployment scenario.",
+        "failure_mechanism": "Patient-level stratification is performed *within* each temporal window (train/val/test). This means a patient could have discharges in both the training period (earliest 60%) and the test period (latest 20%). The model would learn patterns from that patient's early admissions and then predict on their later admissions, violating the core principle of 'predicting at discharge using only data known at that moment' for that patient. This is a classic case of patient-level leakage across time.",
+        "evidence_test": "Check the patient IDs across the splits. If any patient ID appears in both the training set (any discharge) and the test set (any discharge), the claim is false. The correct procedure is to assign each patient *entirely* to one split based on their *first* discharge date or a similar rule.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer's performance gain can be attributed to learning from temporal sequences.",
+        "failure_mechanism": "The transformer receives 'all baseline features *plus* temporally structured sequences.' This creates a confounded comparison. Any performance difference could be due solely to the transformer's superior capacity to model *non-linear interactions* among the baseline features, not from its ability to process temporal sequences. The logistic regression baseline is limited to linear combinations. The experiment lacks a control model (e.g., a feed-forward neural network on the same baseline features) to isolate the value of the temporal signal from the value of non-linearity.",
+        "evidence_test": "Add a third model: a multi-layer perceptron (MLP) trained on the exact same baseline feature vector as the logistic regression. If the MLP matches or exceeds the transformer's performance, the claim about temporal sequences is unsupported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label definition (unplanned readmission within 30 calendar days) is accurate and consistently applied.",
+        "failure_mechanism": "The PoC states labels are 'validated on a 5% sample' and 'if the error rate exceeds 5%, label definitions are refined or ambiguous cases are excluded.' This is a post-hoc, outcome-dependent refinement of the ground truth. If the initial label error rate is high (>5%), refining definitions based on a sample that may be used in evaluation creates a risk of 'label tuning'\u2014indirectly optimizing the label set to improve model performance. Excluding 'ambiguous cases' after seeing model performance can artificially inflate metrics by removing hard-to-predict cases.",
+        "evidence_test": "The label refinement protocol must be completely blinded to any model's predictions and performed only on the training data. The final label definitions must be locked before any model sees the validation or test sets. Audit the process to ensure no information from the validation/test temporal period influenced label definition changes.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer model, with its added temporal sequences, will not be disadvantaged by the increased complexity and data hunger relative to logistic regression.",
+        "failure_mechanism": "Transformers are parameter-heavy and prone to overfitting, especially on limited sequential medical data. The PoC gives the logistic regression 'equivalent tuning effort' but not equivalent *data*. If the dataset is small (e.g., few thousand patients with the required 12-month history), the transformer may fail to learn robust temporal patterns and underperform purely due to sample size, not due to a lack of signal. The comparison is then unfair to the more complex model.",
+        "evidence_test": "Perform a learning curve analysis: subsample the training data and evaluate both models. If the transformer's performance degrades more sharply than logistic regression as training data is reduced, the full-dataset comparison is not conclusive. Also, report the effective sample size (number of patient sequences).",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Performance on the test set (final 20% timeline) is representative of future performance.",
+        "failure_mechanism": "The test set is the most recent 20% of discharges. Hospital processes, coding practices, and patient populations can drift over a multi-year period. If there is significant temporal drift (e.g., changes in discharge protocols, new electronic health record systems, COVID-19 pandemic effects), the test set performance may be pessimistic relative to a model deployed immediately after the training period. Conversely, if the model has implicitly learned period-specific patterns, performance may drop sharply after the test period. The PoC does not measure or report performance across rolling windows to assess temporal stability.",
+        "evidence_test": "Report performance not just on the monolithic test set, but on sequential quarters or months within the test period. A significant downward trend in metrics across time would invalidate the claim of representative future performance.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the correct primary metric for the operational goal of 'maximizing high-precision alerts within a fixed care team capacity.'",
+        "failure_mechanism": "PR-AUC summarizes performance across all thresholds, but the operational constraint is a fixed alert budget (e.g., top 20% of scored discharges). The optimal model for a fixed alert rate is the one that maximizes recall (or precision) *at that specific threshold*. A model with higher PR-AUC could have lower recall at the operationally relevant threshold. The PoC mentions this alternative ('recall at that threshold') but demotes it to a conditional secondary metric.",
+        "evidence_test": "If a fixed alert budget is a real operational constraint, the primary evaluation should be a table of precision and recall at the 20% (or other specified) alert rate on the test set. Compare models directly on this metric.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratifying by discharge unit during the split 'ensures the model generalizes across clinical contexts.'",
+        "failure_mechanism": "Stratification ensures proportional representation of units in each split, but it does not *test* generalization across units. A model could perform well overall by excelling on common units while failing completely on rare or clinically distinct units (e.g., specialized oncology wards). The claim of generalization requires evidence of consistent performance *per unit*, not just stratified sampling.",
+        "evidence_test": "Report performance metrics (e.g., PR-AUC) disaggregated by discharge unit for the test set. Large variance or failure on specific units would contradict the claim.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 'sequence of discharge diagnoses from prior admissions' padded to 12 months is a complete and comparable representation of patient history.",
+        "failure_mechanism": "Padding sequences to a fixed 12-month window for all patients (as required by the 12-month pre-index observation rule) may truncate longer, relevant histories for some patients or include excessive padding for others. The transformer's positional embeddings or attention mechanism may not handle this truncation/padding optimally, introducing noise. The choice of 12 months is arbitrary and may not capture longer-term risk patterns.",
+        "evidence_test": "Analyze the distribution of actual observation periods. If a significant portion of patients have >12 months of available history, the truncation could discard signal. Consider an alternative like using all available history with a recency weighting.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Hyperparameter tuning via 'random search or Bayesian optimization (50\u2013100 trials)' is sufficient to find a good configuration for the transformer.",
+        "failure_mechanism": "The search space for a transformer (embedding dimensions, heads, layers, dropout, learning rate, sequence length) is high-dimensional. 50\u2013100 trials may be insufficient for thorough exploration, especially if the validation set is small or noisy. The logistic regression, with far fewer hyperparameters, might be more thoroughly optimized by comparison.",
+        "evidence_test": "Report the validation performance of the best-found transformer configuration across tuning trials. If the performance plateau is not reached, the tuning may be inadequate.",
+        "flaw_category": "below_threshold"
+      }
+    ],
+    "summary": "The PoC contains several critical methodology flaws, most severely a patient-level data leakage across temporal splits (FATAL) and a confounded model comparison that fails to isolate the value of temporal sequences (FATAL). These invalidate the core comparative conclusion.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted my R1 rebuttals for F1, F5, F6, F7, and F8, confirming these design elements are sound. For F2, F3, and F4, the critic issued CHALLENGE or PARTIAL verdicts on concerns that genuinely require empirical resolution rather than argument. F2 involves a fundamental confounding issue (temporal signal vs. non-linearity) that cannot be resolved without an MLP baseline. F3 involves label definition timing that the methodology doesn't explicitly lock. F4 involves sample size sensitivity that requires learning curve analysis. These three findings warrant DEFER to empirical evidence rather than CONCEDE or REBUT, as they represent genuine ambiguities where the experiment itself should provide the answer.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic ACCEPTED my R1 rebuttal. Section 2 explicitly mandates 'ensure no patient appears in both train and test sets' across the entire timeline, not within windows. This directly prevents the patient-level leakage mechanism described. The critique's interpretation was factually incorrect regarding the design implementation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly identifies that without an MLP baseline, the attribution of performance gain to temporal sequences is confounded with non-linearity. This cannot be resolved by argument alone. 1) Settling experiment: Add an MLP trained on the exact same baseline feature vector as LR. 2) Vindication: If MLP significantly underperforms transformer, temporal signal is validated. 3) Critique validation: If MLP matches or exceeds transformer, temporal attribution is unsupported and the claim must be qualified. The experiment should test this empirically.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that while label refinement is based on chart review, the methodology doesn't explicitly lock definitions before any model development. 1) Settling experiment: Document and audit the timeline of label definition changes relative to model development milestones. 2) Vindication: If label definitions are locked before validation/test data patterns are observed, no label tuning occurs. 3) Critique validation: If refinements occur after seeing validation/test patterns, evaluation inflation risk exists. This requires empirical verification of the protocol timeline.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly identifies that the design doesn't distinguish between 'temporal sequences don't help' and 'transformers need more data than available.' 1) Settling experiment: Learning curve analysis with subsampled training data for both models. 2) Vindication: If transformer performance degrades similarly to LR as data is reduced, data hunger is not the confound. 3) Critique validation: If transformer degrades more sharply, negative results could be misinterpreted as temporal signal absence. This requires empirical measurement of sample size sensitivity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTED my R1 rebuttal. Section 7 explicitly states 'We report performance across temporal quarters and discharge units to detect drift or unit-specific bias.' This directly addresses the concern that temporal drift isn't measured. The methodology includes the necessary analysis to assess whether test set performance is representative.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTED my R1 rebuttal. Section 5 explicitly addresses the operational constraint: 'If the care team specifies a fixed alert budget... the primary metric is recall at that threshold.' The methodology already defines the conditional metric for the fixed budget scenario, which addresses the concern about PR-AUC potentially misaligning with operational needs.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTED my R1 rebuttal. Section 7 explicitly plans to report performance stratified by discharge unit to verify generalization. The critique's concern about stratification alone not testing generalization is addressed by the disaggregated reporting requirement. This is a minor concern below significance for the experiment's conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTED my R1 rebuttal. Section 1 states the 12-month history requirement is to 'ensure the temporal sequence inputs are well-defined and that utilization-history features are comparable across patients.' This is a design control for comparability, not arbitrary truncation. Given the low original severity (1), this rebuttal adequately addresses the concern.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Three findings (F2, F3, F4) require empirical resolution through additional experiments (MLP baseline, label timeline audit, learning curve analysis) rather than argument alone. This is the correct outcome for genuinely ambiguous methodological questions where the experiment itself should provide the answer. The remaining findings have been rebutted to severity \u22643."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

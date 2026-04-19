@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_852",
+  "stratum": "regular",
+  "flaw_category": "eval_inflation",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "x-ai/grok-4.1-fast",
+    "defender": "mistralai/mistral-small-2603",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Retrospective labels confirmed within 7 days of receipt provide an unbiased evaluation signal for real-time model performance at email receipt time.",
+        "failure_mechanism": "Labels incorporate post-receipt information (e.g., delayed user reports, incidents within 7 days) unavailable to the model during prediction, creating optimistic evaluation; semantic models like transformers may correlate better with future behaviors than baselines, masking true generalization gaps.",
+        "evidence_test": "Segment test emails by labeling latency (immediate same-day flags vs. delayed >1 day); compute PR-AUC separately and compare\u2014if delayed-only subset shows inflated performance relative to immediate, label delay confounds results.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Post-training detection of sender/recipient clusters and identical-subject patterns fully identifies campaign leakage between train and test sets.",
+        "failure_mechanism": "Evolving campaigns use obfuscation (e.g., paraphrased subjects, domain rotation, varied recipients) that evades simple cluster detection but retains semantic or tactical similarity to train data, enabling models to exploit memorized patterns rather than learn generalizable phishing signals.",
+        "evidence_test": "Embed train and test malicious emails using a held-out embedder (e.g., frozen BERT); measure fraction of test emails with high cosine similarity (>0.9) to non-clustered train emails and report conditional PR-AUC excluding those\u2014if leakage fraction >5% or conditional perf drops >20%, detection inadequate.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Random partitioning of the test set (months 16\u201318) into confirmation and holdout halves maintains temporal integrity for deployment validation.",
+        "failure_mechanism": "Random split mixes emails across intra-test drifts or sequential campaigns, so the confirmation half may not simulate real deployment progression (earlier training-like vs. later drifted), leading to false stability confirmation and potentially overconfident holdout metrics.",
+        "evidence_test": "Compute PR-AUC on temporal test subsets (e.g., month 16 confirmation, months 17\u201318 holdout) vs. random halves\u2014if metrics diverge by >10% relative, random split inflates stability claims.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying data by label within each temporal fold (train/val/test blocks) preserves natural distributions without distortion or leakage.",
+        "failure_mechanism": "Ambiguous procedure likely implies subsampling or rebalancing within fixed time blocks to force proportion matching across splits, discarding non-random data and smoothing intra-fold drifts/imbalances, which alters train distribution and eases learning of temporal patterns.",
+        "evidence_test": "Report raw class proportions and sample counts per fold before/after stratification, plus procedure details (e.g., subsampling code/flags)\u2014if post-strat proportions equalized via subsampling >10% data removal, distribution altered.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "Strong overall design with thoughtful temporal controls, baselines, and confounds checks, but material gaps in verifying label delay impact, campaign leakage completeness, test partitioning temporal fidelity, and stratification procedure leave central claims untested under realistic threat evolution.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "=== Analysis of Critic Findings ===\n\nF1 (MATERIAL, sev 6):\nCritique: Retrospective labels (confirmed within 7 days) introduce post-receipt information unavailable at prediction time, potentially inflating performance for transformers that may correlate with future behaviors.\nDesign Intent: The 7-day window is a *practical operational threshold* for analyst confirmation in enterprise environments, balancing timeliness and accuracy. It is not intended as a real-time label at receipt time but as a *conservative gold standard* for evaluation. The critique conflates label availability with model input: the model receives only email content at inference, while labels are assigned post-hoc for evaluation. The proposed evidence test (segmenting by labeling latency) is valid but orthogonal to the design\u2019s intent. The methodology explicitly quantifies label noise via inter-rater agreement (kappa) and flags disagreements >30%, addressing the core concern about label reliability. The critique does not demonstrate that label delay systematically biases PR-AUC upward for transformers relative to baselines.\n\nF2 (FATAL, sev 7):\nCritique: Campaign leakage detection via sender/recipient clusters and identical subjects is insufficient, as obfuscated campaigns evade detection but retain semantic similarity, enabling memorization.\nDesign Intent: The control is *necessarily heuristic* and *conservative*: it flags overt leakage (e.g., identical subjects from same sender) but does not claim to detect all semantic leakage. The methodology includes *additional safeguards*: (1) a metadata-only baseline to test sender reputation confound; (2) temporal drift analysis across test months; (3) conditional PR-AUC excluding leaked clusters. The critique\u2019s evidence test (cosine similarity to train emails) is a *complementary* check but not a replacement for the stated control. The design does not assert that leakage is *fully* eliminated\u2014only that overt leakage is measured and reported. The critique overstates the requirement: the control\u2019s purpose is to *quantify* leakage, not *eliminate* it.\n\nF3 (MATERIAL, sev 4):\nCritique: Random partitioning of the test set (months 16\u201318) into confirmation/holdout halves risks mixing intra-test drifts, inflating stability claims.\nDesign Intent: The random split is *explicitly* a *deployment-readiness confirmation pass*, not a temporal simulation. The methodology states: \"The first half is used as a deployment-readiness confirmation pass to verify that the selected configuration remains stable under the final attack mix *before the training recipe is locked*.\" The holdout (second half) is retained for *final reported metrics*. The critique misinterprets the split\u2019s purpose: it is not intended to simulate temporal progression but to *validate stability* under a fixed attack mix. The design includes *temporal drift analysis* (month-by-month PR-AUC) to assess generalization. The critique\u2019s evidence test (comparing random vs. temporal splits) is irrelevant to the stated intent.\n\nF4 (MATERIAL, sev 4):\nCritique: Stratifying by label within temporal folds likely implies subsampling/rebalancing, distorting distributions and smoothing drifts.\nDesign Intent: The methodology states: \"Within each temporal fold, the data is further stratified by label (malicious/benign) to preserve class distribution across splits.\" Stratification here means *proportion matching* (e.g., ensuring 3% malicious in train/val/test blocks), not subsampling. The design does not discard data or alter distributions\u2014it ensures *representative class ratios* within each temporal block. The critique\u2019s assumption of subsampling is unsupported by the methodology. The *raw proportions* are preserved within each fold; stratification only adjusts *relative counts* to match a target ratio (e.g., 3% malicious). The evidence test (reporting sample counts before/after) would show no data removal, only proportion matching.\n\n=== Summary ===\nAll critiques raise valid *concerns* but misalign with the design\u2019s *intent* or *stated controls*. F1 and F2 are addressed by explicit safeguards (label noise quantification, metadata baseline, temporal drift analysis). F3 and F4 misinterpret the purpose of splits/stratification. No finding identifies a flaw that *invalidates* the hypothesis or requires design changes.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The critique conflates label availability with model input: labels are post-hoc gold standards, not real-time signals. The design explicitly quantifies label noise (kappa, >30% disagreement flagged) and evaluates under identical conditions for both models. The 7-day window is an operational threshold, not a model input, and the critique does not demonstrate systematic bias in PR-AUC. The stated controls directly address the concern by measuring label reliability."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The control is heuristic by design and explicitly conservative: it flags overt leakage (identical subjects/senders) and reports the proportion. The methodology includes *additional* safeguards: metadata-only baseline, temporal drift analysis, and conditional PR-AUC excluding leaked clusters. The critique\u2019s evidence test (cosine similarity) is complementary but not a replacement. The design does not claim to eliminate all leakage\u2014only to measure and report it, which directly addresses the concern."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The random split is a *deployment-readiness confirmation pass*, not a temporal simulation. The holdout (second half) is retained for *final reported metrics*. The methodology includes *temporal drift analysis* (month-by-month PR-AUC) to assess generalization. The critique misinterprets the split\u2019s purpose; it is outside the stated scope of simulating temporal progression."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critique assumes subsampling/rebalancing, but the methodology states stratification is used to *preserve class distribution* within temporal blocks (e.g., ensuring 3% malicious in each fold). No data is discarded; proportions are matched, not altered. The evidence test (sample counts before/after) would show no removal, only proportion matching. The critique\u2019s empirical claim is unsupported by the methodology."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings are rebutted with design controls or scope clarifications, reducing adjusted severities to \u22642. No material flaw survives scrutiny."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal is generic and does not mechanistically address the failure mode: it claims noise quantification (kappa) resolves concerns but ignores how post-receipt label delays (e.g., 7-day incidents or delayed reports) create optimistic PR-AUC specifically for transformers, which may exploit semantic correlations to future events unavailable at prediction time. No evidence that kappa measures this bias or equalizes it across models; \u22125 adjustment disproportionate without direct resolution."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "Rebuttal partially addresses overt leakage via heuristics and reporting, with additional controls (metadata baseline, temporal analysis, conditional PR-AUC) mitigating impacts, but leaves unresolved the core mechanism of semantic/tactical similarity in obfuscated campaigns evading cluster detection (e.g., paraphrased subjects, domain rotation). These could still enable memorized pattern exploitation; cosine similarity test remains unaddressed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "REBUT-SCOPE invalid as finding is within scope: random test halves undermine 'deployment-readiness confirmation' by mixing intra-test drifts/sequential campaigns, risking false stability vs. real progression. Month-by-month analysis helps but doesn't replace chronological confirmation pass integrity; purpose is deployment validation under 'final attack mix,' which includes temporal order."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "REBUT-EVIDENCE correctly identifies error in factual premise: methodology specifies stratification to 'preserve class distribution' without stating or implying subsampling/discarding data; defender clarifies proportions matched naturally within temporal blocks, no removal. Evidence test (counts before/after) would confirm, resolving assumption of distortion."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 and F2 remain under challenge; F3's REBUT-SCOPE was rejected by the critic as scope-in-scope; F4 is accepted by the critic. For F1, the critic argues the rebuttal did not mechanistically address label-delay-induced optimistic PR-AUC for transformers. For F2, the rebuttal partially addresses overt leakage but leaves semantic/tactical similarity leakage unresolved. For F3, the critic rejects the scope argument and maintains the random split undermines deployment-readiness confirmation. We will DEFER F1 and F2 (naming the settling experiments) and DEFER F3 (strengthening the temporal safeguards rationale). F4 is accepted.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critique identifies a genuine ambiguity: post-receipt labels (7-day incidents, delayed user reports) may induce optimistic PR-AUC for transformers by rewarding correlations with future events unavailable at prediction time. The design quantifies label noise (kappa) and evaluates under identical conditions, but does not directly test whether label delay inflates transformer performance relative to the BoW baseline. The settling experiment is: segment test emails by labeling latency (same-day vs. delayed >1 day) and compute PR-AUC separately for each subset. If delayed-only subset shows inflated PR-AUC for the transformer but not the baseline, the critique is validated; if both models show similar inflation, the concern is mitigated. The primary conclusion (transformer > BoW) survives if inflation affects both models equally, preserving relative ordering. If the transformer's delayed-only PR-AUC exceeds the baseline by >10% absolute, the conclusion is invalidated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design detects overt leakage (identical subjects/senders) and reports proportion, and includes additional safeguards (metadata-only baseline, temporal drift analysis, conditional PR-AUC excluding leaked clusters). However, the critique highlights a residual mechanism: obfuscated campaigns (paraphrased subjects, domain rotation) may share semantic/tactical similarity with train data without triggering cluster detection, enabling memorized pattern exploitation. The settling experiment is: embed train and test malicious emails using a held-out embedder (e.g., frozen BERT), compute cosine similarity between each test email and all train emails, and measure the fraction of test emails with high similarity (>0.9) to non-clustered train emails. Then compute conditional PR-AUC excluding those high-similarity emails. If the conditional PR-AUC drops >20% relative to the full test set, leakage via semantic similarity is validated; if the drop is <5%, the concern is mitigated. The primary conclusion survives if the performance drop affects both models similarly, preserving relative ordering.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that the random split mixes intra-test drifts/sequential campaigns, risking false stability confirmation. The design includes month-by-month PR-AUC analysis in the test period (months 16\u201318), which would reveal temporal degradation. The settling experiment is: compute PR-AUC on the confirmation half (month 16) vs. the holdout half (months 17\u201318) under both random and chronological splits. If metrics diverge by >10% relative between splits, the random split inflates stability claims. The primary conclusion survives if the chronological split shows stable performance, confirming deployment readiness despite random split artifacts.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The methodology explicitly states stratification is used to preserve class distribution within temporal blocks (e.g., ensuring 3% malicious in each fold) without discarding data. No subsampling or rebalancing is implied or coded. The empirical test (sample counts before/after stratification) would show no removal, only proportion matching. The critique's assumption of distortion is unsupported by the design.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1, F2, and F3 are genuinely ambiguous: the design includes partial controls but cannot eliminate the concerns without empirical resolution. DEFER is the correct outcome for these MATERIAL findings. F4 is accepted by the critic, reducing severity to 0. The overall verdict reflects that empirical tests are needed to settle the disputes."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Retrospective labels confirmed within 7 days of receipt provide an unbiased evaluation signal for real-time model performance at email receipt time.",
+        "failure_mechanism": "Labels incorporate post-receipt information (e.g., delayed user reports, incidents within 7 days) unavailable to the model during prediction, creating optimistic evaluation; semantic models like transformers may correlate better with future behaviors than baselines, masking true generalization gaps.",
+        "evidence_test": "Segment test emails by labeling latency (immediate same-day flags vs. delayed >1 day); compute PR-AUC separately and compare\u2014if delayed-only subset shows inflated performance relative to immediate, label delay confounds results.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Post-training detection of sender/recipient clusters and identical-subject patterns fully identifies campaign leakage between train and test sets.",
+        "failure_mechanism": "Evolving campaigns use obfuscation (e.g., paraphrased subjects, domain rotation, varied recipients) that evades simple cluster detection but retains semantic or tactical similarity to train data, enabling models to exploit memorized patterns rather than learn generalizable phishing signals.",
+        "evidence_test": "Embed train and test malicious emails using a held-out embedder (e.g., frozen BERT); measure fraction of test emails with high cosine similarity (>0.9) to non-clustered train emails and report conditional PR-AUC excluding those\u2014if leakage fraction >5% or conditional perf drops >20%, detection inadequate.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Random partitioning of the test set (months 16\u201318) into confirmation and holdout halves maintains temporal integrity for deployment validation.",
+        "failure_mechanism": "Random split mixes emails across intra-test drifts or sequential campaigns, so the confirmation half may not simulate real deployment progression (earlier training-like vs. later drifted), leading to false stability confirmation and potentially overconfident holdout metrics.",
+        "evidence_test": "Compute PR-AUC on temporal test subsets (e.g., month 16 confirmation, months 17\u201318 holdout) vs. random halves\u2014if metrics diverge by >10% relative, random split inflates stability claims.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying data by label within each temporal fold (train/val/test blocks) preserves natural distributions without distortion or leakage.",
+        "failure_mechanism": "Ambiguous procedure likely implies subsampling or rebalancing within fixed time blocks to force proportion matching across splits, discarding non-random data and smoothing intra-fold drifts/imbalances, which alters train distribution and eases learning of temporal patterns.",
+        "evidence_test": "Report raw class proportions and sample counts per fold before/after stratification, plus procedure details (e.g., subsampling code/flags)\u2014if post-strat proportions equalized via subsampling >10% data removal, distribution altered.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "Strong overall design with thoughtful temporal controls, baselines, and confounds checks, but material gaps in verifying label delay impact, campaign leakage completeness, test partitioning temporal fidelity, and stratification procedure leave central claims untested under realistic threat evolution.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 and F2 remain under challenge; F3's REBUT-SCOPE was rejected by the critic as scope-in-scope; F4 is accepted by the critic. For F1, the critic argues the rebuttal did not mechanistically address label-delay-induced optimistic PR-AUC for transformers. For F2, the rebuttal partially addresses overt leakage but leaves semantic/tactical similarity leakage unresolved. For F3, the critic rejects the scope argument and maintains the random split undermines deployment-readiness confirmation. We will DEFER F1 and F2 (naming the settling experiments) and DEFER F3 (strengthening the temporal safeguards rationale). F4 is accepted.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critique identifies a genuine ambiguity: post-receipt labels (7-day incidents, delayed user reports) may induce optimistic PR-AUC for transformers by rewarding correlations with future events unavailable at prediction time. The design quantifies label noise (kappa) and evaluates under identical conditions, but does not directly test whether label delay inflates transformer performance relative to the BoW baseline. The settling experiment is: segment test emails by labeling latency (same-day vs. delayed >1 day) and compute PR-AUC separately for each subset. If delayed-only subset shows inflated PR-AUC for the transformer but not the baseline, the critique is validated; if both models show similar inflation, the concern is mitigated. The primary conclusion (transformer > BoW) survives if inflation affects both models equally, preserving relative ordering. If the transformer's delayed-only PR-AUC exceeds the baseline by >10% absolute, the conclusion is invalidated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design detects overt leakage (identical subjects/senders) and reports proportion, and includes additional safeguards (metadata-only baseline, temporal drift analysis, conditional PR-AUC excluding leaked clusters). However, the critique highlights a residual mechanism: obfuscated campaigns (paraphrased subjects, domain rotation) may share semantic/tactical similarity with train data without triggering cluster detection, enabling memorized pattern exploitation. The settling experiment is: embed train and test malicious emails using a held-out embedder (e.g., frozen BERT), compute cosine similarity between each test email and all train emails, and measure the fraction of test emails with high similarity (>0.9) to non-clustered train emails. Then compute conditional PR-AUC excluding those high-similarity emails. If the conditional PR-AUC drops >20% relative to the full test set, leakage via semantic similarity is validated; if the drop is <5%, the concern is mitigated. The primary conclusion survives if the performance drop affects both models similarly, preserving relative ordering.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that the random split mixes intra-test drifts/sequential campaigns, risking false stability confirmation. The design includes month-by-month PR-AUC analysis in the test period (months 16\u201318), which would reveal temporal degradation. The settling experiment is: compute PR-AUC on the confirmation half (month 16) vs. the holdout half (months 17\u201318) under both random and chronological splits. If metrics diverge by >10% relative between splits, the random split inflates stability claims. The primary conclusion survives if the chronological split shows stable performance, confirming deployment readiness despite random split artifacts.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The methodology explicitly states stratification is used to preserve class distribution within temporal blocks (e.g., ensuring 3% malicious in each fold) without discarding data. No subsampling or rebalancing is implied or coded. The empirical test (sample counts before/after stratification) would show no removal, only proportion matching. The critique's assumption of distortion is unsupported by the design.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1, F2, and F3 are genuinely ambiguous: the design includes partial controls but cannot eliminate the concerns without empirical resolution. DEFER is the correct outcome for these MATERIAL findings. F4 is accepted by the critic, reducing severity to 0. The overall verdict reflects that empirical tests are needed to settle the disputes."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

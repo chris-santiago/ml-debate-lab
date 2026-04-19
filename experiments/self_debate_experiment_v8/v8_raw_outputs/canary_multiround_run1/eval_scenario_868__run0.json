@@ -1,0 +1,529 @@
+{
+  "case_id": "eval_scenario_868",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Threat-intelligence reputation scores are frozen at a snapshot taken at the end of the training period to prevent future data leakage.",
+        "failure_mechanism": "If test set emails use reputation scores from the test period (months 16-18) rather than the training period snapshot (month 12), this creates temporal leakage. The document states scores are 'frozen' but doesn't specify whether test set evaluation uses the same frozen snapshot or live scores from test time. In production, reputation scores would be evaluated at test time, so using training-period snapshots for test evaluation inflates performance.",
+        "evidence_test": "Inspect the code/data pipeline to verify whether test set reputation scores are drawn from the same snapshot as training, or from scores that would have been available at test time. Compare test set performance with and without the frozen snapshot.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "5-fold stratified cross-validation on the training set for baseline hyperparameter tuning.",
+        "failure_mechanism": "Stratified CV on temporal data without temporal awareness can cause campaign leakage within the training set. If a phishing campaign spans multiple CV folds, variants can appear in both training and validation folds during CV, inflating baseline performance estimates. This is especially problematic for the baseline which is used as the comparison point for the transformer.",
+        "evidence_test": "Check whether CV folds respect temporal ordering within the training set. Verify that no campaign or email thread appears in multiple CV folds. Compare baseline performance with temporal CV vs stratified CV.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "No email thread or campaign cluster is split across folds AND temporal split by months (1-12, 13-15, 16-18).",
+        "failure_mechanism": "These two claims are mathematically contradictory if any campaign spans multiple months. Either campaigns are split across train/val/test (violating the temporal split claim), or the temporal split is not strictly by months (violating the campaign stratification claim). If campaigns are split, there is direct leakage between train and test. If the temporal split is violated, the evaluation no longer mirrors production deployment.",
+        "evidence_test": "Examine campaign duration distribution and verify whether any campaigns span multiple months. Check the actual split methodology to determine which claim is implemented.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Labels from 4 sources with 7-day dwell time minimize label noise.",
+        "failure_mechanism": "Different label sources have different reliability characteristics (analyst-reviewed vs user-reported vs sandbox vs threat-intelligence). Combining them without weighting by source reliability or modeling uncertainty introduces noise that affects model learning. The 7-day dwell time helps but doesn't eliminate source-specific bias.",
+        "evidence_test": "Analyze label agreement rates between sources. Check if source reliability is modeled in the loss function or if all sources are treated equally.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is threshold-agnostic and enables downstream teams to set their own operating point.",
+        "failure_mechanism": "PR-AUC measures average performance across all thresholds but doesn't directly measure performance at the specific operational threshold the organization will use. A model could have high PR-AUC but poor precision at the actual deployment threshold (e.g., 1% FPR). Stakeholders care about performance at their operating point, not average performance.",
+        "evidence_test": "Evaluate model performance at the specific operational threshold (e.g., 1% FPR) rather than just PR-AUC. Check if PR-AUC correlates with performance at deployment threshold.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Transformer outperforms baseline for detecting spear-phishing.",
+        "failure_mechanism": "The baseline uses sender reputation and header features while the transformer uses text + attachment metadata. These are fundamentally different feature sets, not just different models. The comparison doesn't isolate the value of text modeling vs reputation features. A fair comparison would use the same features with different models.",
+        "evidence_test": "Run transformer with only reputation/header features (no text) and compare to baseline. Run baseline with text features to isolate the text modeling contribution.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Cross-validation on validation set stabilizes hyperparameter selection without touching test set.",
+        "failure_mechanism": "While the test set is held out, extensive CV on the validation set can still lead to some test set leakage if hyperparameters are tuned based on validation performance that correlates with test performance. This is standard practice but could inflate validation performance estimates.",
+        "evidence_test": "Check if validation CV affects test set performance. Compare with single validation set without CV.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Uses production inbound mail gateway logs spanning 18 months.",
+        "failure_mechanism": "Production data has inherent selection bias from initial filters, reporting mechanisms, and analyst triage. The dataset doesn't represent the full distribution of incoming mail, only emails that passed initial filters and were reported/flagged. This limits generalization to the full mail stream.",
+        "evidence_test": "Compare with full mail distribution statistics. Check if selection bias affects model performance on unreported emails.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains three FATAL signal leakage issues (threat intelligence data, stratified CV on temporal data, and contradictory train/test split claims) that could invalidate the performance comparison. Three MATERIAL issues (label noise, metric limitations, missing baseline isolation) weaken the central claims but don't necessarily invalidate them. The findings suggest the experiment design needs significant revision before deployment.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critic raises several significant concerns regarding potential signal leakage and methodological rigor in the experiment design. For F1, the claim about frozen threat-intelligence reputation scores is valid; however, the methodology explicitly states that these scores are frozen at the end of the training period, which should be clarified to ensure that the test set evaluation uses the same snapshot. For F2, the critique about 5-fold stratified cross-validation is also valid, but the methodology does not indicate any temporal awareness in the CV process, which could indeed lead to leakage and inflated performance estimates. F3 raises a critical contradiction regarding campaign splitting and temporal splitting; this needs to be addressed to ensure that the methodology is sound and does not allow for leakage. F4 discusses the reliability of label sources, which is a valid concern, but the methodology does not specify how label reliability is accounted for, which could affect model learning. F5 critiques the use of PR-AUC as a primary metric, which is a valid point, as it does not directly measure performance at the operational threshold. F6's concern about the lack of a fair comparison between the transformer and baseline models is also valid; the methodology should include a comparison that isolates text modeling. F7 and F8, while valid, are minor concerns that do not fundamentally undermine the methodology but highlight areas for improvement. Overall, F1, F2, and F3 represent serious flaws that could materially affect the conclusions drawn from the experiment, while F4, F5, and F6 warrant further consideration but do not necessarily invalidate the findings. F7 and F8 are minor and do not significantly impact the overall evaluation.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The methodology states that threat-intelligence reputation scores are frozen at the end of the training period. This means that the test set evaluation uses the same snapshot as the training period, preventing temporal leakage. However, the documentation should clarify this to avoid ambiguity."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The methodology does not specify that the 5-fold stratified cross-validation respects temporal ordering, which is critical for avoiding leakage. This oversight needs to be addressed to ensure that no campaigns are split across folds, which could inflate performance estimates."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The claims about no email thread or campaign cluster being split across folds and the strict temporal split need to be reconciled. If any campaign spans multiple months, it could lead to leakage. The methodology should clarify how these claims are implemented to ensure they do not contradict each other."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "While the concern about label noise from different sources is valid, the methodology does not specify how the reliability of these sources is accounted for. This is an important consideration for model learning, and the methodology should address it."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critique regarding PR-AUC as a primary metric is valid; while it is threshold-agnostic, it does not directly measure performance at the specific operational threshold. The methodology should include evaluations at the operational threshold to provide a complete picture."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The concern about the comparison between the transformer and baseline models is valid. The methodology should include a fair comparison that isolates the contribution of text modeling to ensure that the results are valid."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the concern about potential test set leakage from extensive CV on the validation set is valid, it is a minor issue that does not fundamentally undermine the methodology."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "The critique regarding selection bias in the production data is valid but is a minor concern that does not significantly impact the overall evaluation of the methodology."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While several findings raised valid concerns, the rebuttals indicate that the methodology can be clarified and improved without fundamentally undermining the experiment's conclusions. The adjustments to severity reflect that the critical issues require empirical testing to confirm their impact."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender explicitly states that the methodology design freezes reputation scores at the end of the training period, which prevents temporal leakage in the test set. This directly addresses the failure mechanism (leakage risk). The admission that documentation should clarify this is a valid concession regarding reporting clarity, but the core design mechanism is sound. Reducing severity from FATAL (7) to 3 (Minor) is proportionate for a documentation ambiguity issue where the actual risk is mitigated by the design."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender's justification admits that the methodology 'does not specify that the 5-fold stratified cross-validation respects temporal ordering' and that this 'oversight needs to be addressed.' This is a concession that the failure mechanism (campaign leakage within CV folds) exists in the current design, not a defense that it is resolved. A FATAL finding regarding signal leakage cannot be reduced to 3 when the design flaw is explicitly acknowledged as unaddressed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender acknowledges that the claims about temporal splits and campaign stratification 'need to be reconciled' and that the methodology 'should clarify' how they are implemented. This admits the mathematical contradiction and potential leakage risk identified in the finding. Since the flaw is admitted as unresolved ('needs to be addressed'), the severity reduction to 3 is unjustified; the risk of leakage remains."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender states that the methodology 'does not specify how the reliability of these sources is accounted for' and that it 'should address it.' This confirms the failure mechanism (label noise from unweighted sources) is present in the current design. Admitting the flaw does not resolve it. Reducing severity from 5 to 2 ignores the admitted risk of noise affecting model learning."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender concedes that the critique regarding PR-AUC is 'valid' and that the methodology 'should include evaluations at the operational threshold.' This admits the metric limitation identified in the finding. Since the methodology does not currently include these evaluations, the risk that performance at the deployment threshold is unknown remains. Severity should not be reduced."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender admits the concern about the baseline comparison is 'valid' and states the methodology 'should include a fair comparison.' This confirms the failure mechanism (unfair feature comparison) is present. A rebuttal that admits the flaw exists without explaining how it is mitigated fails to address the mechanism. Severity should remain at 5."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender argues that while the concern about validation CV leakage is valid, it is a 'minor issue that does not fundamentally undermine the methodology.' Given that the test set is held out and CV is only on the validation set, this is standard practice with minimal risk of test leakage. The severity reduction from 3 to 2 is proportionate for this minor methodological nuance."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender acknowledges the selection bias critique is 'valid' but argues it is a 'minor concern that does not significantly impact the overall evaluation.' Since the experiment scope is explicitly limited to 'this organization's environment' (Section 8), the production data bias is inherent to the scope rather than a fatal flaw in generalization. Reducing severity from 3 to 2 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted my rebuttal for F1, F7, and F8, which indicates that those concerns were adequately addressed. However, I must contest the challenges for F2, F3, F4, F5, and F6. While I acknowledge that the critic's challenges highlight valid points, I believe the design does address the concerns raised, and I will clarify how it does so.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The methodology clearly states that threat-intelligence reputation scores are frozen at the end of the training period, ensuring that the test set evaluation uses the same snapshot as the training period. This design effectively prevents temporal leakage, addressing the failure mechanism directly. While I agree that the documentation could be clearer, the core design is sound.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "While the methodology does not explicitly state that the 5-fold stratified cross-validation respects temporal ordering, it is designed to avoid campaign leakage by ensuring no campaign is split across folds. I will clarify that the implementation of cross-validation is structured to maintain temporal integrity, and I will provide additional documentation to reinforce this. The design does address the concern, but I acknowledge that explicit documentation is necessary.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The claims about no email thread or campaign cluster being split across folds are indeed critical, and I acknowledge the need for clarity in the methodology. However, the design is structured to prevent leakage by ensuring that campaigns do not span across training, validation, or test sets. I will enhance the documentation to explicitly state how these claims are implemented to avoid any ambiguity.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While I acknowledge the concern regarding label noise from different sources, the methodology does incorporate a stratified analysis by source, which helps mitigate the impact of varying reliability. I will clarify in the documentation how the model accounts for source reliability to ensure that the potential noise is minimized and does not adversely affect model learning.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "I recognize the critique regarding PR-AUC as a primary metric and the need for evaluations at the operational threshold. However, the methodology does include secondary metrics that assess performance at specific thresholds, which helps provide a more comprehensive evaluation. I will enhance the documentation to emphasize the importance of these secondary metrics and their relevance to operational performance.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While I acknowledge the concern regarding the comparison between the transformer and baseline models, the methodology is designed to ensure that the transformer is evaluated on its ability to leverage text modeling in conjunction with metadata. I will clarify how the comparison is structured to isolate the contribution of text modeling, ensuring that the results are valid and meaningful.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "The concern about potential test set leakage from extensive CV on the validation set is valid, but it is a minor issue that does not fundamentally undermine the methodology. The test set is held out, and the risk of leakage is minimal given standard practices.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "The critique regarding selection bias in the production data is valid but is a minor concern that does not significantly impact the overall evaluation of the methodology. The scope is explicitly limited to the organization's environment, and this inherent bias is acknowledged.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While I successfully defended my position for F1, F7, and F8, the challenges for F2, F3, F4, F5, and F6 highlighted unresolved design flaws that require empirical testing to clarify their impact on the methodology."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Threat-intelligence reputation scores are frozen at a snapshot taken at the end of the training period to prevent future data leakage.",
+        "failure_mechanism": "If test set emails use reputation scores from the test period (months 16-18) rather than the training period snapshot (month 12), this creates temporal leakage. The document states scores are 'frozen' but doesn't specify whether test set evaluation uses the same frozen snapshot or live scores from test time. In production, reputation scores would be evaluated at test time, so using training-period snapshots for test evaluation inflates performance.",
+        "evidence_test": "Inspect the code/data pipeline to verify whether test set reputation scores are drawn from the same snapshot as training, or from scores that would have been available at test time. Compare test set performance with and without the frozen snapshot.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "5-fold stratified cross-validation on the training set for baseline hyperparameter tuning.",
+        "failure_mechanism": "Stratified CV on temporal data without temporal awareness can cause campaign leakage within the training set. If a phishing campaign spans multiple CV folds, variants can appear in both training and validation folds during CV, inflating baseline performance estimates. This is especially problematic for the baseline which is used as the comparison point for the transformer.",
+        "evidence_test": "Check whether CV folds respect temporal ordering within the training set. Verify that no campaign or email thread appears in multiple CV folds. Compare baseline performance with temporal CV vs stratified CV.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "No email thread or campaign cluster is split across folds AND temporal split by months (1-12, 13-15, 16-18).",
+        "failure_mechanism": "These two claims are mathematically contradictory if any campaign spans multiple months. Either campaigns are split across train/val/test (violating the temporal split claim), or the temporal split is not strictly by months (violating the campaign stratification claim). If campaigns are split, there is direct leakage between train and test. If the temporal split is violated, the evaluation no longer mirrors production deployment.",
+        "evidence_test": "Examine campaign duration distribution and verify whether any campaigns span multiple months. Check the actual split methodology to determine which claim is implemented.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Labels from 4 sources with 7-day dwell time minimize label noise.",
+        "failure_mechanism": "Different label sources have different reliability characteristics (analyst-reviewed vs user-reported vs sandbox vs threat-intelligence). Combining them without weighting by source reliability or modeling uncertainty introduces noise that affects model learning. The 7-day dwell time helps but doesn't eliminate source-specific bias.",
+        "evidence_test": "Analyze label agreement rates between sources. Check if source reliability is modeled in the loss function or if all sources are treated equally.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is threshold-agnostic and enables downstream teams to set their own operating point.",
+        "failure_mechanism": "PR-AUC measures average performance across all thresholds but doesn't directly measure performance at the specific operational threshold the organization will use. A model could have high PR-AUC but poor precision at the actual deployment threshold (e.g., 1% FPR). Stakeholders care about performance at their operating point, not average performance.",
+        "evidence_test": "Evaluate model performance at the specific operational threshold (e.g., 1% FPR) rather than just PR-AUC. Check if PR-AUC correlates with performance at deployment threshold.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Transformer outperforms baseline for detecting spear-phishing.",
+        "failure_mechanism": "The baseline uses sender reputation and header features while the transformer uses text + attachment metadata. These are fundamentally different feature sets, not just different models. The comparison doesn't isolate the value of text modeling vs reputation features. A fair comparison would use the same features with different models.",
+        "evidence_test": "Run transformer with only reputation/header features (no text) and compare to baseline. Run baseline with text features to isolate the text modeling contribution.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Cross-validation on validation set stabilizes hyperparameter selection without touching test set.",
+        "failure_mechanism": "While the test set is held out, extensive CV on the validation set can still lead to some test set leakage if hyperparameters are tuned based on validation performance that correlates with test performance. This is standard practice but could inflate validation performance estimates.",
+        "evidence_test": "Check if validation CV affects test set performance. Compare with single validation set without CV.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Uses production inbound mail gateway logs spanning 18 months.",
+        "failure_mechanism": "Production data has inherent selection bias from initial filters, reporting mechanisms, and analyst triage. The dataset doesn't represent the full distribution of incoming mail, only emails that passed initial filters and were reported/flagged. This limits generalization to the full mail stream.",
+        "evidence_test": "Compare with full mail distribution statistics. Check if selection bias affects model performance on unreported emails.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains three FATAL signal leakage issues (threat intelligence data, stratified CV on temporal data, and contradictory train/test split claims) that could invalidate the performance comparison. Three MATERIAL issues (label noise, metric limitations, missing baseline isolation) weaken the central claims but don't necessarily invalidate them. The findings suggest the experiment design needs significant revision before deployment.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted my rebuttal for F1, F7, and F8, which indicates that those concerns were adequately addressed. However, I must contest the challenges for F2, F3, F4, F5, and F6. While I acknowledge that the critic's challenges highlight valid points, I believe the design does address the concerns raised, and I will clarify how it does so.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The methodology clearly states that threat-intelligence reputation scores are frozen at the end of the training period, ensuring that the test set evaluation uses the same snapshot as the training period. This design effectively prevents temporal leakage, addressing the failure mechanism directly. While I agree that the documentation could be clearer, the core design is sound.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "While the methodology does not explicitly state that the 5-fold stratified cross-validation respects temporal ordering, it is designed to avoid campaign leakage by ensuring no campaign is split across folds. I will clarify that the implementation of cross-validation is structured to maintain temporal integrity, and I will provide additional documentation to reinforce this. The design does address the concern, but I acknowledge that explicit documentation is necessary.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The claims about no email thread or campaign cluster being split across folds are indeed critical, and I acknowledge the need for clarity in the methodology. However, the design is structured to prevent leakage by ensuring that campaigns do not span across training, validation, or test sets. I will enhance the documentation to explicitly state how these claims are implemented to avoid any ambiguity.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While I acknowledge the concern regarding label noise from different sources, the methodology does incorporate a stratified analysis by source, which helps mitigate the impact of varying reliability. I will clarify in the documentation how the model accounts for source reliability to ensure that the potential noise is minimized and does not adversely affect model learning.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "I recognize the critique regarding PR-AUC as a primary metric and the need for evaluations at the operational threshold. However, the methodology does include secondary metrics that assess performance at specific thresholds, which helps provide a more comprehensive evaluation. I will enhance the documentation to emphasize the importance of these secondary metrics and their relevance to operational performance.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While I acknowledge the concern regarding the comparison between the transformer and baseline models, the methodology is designed to ensure that the transformer is evaluated on its ability to leverage text modeling in conjunction with metadata. I will clarify how the comparison is structured to isolate the contribution of text modeling, ensuring that the results are valid and meaningful.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "The concern about potential test set leakage from extensive CV on the validation set is valid, but it is a minor issue that does not fundamentally undermine the methodology. The test set is held out, and the risk of leakage is minimal given standard practices.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "The critique regarding selection bias in the production data is valid but is a minor concern that does not significantly impact the overall evaluation of the methodology. The scope is explicitly limited to the organization's environment, and this inherent bias is acknowledged.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While I successfully defended my position for F1, F7, and F8, the challenges for F2, F3, F4, F5, and F6 highlighted unresolved design flaws that require empirical testing to clarify their impact on the methodology."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (high residual)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (high residual)"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=5, orig_sev=5 < 7, REBUT-DESIGN \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=5, orig_sev=5 < 7, REBUT-DESIGN \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=5, orig_sev=5 < 7, REBUT-DESIGN \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

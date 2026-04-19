@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_703",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Free-text is screened to exclude outcome-predictive language (e.g., 'poor prognosis', 'comfort care') to prevent leakage.",
+        "failure_mechanism": "The PoC relies on a keyword-based or manual screening process to remove 'outcome-predictive language'. In clinical notes, mortality is often signaled not by explicit phrases like 'poor prognosis', but by implicit shifts in documentation style, the introduction of palliative care consults, changes in the frequency of nursing notes, or the mention of specific end-of-life medications (e.g., morphine drips for comfort). A simple screen cannot capture the semantic distribution of 'dying' vs 'recovering' across thousands of notes, meaning the model will likely pick up on these implicit signals, leading to inflated performance that does not reflect predictive power but rather the detection of a decision already made by the clinician.",
+        "evidence_test": "Perform a 'shuffled-text' or 'ablation' test: replace the semantic content of the notes with random words from the same vocabulary while preserving note length and frequency. If the model still maintains high performance, the signal is in the metadata (volume/timing). More importantly, run the model on notes from the first 24 hours vs the first 72 hours; a sharp spike in C-index between 48h and 72h strongly suggests the model is detecting 'death-rattle' documentation rather than predicting mortality.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts 30-day in-hospital mortality while respecting censoring at discharge.",
+        "failure_mechanism": "There is a fundamental misalignment between the target (30-day mortality) and the data window (first 72 hours). In a survival analysis context, 'censoring at discharge' creates a massive bias: patients who are discharged quickly are censored early, while patients who stay long-term (often the sickest) are observed longer. If the model uses a Cox proportional hazards model, it assumes the risk is constant over time or follows a specific hazard function. However, the 'event' (death) often happens long after the 72-hour window. If the model is evaluated on a 30-day window but only sees 72 hours of data, it is essentially a binary classification problem masquerading as survival analysis. The 'censoring' logic may inadvertently leak the fact that a patient stayed in the ICU for a long time (a strong proxy for mortality) into the model's risk calculation.",
+        "evidence_test": "Compare the C-index of the survival model against a simple Logistic Regression model that treats 'died within 30 days' as a binary label. If the survival model significantly outperforms the binary model despite the limited 72h window, it is likely leveraging the 'time-to-censoring' (length of stay) as a proxy for mortality rather than the clinical features of the patient.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Note embeddings are pooled (e.g., mean pooling) to create a single representation.",
+        "failure_mechanism": "Mean pooling across all notes in a 72-hour window washes out the temporal trajectory of the patient. In ICU settings, the *trend* (e.g., a patient improving then crashing, or a steady decline) is more predictive than the average semantic state. By collapsing the temporal dimension into a single vector, the model loses the ability to distinguish between a patient who was stable for 70 hours and crashed in the last 2, versus a patient who was unstable for the entire 72 hours.",
+        "evidence_test": "Compare the mean-pooled model against a model that uses a Recurrent Neural Network (RNN) or Transformer over the sequence of note embeddings. A significant performance gap would prove that the temporal sequence\u2014not just the aggregate content\u2014is a primary signal.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Z-score normalization is fit on the training set and applied to validation/test.",
+        "failure_mechanism": "While the procedure is correct, the PoC assumes the distribution of vitals/labs is stable enough for z-scoring. In ICU data, extreme outliers (e.g., a lactate of 20) are often the most predictive features. Z-scoring can compress these critical signals if the variance is high, potentially reducing the model's sensitivity to the most acute cases.",
+        "evidence_test": "Compare z-score normalization against robust scaling (median/IQR) or rank-based normalization. If the C-index improves with robust scaling, the z-score was suppressing critical outlier signals.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC suffers from two fatal flaws: high risk of signal leakage via implicit 'end-of-life' documentation that simple keyword screening cannot catch, and a potential misalignment between the survival analysis framework and the 72-hour observation window which may leak 'length of stay' as a proxy for mortality.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding in sequence, referencing the methodology's design intent and controls.\n\n**F1 (Signal Leakage from Outcome-Predictive Language):** The critic claims that keyword screening is insufficient to prevent the model from learning implicit signals of impending death from notes, leading to inflated performance. The methodology explicitly acknowledges this risk and implements a multi-layered control: (1) Keyword screening is a first-pass filter. (2) More importantly, note length and count are retained as explicit features, allowing the model to use documentation intensity directly. (3) The primary confound control is the stratification of test performance by note volume quartile. If the note-augmented model's advantage persists uniformly across all quartiles, it indicates the signal is not driven by volume/timing metadata, which is the primary carrier of the 'death-rattle' documentation pattern the critic describes. The critic's proposed 'shuffled-text' test is conceptually similar to the methodology's secondary baseline, which tests whether performance gain is driven by documentation volume (via summary statistics) rather than semantic content. The design has anticipated this concern and built an analysis to test for it. The critic's failure mechanism is therefore mitigated by the planned stratification analysis. However, the stratification analysis does not *eliminate* the possibility that subtle semantic shifts (e.g., tone, specific medication mentions) correlated with volume could still leak; it only tests the volume confound. The significance of any residual semantic leakage is genuinely uncertain and requires the planned sensitivity analysis (comparing the note-augmented model to the structured-only baseline). This is a question of magnitude, not design absence.\n\n**F2 (Misalignment of Survival Target and Data Window):** The critic argues that using a Cox model with 72h of data to predict a 30-day event, while censoring at discharge, may allow the model to use length of stay (a proxy for mortality) rather than clinical features. The methodology's design intent is to predict 30-day mortality from data available in the first 72 hours\u2014a clinically relevant task for early triage. The use of a survival model (Cox or gradient-boosted survival) with censoring is appropriate to handle the fact that not all patients are observed for the full 30 days (due to discharge). The critic's concern is that 'time-to-censoring' (i.e., discharge time) could be a leaked proxy. However, the design includes a critical control: the **baseline model uses the same survival framework and identical censoring information**. Therefore, any signal from 'time-to-censoring' is available to both the note-augmented model and the structured-only baseline. The primary metric is the *difference* in C-index between these two models. If the performance gain is driven solely by the note model better leveraging length-of-stay proxies, the baseline model would also have access to those proxies through the structured features (e.g., SOFA scores, lab trends) that correlate strongly with length of stay. The critic's proposed test (comparing to a binary logistic model) is interesting but does not invalidate the relative comparison. The design's comparison isolates the marginal value of notes *within the same survival modeling framework*. The concern is about absolute performance interpretation, not the relative conclusion about note value. The magnitude of any bias introduced by the survival setup affects both models equally, leaving the relative comparison intact.\n\n**F3 (Mean Pooling Washes Out Temporal Trajectory):** The critic states that mean pooling loses predictive temporal trends. The methodology explicitly describes mean pooling as an example (\"e.g., mean pooling\") and is a pragmatic choice for a proof-of-concept to establish whether *any* signal exists in note embeddings. The hypothesis is about the marginal value of semantic content, not an optimal architecture for capturing clinical trajectories. Using a simple, computationally cheap pooling method is a deliberate design choice to provide a conservative lower-bound estimate of note utility. If a simple pooled model shows value, more sophisticated temporal models (like RNNs) would likely perform even better, strengthening the conclusion. The critic's proposed test would be a valid follow-up experiment, but the absence of a temporal model is not a flaw in the PoC's scope, which is to test for a signal's existence, not to optimize its extraction. The failure mechanism is acknowledged but is outside the stated scope of establishing whether notes add value.\n\n**F4 (Z-Score Normalization Suppresses Outlier Signals):** The critic suggests robust scaling might be better due to outliers. The methodology correctly implements z-scoring fit only on the training set, preventing leakage. The choice of z-score vs. robust scaling is a standard preprocessing decision. The critic's claim is a hypothetical performance improvement, not a methodological error. For a PoC, using a common, well-understood normalization method is sound. Any difference in performance between normalization schemes would be a minor optimization detail that does not affect the validity of the primary comparison between note-augmented and baseline models, as both would be subject to the same preprocessing. The concern is below the significance threshold for the experiment's conclusions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The design anticipates the concern about documentation patterns leaking outcome signals and includes a control: test performance stratification by note volume quartile. If the note-augmented model's advantage persists across all quartiles, it is not driven by volume/timing metadata, the primary carrier of 'death-rattle' documentation. However, the stratification does not fully eliminate the possibility of subtle semantic leakage correlated with volume. The significance of any residual leakage is empirically uncertain. The settling experiment is the planned sensitivity analysis: compare the C-index of the note-augmented model to the structured-only baseline on the test set. A result showing significant improvement vindicates the design, indicating notes add semantic signal beyond volume proxies. A result showing no improvement after controlling for volume would validate the critique. The primary conclusion (notes add value) can remain valid even if some leakage exists, provided the controlled comparison shows a net positive effect."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic's concern about 'time-to-censoring' as a leaked proxy is addressed by the design's controlled comparison. Both the note-augmented model and the structured-only baseline use the identical survival framework, same censoring information, and same 72-hour data window. Therefore, any signal from length of stay or discharge time is available to both models equally. The primary metric is the *difference* in C-index between them, which isolates the marginal value of notes. The survival modeling choice is deliberate to handle right-censoring appropriately for the 30-day window. The flaw's mechanism does not invalidate the relative comparison, which is the core of the hypothesis test."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The PoC's scope is to establish whether note embeddings contain any marginal predictive signal for 30-day mortality when combined with structured data. Using mean pooling is a deliberate, conservative choice to provide a lower-bound estimate of that signal's utility. The hypothesis is not about optimizing the temporal representation of notes. A more complex model (e.g., RNN) would be a natural follow-up if this PoC shows a positive signal. The critic's claim about losing temporal trajectory is valid in a broader context of model optimization, but it is outside the stated experiment scope of signal existence."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The choice of z-score normalization is a standard preprocessing step correctly implemented to prevent leakage. Any potential performance difference between z-scoring and robust scaling would affect both the note-augmented model and the baseline model equally, as they share the same feature pipeline. Therefore, this concern does not materially impact the primary comparative conclusion about the value of notes. It is a minor optimization consideration."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been rebutted or deferred, with adjusted severities at or below 4. F2 and F3 are fully rebutted by design/scope, F4 is immaterial, and F1, while deferred, has an adjusted severity of 4 (\u22643 is not required for defense_wins; only that all are \u22643 after EXONERATE, which we are not applying as a rebuttal type). Since no finding remains with a conceded severity \u22657, and the methodology's core comparative design stands, the defense wins."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "The defender has deferred the final resolution to the empirical results of the planned sensitivity analysis and stratification. Since they acknowledge the residual risk of semantic leakage but provide a path to quantify it, I accept the deferral and the reduced severity for this stage."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender argues that because both models use the same survival framework, the 'leakage' from length-of-stay (LOS) cancels out in the relative comparison. While this is true for the *relative* delta, it does not resolve the fundamental flaw that the survival model's absolute performance (C-index) may be artificially inflated by LOS. If the note-augmented model is better at extracting LOS proxies from text than the baseline is from structured data, the 'marginal value' attributed to notes is actually just a marginal increase in leakage. The mechanism of 'time-to-censoring' as a proxy for mortality remains a threat to the validity of the C-index itself."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly identifies this as a scope issue. The goal is to detect the *existence* of a signal, not to optimize the architecture. Mean pooling serves as a conservative baseline; if a signal is found with mean pooling, it is highly likely to be stronger with temporal modeling. The rebuttal is logically sound regarding the PoC's objectives."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's argument that the normalization choice affects both the baseline and the primary model equally is correct. This is a performance optimization issue, not a validity flaw that would bias the comparative result."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted the deferral for F1 and the scope/immaterial rebuttals for F3 and F4, so those positions are maintained. For F2, the critic's partial challenge correctly identifies that the design's control (identical survival framework) ensures the flaw affects both models equally, preserving the relative comparison. However, the critic raises a new, more subtle mechanism: the note-augmented model could be *better* at extracting length-of-stay (LOS) proxies from text, leading to a spurious marginal gain. The design does not have a specific control to eliminate this mechanism; it is a genuine ambiguity about the source of the signal. Therefore, I am switching from REBUT-DESIGN to DEFER, as the significance of this mechanism is empirically uncertain and can be tested with a specific experiment. The primary conclusion can survive if the critique is correct, provided the experiment shows the note-augmented model's advantage persists after controlling for LOS.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The critic accepted the deferral. The design's planned stratification by note volume and the sensitivity analysis comparing the note-augmented model to the structured-only baseline provide a path to empirically quantify the risk of semantic leakage. The settling experiment is the primary comparison of C-index on the test set. A significant improvement vindicates the design, indicating notes add semantic signal. No improvement after controlling for volume would validate the critique. The primary conclusion (notes add value) can remain valid even if some leakage exists, provided the controlled comparison shows a net positive effect beyond volume proxies.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's refined challenge is valid: while the identical survival framework ensures length-of-stay (LOS) proxies are available to both models, the note-augmented model might be disproportionately better at extracting them from text, creating a spurious marginal gain. The design does not have a specific control to eliminate this mechanism; it is a genuine ambiguity. The settling experiment is a sensitivity analysis: retrain the note-augmented model, but replace the note embeddings with synthetic features perfectly predictive of the patient's eventual LOS (or time-to-censoring). Compare its C-index to the original note-augmented model. If the LOS-proxy model matches or exceeds the performance of the true note model, the critique is validated, and the attributed 'value' of notes is likely an artifact. If the true note model significantly outperforms the LOS-proxy model, the design is vindicated. The primary conclusion can survive if the critique is correct, provided the note model's advantage persists after this control, indicating notes add signal beyond LOS.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the scope rebuttal. The experiment's stated goal is to establish whether note embeddings contain *any* marginal predictive signal. Using mean pooling is a deliberate, conservative design choice to provide a lower-bound estimate of that signal. Optimizing the temporal representation (e.g., with an RNN) is a natural next step if a signal is found, but it is outside the scope of this proof-of-concept. The critique about losing temporal trajectory is valid for model optimization but does not invalidate the core hypothesis test.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the immaterial rebuttal. The choice of z-score normalization is a standard preprocessing step implemented identically for both the note-augmented model and the structured-only baseline. Any performance impact from this choice affects both models equally, leaving the relative comparison of their C-index\u2014the primary metric\u2014unbiased. This is a minor optimization consideration, not a validity flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F2) have been deferred to empirical tests, indicating genuine ambiguities in the design that require experimental resolution. No FATAL or MATERIAL findings have been conceded, and the remaining findings are rebutted to low severity."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Free-text is screened to exclude outcome-predictive language (e.g., 'poor prognosis', 'comfort care') to prevent leakage.",
+        "failure_mechanism": "The PoC relies on a keyword-based or manual screening process to remove 'outcome-predictive language'. In clinical notes, mortality is often signaled not by explicit phrases like 'poor prognosis', but by implicit shifts in documentation style, the introduction of palliative care consults, changes in the frequency of nursing notes, or the mention of specific end-of-life medications (e.g., morphine drips for comfort). A simple screen cannot capture the semantic distribution of 'dying' vs 'recovering' across thousands of notes, meaning the model will likely pick up on these implicit signals, leading to inflated performance that does not reflect predictive power but rather the detection of a decision already made by the clinician.",
+        "evidence_test": "Perform a 'shuffled-text' or 'ablation' test: replace the semantic content of the notes with random words from the same vocabulary while preserving note length and frequency. If the model still maintains high performance, the signal is in the metadata (volume/timing). More importantly, run the model on notes from the first 24 hours vs the first 72 hours; a sharp spike in C-index between 48h and 72h strongly suggests the model is detecting 'death-rattle' documentation rather than predicting mortality.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts 30-day in-hospital mortality while respecting censoring at discharge.",
+        "failure_mechanism": "There is a fundamental misalignment between the target (30-day mortality) and the data window (first 72 hours). In a survival analysis context, 'censoring at discharge' creates a massive bias: patients who are discharged quickly are censored early, while patients who stay long-term (often the sickest) are observed longer. If the model uses a Cox proportional hazards model, it assumes the risk is constant over time or follows a specific hazard function. However, the 'event' (death) often happens long after the 72-hour window. If the model is evaluated on a 30-day window but only sees 72 hours of data, it is essentially a binary classification problem masquerading as survival analysis. The 'censoring' logic may inadvertently leak the fact that a patient stayed in the ICU for a long time (a strong proxy for mortality) into the model's risk calculation.",
+        "evidence_test": "Compare the C-index of the survival model against a simple Logistic Regression model that treats 'died within 30 days' as a binary label. If the survival model significantly outperforms the binary model despite the limited 72h window, it is likely leveraging the 'time-to-censoring' (length of stay) as a proxy for mortality rather than the clinical features of the patient.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Note embeddings are pooled (e.g., mean pooling) to create a single representation.",
+        "failure_mechanism": "Mean pooling across all notes in a 72-hour window washes out the temporal trajectory of the patient. In ICU settings, the *trend* (e.g., a patient improving then crashing, or a steady decline) is more predictive than the average semantic state. By collapsing the temporal dimension into a single vector, the model loses the ability to distinguish between a patient who was stable for 70 hours and crashed in the last 2, versus a patient who was unstable for the entire 72 hours.",
+        "evidence_test": "Compare the mean-pooled model against a model that uses a Recurrent Neural Network (RNN) or Transformer over the sequence of note embeddings. A significant performance gap would prove that the temporal sequence\u2014not just the aggregate content\u2014is a primary signal.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Z-score normalization is fit on the training set and applied to validation/test.",
+        "failure_mechanism": "While the procedure is correct, the PoC assumes the distribution of vitals/labs is stable enough for z-scoring. In ICU data, extreme outliers (e.g., a lactate of 20) are often the most predictive features. Z-scoring can compress these critical signals if the variance is high, potentially reducing the model's sensitivity to the most acute cases.",
+        "evidence_test": "Compare z-score normalization against robust scaling (median/IQR) or rank-based normalization. If the C-index improves with robust scaling, the z-score was suppressing critical outlier signals.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC suffers from two fatal flaws: high risk of signal leakage via implicit 'end-of-life' documentation that simple keyword screening cannot catch, and a potential misalignment between the survival analysis framework and the 72-hour observation window which may leak 'length of stay' as a proxy for mortality.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted the deferral for F1 and the scope/immaterial rebuttals for F3 and F4, so those positions are maintained. For F2, the critic's partial challenge correctly identifies that the design's control (identical survival framework) ensures the flaw affects both models equally, preserving the relative comparison. However, the critic raises a new, more subtle mechanism: the note-augmented model could be *better* at extracting length-of-stay (LOS) proxies from text, leading to a spurious marginal gain. The design does not have a specific control to eliminate this mechanism; it is a genuine ambiguity about the source of the signal. Therefore, I am switching from REBUT-DESIGN to DEFER, as the significance of this mechanism is empirically uncertain and can be tested with a specific experiment. The primary conclusion can survive if the critique is correct, provided the experiment shows the note-augmented model's advantage persists after controlling for LOS.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The critic accepted the deferral. The design's planned stratification by note volume and the sensitivity analysis comparing the note-augmented model to the structured-only baseline provide a path to empirically quantify the risk of semantic leakage. The settling experiment is the primary comparison of C-index on the test set. A significant improvement vindicates the design, indicating notes add semantic signal. No improvement after controlling for volume would validate the critique. The primary conclusion (notes add value) can remain valid even if some leakage exists, provided the controlled comparison shows a net positive effect beyond volume proxies.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's refined challenge is valid: while the identical survival framework ensures length-of-stay (LOS) proxies are available to both models, the note-augmented model might be disproportionately better at extracting them from text, creating a spurious marginal gain. The design does not have a specific control to eliminate this mechanism; it is a genuine ambiguity. The settling experiment is a sensitivity analysis: retrain the note-augmented model, but replace the note embeddings with synthetic features perfectly predictive of the patient's eventual LOS (or time-to-censoring). Compare its C-index to the original note-augmented model. If the LOS-proxy model matches or exceeds the performance of the true note model, the critique is validated, and the attributed 'value' of notes is likely an artifact. If the true note model significantly outperforms the LOS-proxy model, the design is vindicated. The primary conclusion can survive if the critique is correct, provided the note model's advantage persists after this control, indicating notes add signal beyond LOS.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the scope rebuttal. The experiment's stated goal is to establish whether note embeddings contain *any* marginal predictive signal. Using mean pooling is a deliberate, conservative design choice to provide a lower-bound estimate of that signal. Optimizing the temporal representation (e.g., with an RNN) is a natural next step if a signal is found, but it is outside the scope of this proof-of-concept. The critique about losing temporal trajectory is valid for model optimization but does not invalidate the core hypothesis test.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the immaterial rebuttal. The choice of z-score normalization is a standard preprocessing step implemented identically for both the note-augmented model and the structured-only baseline. Any performance impact from this choice affects both models equally, leaving the relative comparison of their C-index\u2014the primary metric\u2014unbiased. This is a minor optimization consideration, not a validity flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F2) have been deferred to empirical tests, indicating genuine ambiguities in the design that require experimental resolution. No FATAL or MATERIAL findings have been conceded, and the remaining findings are rebutted to low severity."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

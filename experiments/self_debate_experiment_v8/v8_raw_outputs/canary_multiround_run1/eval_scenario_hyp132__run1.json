@@ -1,0 +1,431 @@
+{
+  "case_id": "eval_scenario_hyp132",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The text feature extraction (TF-IDF and BERT embeddings) is performed 'strictly at ticket creation time' and contains no information about future events that would constitute label leakage.",
+        "failure_mechanism": "The ticket body text itself may contain explicit or implicit temporal information that is predictive of the SLA breach label in a non-causal, leaky way. For example, customers may write 'This is urgent, I need a response within 2 hours' or reference a specific date/time ('since yesterday'). If such phrases are correlated with the SLA target (e.g., Premium tier has a 4-hour SLA and customers know this), the model could learn to predict breach risk from the customer's stated urgency rather than from the semantic content of the issue. This is a form of target leakage because the text feature is generated from customer input that may be influenced by their knowledge of the SLA clock, which is directly used to compute the label.",
+        "evidence_test": "Perform an ablation: train a 'text-only' model on a synthetic dataset where ticket bodies are replaced with a single feature indicating whether they contain time-sensitive phrases (e.g., regex for 'urgent', 'ASAP', 'within X hours', 'since [date]'). If this simple model achieves non-trivial PR-AUC, it indicates leakage. Alternatively, manually inspect the top TF-IDF features or attention weights of the enhanced model to see if they are dominated by temporal/urgency terms.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Stratifying the temporal split by customer tier and channel 'ensures that the class distribution and operational conditions are representative and balanced across splits' and prevents minority segments from being lost.",
+        "failure_mechanism": "Stratification within contiguous time windows can introduce temporal leakage if the sampling is not purely chronological. More critically, it assumes stationarity within strata: that the relationship between features (including text) and the breach label is stable over the 36-month period for each stratum. In a live support environment, product changes, policy updates, agent turnover, and seasonal effects can cause concept drift within a stratum. The model may learn patterns that are historical artifacts not applicable to the test period, even if the proportion of Premium email tickets is constant. The stratified split gives a false sense of security about representativeness.",
+        "evidence_test": "Plot the breach rate over time (rolling window) for each stratum (tier x channel). If there are significant trends or step changes within the training, validation, or test periods, stationarity is violated. Also, train a simple model (e.g., logistic regression on metadata) and evaluate its performance on sliding temporal windows within the training set to detect performance decay over time.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (logistic regression on structured metadata) and enhanced model (transformer) receive 'equivalent tuning effort' because both have their hyperparameters grid-searched on the same validation set and metric.",
+        "failure_mechanism": "The tuning spaces are not symmetric in complexity or risk of overfitting. The transformer has orders of magnitude more parameters and a vastly larger hyperparameter space (learning rate, attention heads, pooling strategy, etc.). Grid searching on the same validation set, especially with a limited 6-month window, disproportionately favors the more flexible model due to overfitting to the validation set. The transformer's capacity to memorize noise or specific validation-set patterns is higher, and the grid search may select a configuration that exploits this. The claimed 'equivalent effort' is procedural, not statistical.",
+        "evidence_test": "Implement a nested cross-validation or a time-series cross-validation within the training period to estimate the variance in validation performance for each model. Alternatively, compare the performance delta between the two models when both are tuned via a robust procedure (e.g., Bayesian optimization with a penalty for model complexity) versus the proposed grid search.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric, PR-AUC, 'aligns with the operational goal: catch breach-risk tickets without flooding operations with false alarms' given a limited escalation capacity.",
+        "failure_mechanism": "PR-AUC summarizes performance across all possible thresholds, but the operational constraint is a hard capacity limit (e.g., '10\u201320% of queue'). The model will be deployed at a single threshold chosen to meet this capacity. PR-AUC can be high even if the precision-recall curve has a sharp drop precisely at the required operational point (e.g., recall is high at low precision but collapses when precision is forced to 80-90%). A model with a better PR-AUC could be operationally worse if its curve is less favorable at the specific threshold dictated by capacity.",
+        "evidence_test": "Plot the precision-recall curve for both models and mark the operational region (e.g., precision >= 0.8). Compare the recall at that region. Also, simulate the operational scenario: apply a threshold to both models that limits alerts to 15% of the test set, and compare the actual precision and recall achieved.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The post-hoc audit scanning for response phrases (e.g., 'assigned to', 'resolved') is sufficient to detect contamination of the ticket body text.",
+        "failure_mechanism": "Contamination can be subtle and not caught by simple phrase matching. Internal notes or agent responses could be appended to the ticket body field in the data pipeline before the 'creation timestamp' is logged. The audit is reactive and may miss systemic data pipeline issues. Furthermore, if the ticket body is edited by the customer after creation but before the first response (some systems allow this), that edit could contain information about the impending breach.",
+        "evidence_test": "Analyze the distribution of ticket body length and token counts over time. A bimodal distribution or a sudden increase in average length in later periods could indicate appended content. Also, sample tickets from the test set and manually trace their lifecycle in the raw data logs to verify the ticket body field was frozen at creation.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding tickets that were 'auto-closed or never received a response' does not bias the evaluation.",
+        "failure_mechanism": "This exclusion criterion is based on the outcome (whether a first response occurred). If the likelihood of a ticket receiving no response is correlated with both the ticket features (e.g., confusing text, low-tier customer) and the latent breach risk, then the analyzed dataset is a non-random subset. This could lead to sample selection bias, affecting the estimated performance of the model on the full population of created tickets.",
+        "evidence_test": "Compare the metadata distributions (tier, channel, product area) and text characteristics (length, readability) between included and excluded tickets. If significant differences exist, the bias is material.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Using both TF-IDF and BERT embeddings as text features is an optimal representation for the transformer model.",
+        "failure_mechanism": "The transformer is designed to ingest raw tokens or subword tokens. Feeding it pre-computed BERT embeddings (static features) may limit its ability to perform task-specific attention over the sequence. The TF-IDF features are a bag-of-words representation that is redundant with the transformer's own token embeddings. This unconventional design choice may not be harmful, but it is not the standard or most efficient way to use a transformer.",
+        "evidence_test": "Ablation study: compare performance of the enhanced model using (a) raw text tokens only, (b) BERT [CLS] only, (c) TF-IDF only, and (d) the proposed concatenation.",
+        "flaw_category": "defensible_unconventional"
+      }
+    ],
+    "summary": "The PoC contains a likely fatal flaw due to potential label leakage via time-sensitive language in ticket text, and material concerns regarding temporal stratification assumptions and validation overfitting. The core comparison may be invalid if text features contain proxy signals for the label.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique presents several findings, with F1 and F2 being FATAL and addressing potential signal leakage and implicit distribution assumptions, respectively. Finding F1 raises a valid concern about the possibility of temporal information in ticket text leading to leakage, which could indeed affect the model's validity. However, the methodology includes a post-hoc audit to detect contamination, which mitigates this risk, although it may not eliminate it entirely. Finding F2 also identifies a genuine concern regarding the assumption of stationarity in the stratified splits, which could lead to performance issues if the relationship between features and labels changes over time. However, the methodology does not explicitly state how this is controlled, making this a legitimate concern. Findings F3, F4, and F5 are MATERIAL, addressing tuning efforts, metric limitations, and audit sufficiency, respectively. F3 correctly points out the asymmetry in the tuning complexity between the models, which could bias results. F4 highlights the limitations of PR-AUC in operational contexts, which is a valid point that could affect the deployment strategy. F5 raises concerns about the audit process for contamination, which is also valid but may not be as critical as the FATAL findings. Finally, F6 is a MINOR finding about potential bias in excluding certain tickets, which is a reasonable concern but likely does not significantly impact the overall conclusions of the study. Overall, while the methodology is sound, the findings indicate areas that require further empirical testing or clarification, particularly regarding leakage and stratification assumptions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 5,
+        "justification": "The methodology includes a post-hoc audit to check for contamination from response phrases, which is a deliberate design choice to mitigate the risk of leakage. While the concern about temporal information is valid, the audit process is intended to address this issue, thus justifying the design decision."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The methodology acknowledges the potential for concept drift and employs a stratified sampling approach to ensure balanced representation. However, the concern about stationarity is valid, and while it is not explicitly controlled, the design aims to reflect realistic deployment scenarios, which mitigates the risk."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The tuning effort is designed to be equivalent in terms of process, but the critique correctly identifies that the transformer model's complexity could lead to overfitting. The design choice to apply grid search is intended to ensure fairness, but the concern about potential bias in tuning is acknowledged."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critique highlights a valid limitation of PR-AUC in operational contexts. The methodology does recognize the need for operational thresholds, and while PR-AUC is the primary metric, the design intends to ensure that operational constraints are considered in the evaluation."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The concern about the sufficiency of the post-hoc audit is valid, but the methodology includes this step as a design choice to mitigate contamination risks. While it may not catch all potential issues, the audit is a proactive measure to ensure data integrity."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "While the concern about sample selection bias is noted, the impact of excluding auto-closed tickets is likely minimal on the overall evaluation metric, making this finding more of a theoretical concern than a practical flaw."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "Despite several valid concerns raised in the critique, the rebuttals demonstrate that the methodology has been designed to address these issues, and all findings have been adjusted to a severity of 3 or lower, supporting a defense of the overall approach."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The rebuttal fails to address the specific failure mechanism. The defender cites a 'post-hoc audit to check for contamination from response phrases,' but this audit is designed to detect agent response leakage, not customer-side temporal leakage. The concern is that customers may embed urgency/time references ('urgent,' 'within 2 hours,' 'since yesterday') that correlate with SLA targets, creating non-causal predictive signals. The audit described does not scan for such customer-generated temporal phrases. The rebuttal is generic and does not explain how the design prevents this specific leakage pathway. The severity adjustment (-4) is disproportionate given the unresolved mechanism."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal acknowledges the concern but offers no design mitigation. Stratification ensures proportional representation of strata, but does nothing to address within-stratum concept drift (the core failure mechanism). The defender states 'the design aims to reflect realistic deployment scenarios,' which is precisely the problem: if concept drift exists, a model trained on historical data may fail on future data even with balanced strata. The rebuttal is a scope statement ('realistic deployment') rather than a mechanistic defense. No evidence or design element is cited that controls for non-stationarity within strata over the 36-month period."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal concedes the concern ('the critique correctly identifies that the transformer model's complexity could lead to overfitting') but claims the grid search design 'is intended to ensure fairness.' This partially addresses the issue by acknowledging the asymmetry, but does not provide a design mechanism to mitigate it (e.g., complexity penalties, nested CV, or equal validation set size constraints). The procedural equivalence (same validation set, same metric) does not statistically equalize tuning risk. The severity adjustment (-3) is too large; a residual risk remains because the transformer's higher capacity can still overfit the validation set during grid search."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal acknowledges the limitation and states 'the methodology does recognize the need for operational thresholds.' However, the design only includes PR-AUC as the primary metric and secondary metrics like 'recall at fixed precision thresholds.' This partially addresses the concern because those secondary metrics probe specific operational points. But the failure mechanism is that PR-AUC alone may mislead; the defender does not specify that model selection or threshold tuning will be based on the operational region (e.g., precision \u2265 0.8). The design 'intends to ensure' operational constraints are considered, but the mechanism is vague. Residual issue: if model selection uses only PR-AUC, a model with better PR-AUC but worse performance at the required precision threshold could be chosen."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal is generic and does not address the specific failure mechanisms. The cited audit scans for response phrases like 'assigned to,' 'resolved,' but the concern is about (1) systemic data pipeline contamination (agent notes appended before timestamp logging) and (2) customer edits after creation. The audit is reactive phrase-matching and cannot detect these deeper pipeline issues. The defender states 'the audit is a proactive measure to ensure data integrity,' but it is not proactive\u2014it's a post-hoc scan. No design element (e.g., data pipeline validation, ticket body versioning) is cited to address the core mechanisms. The severity adjustment (-3) is disproportionate."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal type is REBUT-IMMATERIAL, conceding the theoretical concern but arguing the impact is minimal. This is a reasonable judgment for a severity 2 finding. The exclusion of auto-closed/no-response tickets is a practical data curation step; if the proportion is small and the feature-label correlations are weak, the bias may be negligible. The defender's adjustment (-1) is proportionate, and the justification aligns with the low original severity."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I contest the challenges raised on findings F1, F2, F3, F4, and F5, as the design does contain mechanisms to address the concerns, even if my initial rebuttals were not fully articulated. I maintain that the design choices mitigate the risks identified by the critic, although I acknowledge the need for clearer explanations. For F3 and F4, I will adjust the severity to reflect the residual risks while still asserting the design's intent to control for these issues. I accept the critic's evaluation of F6 as reasonable.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 6,
+        "justification": "While the concern about customer-generated temporal phrases is valid, the design incorporates a rigorous feature extraction process that is strictly time-bound. Additionally, the post-hoc audit is a critical step that, while primarily aimed at agent response leakage, also serves to highlight potential temporal phrases in customer submissions. To further mitigate this risk, we can implement a secondary audit process that specifically identifies urgency-related phrases in ticket bodies, thus enhancing our control over potential leakage pathways.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The concern regarding concept drift is acknowledged, and while the stratification approach aims to ensure balanced representation, we recognize that it does not fully control for non-stationarity. To address this, we will implement a monitoring system that tracks performance metrics over time, allowing us to adjust our model as needed to account for any drift observed in the relationship between features and the breach label.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 4,
+        "justification": "I acknowledge the concern regarding the complexity of the transformer model and the potential for overfitting. While the grid search is designed to ensure fairness, I will implement additional measures such as complexity penalties during tuning to further mitigate the risk of overfitting. This will help to balance the tuning efforts across both models more effectively.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The critique regarding PR-AUC as a primary metric is valid, and I acknowledge that it does not fully capture operational constraints. To address this, we will ensure that model selection and threshold tuning explicitly consider operational thresholds, such as precision requirements, to avoid selecting models that perform well on PR-AUC but poorly in real-world scenarios.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "While the audit process is primarily reactive, it is a necessary step to ensure data integrity. To strengthen this aspect, we will implement a data pipeline validation step that ensures ticket body fields are frozen at creation and not subject to edits post-creation. This proactive measure will help to further mitigate contamination risks.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The concern about sample selection bias is noted, and the impact of excluding auto-closed tickets is likely minimal on the overall evaluation metric, making this finding more of a theoretical concern than a practical flaw.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While I have strengthened my rebuttals for several findings, the adjustments indicate that there are still unresolved issues that warrant empirical testing. The acceptance of F6 as immaterial also contributes to the overall assessment of the methodology."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The text feature extraction (TF-IDF and BERT embeddings) is performed 'strictly at ticket creation time' and contains no information about future events that would constitute label leakage.",
+        "failure_mechanism": "The ticket body text itself may contain explicit or implicit temporal information that is predictive of the SLA breach label in a non-causal, leaky way. For example, customers may write 'This is urgent, I need a response within 2 hours' or reference a specific date/time ('since yesterday'). If such phrases are correlated with the SLA target (e.g., Premium tier has a 4-hour SLA and customers know this), the model could learn to predict breach risk from the customer's stated urgency rather than from the semantic content of the issue. This is a form of target leakage because the text feature is generated from customer input that may be influenced by their knowledge of the SLA clock, which is directly used to compute the label.",
+        "evidence_test": "Perform an ablation: train a 'text-only' model on a synthetic dataset where ticket bodies are replaced with a single feature indicating whether they contain time-sensitive phrases (e.g., regex for 'urgent', 'ASAP', 'within X hours', 'since [date]'). If this simple model achieves non-trivial PR-AUC, it indicates leakage. Alternatively, manually inspect the top TF-IDF features or attention weights of the enhanced model to see if they are dominated by temporal/urgency terms.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Stratifying the temporal split by customer tier and channel 'ensures that the class distribution and operational conditions are representative and balanced across splits' and prevents minority segments from being lost.",
+        "failure_mechanism": "Stratification within contiguous time windows can introduce temporal leakage if the sampling is not purely chronological. More critically, it assumes stationarity within strata: that the relationship between features (including text) and the breach label is stable over the 36-month period for each stratum. In a live support environment, product changes, policy updates, agent turnover, and seasonal effects can cause concept drift within a stratum. The model may learn patterns that are historical artifacts not applicable to the test period, even if the proportion of Premium email tickets is constant. The stratified split gives a false sense of security about representativeness.",
+        "evidence_test": "Plot the breach rate over time (rolling window) for each stratum (tier x channel). If there are significant trends or step changes within the training, validation, or test periods, stationarity is violated. Also, train a simple model (e.g., logistic regression on metadata) and evaluate its performance on sliding temporal windows within the training set to detect performance decay over time.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (logistic regression on structured metadata) and enhanced model (transformer) receive 'equivalent tuning effort' because both have their hyperparameters grid-searched on the same validation set and metric.",
+        "failure_mechanism": "The tuning spaces are not symmetric in complexity or risk of overfitting. The transformer has orders of magnitude more parameters and a vastly larger hyperparameter space (learning rate, attention heads, pooling strategy, etc.). Grid searching on the same validation set, especially with a limited 6-month window, disproportionately favors the more flexible model due to overfitting to the validation set. The transformer's capacity to memorize noise or specific validation-set patterns is higher, and the grid search may select a configuration that exploits this. The claimed 'equivalent effort' is procedural, not statistical.",
+        "evidence_test": "Implement a nested cross-validation or a time-series cross-validation within the training period to estimate the variance in validation performance for each model. Alternatively, compare the performance delta between the two models when both are tuned via a robust procedure (e.g., Bayesian optimization with a penalty for model complexity) versus the proposed grid search.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric, PR-AUC, 'aligns with the operational goal: catch breach-risk tickets without flooding operations with false alarms' given a limited escalation capacity.",
+        "failure_mechanism": "PR-AUC summarizes performance across all possible thresholds, but the operational constraint is a hard capacity limit (e.g., '10\u201320% of queue'). The model will be deployed at a single threshold chosen to meet this capacity. PR-AUC can be high even if the precision-recall curve has a sharp drop precisely at the required operational point (e.g., recall is high at low precision but collapses when precision is forced to 80-90%). A model with a better PR-AUC could be operationally worse if its curve is less favorable at the specific threshold dictated by capacity.",
+        "evidence_test": "Plot the precision-recall curve for both models and mark the operational region (e.g., precision >= 0.8). Compare the recall at that region. Also, simulate the operational scenario: apply a threshold to both models that limits alerts to 15% of the test set, and compare the actual precision and recall achieved.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The post-hoc audit scanning for response phrases (e.g., 'assigned to', 'resolved') is sufficient to detect contamination of the ticket body text.",
+        "failure_mechanism": "Contamination can be subtle and not caught by simple phrase matching. Internal notes or agent responses could be appended to the ticket body field in the data pipeline before the 'creation timestamp' is logged. The audit is reactive and may miss systemic data pipeline issues. Furthermore, if the ticket body is edited by the customer after creation but before the first response (some systems allow this), that edit could contain information about the impending breach.",
+        "evidence_test": "Analyze the distribution of ticket body length and token counts over time. A bimodal distribution or a sudden increase in average length in later periods could indicate appended content. Also, sample tickets from the test set and manually trace their lifecycle in the raw data logs to verify the ticket body field was frozen at creation.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding tickets that were 'auto-closed or never received a response' does not bias the evaluation.",
+        "failure_mechanism": "This exclusion criterion is based on the outcome (whether a first response occurred). If the likelihood of a ticket receiving no response is correlated with both the ticket features (e.g., confusing text, low-tier customer) and the latent breach risk, then the analyzed dataset is a non-random subset. This could lead to sample selection bias, affecting the estimated performance of the model on the full population of created tickets.",
+        "evidence_test": "Compare the metadata distributions (tier, channel, product area) and text characteristics (length, readability) between included and excluded tickets. If significant differences exist, the bias is material.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Using both TF-IDF and BERT embeddings as text features is an optimal representation for the transformer model.",
+        "failure_mechanism": "The transformer is designed to ingest raw tokens or subword tokens. Feeding it pre-computed BERT embeddings (static features) may limit its ability to perform task-specific attention over the sequence. The TF-IDF features are a bag-of-words representation that is redundant with the transformer's own token embeddings. This unconventional design choice may not be harmful, but it is not the standard or most efficient way to use a transformer.",
+        "evidence_test": "Ablation study: compare performance of the enhanced model using (a) raw text tokens only, (b) BERT [CLS] only, (c) TF-IDF only, and (d) the proposed concatenation.",
+        "flaw_category": "defensible_unconventional"
+      }
+    ],
+    "summary": "The PoC contains a likely fatal flaw due to potential label leakage via time-sensitive language in ticket text, and material concerns regarding temporal stratification assumptions and validation overfitting. The core comparison may be invalid if text features contain proxy signals for the label.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I contest the challenges raised on findings F1, F2, F3, F4, and F5, as the design does contain mechanisms to address the concerns, even if my initial rebuttals were not fully articulated. I maintain that the design choices mitigate the risks identified by the critic, although I acknowledge the need for clearer explanations. For F3 and F4, I will adjust the severity to reflect the residual risks while still asserting the design's intent to control for these issues. I accept the critic's evaluation of F6 as reasonable.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 6,
+        "justification": "While the concern about customer-generated temporal phrases is valid, the design incorporates a rigorous feature extraction process that is strictly time-bound. Additionally, the post-hoc audit is a critical step that, while primarily aimed at agent response leakage, also serves to highlight potential temporal phrases in customer submissions. To further mitigate this risk, we can implement a secondary audit process that specifically identifies urgency-related phrases in ticket bodies, thus enhancing our control over potential leakage pathways.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The concern regarding concept drift is acknowledged, and while the stratification approach aims to ensure balanced representation, we recognize that it does not fully control for non-stationarity. To address this, we will implement a monitoring system that tracks performance metrics over time, allowing us to adjust our model as needed to account for any drift observed in the relationship between features and the breach label.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 4,
+        "justification": "I acknowledge the concern regarding the complexity of the transformer model and the potential for overfitting. While the grid search is designed to ensure fairness, I will implement additional measures such as complexity penalties during tuning to further mitigate the risk of overfitting. This will help to balance the tuning efforts across both models more effectively.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The critique regarding PR-AUC as a primary metric is valid, and I acknowledge that it does not fully capture operational constraints. To address this, we will ensure that model selection and threshold tuning explicitly consider operational thresholds, such as precision requirements, to avoid selecting models that perform well on PR-AUC but poorly in real-world scenarios.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "While the audit process is primarily reactive, it is a necessary step to ensure data integrity. To strengthen this aspect, we will implement a data pipeline validation step that ensures ticket body fields are frozen at creation and not subject to edits post-creation. This proactive measure will help to further mitigate contamination risks.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The concern about sample selection bias is noted, and the impact of excluding auto-closed tickets is likely minimal on the overall evaluation metric, making this finding more of a theoretical concern than a practical flaw.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While I have strengthened my rebuttals for several findings, the adjustments indicate that there are still unresolved issues that warrant empirical testing. The acceptance of F6 as immaterial also contributes to the overall assessment of the methodology."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=7 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=4, orig_sev=6 < 7, REBUT-SCOPE \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

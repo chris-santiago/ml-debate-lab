@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_hyp132",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts SLA breach using only information available at ticket creation time.",
+        "failure_mechanism": "Including agent seniority at assignment (and possibly other assignment\u2011related features) leaks information that is only known after the ticket has been assigned, which occurs after creation. This gives the model access to future information, allowing it to cheat and inflate performance.",
+        "evidence_test": "Verify whether any assignment\u2011related feature is derived from data with a timestamp after ticket creation. If so, retrain the model without those features and measure the drop in PR\u2011AUC. A significant drop confirms leakage.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Any performance gain of the transformer model over the logistic regression baseline is attributable to the addition of ticket text features.",
+        "failure_mechanism": "The transformer model has far greater representational capacity than logistic regression. Improvement may stem from this capacity increase rather than from the text features themselves. Without a baseline of comparable capacity that excludes text, the effect of text cannot be isolated.",
+        "evidence_test": "Train a comparison model that uses the same architecture as the enhanced model but with the text features ablated (e.g., replaced with zeros or mean vectors). Compare its PR\u2011AUC to the logistic regression baseline and the full model. If the ablated model performs similarly to the full model, the gain is not due to text.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Engineered historical features (prior SLA compliance rate, prior ticket count) are computed using only information strictly preceding each ticket, ensuring no temporal leakage.",
+        "failure_mechanism": "If the feature computation inadvertently incorporates data from the same or future time windows (e.g., using a global aggregate instead of a rolling window), the model gains access to future information, inflating performance.",
+        "evidence_test": "Audit the feature generation code to confirm that for each ticket, the lookback window excludes the ticket itself and any tickets with timestamps equal to or later than the ticket's creation time. Alternatively, recompute features using an expanding window that only includes prior tickets and compare to the original features; any discrepancy indicates leakage.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding tickets without a first-response event or that were auto-closed does not introduce systematic bias that affects the relative comparison between models.",
+        "failure_mechanism": "Such exclusions may remove tickets that are systematically different (e.g., low\u2011priority spam, or tickets resolved without agent interaction). If the excluded subset differs in breach risk or text characteristics, the estimated performance may not generalize to the full ticket stream, and the bias could affect the two models differently if they rely on different features.",
+        "evidence_test": "Compare the distribution of metadata, text length, and breach rate between included and excluded tickets. If significant differences exist, re\u2011run the experiment including the excluded tickets with a suitable label (e.g., treat auto\u2011closed as non\u2011breach) and observe whether the performance gap changes.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The SLA breach label is stationary over the 36\u2011month period; tier\u2011specific SLA thresholds do not change, so the learning problem is consistent across training, validation, and test splits.",
+        "failure_mechanism": "If SLA configurations evolve (e.g., tightening or loosening thresholds), the label definition drifts, causing concept drift. A model trained on historical SLA definitions may mis\u2011calibrate for future tickets, and the reported PR\u2011AUC may overstate deployable performance.",
+        "evidence_test": "Extract the SLA target values associated with each ticket over time and check for variation. If thresholds shift, recompute labels using a fixed SLA (or model the shift) and evaluate whether performance differences persist.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Temporal splits combined with stratification by tier and channel produce independent, identically distributed samples; there is no residual customer\u2011level correlation that could inflate performance estimates.",
+        "failure_mechanism": "The same customer can appear in multiple time windows (e.g., a customer with tickets in both training and test periods). Features such as prior compliance rate or ticket count create dependence across splits, violating the IID assumption and leading to overly optimistic confidence intervals.",
+        "evidence_test": "Compute the proportion of customers that have tickets in more than one split. If non\u2011negligible, re\u2011split the data at the customer level (e.g., hold out entire customers) and compare performance; a substantial drop indicates that the original split leaked customer\u2011specific information.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains several methodological concerns, most critically the potential use of post\u2011creation features (agent assignment seniority) that leak future information, which could fatally invalidate the claimed advantage of the transformer model. Additional issues include missing capacity\u2011controlled baselines, possible leakage in historical feature construction, selection bias from excluding certain tickets, non\u2011stationary SLA definitions, and customer\u2011level dependence across temporal splits. Addressing these points is necessary to support a credible conclusion about the value of ticket text for SLA breach prediction.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims that 'agent seniority level at assignment' leaks future information because assignment happens after creation. However, the objective is to predict SLA breaches. In a real-world ticketing system, the 'first response' (the target event) occurs after assignment. The model is intended to alert operations to breach-risk tickets. If the model knows who is assigned, it can predict if that specific agent's seniority/speed will lead to a breach. This is not 'cheating' in the context of a predictive alert system that triggers after assignment but before the response deadline. However, the design says 'predicting... on chronologically held-out support tickets' and mentions 'extracted strictly at ticket creation time' for text. There is a contradiction: the text is at creation, but agent seniority is at assignment. If the goal is a 'creation-time' alert, F1 is a fatal leak. If the goal is an 'assignment-time' alert, it is valid. The design says 'predicting first-response SLA breaches', but doesn't explicitly state the trigger event is 'creation'. But Section 3 says 'all text features are extracted strictly at ticket creation time'. This implies the intended inference point is creation. If so, agent seniority is a leak.\n\nF2 argues that the transformer's capacity, not the text, causes the gain. The design uses a Logistic Regression baseline. While LR is simple, the 'Enhanced' model is a transformer encoder. The critic suggests a transformer-based baseline without text. This is a valid point regarding isolating the effect of the feature set vs. the model architecture.\n\nF3 concerns the rolling window for historical features. The design specifies 'prior customer SLA compliance rate in the last 90 days' and 'prior ticket count in the last 30 days'. It does not explicitly state these are computed as rolling windows relative to each ticket's timestamp, though it's standard practice. This is a potential silent misconfig.\n\nF4 discusses the exclusion of auto-closed tickets. This is a standard data cleaning step for a 'first-response' prediction task. Since both models see the same filtered set, the relative comparison (the hypothesis) remains valid even if the absolute performance doesn't generalize to spam.\n\nF5 concerns SLA threshold drift. The design states SLA targets are 'sourced from the ticketing system's SLA configuration'. This implies the label is dynamic based on the config at that time. If the config changed, the label definition changed. This is a valid concern for concept drift.\n\nF6 addresses customer-level leakage. The design uses a temporal split. If a customer has tickets in both training and test, the model might memorize customer-specific behavior. This is a classic leakage pattern in B2B SaaS data.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The design explicitly mandates that text features be extracted 'strictly at ticket creation time' to prevent contamination. Including 'agent seniority level at assignment' contradicts this constraint, as assignment occurs after creation. This introduces a temporal leak where the model knows the assigned agent's profile before the response is sent, which would not be available at the intended inference point (creation)."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The critic is correct that model capacity is a confound. To resolve this, we can run an ablation study: a transformer model using only structured metadata (via an embedding layer) vs. the full transformer. If the metadata-only transformer performs similarly to the LR baseline, the gain is due to text. If it performs similarly to the full transformer, the gain is due to capacity. This experiment would settle the question."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The design specifies the lookback windows (30/90 days) but does not explicitly detail the implementation of the rolling join. An audit of the SQL/Python feature engineering code is required to ensure no 'future' tickets are included in the aggregates for a given ticket. This is an empirical verification of the pipeline."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The objective is to test if text features improve the prediction of SLA breaches for tickets that actually enter the agent workflow. Auto-closed tickets and those without responses are outside the operational scope of 'first-response' prediction. Their exclusion does not bias the relative comparison between the baseline and enhanced models."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "The design uses the system's SLA configuration, which may change. To settle this, we can plot the distribution of SLA targets over the 36-month period. If targets are stable, the concern is resolved. If they shift, we can re-evaluate using a fixed 'global' SLA to see if the performance delta persists."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "In B2B contexts, customer-level correlation is common. To resolve this, we can perform a 'group-split' evaluation where all tickets from a specific customer are assigned to only one split. If the PR-AUC drops significantly compared to the temporal split, it confirms the model was over-fitting to customer identities rather than generalizable patterns."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "A FATAL flaw (F1) was conceded: the inclusion of agent seniority at assignment introduces a temporal leak that violates the design's own 'creation-time' constraint, fundamentally inflating the performance metrics."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "The defender concedes that including 'agent seniority at assignment' violates the requirement that all features be known at ticket creation time, confirming the temporal leakage described in the finding. This directly addresses the failure mechanism."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal defers to a future ablation study without providing any evidence or analysis. It does not address the mechanism of capacity confounding, and the proposed severity adjustment of \u22122 is disproportionate to the unresolved concern."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal merely notes that an audit of the feature engineering code is needed, offering no confirmation that the look\u2011back windows are correctly implemented. It does not resolve the temporal leakage concern, making the \u22122 severity adjustment unjustified."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender argues that auto\u2011closed or non\u2011responded tickets are outside the operational scope of first\u2011response SLA prediction, so their exclusion does not bias the relative comparison between baseline and enhanced models. This directly addresses the claim that the exclusion introduces systematic bias affecting the model comparison."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal proposes to check SLA target stability but supplies no data or analysis. Without evidence that the label is stationary, the proposed \u22121 severity adjustment is not proportionate to the unresolved concept\u2011drift risk."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal suggests a future group\u2011split evaluation to assess customer\u2011level correlation but provides no results. It does not mitigate the IID violation concern, so the \u22121 severity adjustment is unwarranted."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining the CONCEDE for F1 and the REBUT-SCOPE for F4 as they were accepted. For F2, F3, F5, and F6, the critic challenged my R1 severity adjustments because I deferred to future experiments without providing immediate evidence. I have re-evaluated these using the DEFER criteria: for each, I have specified the settling experiment and analyzed whether the primary conclusion (relative gain of text features) survives the flaw. In all four cases, the flaw would likely affect both the baseline and the enhanced model similarly, meaning the relative delta (the primary objective) remains a valid signal even if absolute performance is inflated or drifted.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The design explicitly mandates that text features be extracted 'strictly at ticket creation time'. Including 'agent seniority level at assignment' contradicts this, as assignment occurs after creation, introducing a temporal leak.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern is whether capacity, not text, drives the gain. Settling experiment: Train a 'Metadata-Transformer' (same architecture as the enhanced model but with text features replaced by zero-vectors). If Metadata-Transformer \u2248 LR Baseline, the gain is due to text. If Metadata-Transformer \u2248 Enhanced Model, the gain is due to capacity. The primary conclusion (text adds value) survives if the Metadata-Transformer still outperforms the LR baseline but underperforms the Enhanced model. Because the capacity increase applies to the processing of metadata in both the Metadata-Transformer and the Enhanced model, the relative delta attributable to text remains isolatable.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern is whether rolling window aggregates leak future data. Settling experiment: A code audit of the feature engineering pipeline to verify the join condition is strictly `ticket_timestamp > history_timestamp`. If the audit finds leakage, the features must be recomputed. The primary conclusion survives because the historical features (prior compliance/count) are used by both the LR baseline and the Enhanced model. Any leakage in these features would inflate the PR-AUC of both models symmetrically, leaving the relative improvement provided by the text features intact.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The objective is to predict breaches for tickets that enter the agent workflow. Auto-closed tickets are outside this operational scope. Their exclusion does not bias the relative comparison between the baseline and enhanced models.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern is concept drift due to changing SLA thresholds. Settling experiment: Plot the distribution of SLA targets over the 36-month window. If targets shift, re-evaluate using a fixed global SLA. The primary conclusion survives because any shift in the label definition (the 'ground truth') affects the training and testing of both the LR baseline and the Enhanced model equally. While absolute PR-AUC might change, the relative advantage of adding text features to the metadata is not dependent on the specific threshold value used to define a breach.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern is customer-level correlation violating IID. Settling experiment: Implement a group-split (hold out entire customers). If PR-AUC drops, the model was over-fitting to customer IDs. The primary conclusion survives because customer-level correlation (e.g., a specific customer always breaching) is captured by the 'prior compliance rate' and 'customer tier' features, which are available to both the baseline and the enhanced model. The relative gain provided by the transformer's analysis of the ticket text is an independent signal from the customer's historical identity.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "While several findings were deferred to empirical tests, F1 was conceded as a FATAL flaw (severity 9) involving temporal leakage of agent assignment data, which materially invalidates the claim that predictions are made at ticket creation time."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts SLA breach using only information available at ticket creation time.",
+        "failure_mechanism": "Including agent seniority at assignment (and possibly other assignment\u2011related features) leaks information that is only known after the ticket has been assigned, which occurs after creation. This gives the model access to future information, allowing it to cheat and inflate performance.",
+        "evidence_test": "Verify whether any assignment\u2011related feature is derived from data with a timestamp after ticket creation. If so, retrain the model without those features and measure the drop in PR\u2011AUC. A significant drop confirms leakage.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Any performance gain of the transformer model over the logistic regression baseline is attributable to the addition of ticket text features.",
+        "failure_mechanism": "The transformer model has far greater representational capacity than logistic regression. Improvement may stem from this capacity increase rather than from the text features themselves. Without a baseline of comparable capacity that excludes text, the effect of text cannot be isolated.",
+        "evidence_test": "Train a comparison model that uses the same architecture as the enhanced model but with the text features ablated (e.g., replaced with zeros or mean vectors). Compare its PR\u2011AUC to the logistic regression baseline and the full model. If the ablated model performs similarly to the full model, the gain is not due to text.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Engineered historical features (prior SLA compliance rate, prior ticket count) are computed using only information strictly preceding each ticket, ensuring no temporal leakage.",
+        "failure_mechanism": "If the feature computation inadvertently incorporates data from the same or future time windows (e.g., using a global aggregate instead of a rolling window), the model gains access to future information, inflating performance.",
+        "evidence_test": "Audit the feature generation code to confirm that for each ticket, the lookback window excludes the ticket itself and any tickets with timestamps equal to or later than the ticket's creation time. Alternatively, recompute features using an expanding window that only includes prior tickets and compare to the original features; any discrepancy indicates leakage.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding tickets without a first-response event or that were auto-closed does not introduce systematic bias that affects the relative comparison between models.",
+        "failure_mechanism": "Such exclusions may remove tickets that are systematically different (e.g., low\u2011priority spam, or tickets resolved without agent interaction). If the excluded subset differs in breach risk or text characteristics, the estimated performance may not generalize to the full ticket stream, and the bias could affect the two models differently if they rely on different features.",
+        "evidence_test": "Compare the distribution of metadata, text length, and breach rate between included and excluded tickets. If significant differences exist, re\u2011run the experiment including the excluded tickets with a suitable label (e.g., treat auto\u2011closed as non\u2011breach) and observe whether the performance gap changes.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The SLA breach label is stationary over the 36\u2011month period; tier\u2011specific SLA thresholds do not change, so the learning problem is consistent across training, validation, and test splits.",
+        "failure_mechanism": "If SLA configurations evolve (e.g., tightening or loosening thresholds), the label definition drifts, causing concept drift. A model trained on historical SLA definitions may mis\u2011calibrate for future tickets, and the reported PR\u2011AUC may overstate deployable performance.",
+        "evidence_test": "Extract the SLA target values associated with each ticket over time and check for variation. If thresholds shift, recompute labels using a fixed SLA (or model the shift) and evaluate whether performance differences persist.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Temporal splits combined with stratification by tier and channel produce independent, identically distributed samples; there is no residual customer\u2011level correlation that could inflate performance estimates.",
+        "failure_mechanism": "The same customer can appear in multiple time windows (e.g., a customer with tickets in both training and test periods). Features such as prior compliance rate or ticket count create dependence across splits, violating the IID assumption and leading to overly optimistic confidence intervals.",
+        "evidence_test": "Compute the proportion of customers that have tickets in more than one split. If non\u2011negligible, re\u2011split the data at the customer level (e.g., hold out entire customers) and compare performance; a substantial drop indicates that the original split leaked customer\u2011specific information.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains several methodological concerns, most critically the potential use of post\u2011creation features (agent assignment seniority) that leak future information, which could fatally invalidate the claimed advantage of the transformer model. Additional issues include missing capacity\u2011controlled baselines, possible leakage in historical feature construction, selection bias from excluding certain tickets, non\u2011stationary SLA definitions, and customer\u2011level dependence across temporal splits. Addressing these points is necessary to support a credible conclusion about the value of ticket text for SLA breach prediction.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining the CONCEDE for F1 and the REBUT-SCOPE for F4 as they were accepted. For F2, F3, F5, and F6, the critic challenged my R1 severity adjustments because I deferred to future experiments without providing immediate evidence. I have re-evaluated these using the DEFER criteria: for each, I have specified the settling experiment and analyzed whether the primary conclusion (relative gain of text features) survives the flaw. In all four cases, the flaw would likely affect both the baseline and the enhanced model similarly, meaning the relative delta (the primary objective) remains a valid signal even if absolute performance is inflated or drifted.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The design explicitly mandates that text features be extracted 'strictly at ticket creation time'. Including 'agent seniority level at assignment' contradicts this, as assignment occurs after creation, introducing a temporal leak.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern is whether capacity, not text, drives the gain. Settling experiment: Train a 'Metadata-Transformer' (same architecture as the enhanced model but with text features replaced by zero-vectors). If Metadata-Transformer \u2248 LR Baseline, the gain is due to text. If Metadata-Transformer \u2248 Enhanced Model, the gain is due to capacity. The primary conclusion (text adds value) survives if the Metadata-Transformer still outperforms the LR baseline but underperforms the Enhanced model. Because the capacity increase applies to the processing of metadata in both the Metadata-Transformer and the Enhanced model, the relative delta attributable to text remains isolatable.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern is whether rolling window aggregates leak future data. Settling experiment: A code audit of the feature engineering pipeline to verify the join condition is strictly `ticket_timestamp > history_timestamp`. If the audit finds leakage, the features must be recomputed. The primary conclusion survives because the historical features (prior compliance/count) are used by both the LR baseline and the Enhanced model. Any leakage in these features would inflate the PR-AUC of both models symmetrically, leaving the relative improvement provided by the text features intact.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The objective is to predict breaches for tickets that enter the agent workflow. Auto-closed tickets are outside this operational scope. Their exclusion does not bias the relative comparison between the baseline and enhanced models.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern is concept drift due to changing SLA thresholds. Settling experiment: Plot the distribution of SLA targets over the 36-month window. If targets shift, re-evaluate using a fixed global SLA. The primary conclusion survives because any shift in the label definition (the 'ground truth') affects the training and testing of both the LR baseline and the Enhanced model equally. While absolute PR-AUC might change, the relative advantage of adding text features to the metadata is not dependent on the specific threshold value used to define a breach.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern is customer-level correlation violating IID. Settling experiment: Implement a group-split (hold out entire customers). If PR-AUC drops, the model was over-fitting to customer IDs. The primary conclusion survives because customer-level correlation (e.g., a specific customer always breaching) is captured by the 'prior compliance rate' and 'customer tier' features, which are available to both the baseline and the enhanced model. The relative gain provided by the transformer's analysis of the ticket text is an independent signal from the customer's historical identity.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "While several findings were deferred to empirical tests, F1 was conceded as a FATAL flaw (severity 9) involving temporal leakage of agent assignment data, which materially invalidates the claim that predictions are made at ticket creation time."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

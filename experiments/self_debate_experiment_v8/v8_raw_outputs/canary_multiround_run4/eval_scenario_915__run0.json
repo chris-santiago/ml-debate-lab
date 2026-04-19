@@ -1,0 +1,234 @@
+{
+  "case_id": "eval_scenario_915",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment establishes whether graph-based relational inductive bias improves *forward-looking* intrusion detection.",
+        "failure_mechanism": "The label definition ('within seven days of a confirmed malicious interval') overlaps with the feature lookback window ('prior seven days of telemetry') during the active attack phase. If an attack starts on Day 10, the label for Day 12 is positive. The features for Day 12 include telemetry from Day 5-11, which includes the attack start on Day 10. The model can detect the attack *in progress* rather than predicting it *before* it happens. This conflates detection with prediction, invalidating the 'forward-looking' claim.",
+        "evidence_test": "Calculate the overlap between the 'attack active period' and the 'feature lookback period' for all positive labels. If the model achieves high AUPRC on days where the attack is already visible in the features (e.g., >50% of positive days have attack signals in the lookback window), the 'forward-looking' claim is false.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The evaluation reflects the data generating process the SOC actually faces.",
+        "failure_mechanism": "Excluding 'host-days near unresolved investigations' creates a 'clean' negative class that removes ambiguous cases. In production, the model will face unresolved investigations (false positives). The model is evaluated on a distribution where negatives are 'easy' (no suspicious activity), leading to inflated performance metrics compared to production.",
+        "evidence_test": "Compare the performance on the 'excluded' days (if available) vs. the included days. Or check the ratio of 'unresolved' days in production vs. the training set. If excluded days show significantly lower precision, the production performance will be lower than reported.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Destination reputation buckets used as features do not contain post-hoc information.",
+        "failure_mechanism": "Reputation scores often update post-incident (e.g., 'IP X is malicious' after investigation). If these buckets are updated in real-time based on the incident being investigated, using them for days *before* the incident is confirmed is look-ahead bias. The text says 'remove... post hoc annotations', but reputation buckets are often external feeds, not annotations, and may update dynamically after the attack is detected.",
+        "evidence_test": "Audit the source of 'destination reputation buckets'. Check if they are static historical snapshots or dynamic feeds updated post-incident. Compare the timestamp of the reputation update vs. the timestamp of the telemetry.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The PoC contains a FATAL flaw where the label definition overlaps with the feature window during active attacks, invalidating the 'forward-looking' hypothesis. Two MATERIAL flaws regarding negative class bias and reputation data sources further weaken the validity of the performance claims.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "## Finding F1 Analysis\nThe critic claims the 7-day label window overlaps with the 7-day feature lookback, allowing detection of in-progress attacks rather than forward-looking prediction. The hypothesis explicitly states it tests \"forward-looking generalization to unseen campaigns\" and that the experiment \"establishes whether graph-based relational inductive bias improves forward-looking intrusion detection.\" The design splits data temporally and by campaign novelty, but does not include an explicit control that prevents features from including attack signals during the labeled attack window. The critic's logical analysis is correct: if an attack starts on Day 10, Day 12 is labeled positive (within 7 days), but features for Day 12 include Day 5-11 telemetry, which contains Day 10 attack signals. This conflates detection with prediction. I cannot identify an explicit temporal gap control in the methodology that would resolve this mechanism. This appears to be a genuine flaw in how the forward-looking claim is operationalized.\n\n## Finding F2 Analysis\nThe critic argues that excluding host-days near unresolved investigations creates an artificially \"clean\" negative class, inflating metrics compared to production where the model faces ambiguous cases. The methodology explicitly states this exclusion: \"exclude host-days near unresolved investigations and remove analyst-authored fields, ticket identifiers, suppression states, and any post hoc annotations.\" This is a stated design choice, not an oversight. The experiment explicitly scopes to cases with confirmed outcomes. The claim is \"evaluation reflects the data generating process the SOC actually faces\" - but the methodology narrows this to cases with confirmed malicious intervals. This is a scope limitation, not an unknown flaw. The relative comparison (GNN vs GBDT) remains valid under both distributions.\n\n## Finding F3 Analysis\nThe critic claims destination reputation buckets may contain look-ahead bias if they update post-incident (e.g., \"IP X is malicious\" added after investigation). The methodology removes \"post hoc annotations\" but reputation feeds are external, not internal annotations, and may update dynamically. The critic's concern is valid in principle: if reputation scores used for historical days were updated after the attack was discovered, this is look-ahead bias. However, this requires auditing the specific data source to determine. The methodology does not specify whether reputation snapshots are time-lagged. This is a testable empirical claim about the data source that cannot be resolved by design argument alone.\n\n## Pass 2 Synthesis\n- F1: CONCEDE - valid flaw that undermines the forward-looking claim; no design control addresses it\n- F2: REBUT-SCOPE - valid concern but explicitly scoped out; relative comparison remains fair\n- F3: DEFER - empirical question about data source timestamps; no design argument can resolve",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies that the 7-day label window overlaps with the 7-day feature lookback. If an attack starts on Day 10, Day 12 is labeled positive (within 7 days of confirmed malicious interval), but features for Day 12 include telemetry from Day 5-11, which contains the attack start on Day 10. The model detects the attack in progress rather than predicting it before it happens. The hypothesis explicitly claims 'forward-looking' detection and tests 'future-time generalization to unseen campaigns,' but no design control prevents features from including attack signals during the labeled period. The campaign-level split (keeping intrusion windows in the same split) addresses cross-campaign leakage but not within-campaign temporal overlap. This flaw invalidates the forward-looking claim."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly states the design choice to exclude host-days near unresolved investigations: 'exclude host-days near unresolved investigations and remove analyst-authored fields, ticket identifiers, suppression states, and any post hoc annotations that could leak outcome information.' This is a stated scope limitation, not an unknown flaw. The experiment evaluates on cases with confirmed outcomes, not the full production distribution. The relative comparison (GNN vs GBDT) is fair because both models are evaluated on identical data. The critic's concern about production performance on ambiguous cases is valid for deployment, but it is outside the stated experiment scope. The claim 'evaluation reflects the data generating process' is narrowed by the explicit exclusions in the methodology."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic raises a valid empirical question: whether destination reputation buckets are static historical snapshots or dynamic feeds that update post-incident. The methodology removes 'post hoc annotations' but does not specify the temporal behavior of external reputation feeds. An audit of the reputation data source is required to determine if timestamps reflect when the score was known vs. when it was retroactively updated. 1) The settling experiment: audit the reputation feed source to compare reputation update timestamps against incident discovery timestamps. 2) If timestamps are prior to or independent of incident discovery, the design is sound; if updates post-date discovery and correlate with incident findings, look-ahead bias exists. 3) The primary conclusion (GNN vs GBDT relative comparison) would still hold if bias affects both models equally, but the absolute performance metrics would be inflated. 4) The 'forward-looking' claim could be further invalidated if reputation feeds only update after attacks are confirmed. This cannot be resolved by design argument alone - it requires examining the specific data source."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 was CONCEDed at adjusted severity 9, which prevents EXONERATE. F2 was scope-rebutted to adjusted severity 2 (MINOR). F3 was DEFERred as an empirically testable question about data source timestamps. No FATAL or MATERIAL finding remains above adjusted severity 3 after rebuttal, but the CONCEDE on F1 means the design has a genuine flaw that affects the primary hypothesis claim. The verdict is empirical_test_agreed because F1 requires empirical re-evaluation of whether the experiment can validly test forward-looking detection given the label/feature overlap, and F3 requires empirical audit of reputation feed timestamps."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "Defender explicitly concedes the temporal overlap between the 7-day label window and 7-day feature lookback invalidates the forward-looking claim. The mechanism (detecting attacks in progress rather than predicting them) is acknowledged as a fatal flaw. The severity remains FATAL (9) as the core hypothesis is compromised."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender's scope argument does not resolve the distribution shift mechanism. The claim explicitly asserts the evaluation reflects the SOC process, but the exclusion of unresolved investigations creates a 'clean' negative class that differs from production. The cited methodology text admits the exclusion but does not justify why this still reflects the SOC process. The severity reduction to 2 is disproportionate because the claim's validity is compromised regardless of relative comparison fairness."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "Defender acknowledges the empirical uncertainty regarding reputation feed timestamps and defers to an audit. This is a valid acknowledgment of the limitation. The finding remains valid until the audit is completed, so severity remains MATERIAL (5)."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "For F1, I maintain the CONCEDE as the critic ACCEPTed it - the temporal overlap flaw is fatal and invalidates the forward-looking claim. For F3, I maintain DEFER as ACCEPTed - the empirical audit is required. For F2, the critic CHALLENGEd my REBUT-SCOPE, correctly observing that the design choice to exclude unresolved investigations directly contradicts the claim that evaluation reflects the SOC process. However, there IS a partial answer available: both models are evaluated on identical data, so the relative comparison (GNN vs GBDT) remains valid even if absolute metrics are inflated. The empirical test is to measure performance on excluded days. Since the primary comparative conclusion survives the flaw, DEFER is the correct path rather than CONCEDE.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The temporal overlap between the 7-day label window and 7-day feature lookback allows the model to detect attacks already in progress rather than predicting them before they happen. The critic correctly identifies this invalidates the 'forward-looking' claim. I maintained my R1 CONCEDE, and the critic ACCEPTed this finding. The forward-looking hypothesis cannot be tested with the current design because features include signals from within the labeled attack window.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly CHALLENGED my REBUT-SCOPE: the explicit exclusion of unresolved investigations creates a distribution that differs from production, contradicting the claim that evaluation reflects the SOC process. However, I can DEFER rather than CONCEDE because: (1) The settling experiment is to evaluate both models on the held-out unresolved investigation days and compare precision to the included set. (2) If both GNN and GBDT maintain AUPRC on excluded days, the design is sound for the comparative claim. (3) If excluded days show significantly lower precision, the critique is validated. (4) The primary conclusion (GNN vs GBDT relative ranking) CAN survive this flaw because both models face identical distribution - only absolute metrics are inflated. The comparative finding holds even under distribution shift. The empirical test can settle this, so DEFER is appropriate.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic ACCEPTed my DEFER - the empirical question of whether reputation buckets are static snapshots or dynamically updated post-incident requires an audit of the specific data source. My R1 justification addressed all four DEFER questions: the audit experiment, the conditions for vindication vs validation, and the fact that the relative comparison could survive even if look-ahead bias exists (affecting both models equally). I maintain this position as the critic ACCEPTed it.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings remain at MATERIAL severity after R2: F1 (conceded, fatal to the forward-looking claim but the relative GNN vs GBDT comparison is still testable with modified design) and F3 (deferred to reputation audit). F2 is DEFERRED to an empirical test comparing performance on excluded vs included days. The overall verdict is empirical_test_agreed because F2 requires a specific experiment to resolve the distribution shift question, and F3 requires an audit of the reputation feed timestamps. Both are genuine empirical uncertainties that the current design cannot resolve through argument alone."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment establishes whether graph-based relational inductive bias improves *forward-looking* intrusion detection.",
+        "failure_mechanism": "The label definition ('within seven days of a confirmed malicious interval') overlaps with the feature lookback window ('prior seven days of telemetry') during the active attack phase. If an attack starts on Day 10, the label for Day 12 is positive. The features for Day 12 include telemetry from Day 5-11, which includes the attack start on Day 10. The model can detect the attack *in progress* rather than predicting it *before* it happens. This conflates detection with prediction, invalidating the 'forward-looking' claim.",
+        "evidence_test": "Calculate the overlap between the 'attack active period' and the 'feature lookback period' for all positive labels. If the model achieves high AUPRC on days where the attack is already visible in the features (e.g., >50% of positive days have attack signals in the lookback window), the 'forward-looking' claim is false.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The evaluation reflects the data generating process the SOC actually faces.",
+        "failure_mechanism": "Excluding 'host-days near unresolved investigations' creates a 'clean' negative class that removes ambiguous cases. In production, the model will face unresolved investigations (false positives). The model is evaluated on a distribution where negatives are 'easy' (no suspicious activity), leading to inflated performance metrics compared to production.",
+        "evidence_test": "Compare the performance on the 'excluded' days (if available) vs. the included days. Or check the ratio of 'unresolved' days in production vs. the training set. If excluded days show significantly lower precision, the production performance will be lower than reported.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Destination reputation buckets used as features do not contain post-hoc information.",
+        "failure_mechanism": "Reputation scores often update post-incident (e.g., 'IP X is malicious' after investigation). If these buckets are updated in real-time based on the incident being investigated, using them for days *before* the incident is confirmed is look-ahead bias. The text says 'remove... post hoc annotations', but reputation buckets are often external feeds, not annotations, and may update dynamically after the attack is detected.",
+        "evidence_test": "Audit the source of 'destination reputation buckets'. Check if they are static historical snapshots or dynamic feeds updated post-incident. Compare the timestamp of the reputation update vs. the timestamp of the telemetry.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The PoC contains a FATAL flaw where the label definition overlaps with the feature window during active attacks, invalidating the 'forward-looking' hypothesis. Two MATERIAL flaws regarding negative class bias and reputation data sources further weaken the validity of the performance claims.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "For F1, I maintain the CONCEDE as the critic ACCEPTed it - the temporal overlap flaw is fatal and invalidates the forward-looking claim. For F3, I maintain DEFER as ACCEPTed - the empirical audit is required. For F2, the critic CHALLENGEd my REBUT-SCOPE, correctly observing that the design choice to exclude unresolved investigations directly contradicts the claim that evaluation reflects the SOC process. However, there IS a partial answer available: both models are evaluated on identical data, so the relative comparison (GNN vs GBDT) remains valid even if absolute metrics are inflated. The empirical test is to measure performance on excluded days. Since the primary comparative conclusion survives the flaw, DEFER is the correct path rather than CONCEDE.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The temporal overlap between the 7-day label window and 7-day feature lookback allows the model to detect attacks already in progress rather than predicting them before they happen. The critic correctly identifies this invalidates the 'forward-looking' claim. I maintained my R1 CONCEDE, and the critic ACCEPTed this finding. The forward-looking hypothesis cannot be tested with the current design because features include signals from within the labeled attack window.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly CHALLENGED my REBUT-SCOPE: the explicit exclusion of unresolved investigations creates a distribution that differs from production, contradicting the claim that evaluation reflects the SOC process. However, I can DEFER rather than CONCEDE because: (1) The settling experiment is to evaluate both models on the held-out unresolved investigation days and compare precision to the included set. (2) If both GNN and GBDT maintain AUPRC on excluded days, the design is sound for the comparative claim. (3) If excluded days show significantly lower precision, the critique is validated. (4) The primary conclusion (GNN vs GBDT relative ranking) CAN survive this flaw because both models face identical distribution - only absolute metrics are inflated. The comparative finding holds even under distribution shift. The empirical test can settle this, so DEFER is appropriate.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic ACCEPTed my DEFER - the empirical question of whether reputation buckets are static snapshots or dynamically updated post-incident requires an audit of the specific data source. My R1 justification addressed all four DEFER questions: the audit experiment, the conditions for vindication vs validation, and the fact that the relative comparison could survive even if look-ahead bias exists (affecting both models equally). I maintain this position as the critic ACCEPTed it.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings remain at MATERIAL severity after R2: F1 (conceded, fatal to the forward-looking claim but the relative GNN vs GBDT comparison is still testable with modified design) and F3 (deferred to reputation audit). F2 is DEFERRED to an empirical test comparing performance on excluded vs included days. The overall verdict is empirical_test_agreed because F2 requires a specific experiment to resolve the distribution shift question, and F3 requires an audit of the reputation feed timestamps. Both are genuine empirical uncertainties that the current design cannot resolve through argument alone."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

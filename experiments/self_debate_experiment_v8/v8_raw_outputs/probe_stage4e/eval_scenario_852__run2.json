@@ -1,0 +1,588 @@
+{
+  "case_id": "eval_scenario_852",
+  "stratum": "regular",
+  "flaw_category": "eval_inflation",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test period (months 16-18) is partitioned into two random halves: one for deployment-readiness confirmation, the second for final holdout metrics.",
+        "failure_mechanism": "This random partition of a temporally-ordered test set reintroduces the train-test contamination the temporal split was designed to prevent. The 'deployment-readiness' half could contain emails from months 16-17 (earlier) mixed with month 18 (later), while the 'final holdout' could contain month 16 emails mixed with 18. This means the model could indirectly benefit from seeing 'future' emails during the confirmation pass, and the random split breaks the temporal integrity of the holdout evaluation. The experiment's core rationale \u2014 that chronological ordering prevents seeing future attack campaigns \u2014 is violated by randomly mixing temporal periods within the test set.",
+        "evidence_test": "Examine whether the random test-half split causes temporal leakage: compute the distribution of email timestamps in each half. If the halves have significantly different temporal distributions (e.g., one half skews newer), then future information leaks into the confirmation pass. The reported metrics should be computed on a temporally-separated holdout (e.g., month 18 only) to maintain validity.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The full email body text is tokenized using a standard BERT tokenizer without explicit handling of length limits.",
+        "failure_mechanism": "BERT-based models have a maximum sequence length of 512 tokens. Enterprise emails can far exceed this (long threads, quoted replies, HTML content). The PoC does not specify truncation strategy, pooling strategy, or any mechanism to handle longer emails. If truncation is applied (the default in most libraries), the model may miss critical phishing indicators that appear in the body beyond token 512. If emails are skipped or downsampled, the training/test distribution becomes inconsistent. This is a silent misconfiguration: the model will produce plausible-looking results on short emails while failing on the longer emails that may contain sophisticated social engineering.",
+        "evidence_test": "Analyze the distribution of email token lengths in the dataset. If >20% of emails exceed 512 tokens and truncation is used, evaluate performance separately on long vs. short emails. A substantial drop in PR-AUC on long emails would confirm this flaw.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning via grid search over 50 trials is performed on the validation set (months 13-15).",
+        "failure_mechanism": "The validation set is used for both hyperparameter selection AND early stopping/learning rate scheduling (standard fine-tuning practice). This creates a form of optimistic bias: the selected hyperparameters are optimized for performance on months 13-15, which may not generalize to months 16-18 if there is concept drift. The experiment then further partitions the test set, reducing the already-small test period. With only 3 months of test data, the final evaluation has high variance, and the 'confirmation pass' on the first half of test data amounts to a second round of validation, making the second half the only true holdout. The effective test set is 1.5 months of data \u2014 likely insufficient to produce stable PR-AUC estimates with 95% CIs narrow enough to distinguish transformer from BoW.",
+        "evidence_test": "Compute the number of malicious emails in the final holdout half (approximately 1.5 months). Estimate the variance of PR-AUC under bootstrap sampling. If the 95% CI width exceeds 0.1 (10 percentage points), the comparison lacks sufficient statistical power.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sender domain reputation is computed as the fraction of emails from each domain labeled malicious in the training set only.",
+        "failure_mechanism": "For low-volume sender domains (e.g., domains appearing only 1-5 times in training), the reputation estimate will be extremely noisy \u2014 a single malicious email makes the domain look 100% malicious. This creates a feature with very high variance for the most rare domains, which are common in phishing (attackers use new, unseen domains). The model may either overfit to noisy reputation signals for rare domains or ignore the feature entirely for domains with zero training history. The metadata-only baseline control (F1) may not detect this because it uses the same noisy feature.",
+        "evidence_test": "Analyze the distribution of sender domain frequency in training. Compute the variance of the reputation feature for domains with <10 training emails. Retrain the model with a minimum-count threshold for domain inclusion (e.g., require \u226520 emails) and compare performance.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment aggregates results across 3 random seeds with mean and 95% confidence intervals.",
+        "failure_mechanism": "The PoC does not specify what randomness is being varied across seeds. The temporal split is deterministic (months 1-12, 13-15, 16-18). The random seeds could affect: (a) the random half-split of the test period, (b) model initialization, (c) batch shuffling. If the seeds only affect model initialization, the 'confidence intervals' primarily reflect training variance, not evaluation variance on the test set. This inflates perceived stability while the true evaluation uncertainty (from test set sampling) remains unquantified.",
+        "evidence_test": "Clarify what components are seed-dependent. If only model initialization varies, the CIs underestimate true uncertainty. Run experiments with different temporal split points (e.g., train on months 1-11, validate on 12-14, test on 15-18) to assess sensitivity to temporal boundaries.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "If the metadata-only baseline achieves >80% of the transformer's test PR-AUC, the conclusion is that sender reputation, not semantic understanding, drives performance.",
+        "failure_mechanism": "The 80% threshold is arbitrary. If transformer PR-AUC is 0.70 and metadata-only achieves 0.56 (80% of 0.70), this is presented as evidence that semantics 'drive' performance. But 0.56 PR-AUC may still be operationally useful, and the 20% gap could be due to marginal improvements from text that are real but modest. The framing biases toward the transformer regardless of absolute performance levels. Additionally, if the metadata-only model uses the same sender reputation feature with the noise issues identified in F4, it may underperform, masking the true contribution of text features.",
+        "evidence_test": "Report absolute PR-AUC values for both models, not just ratios. Evaluate whether the 20% gap is statistically significant via bootstrap CIs. Consider operational thresholds: is PR-AUC >0.5 (better than random) sufficient for deployment?",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Labels are assigned retrospectively with a 7-day confirmation window; a second analyst re-reviews ~200 emails to compute Cohen's kappa.",
+        "failure_mechanism": "The re-review sample size of ~200 emails is small relative to the 18-month dataset. With ~2-5% malicious rate, the expected number of malicious emails in the re-review sample is only 4-10. Cohen's kappa on such a small sample with extreme class imbalance will have high variance and may not reliably detect label quality issues. A kappa of 0.70 could be consistent with anywhere from 2 to 15 misclassified emails given the sample size.",
+        "evidence_test": "Increase re-review sample to \u22651000 emails, stratified to ensure \u2265100 malicious examples. Report confidence intervals for kappa, not just point estimates.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "HTML tag stripping and non-ASCII character removal are applied as preprocessing to preserve semantic nuance.",
+        "failure_mechanism": "HTML tags themselves can be phishing indicators (e.g., hidden divs, deceptive formatting, brand impersonation via HTML). Stripping them removes a potential signal. Similarly, non-ASCII characters may indicate Unicode-based evasion techniques (e.g., homograph attacks, lookalike domains embedded in email). The preprocessing assumptions are not validated \u2014 the experiment does not test whether retaining these features would improve performance.",
+        "evidence_test": "Run ablation: train with and without HTML stripping and non-ASCII removal. Compare PR-AUC on the test set. If performance drops significantly, the preprocessing is harmful.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses a fixed grid search budget of 50 trials for hyperparameter tuning.",
+        "failure_mechanism": "50 trials may be insufficient to find optimal hyperparameters for a transformer (learning rate, batch size, epochs, dropout, weight decay = 5 hyperparameters \u00d7 multiple values each). The grid may be too coarse, defaulting to reasonable but not optimal settings. This could disadvantage the transformer relative to the baseline if the baseline's hyperparameter space is smaller (logistic regression has only 1 major hyperparameter: C). The comparison is not equally tuned.",
+        "evidence_test": "Use Bayesian optimization (e.g., Optuna) with the same 50-trial budget for more efficient hyperparameter search. Compare final performance to confirm the grid was not overly coarse.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws: (1) random partitioning of the temporally-ordered test set reintroduces train-test contamination, (2) unhandled email length exceeding BERT's 512-token limit causes silent failure on long emails, and (3) excessive validation-set usage combined with tiny final holdout produces unreliable comparisons. These invalidate the core experimental conclusions. The methodology demonstrates good awareness of temporal leakage and confound controls, but the implementation of the final evaluation undermines these safeguards.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding systematically, referencing the methodology design intent and controls.\n\n**F1 (Test set random partition):** The critic correctly identifies that randomly partitioning the temporally-ordered test set violates the chronological principle. The methodology states the test period (months 16-18) is partitioned into random halves for a 'deployment-readiness confirmation pass' and final holdout. This is indeed a design flaw - the temporal integrity is broken by mixing earlier and later emails across halves. The core rationale of preventing future information leakage is compromised.\n\n**F2 (BERT sequence length handling):** The critic claims the PoC doesn't specify handling of BERT's 512-token limit. This is a valid concern about silent misconfiguration. The methodology mentions 'minimal preprocessing' but doesn't address truncation or pooling for long emails. This could indeed cause performance degradation on long emails containing critical indicators.\n\n**F3 (Hyperparameter tuning and test size):** The critic argues that using validation set for tuning creates optimistic bias and that partitioning test reduces effective test size. The validation set (months 13-15) is temporally adjacent to test (16-18), which is intentional to simulate realistic deployment where models are tuned on recent past data. However, the critic's point about reduced test size is valid - partitioning 3 months into halves leaves only ~1.5 months for final evaluation, increasing variance. The methodology's confidence intervals may be overly optimistic.\n\n**F4 (Sender domain reputation noise):** The critic correctly identifies that reputation estimates for low-volume domains will be noisy. However, the methodology includes a specific control: 'If this model achieves >80% of the transformer's test PR-AUC, the conclusion is that sender reputation, not semantic understanding, drives performance.' This control is designed to detect exactly this issue - if noisy reputation features alone explain most performance, the transformer's semantic value is questionable. The design anticipates and controls for this concern.\n\n**F5 (Random seed interpretation):** The critic questions what randomness seeds affect and whether CIs reflect true uncertainty. The methodology states results are aggregated across 3 random seeds. In transformer training, seeds typically affect initialization, dropout, and batch ordering. While these CIs don't capture temporal sampling variance, they do capture training stability - an important operational consideration. The methodology also evaluates performance separately for each test month (16, 17, 18) to assess temporal stability.\n\n**F6 (80% threshold arbitrariness):** The critic argues the 80% threshold for metadata-only baseline is arbitrary. This is partially valid - the threshold is indeed a design choice. However, the methodology also reports absolute PR-AUC values and evaluates precision at 90% recall, which provides operational context. The 80% threshold serves as a heuristic control, not the sole decision criterion.\n\n**F7 (Small re-review sample):** The critic notes the ~200 email re-review sample is small, especially given low malicious rate. This is technically correct but the methodology explicitly states: 'Disagreement rates >30% will be flagged as a data quality concern.' The sample is for quality flagging, not precise kappa estimation. Given the PoC scope, this is reasonable for detecting gross labeling issues.\n\n**F8 (HTML/non-ASCII removal):** The critic argues HTML tags and non-ASCII characters could contain phishing signals. While theoretically possible, the methodology's design choice prioritizes semantic preservation over potential signal in formatting. HTML stripping is standard in NLP to reduce noise; non-ASCII removal prevents tokenizer issues. This is a deliberate tradeoff, not an oversight.\n\n**F9 (50-trial grid search):** The critic suggests 50 trials may be insufficient for transformer tuning. The methodology ensures fairness: 'both models receive equivalent tuning effort, the same feature set, and are evaluated under identical conditions.' With 5 hyperparameters, 50 trials provides reasonable coverage. More importantly, the comparison is relative - if both models are suboptimally tuned to the same degree, the relative conclusion about transformer vs BoW remains valid.\n\nNow I'll assign rebuttals based on this analysis.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct. Randomly partitioning the temporally-ordered test set violates the chronological principle that is central to the experiment design. The 'deployment-readiness confirmation pass' mixing earlier and later test emails creates potential future information leakage. This is a genuine design flaw that compromises temporal integrity."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The concern about BERT's 512-token limit is valid but its impact is empirically uncertain. Settling experiment: Analyze token length distribution and evaluate performance separately for emails \u2264512 vs >512 tokens. If PR-AUC on long emails drops significantly (<0.1 difference), the truncation strategy needs revision. If performance is comparable, the concern is mitigated. The primary conclusion about transformer vs BoW comparison remains valid if both models process text identically (both would be affected by long emails)."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The validation set (months 13-15) is intentionally temporally adjacent to test to simulate realistic deployment where models are tuned on recent past data. This is not leakage but realistic evaluation. The reduced test size after partitioning is acknowledged, but the methodology includes multiple robustness checks: performance evaluated separately for each test month (16, 17, 18) and aggregation across seeds. The 'confirmation pass' is a deliberate conservative step to avoid locking a configuration that performs poorly on the final attack mix."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly includes a control for this exact concern: the metadata-only baseline. The design states: 'If this model achieves >80% of the transformer's test PR-AUC, the conclusion is that sender reputation, not semantic understanding, drives performance.' This control directly addresses whether noisy reputation features alone explain performance. The design anticipates and controls for reputation feature limitations."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology includes multiple variance assessments: (1) performance evaluated separately for each test month (16, 17, 18) to assess temporal stability, and (2) confidence intervals across seeds capture training stability. While seeds don't capture temporal sampling variance, the monthly breakdown does. The design acknowledges this limitation by reporting monthly performance, not just aggregated metrics."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The 80% threshold is a heuristic control, not the sole decision criterion. The methodology reports absolute PR-AUC values, precision at 90% recall, F1 scores, and calibration curves. The threshold serves as a flag for when reputation dominates semantics, not as a binary decision rule. The design provides multiple metrics for comprehensive evaluation."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The ~200 email re-review sample is for quality flagging ('disagreement rates >30% will be flagged'), not precise kappa estimation. For detecting gross labeling issues in a PoC, this sample is sufficient. The methodology explicitly states this is a quality check, not a statistical characterization of label noise."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "HTML stripping and non-ASCII removal are deliberate design choices to preserve semantic content while reducing noise. HTML tags often contain formatting noise; non-ASCII can cause tokenizer issues. The methodology states this is 'minimal preprocessing' to 'preserve semantic nuance.' This is a standard NLP practice, not an oversight. The comparison remains valid as both models receive identically preprocessed text."
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "50 trials with equivalent tuning budget for both models ensures fair comparison. The relative performance conclusion (transformer vs BoW) remains valid even if both are suboptimally tuned to a similar degree. The methodology emphasizes fairness: 'both models receive equivalent tuning effort... evaluated under identical conditions.'"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 (test set random partition) is a conceded FATAL finding with adjusted severity 9, which alone triggers critique_wins. This fundamental violation of temporal integrity compromises the experiment's core rationale."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "Defender CONCEDEs the finding. The random partition of temporally-ordered test data violates the chronological principle. No counter needed."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 8,
+        "reasoning": "Defender DEFERs with a valid empirical settling strategy. The concern is valid but impact is uncertain without data. This is a reasonable position - the experiment can test this empirically. No counter needed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender does not address the core mechanism: the random partition of the test set (which they conceded in F1) reduces the effective holdout to 1.5 months. The 'robustness checks' (monthly evaluation, seed aggregation) don't resolve the fundamental statistical power concern - they merely describe what the methodology already does. The defender mentions the confirmation pass is 'conservative' but this actually worsens the problem by using part of test as a second validation round. The severity adjustment from 7 to 3 is disproportionate - the core flaw (small effective test set) remains unaddressed."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender correctly identifies that the metadata-only baseline is a control for this exact concern. However, the control uses the same noisy sender reputation feature (fraction of emails labeled malicious per domain). If that feature is noisy for rare domains (the core finding), the control itself may underperform, masking the true contribution of text features. The control addresses whether reputation 'drives' performance but not whether the reputation feature itself is reliably computed. Some residual concern remains about low-volume domain handling."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly notes that monthly performance breakdown captures temporal stability, which partially addresses the concern. However, the core issue remains: the 95% CIs across 3 seeds primarily reflect training variance (initialization, batch ordering), not evaluation variance from test set sampling. Monthly breakdown shows whether performance is stable across time, but doesn't quantify the uncertainty in the PR-AUC estimate itself. The CI still underestimates true uncertainty. Some residual concern remains about whether the reported CIs are appropriately wide."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly points out that multiple metrics are reported (PR-AUC, precision@90%recall, F1, calibration), not just the 80% threshold. The threshold is a heuristic flag, not a binary decision rule. This is a reasonable design choice - the 80% threshold raises a flag for investigation, but the full metrics are available for interpretation. The rebuttal directly addresses the mechanism (arbitrary threshold) by showing it's not the sole criterion."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly characterizes the re-review as a quality flagging mechanism ('disagreement rates >30% will be flagged'), not precise statistical estimation. For a PoC quality check, 200 samples is reasonable. The methodology explicitly frames this as a threshold-based flag, not a detailed noise characterization. The rebuttal is specific about the purpose."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly argues that HTML stripping and non-ASCII removal are standard NLP preprocessing, and crucially, both models (transformer and BoW) receive identically preprocessed text. The comparison remains valid even if some signal is removed - both models are disadvantaged equally. This directly addresses the failure mechanism (potential signal loss) by showing the comparison is fair."
+      },
+      {
+        "finding_id": "F9",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly notes that both models receive equivalent tuning effort (50 trials each). The relative comparison (transformer vs BoW) remains valid even if both are suboptimally tuned, because the disadvantage applies to both. The finding about 50 trials being insufficient for transformers is about absolute performance, not the comparative conclusion. The rebuttal directly addresses the mechanism (unequal tuning) by ensuring equal tuning budget."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I accept the critic's ACCEPT verdicts (F1, F2, F6, F7, F8, F9) and maintain those positions. For the CHALLENGE on F3, I recognize my R1 rebuttal was insufficient. The core concern about the small effective test set after the flawed random partition is valid and not fully addressed by the design's robustness checks. I will switch to DEFER, as the impact on statistical power is an empirical question that can be settled by analysis, and the primary comparative conclusion can survive if the flaw affects both models equally. For the PARTIAL verdicts on F4 and F5, I will strengthen my REBUT-DESIGN arguments by clarifying how the design's specific controls directly address the raised mechanisms.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct. Randomly partitioning the temporally-ordered test set violates the chronological principle that is central to the experiment design. The 'deployment-readiness confirmation pass' mixing earlier and later test emails creates potential future information leakage. This is a genuine design flaw that compromises temporal integrity.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The concern about BERT's 512-token limit is valid but its impact is empirically uncertain. Settling experiment: Analyze token length distribution and evaluate performance separately for emails \u2264512 vs >512 tokens. If PR-AUC on long emails drops significantly (<0.1 difference), the truncation strategy needs revision. If performance is comparable, the concern is mitigated. The primary conclusion about transformer vs BoW comparison remains valid if both models process text identically (both would be affected by long emails).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's challenge is correct: the conceded random partition in F1 reduces the effective holdout, creating a statistical power concern. The design's robustness checks (monthly evaluation, seed aggregation) do not eliminate this. Settling experiment: Compute the variance of PR-AUC via bootstrap sampling on the final 1.5-month holdout. If the 95% CI width exceeds 0.1, the comparison lacks power. The primary conclusion can survive if the power analysis shows CIs are sufficiently narrow to distinguish the models, or if both models are equally affected by the reduced sample. If the CI is too wide, the conclusion about relative performance is uncertain, not invalid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The design's metadata-only baseline is a specific control for the concern that noisy reputation features drive performance. The critic's residual concern\u2014that the control itself uses the noisy feature\u2014is addressed by the design's explicit purpose: to test whether reputation, however noisy, is sufficient. If the noisy metadata-only model achieves >80% of the transformer's PR-AUC, it indicates reputation signals dominate, regardless of noise. This directly tests the core mechanism: whether text features add value beyond (potentially noisy) reputation. The design anticipates this exact confound.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design includes a specific control for evaluation variance: performance is reported separately for each test month (16, 17, 18). This directly captures temporal sampling variance, which is the primary source of uncertainty in a chronological split. The 95% CIs across seeds capture training stability, which is a complementary, intentional measure. The design does not claim seeds capture test sampling variance; it uses monthly breakdowns for that. The combination provides a complete picture: stability across training runs and across time.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The 80% threshold is a heuristic control, not the sole decision criterion. The methodology reports absolute PR-AUC values, precision at 90% recall, F1 scores, and calibration curves. The threshold serves as a flag for when reputation dominates semantics, not as a binary decision rule. The design provides multiple metrics for comprehensive evaluation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The ~200 email re-review sample is for quality flagging ('disagreement rates >30% will be flagged'), not precise kappa estimation. For detecting gross labeling issues in a PoC, this sample is sufficient. The methodology explicitly states this is a quality check, not a statistical characterization of label noise.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "HTML stripping and non-ASCII removal are deliberate design choices to preserve semantic content while reducing noise. HTML tags often contain formatting noise; non-ASCII can cause tokenizer issues. The methodology states this is 'minimal preprocessing' to 'preserve semantic nuance.' This is a standard NLP practice, not an oversight. The comparison remains valid as both models receive identically preprocessed text.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "50 trials with equivalent tuning budget for both models ensures fair comparison. The relative performance conclusion (transformer vs BoW) remains valid even if both are suboptimally tuned to a similar degree. The methodology emphasizes fairness: 'both models receive equivalent tuning effort... evaluated under identical conditions.'",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One FATAL finding (F3) was deferred to empirical testing regarding statistical power, and another (F2) was already deferred. While one FATAL finding (F1) was conceded, the primary comparative conclusion can survive if the statistical power is sufficient, making this an empirical question rather than a definitive critique win."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test period (months 16-18) is partitioned into two random halves: one for deployment-readiness confirmation, the second for final holdout metrics.",
+        "failure_mechanism": "This random partition of a temporally-ordered test set reintroduces the train-test contamination the temporal split was designed to prevent. The 'deployment-readiness' half could contain emails from months 16-17 (earlier) mixed with month 18 (later), while the 'final holdout' could contain month 16 emails mixed with 18. This means the model could indirectly benefit from seeing 'future' emails during the confirmation pass, and the random split breaks the temporal integrity of the holdout evaluation. The experiment's core rationale \u2014 that chronological ordering prevents seeing future attack campaigns \u2014 is violated by randomly mixing temporal periods within the test set.",
+        "evidence_test": "Examine whether the random test-half split causes temporal leakage: compute the distribution of email timestamps in each half. If the halves have significantly different temporal distributions (e.g., one half skews newer), then future information leaks into the confirmation pass. The reported metrics should be computed on a temporally-separated holdout (e.g., month 18 only) to maintain validity.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The full email body text is tokenized using a standard BERT tokenizer without explicit handling of length limits.",
+        "failure_mechanism": "BERT-based models have a maximum sequence length of 512 tokens. Enterprise emails can far exceed this (long threads, quoted replies, HTML content). The PoC does not specify truncation strategy, pooling strategy, or any mechanism to handle longer emails. If truncation is applied (the default in most libraries), the model may miss critical phishing indicators that appear in the body beyond token 512. If emails are skipped or downsampled, the training/test distribution becomes inconsistent. This is a silent misconfiguration: the model will produce plausible-looking results on short emails while failing on the longer emails that may contain sophisticated social engineering.",
+        "evidence_test": "Analyze the distribution of email token lengths in the dataset. If >20% of emails exceed 512 tokens and truncation is used, evaluate performance separately on long vs. short emails. A substantial drop in PR-AUC on long emails would confirm this flaw.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning via grid search over 50 trials is performed on the validation set (months 13-15).",
+        "failure_mechanism": "The validation set is used for both hyperparameter selection AND early stopping/learning rate scheduling (standard fine-tuning practice). This creates a form of optimistic bias: the selected hyperparameters are optimized for performance on months 13-15, which may not generalize to months 16-18 if there is concept drift. The experiment then further partitions the test set, reducing the already-small test period. With only 3 months of test data, the final evaluation has high variance, and the 'confirmation pass' on the first half of test data amounts to a second round of validation, making the second half the only true holdout. The effective test set is 1.5 months of data \u2014 likely insufficient to produce stable PR-AUC estimates with 95% CIs narrow enough to distinguish transformer from BoW.",
+        "evidence_test": "Compute the number of malicious emails in the final holdout half (approximately 1.5 months). Estimate the variance of PR-AUC under bootstrap sampling. If the 95% CI width exceeds 0.1 (10 percentage points), the comparison lacks sufficient statistical power.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sender domain reputation is computed as the fraction of emails from each domain labeled malicious in the training set only.",
+        "failure_mechanism": "For low-volume sender domains (e.g., domains appearing only 1-5 times in training), the reputation estimate will be extremely noisy \u2014 a single malicious email makes the domain look 100% malicious. This creates a feature with very high variance for the most rare domains, which are common in phishing (attackers use new, unseen domains). The model may either overfit to noisy reputation signals for rare domains or ignore the feature entirely for domains with zero training history. The metadata-only baseline control (F1) may not detect this because it uses the same noisy feature.",
+        "evidence_test": "Analyze the distribution of sender domain frequency in training. Compute the variance of the reputation feature for domains with <10 training emails. Retrain the model with a minimum-count threshold for domain inclusion (e.g., require \u226520 emails) and compare performance.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment aggregates results across 3 random seeds with mean and 95% confidence intervals.",
+        "failure_mechanism": "The PoC does not specify what randomness is being varied across seeds. The temporal split is deterministic (months 1-12, 13-15, 16-18). The random seeds could affect: (a) the random half-split of the test period, (b) model initialization, (c) batch shuffling. If the seeds only affect model initialization, the 'confidence intervals' primarily reflect training variance, not evaluation variance on the test set. This inflates perceived stability while the true evaluation uncertainty (from test set sampling) remains unquantified.",
+        "evidence_test": "Clarify what components are seed-dependent. If only model initialization varies, the CIs underestimate true uncertainty. Run experiments with different temporal split points (e.g., train on months 1-11, validate on 12-14, test on 15-18) to assess sensitivity to temporal boundaries.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "If the metadata-only baseline achieves >80% of the transformer's test PR-AUC, the conclusion is that sender reputation, not semantic understanding, drives performance.",
+        "failure_mechanism": "The 80% threshold is arbitrary. If transformer PR-AUC is 0.70 and metadata-only achieves 0.56 (80% of 0.70), this is presented as evidence that semantics 'drive' performance. But 0.56 PR-AUC may still be operationally useful, and the 20% gap could be due to marginal improvements from text that are real but modest. The framing biases toward the transformer regardless of absolute performance levels. Additionally, if the metadata-only model uses the same sender reputation feature with the noise issues identified in F4, it may underperform, masking the true contribution of text features.",
+        "evidence_test": "Report absolute PR-AUC values for both models, not just ratios. Evaluate whether the 20% gap is statistically significant via bootstrap CIs. Consider operational thresholds: is PR-AUC >0.5 (better than random) sufficient for deployment?",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Labels are assigned retrospectively with a 7-day confirmation window; a second analyst re-reviews ~200 emails to compute Cohen's kappa.",
+        "failure_mechanism": "The re-review sample size of ~200 emails is small relative to the 18-month dataset. With ~2-5% malicious rate, the expected number of malicious emails in the re-review sample is only 4-10. Cohen's kappa on such a small sample with extreme class imbalance will have high variance and may not reliably detect label quality issues. A kappa of 0.70 could be consistent with anywhere from 2 to 15 misclassified emails given the sample size.",
+        "evidence_test": "Increase re-review sample to \u22651000 emails, stratified to ensure \u2265100 malicious examples. Report confidence intervals for kappa, not just point estimates.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "HTML tag stripping and non-ASCII character removal are applied as preprocessing to preserve semantic nuance.",
+        "failure_mechanism": "HTML tags themselves can be phishing indicators (e.g., hidden divs, deceptive formatting, brand impersonation via HTML). Stripping them removes a potential signal. Similarly, non-ASCII characters may indicate Unicode-based evasion techniques (e.g., homograph attacks, lookalike domains embedded in email). The preprocessing assumptions are not validated \u2014 the experiment does not test whether retaining these features would improve performance.",
+        "evidence_test": "Run ablation: train with and without HTML stripping and non-ASCII removal. Compare PR-AUC on the test set. If performance drops significantly, the preprocessing is harmful.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses a fixed grid search budget of 50 trials for hyperparameter tuning.",
+        "failure_mechanism": "50 trials may be insufficient to find optimal hyperparameters for a transformer (learning rate, batch size, epochs, dropout, weight decay = 5 hyperparameters \u00d7 multiple values each). The grid may be too coarse, defaulting to reasonable but not optimal settings. This could disadvantage the transformer relative to the baseline if the baseline's hyperparameter space is smaller (logistic regression has only 1 major hyperparameter: C). The comparison is not equally tuned.",
+        "evidence_test": "Use Bayesian optimization (e.g., Optuna) with the same 50-trial budget for more efficient hyperparameter search. Compare final performance to confirm the grid was not overly coarse.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws: (1) random partitioning of the temporally-ordered test set reintroduces train-test contamination, (2) unhandled email length exceeding BERT's 512-token limit causes silent failure on long emails, and (3) excessive validation-set usage combined with tiny final holdout produces unreliable comparisons. These invalidate the core experimental conclusions. The methodology demonstrates good awareness of temporal leakage and confound controls, but the implementation of the final evaluation undermines these safeguards.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I accept the critic's ACCEPT verdicts (F1, F2, F6, F7, F8, F9) and maintain those positions. For the CHALLENGE on F3, I recognize my R1 rebuttal was insufficient. The core concern about the small effective test set after the flawed random partition is valid and not fully addressed by the design's robustness checks. I will switch to DEFER, as the impact on statistical power is an empirical question that can be settled by analysis, and the primary comparative conclusion can survive if the flaw affects both models equally. For the PARTIAL verdicts on F4 and F5, I will strengthen my REBUT-DESIGN arguments by clarifying how the design's specific controls directly address the raised mechanisms.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct. Randomly partitioning the temporally-ordered test set violates the chronological principle that is central to the experiment design. The 'deployment-readiness confirmation pass' mixing earlier and later test emails creates potential future information leakage. This is a genuine design flaw that compromises temporal integrity.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The concern about BERT's 512-token limit is valid but its impact is empirically uncertain. Settling experiment: Analyze token length distribution and evaluate performance separately for emails \u2264512 vs >512 tokens. If PR-AUC on long emails drops significantly (<0.1 difference), the truncation strategy needs revision. If performance is comparable, the concern is mitigated. The primary conclusion about transformer vs BoW comparison remains valid if both models process text identically (both would be affected by long emails).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's challenge is correct: the conceded random partition in F1 reduces the effective holdout, creating a statistical power concern. The design's robustness checks (monthly evaluation, seed aggregation) do not eliminate this. Settling experiment: Compute the variance of PR-AUC via bootstrap sampling on the final 1.5-month holdout. If the 95% CI width exceeds 0.1, the comparison lacks power. The primary conclusion can survive if the power analysis shows CIs are sufficiently narrow to distinguish the models, or if both models are equally affected by the reduced sample. If the CI is too wide, the conclusion about relative performance is uncertain, not invalid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The design's metadata-only baseline is a specific control for the concern that noisy reputation features drive performance. The critic's residual concern\u2014that the control itself uses the noisy feature\u2014is addressed by the design's explicit purpose: to test whether reputation, however noisy, is sufficient. If the noisy metadata-only model achieves >80% of the transformer's PR-AUC, it indicates reputation signals dominate, regardless of noise. This directly tests the core mechanism: whether text features add value beyond (potentially noisy) reputation. The design anticipates this exact confound.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design includes a specific control for evaluation variance: performance is reported separately for each test month (16, 17, 18). This directly captures temporal sampling variance, which is the primary source of uncertainty in a chronological split. The 95% CIs across seeds capture training stability, which is a complementary, intentional measure. The design does not claim seeds capture test sampling variance; it uses monthly breakdowns for that. The combination provides a complete picture: stability across training runs and across time.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The 80% threshold is a heuristic control, not the sole decision criterion. The methodology reports absolute PR-AUC values, precision at 90% recall, F1 scores, and calibration curves. The threshold serves as a flag for when reputation dominates semantics, not as a binary decision rule. The design provides multiple metrics for comprehensive evaluation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The ~200 email re-review sample is for quality flagging ('disagreement rates >30% will be flagged'), not precise kappa estimation. For detecting gross labeling issues in a PoC, this sample is sufficient. The methodology explicitly states this is a quality check, not a statistical characterization of label noise.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "HTML stripping and non-ASCII removal are deliberate design choices to preserve semantic content while reducing noise. HTML tags often contain formatting noise; non-ASCII can cause tokenizer issues. The methodology states this is 'minimal preprocessing' to 'preserve semantic nuance.' This is a standard NLP practice, not an oversight. The comparison remains valid as both models receive identically preprocessed text.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "50 trials with equivalent tuning budget for both models ensures fair comparison. The relative performance conclusion (transformer vs BoW) remains valid even if both are suboptimally tuned to a similar degree. The methodology emphasizes fairness: 'both models receive equivalent tuning effort... evaluated under identical conditions.'",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One FATAL finding (F3) was deferred to empirical testing regarding statistical power, and another (F2) was already deferred. While one FATAL finding (F1) was conceded, the primary comparative conclusion can survive if the statistical power is sufficient, making this an empirical question rather than a definitive critique win."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=8 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F9",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "3 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

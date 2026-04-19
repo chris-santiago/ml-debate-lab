@@ -1,0 +1,234 @@
+{
+  "case_id": "hyp_240",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological split (Months 1-8 train, 9-10 val, 11-12 test) prevents signal leakage and simulates deployment.",
+        "failure_mechanism": "In account takeover (ATO) detection, 'campaigns' often span months. If a single coordinated attack campaign starts in Month 8 and continues into Month 11, the model may learn the specific infrastructure (IPs, device fingerprints, sender domains) of that active campaign during training and 'predict' the same campaign in the test set. This is not detecting the *behavior* of ATO, but memorizing the *identity* of a specific ongoing attack.",
+        "evidence_test": "Compare model performance on 'New Entities' (IPs/Devices never seen in training) vs 'Seen Entities' in the test set. If the performance delta is massive and the 'Seen' performance drives the aggregate metric, the model is memorizing campaign infrastructure rather than learning generalizable ATO patterns.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The graph model's advantage is derived from relational structure/message passing.",
+        "failure_mechanism": "The PoC compares a GNN against a tabular GBT. However, the GBT baseline uses 'historical user risk aggregates'. If the GNN's performance gain is simply because it can implicitly calculate higher-order aggregates (e.g., 'number of users sharing this IP who have also failed MFA') that the GBT's hand-engineered features missed, the gain is due to *feature engineering* (automated vs manual) rather than the *relational inductive bias* of the GNN architecture.",
+        "evidence_test": "Create a 'Graph-Feature' baseline: extract the same structural features the GNN would use (e.g., node degrees, 1-hop neighborhood aggregates, PageRank) as tabular features for the GBT. If the GBT with graph-features matches the GNN, the GNN architecture itself is not the value-add.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding unresolved cases prevents label noise from delayed investigations.",
+        "failure_mechanism": "This introduces 'selection bias'. In real-world security operations, the most sophisticated ATOs often take the longest to investigate and resolve. By removing unresolved cases, the PoC may be training and testing only on 'obvious' ATOs that were closed quickly, potentially inflating performance and failing to test the model on the hardest cases the hypothesis targets.",
+        "evidence_test": "Analyze the distribution of 'time-to-close' for the excluded cases versus the included cases. If excluded cases have significantly higher complexity or different signal patterns, the results are biased toward easy-to-detect attacks.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC is well-structured regarding data leakage and metric choice, but it suffers from a critical risk of campaign leakage across chronological splits and a lack of a structural-feature baseline to isolate the GNN's architectural value.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL, 8): The critic claims the chronological split allows infrastructure leakage (campaigns spanning months). The methodology explicitly states 'keep exact case or campaign identifiers inside one split' and 'Exclude unresolved cases... labels not available by supervision cutoff'. This design control eliminates the specific leakage mechanism described (same campaign in Train and Test) by excluding cases that span the split boundary. The design also includes a 'Seen vs New' ablation to measure any residual entity-level leakage. The critique's evidence test is already built into the design. Thus, the flaw is resolved by design.\n\nF2 (MATERIAL, 6): The critic claims the GNN gain might be due to automated feature engineering rather than architecture. The methodology explicitly states the experiment's scope: 'establish whether relational structure adds predictive value beyond strong hand-engineered aggregates' and 'it will not by itself prove that every observed gain comes from abstract graph reasoning'. The critique asks for a test (Graph-Feature baseline) outside this stated scope. The design is sound within its defined boundaries.\n\nF3 (MATERIAL, 4): The critic claims excluding unresolved cases biases the dataset toward easy ATOs. The methodology explicitly states this exclusion is necessary because 'delayed security investigations otherwise inject label noise'. This is a deliberate design tradeoff to ensure label quality. The design rationale addresses the concern directly, accepting the bias to prevent label noise. This is a valid design choice for the stated goal.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly eliminates the failure mechanism by requiring 'exact case or campaign identifiers inside one split' and excluding unresolved cases. This prevents the same campaign infrastructure from appearing in both Train and Test sets. The 'Seen vs New' ablation further quantifies any residual entity leakage, directly addressing the critic's evidence test."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The PoC scope is explicitly defined as testing whether 'relational structure adds predictive value beyond strong hand-engineered aggregates'. It does not claim to isolate the mechanism (architecture vs. feature engineering). The critique requests a test outside this stated scope."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The design explicitly addresses this tradeoff with the rationale: 'delayed security investigations otherwise inject label noise'. Excluding unresolved cases is a deliberate control to ensure label integrity, accepting the bias toward resolved cases to prevent noise."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have adjusted severity \u2264 3 after rebuttal. The methodology explicitly addresses the identified risks through design controls (case exclusion, scope definition, label quality tradeoff) that are justified for the stated experiment goals."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender claims that keeping 'campaign identifiers' in one split prevents infrastructure leakage. However, campaign IDs are typically assigned *after* an analyst links events; they are not inherent properties of the attack infrastructure (IPs, device fingerprints). If the model learns a specific IP address associated with a campaign in Month 8, and that same IP is used in Month 11, the model will trigger on the IP regardless of whether the 'Campaign ID' was split correctly. The 'Seen vs New' ablation is a valid diagnostic, but it does not *prevent* the leakage, it only *measures* it. The severity remains material because the primary split mechanism (Campaign ID) is a post-hoc label, not a structural barrier to entity leakage."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender uses a scope disclaimer to avoid the critique. However, the hypothesis specifically investigates whether a 'heterogeneous graph model' (an architectural choice) provides value. If the value is actually coming from 'automated feature engineering' (the GNN's ability to aggregate neighbors), then the conclusion that the *graph model* is superior is misleading. Testing against a GBT with graph-derived features is the only way to validate the claim that the relational structure/architecture is the driver of performance. This is not 'outside scope'; it is the core of the scientific validation for the chosen model."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal is a circular argument. The defender justifies the exclusion of unresolved cases by stating they wanted to avoid label noise, which is exactly what the original finding acknowledged. The finding's point is that this 'control' introduces a systematic selection bias (removing the hardest cases). Simply stating that the bias was 'accepted' does not resolve the flaw; it confirms that the resulting performance metrics will be inflated and not representative of real-world deployment on sophisticated threats."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "All three findings received CHALLENGE or PARTIAL verdicts. For F1, the critic correctly identified that campaign ID splitting does not prevent entity-level leakage (IPs, devices appearing in both train/test). The design has a partial control (temporal split) but the 'Seen vs New' ablation is diagnostic, not preventive. For F2, the scope disclaimer acknowledges the limitation but doesn't resolve whether architecture vs. feature engineering drives gains. For F3, the label-noise tradeoff is acknowledged but selection bias remains unaddressed. All three warrant DEFER with empirically resolvable settling experiments.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that campaign IDs are post-hoc labels and do not prevent entity-level leakage (IPs, device fingerprints appearing in both train and test). The temporal split prevents future data from entering training but does not eliminate entity overlap across months. The 'Seen vs New' ablation mentioned in the methodology is the settling experiment: if the GNN performs comparably on 'New Entities' (never seen in training), it proves generalizable ATO pattern learning; if performance drops significantly on 'New Entities', the model is memorizing infrastructure. The primary conclusion (graph model outperforms baseline) can remain valid if we interpret results through the lens of the ablation\u2014if the GNN outperforms on 'New Entities', the relative comparison survives.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The scope disclaimer acknowledges the limitation but does not resolve whether architectural inductive bias or automated feature aggregation drives gains. The methodology does not include a 'Graph-Feature' baseline (GBT with graph-derived features like node degrees, neighborhood aggregates, PageRank). This is the settling experiment: if the GBT with graph-features matches the GNN, the architecture itself is not the value-add; if the GNN still outperforms, relational structure provides value beyond feature engineering. The primary conclusion (relational modeling improves detection) can remain valid even if the critique is correct\u2014the interpretation would shift from 'architecture drives value' to 'automated feature engineering drives value,' but the relative comparison between models remains valid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic is correct that excluding unresolved cases introduces selection bias by removing the hardest-to-detect ATOs. The label-noise tradeoff is acknowledged but not resolved. The 'time-to-close' analysis mentioned in the evidence test is the settling experiment: if excluded cases have significantly higher complexity or different signal patterns, performance metrics are inflated. The primary conclusion (graph model outperforms baseline) can remain valid even if the critique is correct\u2014the absolute performance metrics would be inflated, but the relative comparison between models on the included cases would still be valid.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "All three findings are deferred to empirically resolvable experiments rather than conceded or defended. This is the correct outcome when reasonable disagreement exists and empirical evidence is the appropriate arbiter. The design has partial controls for each concern, but the magnitude of each issue requires experimental resolution before firm conclusions can be drawn."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological split (Months 1-8 train, 9-10 val, 11-12 test) prevents signal leakage and simulates deployment.",
+        "failure_mechanism": "In account takeover (ATO) detection, 'campaigns' often span months. If a single coordinated attack campaign starts in Month 8 and continues into Month 11, the model may learn the specific infrastructure (IPs, device fingerprints, sender domains) of that active campaign during training and 'predict' the same campaign in the test set. This is not detecting the *behavior* of ATO, but memorizing the *identity* of a specific ongoing attack.",
+        "evidence_test": "Compare model performance on 'New Entities' (IPs/Devices never seen in training) vs 'Seen Entities' in the test set. If the performance delta is massive and the 'Seen' performance drives the aggregate metric, the model is memorizing campaign infrastructure rather than learning generalizable ATO patterns.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The graph model's advantage is derived from relational structure/message passing.",
+        "failure_mechanism": "The PoC compares a GNN against a tabular GBT. However, the GBT baseline uses 'historical user risk aggregates'. If the GNN's performance gain is simply because it can implicitly calculate higher-order aggregates (e.g., 'number of users sharing this IP who have also failed MFA') that the GBT's hand-engineered features missed, the gain is due to *feature engineering* (automated vs manual) rather than the *relational inductive bias* of the GNN architecture.",
+        "evidence_test": "Create a 'Graph-Feature' baseline: extract the same structural features the GNN would use (e.g., node degrees, 1-hop neighborhood aggregates, PageRank) as tabular features for the GBT. If the GBT with graph-features matches the GNN, the GNN architecture itself is not the value-add.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding unresolved cases prevents label noise from delayed investigations.",
+        "failure_mechanism": "This introduces 'selection bias'. In real-world security operations, the most sophisticated ATOs often take the longest to investigate and resolve. By removing unresolved cases, the PoC may be training and testing only on 'obvious' ATOs that were closed quickly, potentially inflating performance and failing to test the model on the hardest cases the hypothesis targets.",
+        "evidence_test": "Analyze the distribution of 'time-to-close' for the excluded cases versus the included cases. If excluded cases have significantly higher complexity or different signal patterns, the results are biased toward easy-to-detect attacks.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC is well-structured regarding data leakage and metric choice, but it suffers from a critical risk of campaign leakage across chronological splits and a lack of a structural-feature baseline to isolate the GNN's architectural value.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "All three findings received CHALLENGE or PARTIAL verdicts. For F1, the critic correctly identified that campaign ID splitting does not prevent entity-level leakage (IPs, devices appearing in both train/test). The design has a partial control (temporal split) but the 'Seen vs New' ablation is diagnostic, not preventive. For F2, the scope disclaimer acknowledges the limitation but doesn't resolve whether architecture vs. feature engineering drives gains. For F3, the label-noise tradeoff is acknowledged but selection bias remains unaddressed. All three warrant DEFER with empirically resolvable settling experiments.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that campaign IDs are post-hoc labels and do not prevent entity-level leakage (IPs, device fingerprints appearing in both train and test). The temporal split prevents future data from entering training but does not eliminate entity overlap across months. The 'Seen vs New' ablation mentioned in the methodology is the settling experiment: if the GNN performs comparably on 'New Entities' (never seen in training), it proves generalizable ATO pattern learning; if performance drops significantly on 'New Entities', the model is memorizing infrastructure. The primary conclusion (graph model outperforms baseline) can remain valid if we interpret results through the lens of the ablation\u2014if the GNN outperforms on 'New Entities', the relative comparison survives.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The scope disclaimer acknowledges the limitation but does not resolve whether architectural inductive bias or automated feature aggregation drives gains. The methodology does not include a 'Graph-Feature' baseline (GBT with graph-derived features like node degrees, neighborhood aggregates, PageRank). This is the settling experiment: if the GBT with graph-features matches the GNN, the architecture itself is not the value-add; if the GNN still outperforms, relational structure provides value beyond feature engineering. The primary conclusion (relational modeling improves detection) can remain valid even if the critique is correct\u2014the interpretation would shift from 'architecture drives value' to 'automated feature engineering drives value,' but the relative comparison between models remains valid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic is correct that excluding unresolved cases introduces selection bias by removing the hardest-to-detect ATOs. The label-noise tradeoff is acknowledged but not resolved. The 'time-to-close' analysis mentioned in the evidence test is the settling experiment: if excluded cases have significantly higher complexity or different signal patterns, performance metrics are inflated. The primary conclusion (graph model outperforms baseline) can remain valid even if the critique is correct\u2014the absolute performance metrics would be inflated, but the relative comparison between models on the included cases would still be valid.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "All three findings are deferred to empirically resolvable experiments rather than conceded or defended. This is the correct outcome when reasonable disagreement exists and empirical evidence is the appropriate arbiter. The design has partial controls for each concern, but the magnitude of each issue requires experimental resolution before firm conclusions can be drawn."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=8 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

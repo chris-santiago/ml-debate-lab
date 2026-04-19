@@ -1,0 +1,352 @@
+{
+  "case_id": "rc_rescience_2021_tersek2022re_journal",
+  "stratum": "mixed",
+  "flaw_category": "fixable_flaw",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test-time adaptation strategy uses 'limited supervision available at inference time' without compromising the 'no category-specific retraining' claim.",
+        "failure_mechanism": "In few-shot counting, 'supervision at inference time' typically implies access to ground truth labels (counts or boxes) for the test image beyond the provided exemplars. If the adaptation loop utilizes test-set ground truth to refine weights, the model is effectively semi-supervised or supervised at test time, violating the core hypothesis of generalizing without retraining. This constitutes signal leakage where test labels influence the model's behavior on the test set.",
+        "evidence_test": "Inspect the test-time adaptation loss function to verify if it computes error against ground truth counts or bounding boxes for the non-exemplar regions of the test image. If such labels are used, the claim of 'no retraining' is invalid.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model generalizes to 'novel object categories' when evaluated on the FSC-147 dataset.",
+        "failure_mechanism": "The hypothesis requires that test categories are disjoint from training categories to claim 'novel category' generalization. The PoC text states experiments are conducted on FSC-147 but does not specify if the evaluation uses a disjoint category split (e.g., train on 100 categories, test on 47). If categories overlap between training and testing, the model is merely interpolating known categories, invalidating the generalization claim.",
+        "evidence_test": "Verify the train/test split protocol for FSC-147. Check if the set of categories in the training set is disjoint from the set of categories in the test set. If there is overlap, the 'novel category' claim is unverified.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "FamNet outperforms competing few-shot approaches under identical conditions.",
+        "failure_mechanism": "The PoC claims FamNet uses a 'test-time adaptation strategy'. If competing baselines do not support or are not evaluated with this same adaptation mechanism, FamNet receives an unfair advantage. Comparing a model with test-time adaptation against static baselines inflates performance metrics that are not attributable to the core counting architecture but to the adaptation overhead.",
+        "evidence_test": "Review the baseline evaluation protocol. Confirm if all baselines were evaluated with the same test-time adaptation enabled or if FamNet is the only method utilizing this mechanism. If baselines are static, the comparison is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Exemplar patches taken from the same image enable robust counting across different visual domains.",
+        "failure_mechanism": "Using exemplars from the *same* image introduces strong background/context cues specific to that image into the conditioning signal. The model may learn to count based on the image's background texture or lighting rather than object features. This causes failure under distribution shift where the background changes but the object category remains the same, despite the model appearing to work on the test image.",
+        "evidence_test": "Evaluate performance when exemplars are drawn from a different image of the same category versus the same image. If performance drops significantly on cross-image exemplars, the model relies on image-specific context rather than category features.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The test-time adaptation hyperparameters (e.g., learning rate) are robustly configured to prevent overfitting to exemplars.",
+        "failure_mechanism": "Test-time adaptation is highly sensitive to hyperparameters. A default or poorly tuned learning rate could cause the model to overfit to the few exemplar patches immediately, memorizing the exemplar count rather than learning the category. This produces plausible-looking results on the exemplar regions but fails to generalize the count to the rest of the image, a silent degradation that aggregate metrics might miss if the exemplar region dominates the loss.",
+        "evidence_test": "Check if hyperparameter sensitivity analysis is reported for the adaptation step. Verify if the model's count accuracy on the non-exemplar regions degrades when the adaptation learning rate is increased, indicating overfitting to the prompt.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains critical ambiguities regarding test-time supervision and category splits that potentially invalidate the core claims of generalization and no-retraining. Additionally, baseline comparisons and adaptation hyperparameters require stricter verification to ensure performance gains are attributable to the proposed architecture rather than experimental artifacts.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding sequentially, referencing the methodology's design intent and controls.\n\n**F1 (Test-time adaptation leakage):** The critic claims test-time adaptation uses ground truth labels from the test image beyond the provided exemplars, constituting signal leakage. The methodology states adaptation uses 'limited supervision available at inference time.' In the context of few-shot counting, the 'supervision' refers to the exemplar bounding boxes themselves, which are provided as the few-shot prompt. The adaptation loop would refine the model's feature matching to these exemplars, not to ground truth counts for the entire image. The design intent is to adapt the model's feature space to the novel category using only the exemplars as supervision, maintaining the 'no category-specific retraining' claim. The critic's failure mechanism assumes access to full test labels, which contradicts the stated few-shot paradigm. This is a misunderstanding of the design intent.\n\n**F2 (Novel category generalization):** The critic questions whether train/test categories are disjoint in FSC-147. The methodology explicitly introduces FSC-147 'containing more than 6000 images spanning 147 visual categories with annotations suitable for few-shot counting.' For a valid few-shot generalization claim, the standard evaluation protocol for such datasets is a disjoint category split. The paper's hypothesis of 'generalizing to novel object categories' necessitates this split. Without explicit mention in the provided text, this is a valid concern about verification of prerequisites. The design likely intended this, but the critique correctly identifies it as an unverified prerequisite that could invalidate the core claim if not properly implemented.\n\n**F3 (Unfair baseline comparison):** The critic argues that if FamNet uses test-time adaptation but baselines do not, the comparison is unfair. The methodology states FamNet is 'presented together with a test-time adaptation strategy' and is compared against 'prior few-shot counting methods.' The design intent is to evaluate the full proposed system (FamNet + adaptation) against prior art. If the baselines are static models not designed for adaptation, the comparison is still valid as an end-to-end system comparison. However, the critique raises a material concern about attribution: is the gain from the core architecture or the adaptation mechanism? A fair ablation would compare FamNet with and without adaptation. The provided text does not mention such an ablation, leaving the concern unresolved.\n\n**F4 (Exemplars from same image causing background reliance):** The critic argues that using exemplars from the same image allows the model to cheat using background cues. The methodology's design uses exemplars from the same image as a practical constraint of the few-shot counting task: at test time, you are given an image and a few annotated boxes within it. The model must learn to count objects of that category within that specific image context. The hypothesis is about counting novel categories, not about robustness to background shifts within the same category. The critic's proposed test (cross-image exemplars) is outside the stated scope of the experiment, which is defined by the FSC-147 protocol where exemplars come from the test image. This is a scope mismatch.\n\n**F5 (Adaptation hyperparameter sensitivity):** The critic claims hyperparameter sensitivity could cause overfitting to exemplars, a silent failure. The methodology does not mention hyperparameter analysis for the adaptation step. This is a valid material concern about implementation robustness. The design likely used a fixed, empirically chosen configuration, but the critique correctly identifies that without sensitivity analysis, we cannot be confident the adaptation is robust and not overfitting. This is a genuine uncertainty about implementation choices that could affect results.\n\nNow, I will assign rebuttals based on this analysis.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critique misinterprets 'supervision at inference time.' In the few-shot counting paradigm defined by the methodology, the only supervision provided at test time is the exemplar bounding boxes from the test image. The adaptation loop uses these exemplars to adjust feature matching, not ground truth counts for the entire image. There is no signal leakage because no additional labels beyond the defined task input are used. The critic's failure mechanism applies to a different experimental setup (semi-supervised learning) not within the scope of this few-shot evaluation."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The concern is valid and material to the 'novel category' claim. The settling experiment is to inspect the FSC-147 dataset split specification. A result showing disjoint train/test category sets would vindicate the design. A result showing overlapping categories would validate the critique and require re-evaluation of the generalization conclusion. The primary conclusion about relative performance vs. baselines could remain valid if the overlap affects all methods equally, but the 'novel category' claim would be invalidated. The methodology text does not explicitly state the split protocol, making this genuinely unresolvable by argument alone."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern about attribution of gains (architecture vs. adaptation) is valid. The settling experiment is an ablation study comparing FamNet with and without test-time adaptation against the same baselines. A result where FamNet without adaptation still outperforms baselines would vindicate the core architecture. A result where FamNet only wins with adaptation would validate the critique that the comparison is unfair to static baselines and the gain is from the adaptation mechanism. The primary conclusion about overall system performance could change based on this result. The methodology does not contain this ablation, so the question is empirically unresolvable with the given information."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critique proposes a distribution shift test (cross-image exemplars) that is outside the defined scope of the experiment. The methodology's task is few-shot counting where exemplars are provided from the test image itself, as per the FSC-147 dataset protocol. Evaluating robustness to background variation for the same category is a different research question about domain generalization, not the stated hypothesis of counting novel categories from exemplars in the same image. The design choice to use same-image exemplars is deliberate and matches the intended use case."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern about hyperparameter sensitivity and potential silent overfitting is valid and material. The settling experiment is a sensitivity analysis varying the adaptation learning rate and measuring performance on non-exemplar regions. A result showing stable performance across a reasonable range would vindicate the design's robustness. A result showing significant degradation with small changes would validate the critique that the method is brittle and may be overfitting. The primary conclusion about the effectiveness of test-time adaptation depends on this robustness. The methodology does not report such analysis, making this an empirical question."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Findings F2, F3, and F5 have been deferred as they identify genuine uncertainties about dataset splits, baseline attribution, and hyperparameter robustness that require empirical resolution. While F1 and F4 were successfully rebutted, the presence of deferred material findings necessitates an empirical test to settle the remaining concerns."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender clarifies that the adaptation mechanism uses exemplar bounding boxes for feature matching rather than ground truth counts for the entire image. This directly addresses the signal leakage failure mechanism by confirming the absence of test-set labels in the loss function. While labeled REBUT-SCOPE, the argument is a factual correction of the premise that 'supervision' implies GT labels. The mechanism is sound, resolving the FATAL concern."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 8,
+        "reasoning": "The defender acknowledges the validity of the concern regarding train/test category overlap but defers resolution to a dataset split inspection. Since the split protocol is not provided in the methodology text, the finding remains unresolved. The severity remains FATAL as the generalization claim is unverified."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender acknowledges the concern about unfair baseline comparison due to test-time adaptation but defers resolution to an ablation study. As the ablation is not reported in the current methodology, the finding regarding unfair advantage remains unresolved. Severity remains MATERIAL."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender claims the critique is out of scope, but the claim explicitly states the method enables 'robust counting across different visual domains'. Testing distribution shift (background variation) is therefore within the scope of the claim. The scope argument does not address the validity of the claim regarding domain robustness, leaving the failure mechanism unresolved."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender acknowledges the concern about hyperparameter sensitivity and overfitting but defers resolution to a sensitivity analysis. As this analysis is not reported, the finding regarding robust configuration remains unresolved. Severity remains MATERIAL."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I accept the critic's ACCEPT verdict for F1 and maintain my REBUT-SCOPE position. For F2, F3, and F5, the critic's PARTIAL verdicts are correct\u2014the methodology lacks explicit text to resolve these concerns, but the concerns are not undeniable flaws; they are genuine ambiguities requiring empirical tests. I will maintain DEFER for these findings, as the primary conclusions could survive if the critiques are validated (e.g., relative comparisons could remain valid even if 'novel category' claim is weakened). For F4, the critic's CHALLENGE is incorrect; the claim about 'robust counting across different visual domains' refers to the model's ability to handle diverse categories in FSC-147, not background invariance within a category. The design's scope (same-image exemplars) is explicit and addresses the concern by defining the task. I will strengthen my REBUT-SCOPE.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic ACCEPTed my rebuttal, confirming the design's adaptation uses only exemplar bounding boxes from the test image for feature matching, not ground truth counts for the entire image. This is the defined supervision in the few-shot counting task. There is no signal leakage, and the 'no category-specific retraining' claim remains valid. The failure mechanism mischaracterizes the experimental setup.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology does not specify the FSC-147 train/test category split protocol. The settling experiment is to inspect the dataset splits. If categories are disjoint, the 'novel category' claim is vindicated. If they overlap, the claim is invalidated. The primary conclusion about FamNet outperforming baselines could remain valid if the overlap affects all methods equally (the relative comparison is intact), but the generalization claim would need revision. This is a genuine ambiguity requiring empirical resolution.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The methodology does not include an ablation comparing FamNet with and without test-time adaptation against the same baselines. The settling experiment is that ablation. If FamNet without adaptation still outperforms baselines, the core architecture is vindicated. If FamNet only wins with adaptation, the critique is validated\u2014the gain is from the adaptation mechanism, making the comparison unfair. The primary conclusion about overall system performance could change, but the relative performance conclusion (FamNet vs. baselines) could remain valid if the adaptation advantage is acknowledged as part of the system. This is an empirical question.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic misinterprets 'robust counting across different visual domains.' The claim refers to the model's ability to count diverse categories (147 visual domains) in the FSC-147 dataset, not robustness to background variation within a single category. The methodology explicitly defines the task: exemplars are taken from the same image. Testing cross-image exemplars is a different research question about domain generalization, not within the scope of this hypothesis. The design's scope decision directly addresses the concern by limiting the claim to same-image exemplars.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The methodology does not report hyperparameter sensitivity analysis for test-time adaptation. The settling experiment is a sensitivity analysis varying the learning rate and measuring performance on non-exemplar regions. Stable performance across a reasonable range would vindicate robustness; significant degradation would validate overfitting concerns. The primary conclusion about the effectiveness of test-time adaptation depends on this robustness, but the conclusion about FamNet's overall performance could remain valid if the adaptation is tuned appropriately (the critique would indicate a configuration risk, not a fundamental flaw). This is an empirical ambiguity.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Three findings (F2, F3, F5) are deferred to empirical tests because the methodology lacks explicit controls to resolve them, but the concerns are not undeniable flaws\u2014the primary conclusions could survive if the critiques are validated. This indicates genuine ambiguities requiring further experimentation."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test-time adaptation strategy uses 'limited supervision available at inference time' without compromising the 'no category-specific retraining' claim.",
+        "failure_mechanism": "In few-shot counting, 'supervision at inference time' typically implies access to ground truth labels (counts or boxes) for the test image beyond the provided exemplars. If the adaptation loop utilizes test-set ground truth to refine weights, the model is effectively semi-supervised or supervised at test time, violating the core hypothesis of generalizing without retraining. This constitutes signal leakage where test labels influence the model's behavior on the test set.",
+        "evidence_test": "Inspect the test-time adaptation loss function to verify if it computes error against ground truth counts or bounding boxes for the non-exemplar regions of the test image. If such labels are used, the claim of 'no retraining' is invalid.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model generalizes to 'novel object categories' when evaluated on the FSC-147 dataset.",
+        "failure_mechanism": "The hypothesis requires that test categories are disjoint from training categories to claim 'novel category' generalization. The PoC text states experiments are conducted on FSC-147 but does not specify if the evaluation uses a disjoint category split (e.g., train on 100 categories, test on 47). If categories overlap between training and testing, the model is merely interpolating known categories, invalidating the generalization claim.",
+        "evidence_test": "Verify the train/test split protocol for FSC-147. Check if the set of categories in the training set is disjoint from the set of categories in the test set. If there is overlap, the 'novel category' claim is unverified.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "FamNet outperforms competing few-shot approaches under identical conditions.",
+        "failure_mechanism": "The PoC claims FamNet uses a 'test-time adaptation strategy'. If competing baselines do not support or are not evaluated with this same adaptation mechanism, FamNet receives an unfair advantage. Comparing a model with test-time adaptation against static baselines inflates performance metrics that are not attributable to the core counting architecture but to the adaptation overhead.",
+        "evidence_test": "Review the baseline evaluation protocol. Confirm if all baselines were evaluated with the same test-time adaptation enabled or if FamNet is the only method utilizing this mechanism. If baselines are static, the comparison is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Exemplar patches taken from the same image enable robust counting across different visual domains.",
+        "failure_mechanism": "Using exemplars from the *same* image introduces strong background/context cues specific to that image into the conditioning signal. The model may learn to count based on the image's background texture or lighting rather than object features. This causes failure under distribution shift where the background changes but the object category remains the same, despite the model appearing to work on the test image.",
+        "evidence_test": "Evaluate performance when exemplars are drawn from a different image of the same category versus the same image. If performance drops significantly on cross-image exemplars, the model relies on image-specific context rather than category features.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The test-time adaptation hyperparameters (e.g., learning rate) are robustly configured to prevent overfitting to exemplars.",
+        "failure_mechanism": "Test-time adaptation is highly sensitive to hyperparameters. A default or poorly tuned learning rate could cause the model to overfit to the few exemplar patches immediately, memorizing the exemplar count rather than learning the category. This produces plausible-looking results on the exemplar regions but fails to generalize the count to the rest of the image, a silent degradation that aggregate metrics might miss if the exemplar region dominates the loss.",
+        "evidence_test": "Check if hyperparameter sensitivity analysis is reported for the adaptation step. Verify if the model's count accuracy on the non-exemplar regions degrades when the adaptation learning rate is increased, indicating overfitting to the prompt.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains critical ambiguities regarding test-time supervision and category splits that potentially invalidate the core claims of generalization and no-retraining. Additionally, baseline comparisons and adaptation hyperparameters require stricter verification to ensure performance gains are attributable to the proposed architecture rather than experimental artifacts.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I accept the critic's ACCEPT verdict for F1 and maintain my REBUT-SCOPE position. For F2, F3, and F5, the critic's PARTIAL verdicts are correct\u2014the methodology lacks explicit text to resolve these concerns, but the concerns are not undeniable flaws; they are genuine ambiguities requiring empirical tests. I will maintain DEFER for these findings, as the primary conclusions could survive if the critiques are validated (e.g., relative comparisons could remain valid even if 'novel category' claim is weakened). For F4, the critic's CHALLENGE is incorrect; the claim about 'robust counting across different visual domains' refers to the model's ability to handle diverse categories in FSC-147, not background invariance within a category. The design's scope (same-image exemplars) is explicit and addresses the concern by defining the task. I will strengthen my REBUT-SCOPE.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic ACCEPTed my rebuttal, confirming the design's adaptation uses only exemplar bounding boxes from the test image for feature matching, not ground truth counts for the entire image. This is the defined supervision in the few-shot counting task. There is no signal leakage, and the 'no category-specific retraining' claim remains valid. The failure mechanism mischaracterizes the experimental setup.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology does not specify the FSC-147 train/test category split protocol. The settling experiment is to inspect the dataset splits. If categories are disjoint, the 'novel category' claim is vindicated. If they overlap, the claim is invalidated. The primary conclusion about FamNet outperforming baselines could remain valid if the overlap affects all methods equally (the relative comparison is intact), but the generalization claim would need revision. This is a genuine ambiguity requiring empirical resolution.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The methodology does not include an ablation comparing FamNet with and without test-time adaptation against the same baselines. The settling experiment is that ablation. If FamNet without adaptation still outperforms baselines, the core architecture is vindicated. If FamNet only wins with adaptation, the critique is validated\u2014the gain is from the adaptation mechanism, making the comparison unfair. The primary conclusion about overall system performance could change, but the relative performance conclusion (FamNet vs. baselines) could remain valid if the adaptation advantage is acknowledged as part of the system. This is an empirical question.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic misinterprets 'robust counting across different visual domains.' The claim refers to the model's ability to count diverse categories (147 visual domains) in the FSC-147 dataset, not robustness to background variation within a single category. The methodology explicitly defines the task: exemplars are taken from the same image. Testing cross-image exemplars is a different research question about domain generalization, not within the scope of this hypothesis. The design's scope decision directly addresses the concern by limiting the claim to same-image exemplars.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The methodology does not report hyperparameter sensitivity analysis for test-time adaptation. The settling experiment is a sensitivity analysis varying the learning rate and measuring performance on non-exemplar regions. Stable performance across a reasonable range would vindicate robustness; significant degradation would validate overfitting concerns. The primary conclusion about the effectiveness of test-time adaptation depends on this robustness, but the conclusion about FamNet's overall performance could remain valid if the adaptation is tuned appropriately (the critique would indicate a configuration risk, not a fundamental flaw). This is an empirical ambiguity.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Three findings (F2, F3, F5) are deferred to empirical tests because the methodology lacks explicit controls to resolve them, but the concerns are not undeniable flaws\u2014the primary conclusions could survive if the critiques are validated. This indicates genuine ambiguities requiring further experimentation."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

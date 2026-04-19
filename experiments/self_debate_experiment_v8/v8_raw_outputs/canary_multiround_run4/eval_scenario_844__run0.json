@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_844",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "x-ai/grok-4.1-fast",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The spatial smoothing feature ('weighted average of ride counts from neighboring zones') is a valid causal forecasting feature computed using only data available prior to the target 30-minute interval.",
+        "failure_mechanism": "The design does not specify lags for the neighbor ride counts used in smoothing (unlike per-zone lags, which explicitly list time offsets); if contemporaneous or insufficiently lagged ride counts from neighbors are used (e.g., target interval ride counts, assuming near-real-time observability), the feature incorporates leakage from the prediction horizon or target-time information, inflating train/validation performance while failing in deployment where true past data must be used.",
+        "evidence_test": "Explicit documentation or pseudocode showing the timestamps/lags applied to neighbor ride counts (e.g., all inputs from at least 30 minutes prior to target start); ablation experiment recomputing spatial features with confirmed causal lags and verifying performance drop if lags removed or set to zero.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The Gaussian kernel bandwidth for spatial smoothing is fitted on training data in a leakage-free manner.",
+        "failure_mechanism": "Bandwidth fitting criterion is unspecified; if fitted supervisedly by minimizing reconstruction error against target-interval ride counts (e.g., via CV where smoothed features predict demand), it leaks target information into feature hyperparameters, which are then applied to val/test, producing misleading feature quality estimates.",
+        "evidence_test": "Description of exact fitting objective (e.g., unsupervised like neighbor variance minimization vs. supervised prediction CV); sensitivity analysis re-fitting bandwidth with held-out train fold and checking val performance degradation.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Imputation of missing external data (weather, events) using 'forward-fill or domain-appropriate methods' fitted on train and applied to val/test does not introduce leakage or target dependence.",
+        "failure_mechanism": "Method details underspecified; if 'domain-appropriate' involves supervised imputation (e.g., regressing weather on ride counts) or forward-fill applied non-chronologically across splits (peeking from train into val), it leaks target or train info into val/test features; even forward-fill on rare missings could propagate train-specific artifacts under temporal shifts.",
+        "evidence_test": "Full spec of imputation algorithm (inputs/outputs, e.g., purely autoregressive forward-fill on external time series alone); comparison of val/test imputed values when imputed separately (chronologically per split) vs. as-described, checking feature distribution shifts or performance impact.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding zones/intervals with data quality issues (gaps, sensor failures) does not bias evaluation toward easier cases, particularly those less affected by events or demand spikes.",
+        "failure_mechanism": "Gaps may correlate with hard cases targeted by hypothesis (e.g., sensor overload during events, sparse event zones); excluding them inflates aggregate MAE by focusing on reliable high-volume zones, masking failure on deployment-critical low-volume/event-heavy zones despite later stratification.",
+        "evidence_test": "Summary stats comparing excluded vs. included zones on event frequency, demand variance, volume tiers; inclusion of a 'noisy but complete' zone subset in eval with performance comparison to clean zones.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The design is rigorous overall with strong controls for temporality, baselines, and stratification, but critical unverified assumptions in feature engineering (spatial smoothing causality and fitting) risk signal leakage that could invalidate claims of improvement from proposed features. Secondary concerns around imputation and data exclusion weaken evidential strength but do not fully undermine the setup.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL, 9): The critic claims spatial smoothing lacks lag specification, risking leakage from contemporaneous neighbor data. However, the experiment is defined as a *forecasting* task (Section 2, 5) where the model predicts future demand. Contemporaneous neighbor ride counts for the target interval are unavailable at prediction time; using them would violate the fundamental definition of the forecasting horizon. The critique assumes a deployment scenario that contradicts the task constraints. This is a misunderstanding of the design intent, not a documentation gap.\n\nF2 (FATAL, 8): The critic claims bandwidth fitting might be supervised, leaking target information. Section 3 states bandwidth is 'fitted on training data'. Standard spatial smoothing uses unsupervised criteria (e.g., neighbor distance variance). Supervised fitting would violate the validation protocol (Section 6) where hyperparameters are tuned on validation MAE. The design intent explicitly separates feature engineering from target prediction to prevent leakage. The critique's assumption of supervised fitting is unsupported by the stated protocol.\n\nF3 (MATERIAL, 6): The critic claims imputation might leak via supervised methods. Section 1 specifies imputation is 'fitted on the training set only' and applied to val/test. External data (weather) is exogenous to ride demand. Imputing weather using ride counts would be reverse causality (demand -> weather), which is logically unsound. The design implies autoregressive imputation on external series, respecting causal direction. The critique's concern about 'domain-appropriate' methods is mitigated by the exogenous nature of the data.\n\nF4 (MATERIAL, 5): The critic claims excluding zones with data gaps biases evaluation toward easier cases. Section 1 excludes 'zones or intervals with known collection gaps or sensor failures'. Section 8 defines the scope as 'On this platform...'. Sensor failures represent non-operational data, not 'production logs'. Excluding them is standard data cleaning for stability. The scope is limited to reliable operational zones, making the exclusion a valid scope boundary rather than a bias.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critique's claim that the design 'does not specify lags' is factually incorrect given the experiment's definition as a forecasting task (Section 2). Contemporaneous neighbor data is physically unavailable at prediction time, making the leakage scenario impossible by construction. The design intent inherently enforces causal lags."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 2,
+        "justification": "The critique assumes supervised bandwidth fitting, which contradicts the validation protocol (Section 6) where hyperparameters are tuned on validation MAE. Supervised feature engineering would be detected and rejected during this process. The design intent uses unsupervised kernel fitting, rendering the leakage mechanism impossible."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "Imputation of external data (weather) uses autoregressive methods on the external series alone, respecting the causal direction (weather -> demand). Imputing exogenous features using endogenous targets (ride counts) would be logically unsound and is not part of the design. The 'domain-appropriate' clause refers to standard time-series imputation."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The experiment scope (Section 8) is limited to 'production ride-hailing transaction logs'. Sensor failures represent non-operational data, not valid production logs. Excluding them is a standard data quality control, not a bias toward easier cases. The evaluation is valid within the defined scope of reliable operational zones."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted to adjusted severity \u2264 3. The critique's primary concerns (F1, F2) stem from misunderstandings of the forecasting task constraints and validation protocol, while F3 and F4 are resolved by design controls and scope definitions."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "REBUT-EVIDENCE fails: the defender does not correct the factual premise that the design lacks explicit specification of lags for neighbor ride counts (unlike explicitly listed lags for per-zone features). Citing the forecasting task (Section 2) and 'physical unavailability' assumes intent but does not confirm or document the causal lags used in smoothing (e.g., no pseudocode or timestamp details), leaving open the mechanism where contemporaneous neighbor data could be erroneously included if implementation deviates from unstated intent."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "REBUT-EVIDENCE fails: no correction to the premise that bandwidth fitting is unspecified (could be supervised on train targets). Reference to validation protocol (Section 6) is irrelevant, as feature hyperparameters like bandwidth are fit pre-model-tuning on train data, not detected by val MAE; 'design intent unsupervised' is unsubstantiated assertion without cited mechanism (e.g., exact unsupervised objective), leaving leakage possible via supervised fitting on train reconstruction error."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "REBUT-DESIGN validly addresses the failure mechanism: specifies autoregressive imputation strictly on external series (exogenous weather/events), excluding endogenous ride counts and ensuring chronological causality without target leakage or non-chronological peeking across splits."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "REBUT-SCOPE invalid: the finding concerns bias in evaluation on the scoped dataset (production logs with gaps excluded), where gaps may correlate with event/spike-hard cases central to the hypothesis (events, low-volume zones). Section 8 limits claims to this platform/period but does not exempt aggregate MAE inflation from excluding deployment-relevant noisy cases; stratification is mentioned but exclusion still biases primary metric."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 and F2 are genuine signal leakage risks where the design lacks explicit specification for neighbor lags and bandwidth fitting. Since the baseline has no spatial smoothing, any leakage would asymmetrically benefit the proposed model, invalidating the relative conclusion\u2014requiring CONCEDE. F3 was accepted by the critic and is maintained. F4 involves evaluation bias from excluding zones with gaps; while absolute MAE may be biased, the relative comparison between models on the same test set survives, warranting DEFER with a settling experiment.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The design lacks explicit specification of lag structure for neighbor ride counts in spatial smoothing (unlike per-zone lags which explicitly list time offsets). While the forecasting task implies causal lags, this is not documented in the methodology. Since the baseline has no spatial smoothing, any leakage would asymmetrically benefit the proposed model, invalidating the primary relative conclusion. This is an undeniable flaw with no design control.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The design does not specify the bandwidth fitting criterion (unsupervised vs. supervised). Reference to validation protocol is irrelevant since feature hyperparameters are fit pre-model-tuning on training data. Without explicit unsupervised objective (e.g., neighbor variance minimization), supervised fitting on train targets could leak information. Since baseline has no spatial smoothing, any leakage would asymmetrically benefit the proposed model, invalidating the primary relative conclusion.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic accepted my R1 rebuttal. Imputation uses autoregressive methods on external series alone (weather, events), respecting causal direction (exogenous features \u2192 demand). Endogenous ride counts are excluded from imputation inputs, and chronological splits prevent peeking across validation/test. This design control eliminates the leakage mechanism.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The design excludes zones with data quality gaps, which may correlate with deployment-critical cases (events, spikes). However, both models are evaluated on the same test set, so the relative comparison survives even if absolute MAE is biased. A settling experiment is needed: compare excluded vs. included zones on event frequency and demand variance, and report stratified MAE by zone volume tier. If excluded zones have systematically higher event frequency/variance and performance differs significantly, the absolute performance claim is weakened but the relative conclusion (proposed vs. baseline) remains valid.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL findings (F1, F2) were conceded due to asymmetric signal leakage risks that invalidate the primary relative conclusion. One MATERIAL finding (F4) was deferred pending empirical resolution of evaluation bias. The critique successfully identified genuine design gaps that cannot be resolved by argument alone."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The spatial smoothing feature ('weighted average of ride counts from neighboring zones') is a valid causal forecasting feature computed using only data available prior to the target 30-minute interval.",
+        "failure_mechanism": "The design does not specify lags for the neighbor ride counts used in smoothing (unlike per-zone lags, which explicitly list time offsets); if contemporaneous or insufficiently lagged ride counts from neighbors are used (e.g., target interval ride counts, assuming near-real-time observability), the feature incorporates leakage from the prediction horizon or target-time information, inflating train/validation performance while failing in deployment where true past data must be used.",
+        "evidence_test": "Explicit documentation or pseudocode showing the timestamps/lags applied to neighbor ride counts (e.g., all inputs from at least 30 minutes prior to target start); ablation experiment recomputing spatial features with confirmed causal lags and verifying performance drop if lags removed or set to zero.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The Gaussian kernel bandwidth for spatial smoothing is fitted on training data in a leakage-free manner.",
+        "failure_mechanism": "Bandwidth fitting criterion is unspecified; if fitted supervisedly by minimizing reconstruction error against target-interval ride counts (e.g., via CV where smoothed features predict demand), it leaks target information into feature hyperparameters, which are then applied to val/test, producing misleading feature quality estimates.",
+        "evidence_test": "Description of exact fitting objective (e.g., unsupervised like neighbor variance minimization vs. supervised prediction CV); sensitivity analysis re-fitting bandwidth with held-out train fold and checking val performance degradation.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Imputation of missing external data (weather, events) using 'forward-fill or domain-appropriate methods' fitted on train and applied to val/test does not introduce leakage or target dependence.",
+        "failure_mechanism": "Method details underspecified; if 'domain-appropriate' involves supervised imputation (e.g., regressing weather on ride counts) or forward-fill applied non-chronologically across splits (peeking from train into val), it leaks target or train info into val/test features; even forward-fill on rare missings could propagate train-specific artifacts under temporal shifts.",
+        "evidence_test": "Full spec of imputation algorithm (inputs/outputs, e.g., purely autoregressive forward-fill on external time series alone); comparison of val/test imputed values when imputed separately (chronologically per split) vs. as-described, checking feature distribution shifts or performance impact.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding zones/intervals with data quality issues (gaps, sensor failures) does not bias evaluation toward easier cases, particularly those less affected by events or demand spikes.",
+        "failure_mechanism": "Gaps may correlate with hard cases targeted by hypothesis (e.g., sensor overload during events, sparse event zones); excluding them inflates aggregate MAE by focusing on reliable high-volume zones, masking failure on deployment-critical low-volume/event-heavy zones despite later stratification.",
+        "evidence_test": "Summary stats comparing excluded vs. included zones on event frequency, demand variance, volume tiers; inclusion of a 'noisy but complete' zone subset in eval with performance comparison to clean zones.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The design is rigorous overall with strong controls for temporality, baselines, and stratification, but critical unverified assumptions in feature engineering (spatial smoothing causality and fitting) risk signal leakage that could invalidate claims of improvement from proposed features. Secondary concerns around imputation and data exclusion weaken evidential strength but do not fully undermine the setup.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 and F2 are genuine signal leakage risks where the design lacks explicit specification for neighbor lags and bandwidth fitting. Since the baseline has no spatial smoothing, any leakage would asymmetrically benefit the proposed model, invalidating the relative conclusion\u2014requiring CONCEDE. F3 was accepted by the critic and is maintained. F4 involves evaluation bias from excluding zones with gaps; while absolute MAE may be biased, the relative comparison between models on the same test set survives, warranting DEFER with a settling experiment.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The design lacks explicit specification of lag structure for neighbor ride counts in spatial smoothing (unlike per-zone lags which explicitly list time offsets). While the forecasting task implies causal lags, this is not documented in the methodology. Since the baseline has no spatial smoothing, any leakage would asymmetrically benefit the proposed model, invalidating the primary relative conclusion. This is an undeniable flaw with no design control.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The design does not specify the bandwidth fitting criterion (unsupervised vs. supervised). Reference to validation protocol is irrelevant since feature hyperparameters are fit pre-model-tuning on training data. Without explicit unsupervised objective (e.g., neighbor variance minimization), supervised fitting on train targets could leak information. Since baseline has no spatial smoothing, any leakage would asymmetrically benefit the proposed model, invalidating the primary relative conclusion.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic accepted my R1 rebuttal. Imputation uses autoregressive methods on external series alone (weather, events), respecting causal direction (exogenous features \u2192 demand). Endogenous ride counts are excluded from imputation inputs, and chronological splits prevent peeking across validation/test. This design control eliminates the leakage mechanism.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The design excludes zones with data quality gaps, which may correlate with deployment-critical cases (events, spikes). However, both models are evaluated on the same test set, so the relative comparison survives even if absolute MAE is biased. A settling experiment is needed: compare excluded vs. included zones on event frequency and demand variance, and report stratified MAE by zone volume tier. If excluded zones have systematically higher event frequency/variance and performance differs significantly, the absolute performance claim is weakened but the relative conclusion (proposed vs. baseline) remains valid.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL findings (F1, F2) were conceded due to asymmetric signal leakage risks that invalidate the primary relative conclusion. One MATERIAL finding (F4) was deferred pending empirical resolution of evaluation bias. The critique successfully identified genuine design gaps that cannot be resolved by argument alone."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=8 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,470 @@
+{
+  "case_id": "hyp_240",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that excluding unresolved cases and cases without labels by the supervision cutoff eliminates label noise due to delayed security investigations.",
+        "failure_mechanism": "Delayed label availability does not just introduce missing labels\u2014it creates a systematic bias where cases with longer investigation times (often more complex or severe ATOs) are more likely to be excluded. This exclusion disproportionately removes true positives, inflating false negatives and distorting the class balance. The remaining labeled negatives may also be biased toward easier, faster-resolved cases, further skewing evaluation.",
+        "evidence_test": "Compare the distribution of investigation durations between the excluded and included cases. If excluded cases have significantly longer investigation times and a higher proportion of ATOs, the exclusion is biased. Alternatively, perform a sensitivity analysis by including a subset of delayed cases with imputed labels (e.g., using analyst estimates or proxy outcomes) and measure the impact on model performance and class balance.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that removing features tied to analyst workflow timing or case closure state (e.g., time since last analyst touch) prevents leakage of future information into the model.",
+        "failure_mechanism": "Some features may indirectly encode future information even after removal of explicit timing features. For example, 'mailbox rule changes' or 'device health posture' could be updated by analysts in response to an ongoing ATO, creating a temporal dependency between the feature and the label that leaks information about unresolved cases. This is especially problematic if these features are updated in real-time and used in the graph model (e.g., via device nodes).",
+        "evidence_test": "Perform a temporal leakage audit: for each feature, check if its value at time t correlates with labels at time t+\u0394 for \u0394 > 0, even after removing explicit timing features. Alternatively, train a model to predict labels using only features available at time t and evaluate its performance on future windows\u2014if it performs well, leakage is likely.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that a chronological split (months 1\u20138 train, 9\u201310 validation, 11\u201312 test) is sufficient to prevent campaign leakage and evaluate generalization under drift.",
+        "failure_mechanism": "Campaigns (coordinated attack sequences) may span multiple months, and their edges or patterns could leak across splits if not explicitly controlled. For example, a user compromised in month 8 (training) may appear in a campaign that continues into month 11 (test), creating indirect label leakage via shared entities. The experiment does not describe how campaign identifiers are handled beyond 'keeping exact case or campaign identifiers inside one split.' If campaigns are not fully isolated, the test set may contain entities or patterns seen in training, inflating performance.",
+        "evidence_test": "Audit campaign overlap across splits: for each campaign, count the number of unique entities (users, devices, IPs) involved and check if any entity appears in multiple splits. If campaigns span splits, perform a campaign-aware split (e.g., assign all entities in a campaign to the same split) and re-evaluate performance.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that average precision (AP) is the most appropriate metric for comparing the graph model and baseline under class imbalance and analyst triage constraints.",
+        "failure_mechanism": "AP is sensitive to the distribution of positive examples and may not directly reflect the analyst's operational goal: concentrating true takeovers near the top of the ranked queue. A model with high AP but poor precision in the top 100 alerts per week (e.g., due to many false positives among the first few predictions) could be less useful in practice. The experiment reports precision at fixed levels and top-k precision, but these are secondary metrics and not used for model selection.",
+        "evidence_test": "Compare the ranked lists of the two models at the operational triage threshold (e.g., top 100 alerts per week). If the graph model's top predictions include many false positives that the baseline avoids, AP may overstate its utility. Alternatively, use a metric like 'precision@k' for k chosen to match the analyst's triage capacity and select models based on this.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that the graph model's performance gains (if any) are attributable to 'relational structure' rather than specific recurrent entity patterns (e.g., repeated use of the same IP or device by attackers).",
+        "failure_mechanism": "The ablations described (removing high-cardinality identifiers) may not fully isolate the effect of relational structure. For example, if the graph model learns to associate users with known malicious IPs/devices, it may be exploiting entity-level patterns rather than abstract graph reasoning. Without a more rigorous ablation (e.g., randomizing edges while preserving node features), the experiment cannot claim that relational structure per se improves performance.",
+        "evidence_test": "Perform a node-label permutation test: randomly shuffle node labels (keeping graph structure intact) and retrain the graph model. If performance remains high, the model is likely exploiting structural patterns rather than relational reasoning. Alternatively, train a model on a synthetic graph where edges are randomized but node features and label distribution are preserved, and compare performance to the original graph model.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that the gradient-boosted tree baseline is a 'strong' feature-only model, but does not compare it to other strong baselines (e.g., deep tabular models like NODE or FT-Transformer) or ablations of its feature set.",
+        "failure_mechanism": "The baseline's strength is critical to the hypothesis: if the feature-only model is not state-of-the-art, the graph model's gains may reflect a weak baseline rather than the value of relational structure. The PoC does not describe the tuning process in detail (e.g., hyperparameter ranges, number of trials) or compare against other baselines.",
+        "evidence_test": "Include additional baselines: (1) a deep tabular model trained on the same features, (2) a feature-only model with reduced feature sets (e.g., removing historical risk aggregates), and (3) a random forest baseline. Report performance differences with confidence intervals. If the GBT baseline is not competitive with these alternatives, the comparison is not meaningful.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment assumes that recency and interaction-count weights in the graph edges are sufficient to capture temporal dynamics, without explicit evaluation of edge weighting schemes.",
+        "failure_mechanism": "Recency and interaction counts may not adequately model temporal patterns in ATOs (e.g., bursty activity after compromise). Alternative edge weighting schemes (e.g., exponential decay, time-decayed counts) or dynamic graph construction (e.g., sliding windows) could improve performance but are not explored.",
+        "evidence_test": "Compare the current edge weighting scheme against alternatives (e.g., time-decayed edges, sliding window graphs) using the validation set. If performance improves with a different scheme, the current choice is suboptimal.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws related to label noise from delayed investigations, potential future information leakage in features, and campaign leakage across splits. These invalidate the core experimental design. MATERIAL flaws include metric misalignment with operational goals and insufficient ablations to isolate the effect of relational structure. Addressing these is critical before the hypothesis can be evaluated.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Analyzing each finding against the methodology document, which explicitly details controls for label delay, leakage, splits, metrics, ablations, and scope.\n\nF1 (FATAL 9): Critic claims exclusion of unresolved/delayed labels biases by disproportionately excluding complex TPs with longer investigations, distorting balance. Methodology explicitly states: 'Exclude unresolved cases and any examples whose labels are not available by the supervision cutoff, since delayed security investigations otherwise inject label noise.' This is a deliberate design choice standard in security ML to ensure label reliability at deployment time, avoiding noisy partial labels. The bias claim is an empirical assertion about investigation duration distributions and TP proportions in excluded cases, unsupported by any PoC evidence (no outputs or audits provided). Uncertainty: Actual bias magnitude unknown without data, but design prioritizes noise avoidance over completeness, matching realistic supervision cutoff. No explicit ablation for delayed labels, but core to time-respecting eval.\n\nF2 (FATAL 8): Critic speculates indirect future leakage via features like 'mailbox rule changes' or 'device health posture' potentially updated by analysts during investigation. Methodology specifies: 'build a tabular feature set from signals available at scoring time' and 'Construct graphs using only data available up to the relevant split boundary so future edges never enter training or inference.' Features listed (login/MFA patterns, impossible travel, first-seen flags, device posture, sender novelty, burstiness, mailbox rules, user risk aggregates) are log/telemetry signals, not analyst annotations; mailbox rules are user actions, device posture from endpoints. Removal of 'features tied to analyst workflow timing or case closure state' directly controls explicit leakage. Claim of indirect correlation is empirical (feature t vs label t+\u0394), unsupported. Uncertainty: Rare analyst-updated signals possible, but design enforces availability at scoring time.\n\nF3 (FATAL 7): Critic worries campaigns span splits, leaking via shared entities despite chronological split. Methodology states: 'To limit campaign leakage, keep exact case or campaign identifiers inside one split and remove features tied to analyst workflow'; 'Construct graphs using only data available up to the relevant split boundary'; ablations 'report results separately for previously seen versus newly observed users and devices.' This isolates cases/campaigns wholly (no cross-split IDs) and controls entity reuse via ablations/chronological construction. Overlap claim is empirical (entity counts per campaign across splits), unsupported. Uncertainty: If campaigns truly span months via same entities, ablations quantify impact; design anticipates drift via chrono split.\n\nF4 (MATERIAL 6): Critic argues AP sensitive, not reflecting top-k triage; suggests precision@k primary. Methodology: 'average precision as the primary metric... concentrating true takeovers near the top... most useful'; 'report... precision in the top 100 and top 500 alerts per week'. AP is ranking metric optimal for imbalanced triage (integrates precision across recalls, emphasizes top), with top-k reported for operations. Model selection on val AP, test untouched. No evidence AP misleads vs top-k here.\n\nF5 (MATERIAL 5): Critic says ablations insufficient for 'relational structure' vs entity patterns. Methodology: 'run ablations removing raw high-cardinality identifiers while preserving behavioral summaries, and report... seen versus newly observed users and devices. This experiment will establish whether relational modeling improves...; it will not by itself prove... abstract graph reasoning rather than specific recurrent entity patterns.' Scope explicitly disclaims proving abstract reasoning, focuses on relational adds value beyond aggregates. Ablations target confounds.\n\nF6 (MATERIAL 4): Critic wants deep tabular baselines (NODE/FT-Transformer), more ablations. Methodology: 'gradient-boosted tree baseline tuned with... validation-based search over [detailed params]... strong hand-engineered aggregates.' GBT (e.g., XGBoost/LightGBM) is established SOTA for tabular security tasks; tuning disciplined. Hypothesis is graph vs strong feature-only; extras dilute PoC focus. No evidence GBT weak.\n\nF7 (MINOR 3): Critic notes no eval of alt edge weights. Methodology uses 'recency and interaction-count weights' as reasonable PoC choice for dynamics; no claim of optimality. Minor optimization, immaterial to hypothesis.\n\nAll findings addressed by explicit design choices/scope (label exclusion, time-respecting features/graphs/splits, ablations, metric rationale, hypo scope) or lack critic evidence. No genuine unresolved flaws; methodology sound for PoC.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "Critic's core claim of systematic TP exclusion bias relies on unsupported empirical assumptions about investigation duration distributions and ATO proportions in excluded cases; methodology deliberately excludes delayed labels to prevent noise from unreliable supervision, a standard control with no contradicting PoC evidence."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 2,
+        "justification": "Speculation of indirect leakage via analyst-updated features (e.g., mailbox rules, device posture) ignores methodology's 'signals available at scoring time' and explicit removal of workflow features; no evidence of temporal correlation t vs t+\u0394, as features are log/telemetry-based."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Campaigns/cases kept wholly within splits via ID isolation, chronological boundaries prevent future data, and seen/new entity ablations directly control shared entity leakage; design anticipates drift and quantifies via ablations."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "AP explicitly chosen for imbalanced ranking/triage ('concentrating true takeovers near the top'), with top-100/500 precision reported as operational checks; optimal for hypothesis under analyst queue constraints."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Experiment scope is 'whether relational modeling improves future-window detection', explicitly not proving 'abstract graph reasoning rather than specific recurrent entity patterns'; high-card/seen-new ablations suffice for stated hypothesis."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "GBT is a deliberate 'strong feature-only' baseline with detailed val-based tuning; established SOTA for tabular security tasks, focused comparison avoids diluting PoC on relational value."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Edge weighting is a PoC simplification below threshold for impacting relational hypothesis validity; alternatives are optimizations outside core experiment."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted with adjusted severities \u22643 via design controls, scope alignment, and lack of critic evidence, fully exonerating the sound methodology. No concessions or deferrals needed, as explicit sections address concerns."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal does not address the core failure mechanism: the claim that excluding unresolved cases introduces systematic bias due to longer investigation times for complex ATOs. The justification states that exclusion is a 'standard control with no contradicting PoC evidence,' but this does not engage with the empirical test proposed (comparing investigation durations or sensitivity analysis with imputed labels). The rebuttal is generic and does not provide evidence or mechanism to refute the bias concern."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal dismisses the leakage concern by asserting that features are 'log/telemetry-based' and 'signals available at scoring time,' but this does not directly address the failure mechanism: indirect leakage via analyst-updated features (e.g., mailbox rules or device posture) that may correlate with future labels. The justification does not provide empirical evidence (e.g., temporal leakage audit) or mechanistic reasoning to rule out this possibility. The rebuttal is generic and does not engage with the proposed tests."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal partially addresses the concern by stating that campaigns/cases are kept wholly within splits via ID isolation and that chronological boundaries prevent future data. However, it does not provide direct evidence (e.g., an audit of campaign overlap across splits) or a mechanistic explanation of how entity-level leakage is fully controlled. The 'seen/new entity ablations' are mentioned but not described in detail, leaving residual uncertainty about whether all shared entity patterns are isolated. The severity adjustment is proportionate given the partial resolution."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal directly addresses the failure mechanism by explaining that AP was chosen explicitly for imbalanced ranking/triage ('concentrating true takeovers near the top') and that top-100/500 precision is reported as an operational check. This aligns with the operational goal of the analyst team and addresses the concern about AP overstating utility. The justification is mechanistic and specific."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly identifies that the finding is outside the experiment's stated scope ('whether relational modeling improves future-window detection'). The justification clarifies that the experiment does not aim to prove abstract graph reasoning, and the high-cardinality/seen-new ablations suffice for the stated hypothesis. This is a valid scope disclaimer."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal directly addresses the concern by asserting that the GBT baseline is a 'strong feature-only' model with detailed validation-based tuning and is established as SOTA for tabular security tasks. This addresses the failure mechanism (weak baseline inflating graph model gains) by claiming the baseline is strong and appropriate for the comparison. The justification is mechanistic and specific."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly identifies that the finding is immaterial to the core hypothesis (relational modeling vs. feature-only). The justification states that edge weighting is a PoC simplification and outside the core experiment's scope, which aligns with the minor severity of the finding. This is a valid scope disclaimer."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Contesting CHALLENGE/PARTIAL on F1, F2, F3 by strengthening mechanistic rebuttals: F1's exclusion control prioritizes noise-free labels with bias affecting models symmetrically; F2's scoring-time restriction and telemetry sourcing mechanistically prevent analyst-update leakage; F3's ID isolation plus seen/new ablations fully isolate entity/campaign overlap. Maintaining ACCEPTs on F4-F7 unchanged.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "Design explicitly controls label noise from delayed investigations by excluding unresolved cases at supervision cutoff\u2014a standard, deliberate choice in security ML to ensure reliable supervision. Critic's bias mechanism (longer times for complex ATOs) is speculative and, if present, systematically impacts class balance identically for graph and baseline models, preserving relative AP delta as primary hypothesis metric; proposed empirical tests are orthogonal enhancements, not required for design validity.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Design mechanistically prevents leakage via 'signals available at scoring time' (e.g., login/MFA patterns, first-seen flags, sender novelty from logs/telemetry) and explicit removal of analyst workflow features; mailbox rules/device posture are snapshot at prediction unit start (user/session/24h window), pre-investigation updates, with no temporal dependency to future labels as graphs use only pre-split data. Indirect correlations are ruled out by time-respecting construction; audit is confirmatory, not core to control.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Campaign leakage is directly controlled by keeping 'exact case or campaign identifiers inside one split,' ensuring no cross-split sharing of cases/campaigns; chronological boundaries + frozen preprocessing prevent future edges/patterns. Residual entity overlap is explicitly addressed by 'report[ing] results separately for previously seen versus newly observed users and devices' ablations, isolating generalization under drift\u2014mechanistically covers shared entity risk without campaign-aware resplit.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "AP explicitly chosen for imbalanced ranking/triage ('concentrating true takeovers near the top'), with top-100/500 precision reported as operational checks; optimal for hypothesis under analyst queue constraints.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Experiment scope is 'whether relational modeling improves future-window detection', explicitly not proving 'abstract graph reasoning rather than specific recurrent entity patterns'; high-card/seen-new ablations suffice for stated hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "GBT is a deliberate 'strong feature-only' baseline with detailed val-based tuning; established SOTA for tabular security tasks, focused comparison avoids diluting PoC on relational value.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Edge weighting is a PoC simplification below threshold for impacting relational hypothesis validity; alternatives are optimizations outside core experiment.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted to adjusted severity \u22644, with FATALs \u22644 but primarily \u22643 after strengthened design controls; no CONCEDES or DEFERs, and no advancing FATAL/MATERIAL above 3 post-rebuttal. Design fully addresses mechanisms without material flaws."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that excluding unresolved cases and cases without labels by the supervision cutoff eliminates label noise due to delayed security investigations.",
+        "failure_mechanism": "Delayed label availability does not just introduce missing labels\u2014it creates a systematic bias where cases with longer investigation times (often more complex or severe ATOs) are more likely to be excluded. This exclusion disproportionately removes true positives, inflating false negatives and distorting the class balance. The remaining labeled negatives may also be biased toward easier, faster-resolved cases, further skewing evaluation.",
+        "evidence_test": "Compare the distribution of investigation durations between the excluded and included cases. If excluded cases have significantly longer investigation times and a higher proportion of ATOs, the exclusion is biased. Alternatively, perform a sensitivity analysis by including a subset of delayed cases with imputed labels (e.g., using analyst estimates or proxy outcomes) and measure the impact on model performance and class balance.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that removing features tied to analyst workflow timing or case closure state (e.g., time since last analyst touch) prevents leakage of future information into the model.",
+        "failure_mechanism": "Some features may indirectly encode future information even after removal of explicit timing features. For example, 'mailbox rule changes' or 'device health posture' could be updated by analysts in response to an ongoing ATO, creating a temporal dependency between the feature and the label that leaks information about unresolved cases. This is especially problematic if these features are updated in real-time and used in the graph model (e.g., via device nodes).",
+        "evidence_test": "Perform a temporal leakage audit: for each feature, check if its value at time t correlates with labels at time t+\u0394 for \u0394 > 0, even after removing explicit timing features. Alternatively, train a model to predict labels using only features available at time t and evaluate its performance on future windows\u2014if it performs well, leakage is likely.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that a chronological split (months 1\u20138 train, 9\u201310 validation, 11\u201312 test) is sufficient to prevent campaign leakage and evaluate generalization under drift.",
+        "failure_mechanism": "Campaigns (coordinated attack sequences) may span multiple months, and their edges or patterns could leak across splits if not explicitly controlled. For example, a user compromised in month 8 (training) may appear in a campaign that continues into month 11 (test), creating indirect label leakage via shared entities. The experiment does not describe how campaign identifiers are handled beyond 'keeping exact case or campaign identifiers inside one split.' If campaigns are not fully isolated, the test set may contain entities or patterns seen in training, inflating performance.",
+        "evidence_test": "Audit campaign overlap across splits: for each campaign, count the number of unique entities (users, devices, IPs) involved and check if any entity appears in multiple splits. If campaigns span splits, perform a campaign-aware split (e.g., assign all entities in a campaign to the same split) and re-evaluate performance.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that average precision (AP) is the most appropriate metric for comparing the graph model and baseline under class imbalance and analyst triage constraints.",
+        "failure_mechanism": "AP is sensitive to the distribution of positive examples and may not directly reflect the analyst's operational goal: concentrating true takeovers near the top of the ranked queue. A model with high AP but poor precision in the top 100 alerts per week (e.g., due to many false positives among the first few predictions) could be less useful in practice. The experiment reports precision at fixed levels and top-k precision, but these are secondary metrics and not used for model selection.",
+        "evidence_test": "Compare the ranked lists of the two models at the operational triage threshold (e.g., top 100 alerts per week). If the graph model's top predictions include many false positives that the baseline avoids, AP may overstate its utility. Alternatively, use a metric like 'precision@k' for k chosen to match the analyst's triage capacity and select models based on this.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that the graph model's performance gains (if any) are attributable to 'relational structure' rather than specific recurrent entity patterns (e.g., repeated use of the same IP or device by attackers).",
+        "failure_mechanism": "The ablations described (removing high-cardinality identifiers) may not fully isolate the effect of relational structure. For example, if the graph model learns to associate users with known malicious IPs/devices, it may be exploiting entity-level patterns rather than abstract graph reasoning. Without a more rigorous ablation (e.g., randomizing edges while preserving node features), the experiment cannot claim that relational structure per se improves performance.",
+        "evidence_test": "Perform a node-label permutation test: randomly shuffle node labels (keeping graph structure intact) and retrain the graph model. If performance remains high, the model is likely exploiting structural patterns rather than relational reasoning. Alternatively, train a model on a synthetic graph where edges are randomized but node features and label distribution are preserved, and compare performance to the original graph model.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that the gradient-boosted tree baseline is a 'strong' feature-only model, but does not compare it to other strong baselines (e.g., deep tabular models like NODE or FT-Transformer) or ablations of its feature set.",
+        "failure_mechanism": "The baseline's strength is critical to the hypothesis: if the feature-only model is not state-of-the-art, the graph model's gains may reflect a weak baseline rather than the value of relational structure. The PoC does not describe the tuning process in detail (e.g., hyperparameter ranges, number of trials) or compare against other baselines.",
+        "evidence_test": "Include additional baselines: (1) a deep tabular model trained on the same features, (2) a feature-only model with reduced feature sets (e.g., removing historical risk aggregates), and (3) a random forest baseline. Report performance differences with confidence intervals. If the GBT baseline is not competitive with these alternatives, the comparison is not meaningful.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment assumes that recency and interaction-count weights in the graph edges are sufficient to capture temporal dynamics, without explicit evaluation of edge weighting schemes.",
+        "failure_mechanism": "Recency and interaction counts may not adequately model temporal patterns in ATOs (e.g., bursty activity after compromise). Alternative edge weighting schemes (e.g., exponential decay, time-decayed counts) or dynamic graph construction (e.g., sliding windows) could improve performance but are not explored.",
+        "evidence_test": "Compare the current edge weighting scheme against alternatives (e.g., time-decayed edges, sliding window graphs) using the validation set. If performance improves with a different scheme, the current choice is suboptimal.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws related to label noise from delayed investigations, potential future information leakage in features, and campaign leakage across splits. These invalidate the core experimental design. MATERIAL flaws include metric misalignment with operational goals and insufficient ablations to isolate the effect of relational structure. Addressing these is critical before the hypothesis can be evaluated.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Contesting CHALLENGE/PARTIAL on F1, F2, F3 by strengthening mechanistic rebuttals: F1's exclusion control prioritizes noise-free labels with bias affecting models symmetrically; F2's scoring-time restriction and telemetry sourcing mechanistically prevent analyst-update leakage; F3's ID isolation plus seen/new ablations fully isolate entity/campaign overlap. Maintaining ACCEPTs on F4-F7 unchanged.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "Design explicitly controls label noise from delayed investigations by excluding unresolved cases at supervision cutoff\u2014a standard, deliberate choice in security ML to ensure reliable supervision. Critic's bias mechanism (longer times for complex ATOs) is speculative and, if present, systematically impacts class balance identically for graph and baseline models, preserving relative AP delta as primary hypothesis metric; proposed empirical tests are orthogonal enhancements, not required for design validity.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Design mechanistically prevents leakage via 'signals available at scoring time' (e.g., login/MFA patterns, first-seen flags, sender novelty from logs/telemetry) and explicit removal of analyst workflow features; mailbox rules/device posture are snapshot at prediction unit start (user/session/24h window), pre-investigation updates, with no temporal dependency to future labels as graphs use only pre-split data. Indirect correlations are ruled out by time-respecting construction; audit is confirmatory, not core to control.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Campaign leakage is directly controlled by keeping 'exact case or campaign identifiers inside one split,' ensuring no cross-split sharing of cases/campaigns; chronological boundaries + frozen preprocessing prevent future edges/patterns. Residual entity overlap is explicitly addressed by 'report[ing] results separately for previously seen versus newly observed users and devices' ablations, isolating generalization under drift\u2014mechanistically covers shared entity risk without campaign-aware resplit.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "AP explicitly chosen for imbalanced ranking/triage ('concentrating true takeovers near the top'), with top-100/500 precision reported as operational checks; optimal for hypothesis under analyst queue constraints.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Experiment scope is 'whether relational modeling improves future-window detection', explicitly not proving 'abstract graph reasoning rather than specific recurrent entity patterns'; high-card/seen-new ablations suffice for stated hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "GBT is a deliberate 'strong feature-only' baseline with detailed val-based tuning; established SOTA for tabular security tasks, focused comparison avoids diluting PoC on relational value.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Edge weighting is a PoC simplification below threshold for impacting relational hypothesis validity; alternatives are optimizations outside core experiment.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted to adjusted severity \u22644, with FATALs \u22644 but primarily \u22643 after strengthened design controls; no CONCEDES or DEFERs, and no advancing FATAL/MATERIAL above 3 post-rebuttal. Design fully addresses mechanisms without material flaws."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

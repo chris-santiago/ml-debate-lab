@@ -1,0 +1,352 @@
+{
+  "case_id": "eval_scenario_068",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline and sequence model are fairly compared in terms of information available at prediction time",
+        "failure_mechanism": "The baseline uses summary statistics from the first 12 hours for ALL predictions (including hour 60), while the sequence model can use data up to prediction time. This creates an inherent asymmetry where the sequence model has access to 48+ additional hours of data for late predictions, while the baseline is artificially constrained. The hypothesis claims sequence models exploit temporal structure, but the comparison is confounded by unequal information access.",
+        "evidence_test": "Check if baseline predictions at hour 60 use only first 12 hours of data. If so, re-run baseline with summary features computed from [t-12, t] for each prediction time t to ensure fair comparison.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Sepsis onset timestamp reflects true physiological onset of sepsis",
+        "failure_mechanism": "The label is defined by when clinical criteria are documented, not when physiological changes occur. Documentation lag is well-documented in sepsis research (often 6-12 hours). The model may be learning documentation patterns (when clinicians write up sepsis) rather than true physiological onset. This means the model could achieve high scores by predicting when documentation occurs, not when sepsis actually begins.",
+        "evidence_test": "Compare model predictions to physiological markers (e.g., lactate trends, vasopressor initiation) that may precede documentation. If predictions align better with documentation timestamps than physiological markers, the model is learning documentation patterns.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sequence models outperform standard approaches for sepsis prediction",
+        "failure_mechanism": "No comparison to clinical scoring systems (SOFA, qSOFA, MEWS) which are the actual standard of care in ICU settings. A sequence model that outperforms logistic regression on summary features but not clinical scores would have limited clinical utility. The claim of 'outperforming standard approaches' is not substantiated.",
+        "evidence_test": "Run clinical scoring systems (SOFA, qSOFA) on the same test set and compare their Precision@FPR=10% to both the baseline and sequence model.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Preprocessing for irregular time series is handled appropriately",
+        "failure_mechanism": "For irregular time series, imputation strategy significantly affects model behavior. Forward-fill, interpolation, or time-decay weighting can all produce different results. Without explicit specification, the imputation could introduce bias (e.g., forward-fill creates artificial stability in vital signs between measurements). This is a silent misconfiguration that could produce plausible-looking results while measuring the wrong thing.",
+        "evidence_test": "Check the actual imputation strategy used. Run ablation with different imputation methods (forward-fill vs. interpolation vs. time-decay) to measure sensitivity.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hospital stratification ensures robustness across health system",
+        "failure_mechanism": "Hospital stratification in splits ensures all sites appear in each split, but does not prevent the model from learning hospital-specific patterns (documentation practices, workflow differences, equipment differences). If the model learns site-specific patterns, it will fail on completely held-out hospitals. The claim of robustness across the health system is not verified.",
+        "evidence_test": "Test on completely held-out hospitals (not just stratified splits). If performance drops significantly, the model is learning site-specific patterns.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC contains two FATAL flaws that fundamentally invalidate the comparison: the baseline is unfairly constrained to first 12 hours while the sequence model can use all available data, and the label definition relies on documentation timing rather than physiological onset. Three MATERIAL flaws weaken the clinical utility claims and generalization assertions. The experiment design would require significant revision before the hypothesis could be meaningfully tested.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I analyzed each finding against the methodology and design intent. F1 identifies a genuine asymmetry: the baseline uses first-12-hours summary features for ALL predictions while the sequence model uses data up to prediction time. This is explicitly stated in the methodology and creates unequal information access at later prediction times. F2 raises a legitimate concern about label quality (documentation vs. physiological timing), but the design includes temporal controls that prevent direct leakage \u2014 this is an empirical question about what the model learns, not a design flaw. F3 compares to clinical scoring systems, but the experiment scope explicitly targets logistic regression comparison, not clinical standard-of-care benchmarks. F4 notes imputation strategy isn't specified, but the critic makes an empirical claim about what method was used without evidence from the methodology. F5 correctly notes stratified splits don't guarantee robustness to held-out hospitals, but the methodology acknowledges this is not verified. After adjustments, only F2 (DEFER) remains above severity 3, preventing exoneration.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The asymmetry is real and explicitly designed: the baseline represents a simple hand-engineered feature approach using fixed early-window summary statistics, while the sequence model uses all available data up to prediction time. This is the intended comparison \u2014 a simple feature extraction method vs. a temporal learning method. The hypothesis tests whether sequence models exploit temporal structure; the baseline is intentionally constrained to represent a common clinical workflow (early-window summary). The recency ablation (section 6.4) provides a control to detect whether gains come from long-range patterns vs. timing artifacts. The design is deliberate, not a misconfiguration."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The concern is valid but cannot be resolved by design argument alone. The methodology includes controls (temporal split, feature availability audit, post-sepsis exclusion) that prevent direct leakage from documentation timestamps. However, the critic's point is that clinical signals (vitals, labs, medications) may themselves be documentation-driven rather than purely physiological. The settling experiment would compare model predictions to physiological markers (lactate trends, vasopressor timing) that precede documentation. If predictions align with documentation timestamps rather than physiological markers, the model learns workflow patterns. If predictions track physiological markers, the model learns true onset. This is empirically testable but not resolvable by design controls alone."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The finding is valid in a different context but outside the stated experiment scope. Section 1 explicitly defines the comparison: sequence model vs. baseline logistic regression using hand-engineered summary features. Section 7 explicitly scopes out clinical safety, generalization to new health systems, and clinician adoption. The claim 'outperforming standard approaches' refers to the baseline logistic regression, not clinical scoring systems. Adding SOFA/qSOFA/MEWS comparators would expand the experiment beyond its stated hypothesis. The scope explicitly targets methodological comparison, not clinical utility validation."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic makes an empirical claim about what imputation strategy was used (forward-fill creates artificial stability), but the methodology does not specify the imputation method \u2014 it only states that preprocessing transformers are fit on training data. Without evidence of what method was actually used, the claim of bias is speculative. The finding is valid that imputation should be explicitly documented for reproducibility, but the critic's specific failure mechanism (forward-fill bias) is not demonstrated in the methodology."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "The critic correctly notes that stratified splits don't prevent learning site-specific patterns. The methodology includes hospital stratification as a control (section 2) but does not verify robustness to completely held-out hospitals. This is a partial design control (stratification) with remaining uncertainty about magnitude. The settling experiment would test on fully held-out hospitals. If performance drops significantly, site-specific learning is confirmed. The design acknowledges this is not verified (section 7 scope limitations), but the concern remains empirically uncertain."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F2 (DEFER) has adjusted severity 7, which blocks EXONERATE and defense_wins. F1 is rebutted as deliberate design (adjusted 4), F3 is out of scope (adjusted 1), F4 lacks evidence (adjusted 1), F5 is deferred (adjusted 3). Since one finding has DEFER rebuttal with adjusted severity > 3 and no FATAL finding was conceded, empirical_test_agreed is the correct verdict. The methodology is sound but F2 represents a genuine empirical question about label quality that requires physiological marker comparison to resolve."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "Defender clarifies that the information asymmetry is an intentional design choice aligned with the stated hypothesis (Seq vs. Early Summary). The recency ablation provides a control for long-range patterns. The 'silent misconfig' label is invalid as the design is deliberate."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "Defender acknowledges the limitation but defers resolution to empirical testing. The failure mechanism (documentation lag vs. physiological onset) remains unaddressed by design controls."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "Defender correctly clarifies that the experiment scope is limited to Seq vs. LR. Clinical score comparison is outside the stated hypothesis and methodology."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "Defender correctly notes the specific bias claim is speculative without knowing the method. However, the finding's core concern (lack of imputation specification in methodology) remains valid for reproducibility."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "Defender acknowledges the limitation but defers resolution. The robustness claim remains unverified and the finding stands."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I accept the R2 verdicts on F1 and F3 as they correctly recognize scope and design intent. For F2 and F5, the critic's CHALLENGE correctly identifies that the design controls are partial and the primary conclusion could be invalidated by the unaddressed mechanisms - these require CONCEDE. For F4, the PARTIAL verdict correctly acknowledges the core concern about documentation while accepting my point about speculative bias claims - I will strengthen the REBUT-EVIDENCE.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The asymmetry is real and explicitly designed: the baseline represents a simple hand-engineered feature approach using fixed early-window summary statistics, while the sequence model uses all available data up to prediction time. This is the intended comparison \u2014 a simple feature extraction method vs. a temporal learning method. The hypothesis tests whether sequence models exploit temporal structure; the baseline is intentionally constrained to represent a common clinical workflow (early-window summary). The recency ablation (section 6.4) provides a control to detect whether gains come from long-range patterns vs. timing artifacts. The design is deliberate, not a misconfiguration.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's CHALLENGE is correct. While the methodology includes controls (temporal split, feature availability audit, post-sepsis exclusion) that prevent direct timestamp leakage, these controls do not eliminate the mechanism of learning documentation-driven clinical signals. The deeper concern is that clinical signals (vitals, labs, medications) may themselves be documentation-driven rather than purely physiological. More critically, the sequence model's greater capacity to exploit these documentation patterns differs from the baseline's capability - this asymmetry could invalidate the relative comparison. The primary conclusion (sequence model vs baseline) could be true for the wrong reason (learning documentation workflow rather than physiological onset). The design has no control that eliminates this mechanism, and the flaw could materially affect the primary evaluation metric. This meets the CONCEDE threshold.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The finding is valid in a different context but outside the stated experiment scope. Section 1 explicitly defines the comparison: sequence model vs. baseline logistic regression using hand-engineered summary features. Section 7 explicitly scopes out clinical safety, generalization to new health systems, and clinician adoption. The claim 'outperforming standard approaches' refers to the baseline logistic regression, not clinical scoring systems. Adding SOFA/qSOFA/MEWS comparators would expand the experiment beyond its stated hypothesis. The scope explicitly targets methodological comparison, not clinical utility validation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic's PARTIAL verdict correctly acknowledges that the specific bias claim (forward-fill creates artificial stability) is speculative without knowing the method used. However, the core concern remains valid for reproducibility: the methodology does not specify the imputation strategy for irregular time series. I maintain that the specific failure mechanism (forward-fill bias) is not demonstrated, but acknowledge that explicit imputation specification is a legitimate documentation requirement. The finding's severity is reduced because the critic's specific mechanism claim is unverified, though the underlying reproducibility concern has partial merit.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic's CHALLENGE is correct. Hospital stratification in splits ensures all sites appear in each split, but does not prevent the model from learning hospital-specific patterns (documentation practices, workflow differences, equipment differences). The design includes stratification as a control but has no mechanism to verify robustness to completely held-out hospitals. More critically, if the sequence model learns site-specific patterns more than the baseline (due to its greater capacity), the primary conclusion (sequence model outperforms baseline) could be invalidated when generalizing to new hospitals. The design acknowledges this is not verified (section 7 scope limitations), but the concern is material to the primary evaluation metric. The design has no control that eliminates this mechanism, and the flaw could invalidate the primary conclusion - this meets the CONCEDE threshold.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL findings (F2 and F5) were CONCEDed and remain at adjusted_severity 7 and 4 respectively, both above the threshold of 3. F2 concerns documentation-driven signal learning that could invalidate the relative comparison, and F5 concerns site-specific pattern learning that could invalidate generalization. These represent genuine design limitations that the methodology does not address."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline and sequence model are fairly compared in terms of information available at prediction time",
+        "failure_mechanism": "The baseline uses summary statistics from the first 12 hours for ALL predictions (including hour 60), while the sequence model can use data up to prediction time. This creates an inherent asymmetry where the sequence model has access to 48+ additional hours of data for late predictions, while the baseline is artificially constrained. The hypothesis claims sequence models exploit temporal structure, but the comparison is confounded by unequal information access.",
+        "evidence_test": "Check if baseline predictions at hour 60 use only first 12 hours of data. If so, re-run baseline with summary features computed from [t-12, t] for each prediction time t to ensure fair comparison.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Sepsis onset timestamp reflects true physiological onset of sepsis",
+        "failure_mechanism": "The label is defined by when clinical criteria are documented, not when physiological changes occur. Documentation lag is well-documented in sepsis research (often 6-12 hours). The model may be learning documentation patterns (when clinicians write up sepsis) rather than true physiological onset. This means the model could achieve high scores by predicting when documentation occurs, not when sepsis actually begins.",
+        "evidence_test": "Compare model predictions to physiological markers (e.g., lactate trends, vasopressor initiation) that may precede documentation. If predictions align better with documentation timestamps than physiological markers, the model is learning documentation patterns.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sequence models outperform standard approaches for sepsis prediction",
+        "failure_mechanism": "No comparison to clinical scoring systems (SOFA, qSOFA, MEWS) which are the actual standard of care in ICU settings. A sequence model that outperforms logistic regression on summary features but not clinical scores would have limited clinical utility. The claim of 'outperforming standard approaches' is not substantiated.",
+        "evidence_test": "Run clinical scoring systems (SOFA, qSOFA) on the same test set and compare their Precision@FPR=10% to both the baseline and sequence model.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Preprocessing for irregular time series is handled appropriately",
+        "failure_mechanism": "For irregular time series, imputation strategy significantly affects model behavior. Forward-fill, interpolation, or time-decay weighting can all produce different results. Without explicit specification, the imputation could introduce bias (e.g., forward-fill creates artificial stability in vital signs between measurements). This is a silent misconfiguration that could produce plausible-looking results while measuring the wrong thing.",
+        "evidence_test": "Check the actual imputation strategy used. Run ablation with different imputation methods (forward-fill vs. interpolation vs. time-decay) to measure sensitivity.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hospital stratification ensures robustness across health system",
+        "failure_mechanism": "Hospital stratification in splits ensures all sites appear in each split, but does not prevent the model from learning hospital-specific patterns (documentation practices, workflow differences, equipment differences). If the model learns site-specific patterns, it will fail on completely held-out hospitals. The claim of robustness across the health system is not verified.",
+        "evidence_test": "Test on completely held-out hospitals (not just stratified splits). If performance drops significantly, the model is learning site-specific patterns.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC contains two FATAL flaws that fundamentally invalidate the comparison: the baseline is unfairly constrained to first 12 hours while the sequence model can use all available data, and the label definition relies on documentation timing rather than physiological onset. Three MATERIAL flaws weaken the clinical utility claims and generalization assertions. The experiment design would require significant revision before the hypothesis could be meaningfully tested.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I accept the R2 verdicts on F1 and F3 as they correctly recognize scope and design intent. For F2 and F5, the critic's CHALLENGE correctly identifies that the design controls are partial and the primary conclusion could be invalidated by the unaddressed mechanisms - these require CONCEDE. For F4, the PARTIAL verdict correctly acknowledges the core concern about documentation while accepting my point about speculative bias claims - I will strengthen the REBUT-EVIDENCE.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The asymmetry is real and explicitly designed: the baseline represents a simple hand-engineered feature approach using fixed early-window summary statistics, while the sequence model uses all available data up to prediction time. This is the intended comparison \u2014 a simple feature extraction method vs. a temporal learning method. The hypothesis tests whether sequence models exploit temporal structure; the baseline is intentionally constrained to represent a common clinical workflow (early-window summary). The recency ablation (section 6.4) provides a control to detect whether gains come from long-range patterns vs. timing artifacts. The design is deliberate, not a misconfiguration.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's CHALLENGE is correct. While the methodology includes controls (temporal split, feature availability audit, post-sepsis exclusion) that prevent direct timestamp leakage, these controls do not eliminate the mechanism of learning documentation-driven clinical signals. The deeper concern is that clinical signals (vitals, labs, medications) may themselves be documentation-driven rather than purely physiological. More critically, the sequence model's greater capacity to exploit these documentation patterns differs from the baseline's capability - this asymmetry could invalidate the relative comparison. The primary conclusion (sequence model vs baseline) could be true for the wrong reason (learning documentation workflow rather than physiological onset). The design has no control that eliminates this mechanism, and the flaw could materially affect the primary evaluation metric. This meets the CONCEDE threshold.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The finding is valid in a different context but outside the stated experiment scope. Section 1 explicitly defines the comparison: sequence model vs. baseline logistic regression using hand-engineered summary features. Section 7 explicitly scopes out clinical safety, generalization to new health systems, and clinician adoption. The claim 'outperforming standard approaches' refers to the baseline logistic regression, not clinical scoring systems. Adding SOFA/qSOFA/MEWS comparators would expand the experiment beyond its stated hypothesis. The scope explicitly targets methodological comparison, not clinical utility validation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic's PARTIAL verdict correctly acknowledges that the specific bias claim (forward-fill creates artificial stability) is speculative without knowing the method used. However, the core concern remains valid for reproducibility: the methodology does not specify the imputation strategy for irregular time series. I maintain that the specific failure mechanism (forward-fill bias) is not demonstrated, but acknowledge that explicit imputation specification is a legitimate documentation requirement. The finding's severity is reduced because the critic's specific mechanism claim is unverified, though the underlying reproducibility concern has partial merit.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic's CHALLENGE is correct. Hospital stratification in splits ensures all sites appear in each split, but does not prevent the model from learning hospital-specific patterns (documentation practices, workflow differences, equipment differences). The design includes stratification as a control but has no mechanism to verify robustness to completely held-out hospitals. More critically, if the sequence model learns site-specific patterns more than the baseline (due to its greater capacity), the primary conclusion (sequence model outperforms baseline) could be invalidated when generalizing to new hospitals. The design acknowledges this is not verified (section 7 scope limitations), but the concern is material to the primary evaluation metric. The design has no control that eliminates this mechanism, and the flaw could invalidate the primary conclusion - this meets the CONCEDE threshold.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL findings (F2 and F5) were CONCEDed and remain at adjusted_severity 7 and 4 respectively, both above the threshold of 3. F2 concerns documentation-driven signal learning that could invalidate the relative comparison, and F5 concerns site-specific pattern learning that could invalidate generalization. These represent genuine design limitations that the methodology does not address."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=8 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=7 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=4, CONCEDE \u2192 critique_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

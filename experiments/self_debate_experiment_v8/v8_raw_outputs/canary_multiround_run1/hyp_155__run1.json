@@ -1,0 +1,352 @@
+{
+  "case_id": "hyp_155",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The graph features (e.g., sender in-degree, PageRank) and historical sender signals (e.g., fraction of prior messages that were malicious) computed from the training window are a valid, non-leaky representation for messages in the validation and test sets.",
+        "failure_mechanism": "Signal leakage via label contamination. The claim assumes that for a given sender in the validation/test set, the 'fraction of prior messages that were malicious' is computed using only labels from the training period (T0 to T0+12m). However, the methodology states labels are defined as malicious if confirmed by analyst triage, and benign if confirmed non-malicious or older than 30 days without subsequent report. If a message from a sender in the *training* window receives its malicious label *after* the training window ends (but within 30 days of its date), that label is used to compute the sender's historical malicious fraction. This label information is from a future time relative to the training window boundary and would not be available at inference time for a real-time detector. Using it to compute features for validation/test senders constitutes train-test leakage, artificially inflating performance by giving the model access to future label information about senders' historical behavior.",
+        "evidence_test": "Audit the feature computation pipeline. For each sender in the validation/test set, trace the source and timestamp of every label used to compute their 'fraction of prior messages that were malicious' and other historical statistics. Confirm that no label with a determination date after the training window cutoff (T0+12m) is used in the feature calculation for any sender evaluated in validation or test.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Stratifying the chronological split by sender domain (internal vs. external) is sufficient to ensure the train, validation, and test cohorts 'all reflect the realistic operational sender distribution'.",
+        "failure_mechanism": "Implicit distributional assumption of stationarity within domain categories. The split ensures proportional representation of internal/external senders, but the operational challenge of spear-phishing detection is not just the ratio of internal to external mail. It critically depends on the *identity and behavior of specific senders* and the evolving graph structure. A chronological split with stratification by domain still allows a specific malicious sender (or a cluster of senders) to appear exclusively in the test set. The model would have no prior graph features or historical signals for this sender (cold-start problem), as the graph is frozen at training. The baseline text model would also face this challenge, but the hypothesis model's claimed advantage from graph context would be invalidated for these senders. The evaluation metric aggregates over all test samples, potentially masking a catastrophic failure mode for new senders, which are a key component of the 'hardest, most realistic condition' the test set is meant to represent.",
+        "evidence_test": "Analyze the test set senders: calculate the proportion of test messages (and specifically test malicious messages) from senders who sent zero messages in the training window. Evaluate the performance (precision, recall) of the hypothesis model versus the baseline model specifically on this 'cold-start sender' subset. If performance on this subset is significantly worse than on the overall test set, or if the hypothesis model's advantage vanishes here, the claim of general superiority is weakened.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary evaluation metric (Precision at Recall=80%) is sufficient to conclude the hypothesis model 'outperforms' the text-only baseline for the operational objective.",
+        "failure_mechanism": "Metric limitations due to threshold selection and operational trade-offs. Optimizing and selecting models based on a single point (P@R=80%) on the validation PR curve is unstable, especially with severe class imbalance (~0.5-2%). Small changes in model scores can cause large shifts in the threshold required to achieve 80% recall, making the precision at that point a noisy metric for model selection. Furthermore, the operational objective is more nuanced: there is a cost curve for false positives. A model with slightly lower P@R=80% might have much higher precision at lower recall points (e.g., R=50%), which could be more valuable if the operational response capacity is limited. Basing the entire conclusion on one arbitrary point ignores the full precision-recall trade-off that should inform deployment.",
+        "evidence_test": "Compare the full precision-recall curves of the final selected models on the test set. Calculate the area under the PR curve (AUPRC) and perform a statistical significance test (e.g., bootstrap). Also, evaluate precision at multiple recall levels (e.g., 50%, 80%, 90%) to see if the hypothesis model's advantage is consistent or isolated to the 80% point chosen during validation.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline model, denied access to non-text signals, provides a clean counterfactual to isolate the contribution of graph and historical context.",
+        "failure_mechanism": "Missing baseline that controls for feature engineering effort. The hypothesis model receives concatenated text embeddings and graph features. The baseline receives only text embeddings. However, the act of concatenating additional features (even random noise) can change the optimization landscape and effective learning capacity for the downstream MLP, potentially leading to different convergence points and performance, independent of the informational content of the graph features. The performance gap could be partly due to this architectural/optimization effect, not the graph signals. A stronger baseline would be a model with the same architecture but receiving a placebo set of features (e.g., random vectors of the same dimension as the graph features) to control for this effect.",
+        "evidence_test": "Implement an additional 'placebo' baseline model identical to the hypothesis model but where the graph-derived features are replaced with random Gaussian noise of the same dimensionality. Train and evaluate this model. If the placebo model shows a performance gain over the text-only baseline similar to the hypothesis model, then the claimed effect of graph features is not supported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding messages whose label arrives more than 30 days after the message date ensures 'label quality and temporal consistency' for a real-time detector.",
+        "failure_mechanism": "This filtering creates a potential survivorship bias. Sophisticated spear-phishing campaigns may take longer to be discovered and confirmed (e.g., slow-rolling BEC). By excluding messages with labels delayed beyond 30 days, the experiment may systematically remove the hardest, most sophisticated attacks from the dataset. This could make the classification task artificially easier and not representative of the true threat landscape the detector must face. The model's performance, especially on 'historical' signals, might be inflated because the most challenging cases have been filtered out.",
+        "evidence_test": "Analyze the distribution of label delay times for malicious messages. If a non-trivial fraction of confirmed attacks have determination delays >30 days, characterize those attacks (e.g., by campaign, sender sophistication). The concern is material if these long-delay attacks differ systematically from shorter-delay attacks and constitute a meaningful portion of the threat landscape.",
+        "flaw_category": "uncertain_significance"
+      }
+    ],
+    "summary": "The PoC contains a likely fatal flaw due to potential label leakage in historical feature computation (F1) and a significant concern regarding the evaluation of new senders (F2). The metric choice and baseline design also weaken the conclusiveness of the comparison.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Let me analyze each finding systematically:\n\n**F1 (Severity 9, FATAL):** The critic claims label contamination occurs because labels can arrive up to 30 days after message date. If a message at T0+11.5 months gets labeled at T0+12.5 months (within 30-day window), that label would be included in the dataset but fall outside the training temporal boundary for feature computation. This is a legitimate concern about the temporal semantics of \"training window\" - does it refer to message date or label date? The methodology states features are \"computed from the training window\" and the graph is \"frozen at the training boundary,\" but does not explicitly clarify which timestamps govern label inclusion vs. feature computation. This is a genuine ambiguity requiring empirical audit - the design intent is sound but the implementation boundary needs verification. This warrants DEFER.\n\n**F2 (Severity 7, FATAL):** The critic argues stratification by internal/external domain doesn't prevent cold-start senders in test. However, the methodology explicitly states the test set represents \"the hardest, most realistic condition\" including new senders. The scope section acknowledges generalization requires separate evaluation. This is an intentional design choice - the experiment tests whether graph features help for senders WITH history, while accepting that cold-start is a shared challenge. Both models face the same cold-start distribution; the comparison remains valid. This is REBUT-DESIGN.\n\n**F3 (Severity 5, MATERIAL):** The critic objects to single-point optimization (P@R=80%). However, the methodology includes AUROC, AUPRC, and precision at multiple FPRs (1%, 5%) as secondary metrics. The primary metric is operationally grounded - the organization needs 80% recall. Model selection uses validation before test. This is a reasonable operational choice, not a flaw. REBUT-DESIGN.\n\n**F4 (Severity 4, MATERIAL):** The critic wants a placebo baseline with random features to control for concatenation effect. However, the baseline explicitly denies non-text signals, providing a strong counterfactual. The informational content difference (text-only vs. text+graph) is the hypothesis. Adding random noise features would complicate the architecture without clear benefit. This is a reasonable design choice. REBUT-DESIGN.\n\n**F5 (Severity 2, MINOR):** The critic notes 30-day label exclusion might remove sophisticated slow-rolling attacks. This is a valid uncertainty, but the methodology explicitly targets real-time detector conditions where delayed labels are unavailable. The concern is acknowledged as uncertain without empirical analysis. This is below significance for the experiment's conclusions. REBUT-IMMATERIAL.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic raises a legitimate ambiguity: the methodology states labels arriving within 30 days are included, and features are computed from the 'training window.' The critical question is whether the training window boundary applies to message dates or label determination dates. If a message at month 11.5 receives a label at month 12.5 (within 30 days), does that label contribute to sender statistics used for validation/test evaluation? The design intent is sound (temporal consistency), but the implementation boundary needs empirical audit. This question cannot be resolved by argument alone - it requires tracing the actual feature computation pipeline. The concern is real but the methodology's intent is clearly to prevent leakage; whether the implementation achieves this needs verification."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The critic claims stratification by sender domain doesn't prevent cold-start senders in test. However, this is an intentional design choice, not a flaw. The methodology explicitly states the test set represents 'the hardest, most realistic condition' including new senders the model hasn't seen. The scope section explicitly acknowledges generalization across organizations requires separate evaluation. The experiment tests whether graph features help for senders WITH historical context - the cold-start case is a shared challenge for both hypothesis and baseline models. The comparison remains valid: any performance gap is attributable to graph features for senders where those features exist. The hypothesis model is not claimed to solve cold-start; it tests whether historical context helps when available."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic objects to single-point optimization (P@R=80%) as unstable with class imbalance. However, the methodology includes AUROC, AUPRC, and precision at multiple FPRs (1%, 5%) as secondary metrics. The primary metric is operationally grounded: the organization explicitly needs 80% recall with low FPR. Model selection uses validation data before test evaluation - this is proper cross-validation. The concern about threshold instability is valid but mitigated by the secondary metrics and the explicit operational context. This is a reasonable design choice for the stated objective."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic wants a placebo baseline with random features to control for concatenation effect. However, the baseline explicitly denies access to non-text signals (attachments, URLs, sender reputation), providing a strong counterfactual that isolates graph/informational contribution. The hypothesis tests whether graph information improves over text-only; the architectural effect of concatenation is minimal compared to the informational content difference. Adding random noise features would complicate the architecture without clear benefit to the hypothesis test. This is a reasonable baseline design."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic notes the 30-day label exclusion might remove sophisticated slow-rolling attacks (survivorship bias). This is a valid uncertainty, but the methodology explicitly targets real-time detector conditions where delayed labels are operationally unavailable. The concern is acknowledged as uncertain - it would only be material if a meaningful fraction of attacks have >30 day delays and differ systematically. Without evidence this is a large or systematic effect, it's below significance for the experiment's conclusions about graph feature utility."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "After rebuttals, the maximum adjusted severity is 3 (F2), with F1 requiring empirical verification (DEFER) but not representing a design failure - it's an implementation boundary question. All other findings are below adjusted severity 3. The methodology is sound; F1 needs pipeline audit but does not represent a conceded flaw requiring design change. The experiment correctly tests whether graph features improve over text-only for the operational objective."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "The defender correctly identifies this as an implementation ambiguity that requires empirical audit. They acknowledge the legitimate concern about whether label determination dates after the training window could contaminate historical sender statistics. Since this is a DEFER rebuttal that doesn't claim to resolve the issue, and the severity remains unchanged, we accept this as an open question requiring verification."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender's rebuttal fails to address the core failure mechanism. While they correctly note that cold-start senders are an intentional design choice, they miss the critical point: the evaluation metric aggregates over ALL test samples, potentially masking catastrophic failure on cold-start senders. If the hypothesis model's advantage disappears for cold-start senders (which represent the 'hardest, most realistic condition'), then claiming general superiority is misleading. The defender's argument that 'any performance gap is attributable to graph features for senders where those features exist' ignores that the overall conclusion about the model's utility would be inflated if cold-start senders constitute a significant portion of the test set. The severity adjustment from 7 to 3 is disproportionate; this remains a MATERIAL concern requiring stratified analysis."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender's rebuttal directly addresses the failure mechanism by noting that secondary metrics (AUROC, AUPRC, precision at multiple FPRs) provide robustness against the instability of single-point optimization. The operational grounding of P@R=80% is explicitly stated in the methodology, and the use of validation data for model selection before test evaluation is sound. While the concern about threshold instability is valid, the design includes sufficient safeguards. The severity adjustment from 5 to 2 is appropriate."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender's rebuttal partially addresses the concern but leaves a residual issue. While it's true that the baseline isolates informational contribution by denying access to non-text signals, the architectural effect of concatenating additional features (even if informative) could still influence optimization dynamics and convergence. The defender dismisses this as 'minimal compared to the informational content difference' without evidence. A well-designed experiment would control for this potential confound. However, the concern is reduced from MATERIAL to MINOR since the primary comparison remains valid. The severity adjustment from 4 to 1 is too aggressive; a reduction to 3 is more appropriate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly notes that the 30-day exclusion aligns with real-time detector conditions and acknowledges the uncertainty about systematic effects. Without evidence that long-delay attacks constitute a meaningful portion of the threat landscape or differ systematically, this remains a minor concern. The severity adjustment from 2 to 1 is proportionate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am accepting the ACCEPT verdicts (F1, F3, F5) unchanged. For F2, I maintain REBUT-DESIGN but acknowledge the critic's valid point about stratified analysis - the design intent is sound but could be strengthened. For F4, I adjust from REBUT-DESIGN to REBUT-SCOPE, acknowledging the residual architectural concern while maintaining the core comparison remains valid.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic ACCEPTed my DEFER. The concern remains an open empirical question requiring audit of the feature computation pipeline. No change to position.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The critic CHALLENGEd my rebuttal, arguing the aggregate metric masks cold-start failure. I maintain the design is sound but acknowledge the valid concern: stratified analysis on cold-start vs. warm-start senders would strengthen the evaluation. The design explicitly includes cold-start as part of 'hardest realistic condition' - both models face this challenge equally. The comparison remains valid for testing whether graph features help when context exists. However, the critic correctly notes that claiming 'general superiority' requires acknowledging this limitation. I adjust severity from 3 to 4 to reflect the legitimate concern about stratified analysis, while maintaining the core design is not flawed.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTed my rebuttal. No change to position.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "The critic issued PARTIAL, arguing the architectural concatenation effect isn't fully addressed. I shift from REBUT-DESIGN to REBUT-SCOPE: the design controls for informational content (denying non-text signals to baseline), which is the primary hypothesis test. The architectural optimization effect is a secondary concern - the critic is correct that this could theoretically influence convergence. However, this is a scope limitation, not a fatal flaw: the primary comparison (graph information vs. text-only) remains valid. The design could be strengthened with a placebo baseline, but the current design adequately tests the stated hypothesis. I adjust severity to 3 (from 1) to reflect the residual concern.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed my rebuttal. No change to position.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have adjusted_severity \u2264 4. F1 remains DEFER (open empirical question), F2 adjusted to 4 (strengthened with acknowledgment of stratified analysis value), F3 at 2, F4 at 3 (scope limitation acknowledged), F5 at 1. No FATAL or MATERIAL findings remain above severity 3. The design adequately tests the hypothesis; any residual concerns are either empirical questions requiring verification or scope limitations that don't invalidate the core comparison."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The graph features (e.g., sender in-degree, PageRank) and historical sender signals (e.g., fraction of prior messages that were malicious) computed from the training window are a valid, non-leaky representation for messages in the validation and test sets.",
+        "failure_mechanism": "Signal leakage via label contamination. The claim assumes that for a given sender in the validation/test set, the 'fraction of prior messages that were malicious' is computed using only labels from the training period (T0 to T0+12m). However, the methodology states labels are defined as malicious if confirmed by analyst triage, and benign if confirmed non-malicious or older than 30 days without subsequent report. If a message from a sender in the *training* window receives its malicious label *after* the training window ends (but within 30 days of its date), that label is used to compute the sender's historical malicious fraction. This label information is from a future time relative to the training window boundary and would not be available at inference time for a real-time detector. Using it to compute features for validation/test senders constitutes train-test leakage, artificially inflating performance by giving the model access to future label information about senders' historical behavior.",
+        "evidence_test": "Audit the feature computation pipeline. For each sender in the validation/test set, trace the source and timestamp of every label used to compute their 'fraction of prior messages that were malicious' and other historical statistics. Confirm that no label with a determination date after the training window cutoff (T0+12m) is used in the feature calculation for any sender evaluated in validation or test.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Stratifying the chronological split by sender domain (internal vs. external) is sufficient to ensure the train, validation, and test cohorts 'all reflect the realistic operational sender distribution'.",
+        "failure_mechanism": "Implicit distributional assumption of stationarity within domain categories. The split ensures proportional representation of internal/external senders, but the operational challenge of spear-phishing detection is not just the ratio of internal to external mail. It critically depends on the *identity and behavior of specific senders* and the evolving graph structure. A chronological split with stratification by domain still allows a specific malicious sender (or a cluster of senders) to appear exclusively in the test set. The model would have no prior graph features or historical signals for this sender (cold-start problem), as the graph is frozen at training. The baseline text model would also face this challenge, but the hypothesis model's claimed advantage from graph context would be invalidated for these senders. The evaluation metric aggregates over all test samples, potentially masking a catastrophic failure mode for new senders, which are a key component of the 'hardest, most realistic condition' the test set is meant to represent.",
+        "evidence_test": "Analyze the test set senders: calculate the proportion of test messages (and specifically test malicious messages) from senders who sent zero messages in the training window. Evaluate the performance (precision, recall) of the hypothesis model versus the baseline model specifically on this 'cold-start sender' subset. If performance on this subset is significantly worse than on the overall test set, or if the hypothesis model's advantage vanishes here, the claim of general superiority is weakened.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary evaluation metric (Precision at Recall=80%) is sufficient to conclude the hypothesis model 'outperforms' the text-only baseline for the operational objective.",
+        "failure_mechanism": "Metric limitations due to threshold selection and operational trade-offs. Optimizing and selecting models based on a single point (P@R=80%) on the validation PR curve is unstable, especially with severe class imbalance (~0.5-2%). Small changes in model scores can cause large shifts in the threshold required to achieve 80% recall, making the precision at that point a noisy metric for model selection. Furthermore, the operational objective is more nuanced: there is a cost curve for false positives. A model with slightly lower P@R=80% might have much higher precision at lower recall points (e.g., R=50%), which could be more valuable if the operational response capacity is limited. Basing the entire conclusion on one arbitrary point ignores the full precision-recall trade-off that should inform deployment.",
+        "evidence_test": "Compare the full precision-recall curves of the final selected models on the test set. Calculate the area under the PR curve (AUPRC) and perform a statistical significance test (e.g., bootstrap). Also, evaluate precision at multiple recall levels (e.g., 50%, 80%, 90%) to see if the hypothesis model's advantage is consistent or isolated to the 80% point chosen during validation.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline model, denied access to non-text signals, provides a clean counterfactual to isolate the contribution of graph and historical context.",
+        "failure_mechanism": "Missing baseline that controls for feature engineering effort. The hypothesis model receives concatenated text embeddings and graph features. The baseline receives only text embeddings. However, the act of concatenating additional features (even random noise) can change the optimization landscape and effective learning capacity for the downstream MLP, potentially leading to different convergence points and performance, independent of the informational content of the graph features. The performance gap could be partly due to this architectural/optimization effect, not the graph signals. A stronger baseline would be a model with the same architecture but receiving a placebo set of features (e.g., random vectors of the same dimension as the graph features) to control for this effect.",
+        "evidence_test": "Implement an additional 'placebo' baseline model identical to the hypothesis model but where the graph-derived features are replaced with random Gaussian noise of the same dimensionality. Train and evaluate this model. If the placebo model shows a performance gain over the text-only baseline similar to the hypothesis model, then the claimed effect of graph features is not supported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding messages whose label arrives more than 30 days after the message date ensures 'label quality and temporal consistency' for a real-time detector.",
+        "failure_mechanism": "This filtering creates a potential survivorship bias. Sophisticated spear-phishing campaigns may take longer to be discovered and confirmed (e.g., slow-rolling BEC). By excluding messages with labels delayed beyond 30 days, the experiment may systematically remove the hardest, most sophisticated attacks from the dataset. This could make the classification task artificially easier and not representative of the true threat landscape the detector must face. The model's performance, especially on 'historical' signals, might be inflated because the most challenging cases have been filtered out.",
+        "evidence_test": "Analyze the distribution of label delay times for malicious messages. If a non-trivial fraction of confirmed attacks have determination delays >30 days, characterize those attacks (e.g., by campaign, sender sophistication). The concern is material if these long-delay attacks differ systematically from shorter-delay attacks and constitute a meaningful portion of the threat landscape.",
+        "flaw_category": "uncertain_significance"
+      }
+    ],
+    "summary": "The PoC contains a likely fatal flaw due to potential label leakage in historical feature computation (F1) and a significant concern regarding the evaluation of new senders (F2). The metric choice and baseline design also weaken the conclusiveness of the comparison.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am accepting the ACCEPT verdicts (F1, F3, F5) unchanged. For F2, I maintain REBUT-DESIGN but acknowledge the critic's valid point about stratified analysis - the design intent is sound but could be strengthened. For F4, I adjust from REBUT-DESIGN to REBUT-SCOPE, acknowledging the residual architectural concern while maintaining the core comparison remains valid.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic ACCEPTed my DEFER. The concern remains an open empirical question requiring audit of the feature computation pipeline. No change to position.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The critic CHALLENGEd my rebuttal, arguing the aggregate metric masks cold-start failure. I maintain the design is sound but acknowledge the valid concern: stratified analysis on cold-start vs. warm-start senders would strengthen the evaluation. The design explicitly includes cold-start as part of 'hardest realistic condition' - both models face this challenge equally. The comparison remains valid for testing whether graph features help when context exists. However, the critic correctly notes that claiming 'general superiority' requires acknowledging this limitation. I adjust severity from 3 to 4 to reflect the legitimate concern about stratified analysis, while maintaining the core design is not flawed.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTed my rebuttal. No change to position.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "The critic issued PARTIAL, arguing the architectural concatenation effect isn't fully addressed. I shift from REBUT-DESIGN to REBUT-SCOPE: the design controls for informational content (denying non-text signals to baseline), which is the primary hypothesis test. The architectural optimization effect is a secondary concern - the critic is correct that this could theoretically influence convergence. However, this is a scope limitation, not a fatal flaw: the primary comparison (graph information vs. text-only) remains valid. The design could be strengthened with a placebo baseline, but the current design adequately tests the stated hypothesis. I adjust severity to 3 (from 1) to reflect the residual concern.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed my rebuttal. No change to position.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have adjusted_severity \u2264 4. F1 remains DEFER (open empirical question), F2 adjusted to 4 (strengthened with acknowledgment of stratified analysis value), F3 at 2, F4 at 3 (scope limitation acknowledged), F5 at 1. No FATAL or MATERIAL findings remain above severity 3. The design adequately tests the hypothesis; any residual concerns are either empirical questions requiring verification or scope limitations that don't invalidate the core comparison."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=9, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=7 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

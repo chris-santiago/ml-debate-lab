@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_705",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Host identifiers (IP addresses) are included in the transformer model but excluded from the baseline, and this difference does not invalidate the comparison because the transformer's advantage persists when host identifiers are removed.",
+        "failure_mechanism": "The transformer's inclusion of host identifiers creates a potential identity leakage pathway. Even if a second transformer variant removes host identifiers, the baseline (XGBoost/LightGBM) may still be disadvantaged because it lacks access to other identity-linked features (e.g., historical alert counts on the source host, user agent hashes, or port categories that correlate with specific hosts). The baseline's exclusion of host identifiers is not a fair comparison if other identity-linked features are present in the transformer's input.",
+        "evidence_test": "Retrain both models with all identity-linked features (e.g., source/destination IP, user agent hash, historical alert counts on the source host) removed from both models. If the transformer's advantage persists, the comparison is fair. If the transformer's advantage disappears or the baseline performs comparably, the original comparison is invalid due to unfair feature exclusion.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 24-hour label confirmation window aligns with realistic detection latency and does not introduce label leakage.",
+        "failure_mechanism": "The label assignment process uses retrospective confirmation after the 24-hour window, but the hypothesis targets 'next-day confirmed incidents.' If the model is trained to predict incidents that will be confirmed 24 hours later, the label assignment must ensure that no information from the 24-hour window leaks into the training data. However, the description does not explicitly state that the model's input features are restricted to data available at the time of prediction (e.g., no features from the 24-hour confirmation window are included). If features from the confirmation window are used, the model could be indirectly using future information to predict past incidents, inflating performance.",
+        "evidence_test": "Audit the feature set to ensure no features are derived from the 24-hour confirmation window (e.g., no post-incident alerts, no callback detections, no lateral movement logs). If such features are included, retrain the model with only pre-confirmation features and re-evaluate. If performance drops significantly, the original results are invalid due to label leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201310 train, 11\u201313 validation, 14\u201318 test) is sufficient to prevent temporal leakage and distribution shift.",
+        "failure_mechanism": "The temporal split is chronological, but the description does not address whether the 18-month dataset is representative of the deployment environment. If the dataset is missing critical attack campaigns (e.g., a new adversary technique emerges in month 14), the test set may not reflect the hypothesis's target: 'next-day confirmed incidents.' Additionally, the split does not account for potential seasonal patterns or periodic network behavior that could bias the evaluation. The per-month evaluation in the test set helps, but the initial split may still be vulnerable to systematic shifts.",
+        "evidence_test": "Evaluate the model on a synthetic or external dataset representing a novel attack campaign not present in the training data. If performance degrades significantly, the temporal split is insufficient to test the hypothesis under distribution shift. Alternatively, perform a sensitivity analysis by excluding the first and last months of the training set and retraining to test robustness to campaign drift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (pAUC-ROC over 0\u20135% FPR) is aligned with operational constraints and provides a fair comparison between the transformer and baseline.",
+        "failure_mechanism": "The pAUC-ROC metric is operationally aligned, but it may not capture the full complexity of the detection task. For example, the metric does not account for the cost of false negatives in high-severity incidents or the temporal urgency of alerts (e.g., early detection of lateral movement vs. late-stage C2 callbacks). Additionally, the 5% FPR threshold is arbitrary; a more principled approach would derive the threshold from analyst workload constraints or incident severity distributions.",
+        "evidence_test": "Define a cost-sensitive metric that weights false negatives by incident severity (e.g., malware callbacks vs. benign lateral movement) and false positives by analyst workload. Re-evaluate both models using this metric. If the transformer's advantage disappears or reverses, the pAUC-ROC metric is misaligned with the deployment objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The preprocessing transformers (scaling, encoding, imputation) are parameterized once on the full 18-month corpus and frozen before model fitting, ensuring no leakage.",
+        "failure_mechanism": "Freezing preprocessing parameters on the full corpus risks leaking information from the validation and test sets into the training pipeline. For example, if the imputation strategy for missing fields is learned from the entire dataset, the training set's preprocessing is influenced by future data. This violates the strict temporal separation required by the hypothesis.",
+        "evidence_test": "Re-run preprocessing with parameters estimated only on the training set (months 1\u201310) and apply them to the validation and test sets without adjustment. If performance changes significantly, the original preprocessing pipeline leaked information.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer's inclusion of packet-level sequences provides a fair comparison to the baseline, which uses aggregated flow statistics.",
+        "failure_mechanism": "The transformer's input includes packet-level sequences (inter-packet delay, packet size, direction), while the baseline uses aggregated statistics (mean, std, skew of inter-packet delays). This is not a fair comparison because the transformer has access to fine-grained temporal dynamics, while the baseline only sees coarse summaries. The hypothesis tests whether sequence modeling provides gains, but the comparison is confounded by the granularity of the input features.",
+        "evidence_test": "Retrain the baseline with packet-level sequences (e.g., by computing the same sequence features as the transformer) and compare it to the transformer. If the baseline's performance improves significantly, the original comparison was unfair due to feature granularity.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 18-month dataset is sufficient to train and evaluate the models for intrusion detection.",
+        "failure_mechanism": "The dataset size is not explicitly justified relative to the complexity of the models. For example, the transformer has 4 encoder blocks with 8 attention heads and a hidden dimension of 256, which may require more data to train effectively without overfitting. The description does not address whether the dataset is large enough to support the transformer's capacity or whether the baseline is under-tuned due to limited data.",
+        "evidence_test": "Perform a learning curve analysis by training the transformer on subsets of the training data (e.g., 25%, 50%, 75% of months 1\u201310) and evaluating on the validation set. If the transformer's performance plateaus or degrades with more data, the dataset may be insufficient or the model may be overparameterized.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC has multiple FATAL flaws related to signal leakage (host identifiers, label confirmation window, preprocessing leakage) and distribution shift that invalidate the core comparison. Material flaws include metric misalignment and unfair feature granularity. Addressing these issues is critical before the hypothesis can be meaningfully tested.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critic raises several significant concerns regarding the methodology. Finding F1 claims that the inclusion of host identifiers in the transformer model creates a potential identity leakage pathway, which is valid. However, the design includes a control where a variant of the transformer is trained without these identifiers, allowing for a fair comparison. Finding F2 questions the label assignment process, suggesting that features from the 24-hour confirmation window may inadvertently leak into the training data. This concern is valid; however, the design explicitly states that labels are assigned only after the confirmation window, which mitigates the risk of leakage. Finding F3 raises issues about the representativeness of the 18-month dataset and the potential for systematic shifts, which is a valid concern but is partially addressed by the temporal split and per-month evaluation. Finding F4 critiques the primary metric, pAUC-ROC, for not capturing the full complexity of the detection task, which is a valid point, but the metric aligns with operational constraints. Finding F5 points out that freezing preprocessing parameters on the full corpus could lead to leakage, which is a significant concern; however, if the preprocessing is strictly applied only to the training set, this can be controlled. Finding F6 discusses the granularity of features between the transformer and baseline, which is a valid point, but the hypothesis is focused on the sequence modeling aspect, which is adequately tested. Finding F7 is a minor concern regarding dataset size relative to model complexity, which is valid but does not significantly impact the overall conclusions. Overall, while several findings raise valid concerns, the methodology has controls in place that address many of these issues, particularly regarding identity leakage and label contamination.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 5,
+        "justification": "The design includes a control where a variant of the transformer is trained without host identifiers, allowing for a direct comparison to the baseline. This control addresses the potential identity leakage pathway raised in the critique."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The methodology explicitly states that labels are assigned only after the 24-hour confirmation window has elapsed, mitigating the risk of label leakage. This design choice ensures that no future information contaminates the training data."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "While the concern about dataset representativeness is valid, the methodology includes a temporal split and per-month evaluation that help address potential distribution shifts. The focus is on ensuring that the test set reflects future attack patterns."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 5,
+        "justification": "The primary metric, pAUC-ROC, is aligned with operational constraints, and while it may not capture every nuance of the detection task, it is appropriate for the evaluation context. The critique raises a valid point but does not fundamentally undermine the experiment."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The preprocessing pipeline can be adjusted to ensure parameters are estimated only on the training set, thus avoiding leakage. This design choice can be implemented to maintain strict temporal separation."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The hypothesis focuses on the benefits of sequence modeling, and while the granularity of features is a valid concern, the design adequately tests the hypothesis by comparing the transformer against a baseline with different feature sets."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the dataset size relative to model complexity is a valid concern, it does not significantly impact the overall conclusions of the study. The methodology is sound for the intended evaluation."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been addressed with rebuttals that sufficiently mitigate their concerns, resulting in adjusted severities below the critical threshold. The methodology remains sound and effective for testing the hypothesis."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal mentions a transformer variant without host identifiers but does not address the broader issue of identity-linked features (e.g., historical alert counts on the source host, user agent hashes, or port categories). The failure mechanism is not fully resolved because the baseline may still be disadvantaged by the exclusion of these identity-linked features, even if host identifiers are removed. The rebuttal is generic and does not mechanistically address the specific leakage pathway."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal explicitly states that labels are assigned only after the 24-hour confirmation window has elapsed, directly addressing the label leakage concern. The mechanism is sound and resolves the failure mode."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal is a scope disclaimer ('focus is on ensuring the test set reflects future attack patterns') and does not address the core failure mechanism: whether the dataset is representative of novel attack campaigns not present in training. The per-month evaluation helps but does not resolve the representativeness concern."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal acknowledges the critique's validity but argues that pAUC-ROC is appropriate for the evaluation context. While the metric may not capture every nuance, the rebuttal is proportionate and does not dismiss the concern outright."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal acknowledges the design flaw and states that preprocessing parameters can be estimated only on the training set. This directly addresses the leakage mechanism and is a valid design adjustment."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal is a scope statement ('the hypothesis focuses on the benefits of sequence modeling') and does not address the specific failure mechanism: the unfair comparison due to feature granularity. The transformer has access to packet-level sequences, while the baseline uses aggregated statistics, which is not a fair test of the hypothesis."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal acknowledges the concern but argues it is immaterial to the overall conclusions. While the dataset size relative to model complexity is a valid concern, it does not fundamentally undermine the experiment's validity."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I accept the challenges for findings F2, F4, F5, and F7 as they accurately reflect the strengths of my rebuttals. However, I contest the challenges for findings F1, F3, and F6, as the design does address the concerns raised, albeit not perfectly articulated in R1. For F1, while there are identity-linked features, the transformer variant without host identifiers still provides a valid comparison. For F3, the temporal split and per-month evaluations do help ensure representativeness, but I will defer to empirical testing to confirm this. For F6, the granularity of features is a valid point, but the design still adequately tests the hypothesis despite the differences in feature sets.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 5,
+        "justification": "The design includes a control where a variant of the transformer is trained without host identifiers, allowing for a direct comparison to the baseline. While the baseline may lack some identity-linked features, the removal of host identifiers still provides a significant test of the hypothesis. The transformer variant's performance will indicate whether the advantage is due to sequence modeling or identity features.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The methodology explicitly states that labels are assigned only after the 24-hour confirmation window has elapsed, mitigating the risk of label leakage. This design choice ensures that no future information contaminates the training data.",
+        "r2_challenge_response": "ACCEPT"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While the methodology includes a temporal split and per-month evaluation, I acknowledge that the representativeness of the dataset for novel attack campaigns needs empirical testing. A settling experiment could involve evaluating the model on an external dataset representing new attack patterns. If performance degrades significantly, it would indicate a limitation in the dataset's representativeness.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 5,
+        "justification": "The primary metric, pAUC-ROC, is aligned with operational constraints, and while it may not capture every nuance of the detection task, it is appropriate for the evaluation context. The critique raises a valid point but does not fundamentally undermine the experiment.",
+        "r2_challenge_response": "ACCEPT"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The preprocessing pipeline can be adjusted to ensure parameters are estimated only on the training set, thus avoiding leakage. This design choice can be implemented to maintain strict temporal separation.",
+        "r2_challenge_response": "ACCEPT"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "While the transformer has access to packet-level sequences and the baseline uses aggregated statistics, I recognize the need for a more direct comparison. A settling experiment could involve retraining the baseline with packet-level sequences and evaluating performance. If the baseline's performance improves significantly, it would indicate that the original comparison was unfair due to feature granularity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the dataset size relative to model complexity is a valid concern, it does not significantly impact the overall conclusions of the study. The methodology is sound for the intended evaluation.",
+        "r2_challenge_response": "ACCEPT"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals for findings F2, F4, F5, and F7 were accepted, and findings F3 and F6 were deferred for empirical testing, indicating that there are valid concerns that require further investigation."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Host identifiers (IP addresses) are included in the transformer model but excluded from the baseline, and this difference does not invalidate the comparison because the transformer's advantage persists when host identifiers are removed.",
+        "failure_mechanism": "The transformer's inclusion of host identifiers creates a potential identity leakage pathway. Even if a second transformer variant removes host identifiers, the baseline (XGBoost/LightGBM) may still be disadvantaged because it lacks access to other identity-linked features (e.g., historical alert counts on the source host, user agent hashes, or port categories that correlate with specific hosts). The baseline's exclusion of host identifiers is not a fair comparison if other identity-linked features are present in the transformer's input.",
+        "evidence_test": "Retrain both models with all identity-linked features (e.g., source/destination IP, user agent hash, historical alert counts on the source host) removed from both models. If the transformer's advantage persists, the comparison is fair. If the transformer's advantage disappears or the baseline performs comparably, the original comparison is invalid due to unfair feature exclusion.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 24-hour label confirmation window aligns with realistic detection latency and does not introduce label leakage.",
+        "failure_mechanism": "The label assignment process uses retrospective confirmation after the 24-hour window, but the hypothesis targets 'next-day confirmed incidents.' If the model is trained to predict incidents that will be confirmed 24 hours later, the label assignment must ensure that no information from the 24-hour window leaks into the training data. However, the description does not explicitly state that the model's input features are restricted to data available at the time of prediction (e.g., no features from the 24-hour confirmation window are included). If features from the confirmation window are used, the model could be indirectly using future information to predict past incidents, inflating performance.",
+        "evidence_test": "Audit the feature set to ensure no features are derived from the 24-hour confirmation window (e.g., no post-incident alerts, no callback detections, no lateral movement logs). If such features are included, retrain the model with only pre-confirmation features and re-evaluate. If performance drops significantly, the original results are invalid due to label leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201310 train, 11\u201313 validation, 14\u201318 test) is sufficient to prevent temporal leakage and distribution shift.",
+        "failure_mechanism": "The temporal split is chronological, but the description does not address whether the 18-month dataset is representative of the deployment environment. If the dataset is missing critical attack campaigns (e.g., a new adversary technique emerges in month 14), the test set may not reflect the hypothesis's target: 'next-day confirmed incidents.' Additionally, the split does not account for potential seasonal patterns or periodic network behavior that could bias the evaluation. The per-month evaluation in the test set helps, but the initial split may still be vulnerable to systematic shifts.",
+        "evidence_test": "Evaluate the model on a synthetic or external dataset representing a novel attack campaign not present in the training data. If performance degrades significantly, the temporal split is insufficient to test the hypothesis under distribution shift. Alternatively, perform a sensitivity analysis by excluding the first and last months of the training set and retraining to test robustness to campaign drift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (pAUC-ROC over 0\u20135% FPR) is aligned with operational constraints and provides a fair comparison between the transformer and baseline.",
+        "failure_mechanism": "The pAUC-ROC metric is operationally aligned, but it may not capture the full complexity of the detection task. For example, the metric does not account for the cost of false negatives in high-severity incidents or the temporal urgency of alerts (e.g., early detection of lateral movement vs. late-stage C2 callbacks). Additionally, the 5% FPR threshold is arbitrary; a more principled approach would derive the threshold from analyst workload constraints or incident severity distributions.",
+        "evidence_test": "Define a cost-sensitive metric that weights false negatives by incident severity (e.g., malware callbacks vs. benign lateral movement) and false positives by analyst workload. Re-evaluate both models using this metric. If the transformer's advantage disappears or reverses, the pAUC-ROC metric is misaligned with the deployment objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The preprocessing transformers (scaling, encoding, imputation) are parameterized once on the full 18-month corpus and frozen before model fitting, ensuring no leakage.",
+        "failure_mechanism": "Freezing preprocessing parameters on the full corpus risks leaking information from the validation and test sets into the training pipeline. For example, if the imputation strategy for missing fields is learned from the entire dataset, the training set's preprocessing is influenced by future data. This violates the strict temporal separation required by the hypothesis.",
+        "evidence_test": "Re-run preprocessing with parameters estimated only on the training set (months 1\u201310) and apply them to the validation and test sets without adjustment. If performance changes significantly, the original preprocessing pipeline leaked information.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer's inclusion of packet-level sequences provides a fair comparison to the baseline, which uses aggregated flow statistics.",
+        "failure_mechanism": "The transformer's input includes packet-level sequences (inter-packet delay, packet size, direction), while the baseline uses aggregated statistics (mean, std, skew of inter-packet delays). This is not a fair comparison because the transformer has access to fine-grained temporal dynamics, while the baseline only sees coarse summaries. The hypothesis tests whether sequence modeling provides gains, but the comparison is confounded by the granularity of the input features.",
+        "evidence_test": "Retrain the baseline with packet-level sequences (e.g., by computing the same sequence features as the transformer) and compare it to the transformer. If the baseline's performance improves significantly, the original comparison was unfair due to feature granularity.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 18-month dataset is sufficient to train and evaluate the models for intrusion detection.",
+        "failure_mechanism": "The dataset size is not explicitly justified relative to the complexity of the models. For example, the transformer has 4 encoder blocks with 8 attention heads and a hidden dimension of 256, which may require more data to train effectively without overfitting. The description does not address whether the dataset is large enough to support the transformer's capacity or whether the baseline is under-tuned due to limited data.",
+        "evidence_test": "Perform a learning curve analysis by training the transformer on subsets of the training data (e.g., 25%, 50%, 75% of months 1\u201310) and evaluating on the validation set. If the transformer's performance plateaus or degrades with more data, the dataset may be insufficient or the model may be overparameterized.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC has multiple FATAL flaws related to signal leakage (host identifiers, label confirmation window, preprocessing leakage) and distribution shift that invalidate the core comparison. Material flaws include metric misalignment and unfair feature granularity. Addressing these issues is critical before the hypothesis can be meaningfully tested.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I accept the challenges for findings F2, F4, F5, and F7 as they accurately reflect the strengths of my rebuttals. However, I contest the challenges for findings F1, F3, and F6, as the design does address the concerns raised, albeit not perfectly articulated in R1. For F1, while there are identity-linked features, the transformer variant without host identifiers still provides a valid comparison. For F3, the temporal split and per-month evaluations do help ensure representativeness, but I will defer to empirical testing to confirm this. For F6, the granularity of features is a valid point, but the design still adequately tests the hypothesis despite the differences in feature sets.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 5,
+        "justification": "The design includes a control where a variant of the transformer is trained without host identifiers, allowing for a direct comparison to the baseline. While the baseline may lack some identity-linked features, the removal of host identifiers still provides a significant test of the hypothesis. The transformer variant's performance will indicate whether the advantage is due to sequence modeling or identity features.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The methodology explicitly states that labels are assigned only after the 24-hour confirmation window has elapsed, mitigating the risk of label leakage. This design choice ensures that no future information contaminates the training data.",
+        "r2_challenge_response": "ACCEPT"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While the methodology includes a temporal split and per-month evaluation, I acknowledge that the representativeness of the dataset for novel attack campaigns needs empirical testing. A settling experiment could involve evaluating the model on an external dataset representing new attack patterns. If performance degrades significantly, it would indicate a limitation in the dataset's representativeness.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 5,
+        "justification": "The primary metric, pAUC-ROC, is aligned with operational constraints, and while it may not capture every nuance of the detection task, it is appropriate for the evaluation context. The critique raises a valid point but does not fundamentally undermine the experiment.",
+        "r2_challenge_response": "ACCEPT"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The preprocessing pipeline can be adjusted to ensure parameters are estimated only on the training set, thus avoiding leakage. This design choice can be implemented to maintain strict temporal separation.",
+        "r2_challenge_response": "ACCEPT"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "While the transformer has access to packet-level sequences and the baseline uses aggregated statistics, I recognize the need for a more direct comparison. A settling experiment could involve retraining the baseline with packet-level sequences and evaluating performance. If the baseline's performance improves significantly, it would indicate that the original comparison was unfair due to feature granularity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the dataset size relative to model complexity is a valid concern, it does not significantly impact the overall conclusions of the study. The methodology is sound for the intended evaluation.",
+        "r2_challenge_response": "ACCEPT"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals for findings F2, F4, F5, and F7 were accepted, and findings F3 and F6 were deferred for empirical testing, indicating that there are valid concerns that require further investigation."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=8 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=5, orig_sev=6 < 7, REBUT-IMMATERIAL \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

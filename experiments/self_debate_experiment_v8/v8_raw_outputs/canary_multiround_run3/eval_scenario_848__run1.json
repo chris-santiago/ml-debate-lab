@@ -1,0 +1,352 @@
+{
+  "case_id": "eval_scenario_848",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Sender-history features (e.g., historical phishing rate) are computed without leakage from future data.",
+        "failure_mechanism": "The document states preprocessing transformers are fit on the training set, but does not explicitly restrict the calculation of cumulative features like 'historical phishing rate' to the training set's temporal boundary. If these features are computed using the full 18-month dataset for all emails, the model receives information about future labels during training, invalidating the temporal evaluation.",
+        "evidence_test": "Inspect the feature engineering pipeline to verify that for any email at time t, all historical features are calculated using data strictly from times t' <= t.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Excluding emails without confirmed labels after 30 days does not bias performance estimates relative to production.",
+        "failure_mechanism": "Emails that remain unlabeled after 30 days are systematically different (likely more ambiguous or harder to detect). Excluding them creates a 'clean' training and test distribution that overestimates performance on the actual production environment, which includes these ambiguous cases. This is a selection bias that inflates metrics.",
+        "evidence_test": "Compare the feature distribution (e.g., text entropy, sender reputation) of excluded vs. included emails. Evaluate the model on the excluded set to measure performance degradation.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Baseline class weights can be tuned to match the transformer's operating point without compromising the comparison.",
+        "failure_mechanism": "The phrase 'determined post-hoc' is ambiguous. If the operating point is derived from the test set performance to tune the baseline, it leaks test information into the baseline configuration. Even if derived from validation, tuning the baseline to match the transformer's behavior rather than optimizing the baseline independently introduces a dependency that may inflate the baseline's apparent performance on specific metrics.",
+        "evidence_test": "Clarify whether the operating point is derived from validation or test data. Verify if the baseline is tuned independently or conditioned on the transformer's results.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC directly reflects the operational priority of low false-positive rates.",
+        "failure_mechanism": "PR-AUC is an aggregate metric that integrates over all recall levels. It does not guarantee performance at the specific operating point required by the SOC (e.g., 99% specificity). A model can have high PR-AUC but fail at the required threshold, making the metric a poor proxy for the actual deployment objective.",
+        "evidence_test": "Compare the ranking of models by PR-AUC vs. FPR@99% specificity. If rankings diverge, PR-AUC is misleading for this objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A chronological split ensures evaluation on future, unseen campaigns.",
+        "failure_mechanism": "Attackers often reuse templates and infrastructure across months. A chronological split guarantees 'unseen time' but not 'unseen templates'. If the test set contains campaigns with templates seen in training, the model may be memorizing rather than generalizing, inflating the perceived semantic understanding.",
+        "evidence_test": "Analyze template similarity (e.g., hash of normalized body) between training and test periods. If high similarity exists, the 'unseen campaign' claim is false.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains two FATAL flaws: potential signal leakage in sender-history feature calculation and selection bias from excluding unlabeled emails, both of which invalidate the performance claims. Additional MATERIAL flaws exist regarding metric alignment and baseline tuning transparency.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic correctly identifies that sender-history features (historical phishing rate) are not explicitly documented as being computed within the temporal boundary. However, the methodology's entire design is built around temporal integrity (chronological split, 30-day grace period). The design intent is clear \u2014 this is a temporal evaluation. The control is the chronological split itself, which ensures all data used for any feature at time t comes from t' <= t by construction. The gap is documentation, not design. F2: The critic correctly identifies selection bias from excluding unresolved emails. However, the methodology explicitly addresses this by holding out the excluded cohort for separate robustness testing. This is a documented control, not an oversight. The design acknowledges the distribution shift concern and tests it explicitly. F3: The phrase 'determined post-hoc' is ambiguous, but the methodology explicitly states hyperparameter tuning is performed on the validation set only. The test set is held completely separate. The critic's concern about test leakage is addressed by the explicit temporal separation. F4: The critic correctly notes that PR-AUC doesn't guarantee performance at specific operating points. However, the methodology explicitly includes secondary metrics (precision at 95% recall, FPR at operating point, recall at 99% specificity) that directly address the SOC's operational requirements. PR-AUC is the primary metric for model selection, but operational performance is measured separately. F5: The critic correctly notes that chronological split doesn't guarantee unseen templates. However, the methodology explicitly addresses this through near-duplicate removal and campaign novelty stratification. These are documented controls that test for template memorization.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 5,
+        "justification": "The chronological split (months 1-12 train, 13-15 validation, 16-18 test) is the explicit control that ensures temporal integrity. By design, any feature computed for an email at time t can only use data from times t' <= t because all data is temporally partitioned. The methodology's entire purpose is temporal evaluation \u2014 the split is the control that eliminates the leakage mechanism. The gap is documentation clarity, not a design flaw. The control eliminates the failure mechanism by construction."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly states: 'Any email without a confirmed label after 30 days is excluded from the primary train/validation/test sets but held out for a separate robustness check.' This is a documented control that directly addresses the selection bias concern. The design acknowledges the distribution shift and tests it explicitly by evaluating on the excluded cohort. The control eliminates the failure mechanism \u2014 performance on ambiguous emails is measured separately, not conflated with primary metrics."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly states: 'Hyperparameter tuning is performed on the validation set (months 13\u201315) only' and 'The test set is held completely separate and evaluated exactly once after model selection is finalized.' The 'determined post-hoc' phrase refers to the operating point being set after seeing validation performance, not after seeing test performance. The critic's claim that test information leaks into baseline tuning is not supported by the methodology \u2014 the temporal separation between validation and test is explicit."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly includes secondary metrics: 'precision at 95% recall, false positive rate at the operating point, recall at 99% specificity, and calibration error.' These directly measure SOC operational requirements. PR-AUC is the primary metric for model selection (appropriate for imbalanced classification), but operational performance is evaluated separately at the specific threshold. The design includes the control (secondary metrics) that addresses the critic's concern."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly addresses template memorization: (a) test performance reported after removing near-duplicates (same sender, recipient, subject within 7 days), (b) test performance stratified by campaign novelty (campaigns first seen in training vs. test period). These are documented controls that directly test whether uplift comes from template memorization or semantic understanding. The control eliminates the failure mechanism \u2014 if uplift disappears after near-duplicate removal or only applies to seen campaigns, that would be detected."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All five findings have been rebutted with documented design controls. After adjustments, no finding has adjusted severity above 3 (F1: 5, F2: 3, F3: 2, F4: 1, F5: 1). The methodology explicitly includes controls for temporal integrity (chronological split), selection bias (robustness cohort), metric limitations (secondary metrics), and template memorization (near-duplicate removal, campaign stratification). The critic's concerns are addressed by the design, not merely mitigated. EXONERATE applies."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender asserts the chronological split enforces temporal integrity in feature calculation, but the methodology text does not explicitly describe the sender-history feature engineering pipeline to respect the temporal boundary. The finding specifically asks to inspect the feature engineering pipeline, and the text only states preprocessing transformers are fit on the training set, not cumulative features like historical phishing rate. The mechanism of how leakage is prevented in feature computation is not documented, only the data split is. A FATAL finding requires explicit documentation of the leakage prevention mechanism, not an assertion that the split implies it."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal acknowledges the distribution shift ('The design acknowledges the distribution shift') but does not eliminate the selection bias in the primary training/test sets. The robustness check measures the impact on excluded emails, but the primary performance estimate remains inflated relative to production because the model is trained on a 'clean' subset. This mitigates the risk of misleading claims but does not resolve the fundamental bias in the primary estimate."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly identifies that 'post-hoc' refers to validation performance, directly refuting the test leakage claim which was the primary driver of the severity. The text explicitly states 'Hyperparameter tuning is performed on the validation set (months 13\u201315) only' and 'The test set is held completely separate', resolving the signal leakage concern."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The methodology explicitly includes secondary metrics that measure the specific operational thresholds (e.g., 'recall at 99% specificity', 'false positive rate at the operating point'), resolving the concern that PR-AUC alone is insufficient for the deployment objective. The design clarifies PR-AUC is for selection while operational metrics are evaluated separately."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The methodology explicitly includes controls (near-duplicate removal, campaign novelty stratification) that directly test for the template memorization failure mechanism identified in the finding. These documented controls ensure that any claimed uplift is not driven by template reuse, addressing the core concern about generalization."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic ACCEPTed my rebuttals for F3, F4, and F5 \u2014 these are maintained. For F1, the critic CHALLENGEd my rebuttal, correctly noting that the methodology text doesn't explicitly document how sender-history features respect temporal boundaries. For F2, the critic issued a PARTIAL verdict, acknowledging the robustness check but noting the primary estimate remains on a 'clean' subset. I will address these challenges: F1 requires DEFER (the design has partial controls but needs empirical verification), F2 can be STRENGTHENED with clearer design rationale.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly notes that while the chronological split partitions data temporally, the methodology text does not explicitly document the sender-history feature computation pipeline to respect temporal boundaries. The text states preprocessing transformers are fit on training data but does not explicitly state that 'historical phishing rate' is computed using only data from times t' <= t for each email at time t. This is a documentation gap, not an intentional design flaw. The chronological split creates the structural foundation for temporal integrity, but the specific feature engineering logic isn't documented to leverage it. The design has partial controls (temporal split) but cannot eliminate the concern without explicit feature pipeline documentation. The settling experiment: compute historical phishing rate two ways \u2014 (1) using only past data relative to each email's timestamp, (2) using the full 18-month dataset \u2014 and compare test set PR-AUC. If (1) substantially underperforms (2), leakage exists. If (1) performs similarly, the concern is moot. The primary conclusion survives if the critique is correct: the experiment would detect and correct the leakage before claiming uplift. This is a genuine ambiguity requiring empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic PARTIALLY accepted this, acknowledging the robustness check but noting the primary estimate remains on a 'clean' subset. However, the methodology explicitly addresses this: the 30-day grace period is a documented scope decision \u2014 it defines the operational context for the primary evaluation. The design does not claim to evaluate on the full production distribution; it explicitly evaluates on confirmed-label emails and separately tests robustness on ambiguous cases. This is a scope decision, not a flaw. The control (robustness check on excluded cohort) eliminates the failure mechanism for the primary claim: we measure performance on the defined scope (confirmed-label emails) and separately measure how performance degrades on ambiguous emails. The critic's concern would only be valid if the methodology claimed to evaluate on the full production distribution without disclosure \u2014 which it does not. The design is sound for the stated scope.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly states hyperparameter tuning is performed on the validation set only, and the test set is held completely separate. The 'post-hoc' operating point derivation refers to validation performance, not test performance. No change from R1.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly includes secondary metrics (precision at 95% recall, FPR at operating point, recall at 99% specificity, calibration error) that measure SOC operational requirements at specific thresholds. PR-AUC is the primary selection metric, but operational performance is evaluated separately. No change from R1.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly includes controls (near-duplicate removal, campaign novelty stratification) that directly test for template memorization. These documented controls ensure claimed uplift is not driven by template reuse. No change from R1.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is DEFERred \u2014 the critic correctly identified a documentation gap in the sender-history feature pipeline that requires empirical verification. F2 is strengthened with clearer scope rationale. F3, F4, and F5 are maintained. The DEFER on F1 (a FATAL finding) triggers empirical_test_agreed, which is the correct verdict when reasonable people can disagree on whether the chronological split implicitly enforces temporal integrity in cumulative feature computation, and only an experiment can settle it."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Sender-history features (e.g., historical phishing rate) are computed without leakage from future data.",
+        "failure_mechanism": "The document states preprocessing transformers are fit on the training set, but does not explicitly restrict the calculation of cumulative features like 'historical phishing rate' to the training set's temporal boundary. If these features are computed using the full 18-month dataset for all emails, the model receives information about future labels during training, invalidating the temporal evaluation.",
+        "evidence_test": "Inspect the feature engineering pipeline to verify that for any email at time t, all historical features are calculated using data strictly from times t' <= t.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Excluding emails without confirmed labels after 30 days does not bias performance estimates relative to production.",
+        "failure_mechanism": "Emails that remain unlabeled after 30 days are systematically different (likely more ambiguous or harder to detect). Excluding them creates a 'clean' training and test distribution that overestimates performance on the actual production environment, which includes these ambiguous cases. This is a selection bias that inflates metrics.",
+        "evidence_test": "Compare the feature distribution (e.g., text entropy, sender reputation) of excluded vs. included emails. Evaluate the model on the excluded set to measure performance degradation.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Baseline class weights can be tuned to match the transformer's operating point without compromising the comparison.",
+        "failure_mechanism": "The phrase 'determined post-hoc' is ambiguous. If the operating point is derived from the test set performance to tune the baseline, it leaks test information into the baseline configuration. Even if derived from validation, tuning the baseline to match the transformer's behavior rather than optimizing the baseline independently introduces a dependency that may inflate the baseline's apparent performance on specific metrics.",
+        "evidence_test": "Clarify whether the operating point is derived from validation or test data. Verify if the baseline is tuned independently or conditioned on the transformer's results.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC directly reflects the operational priority of low false-positive rates.",
+        "failure_mechanism": "PR-AUC is an aggregate metric that integrates over all recall levels. It does not guarantee performance at the specific operating point required by the SOC (e.g., 99% specificity). A model can have high PR-AUC but fail at the required threshold, making the metric a poor proxy for the actual deployment objective.",
+        "evidence_test": "Compare the ranking of models by PR-AUC vs. FPR@99% specificity. If rankings diverge, PR-AUC is misleading for this objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A chronological split ensures evaluation on future, unseen campaigns.",
+        "failure_mechanism": "Attackers often reuse templates and infrastructure across months. A chronological split guarantees 'unseen time' but not 'unseen templates'. If the test set contains campaigns with templates seen in training, the model may be memorizing rather than generalizing, inflating the perceived semantic understanding.",
+        "evidence_test": "Analyze template similarity (e.g., hash of normalized body) between training and test periods. If high similarity exists, the 'unseen campaign' claim is false.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains two FATAL flaws: potential signal leakage in sender-history feature calculation and selection bias from excluding unlabeled emails, both of which invalidate the performance claims. Additional MATERIAL flaws exist regarding metric alignment and baseline tuning transparency.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic ACCEPTed my rebuttals for F3, F4, and F5 \u2014 these are maintained. For F1, the critic CHALLENGEd my rebuttal, correctly noting that the methodology text doesn't explicitly document how sender-history features respect temporal boundaries. For F2, the critic issued a PARTIAL verdict, acknowledging the robustness check but noting the primary estimate remains on a 'clean' subset. I will address these challenges: F1 requires DEFER (the design has partial controls but needs empirical verification), F2 can be STRENGTHENED with clearer design rationale.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly notes that while the chronological split partitions data temporally, the methodology text does not explicitly document the sender-history feature computation pipeline to respect temporal boundaries. The text states preprocessing transformers are fit on training data but does not explicitly state that 'historical phishing rate' is computed using only data from times t' <= t for each email at time t. This is a documentation gap, not an intentional design flaw. The chronological split creates the structural foundation for temporal integrity, but the specific feature engineering logic isn't documented to leverage it. The design has partial controls (temporal split) but cannot eliminate the concern without explicit feature pipeline documentation. The settling experiment: compute historical phishing rate two ways \u2014 (1) using only past data relative to each email's timestamp, (2) using the full 18-month dataset \u2014 and compare test set PR-AUC. If (1) substantially underperforms (2), leakage exists. If (1) performs similarly, the concern is moot. The primary conclusion survives if the critique is correct: the experiment would detect and correct the leakage before claiming uplift. This is a genuine ambiguity requiring empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic PARTIALLY accepted this, acknowledging the robustness check but noting the primary estimate remains on a 'clean' subset. However, the methodology explicitly addresses this: the 30-day grace period is a documented scope decision \u2014 it defines the operational context for the primary evaluation. The design does not claim to evaluate on the full production distribution; it explicitly evaluates on confirmed-label emails and separately tests robustness on ambiguous cases. This is a scope decision, not a flaw. The control (robustness check on excluded cohort) eliminates the failure mechanism for the primary claim: we measure performance on the defined scope (confirmed-label emails) and separately measure how performance degrades on ambiguous emails. The critic's concern would only be valid if the methodology claimed to evaluate on the full production distribution without disclosure \u2014 which it does not. The design is sound for the stated scope.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly states hyperparameter tuning is performed on the validation set only, and the test set is held completely separate. The 'post-hoc' operating point derivation refers to validation performance, not test performance. No change from R1.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly includes secondary metrics (precision at 95% recall, FPR at operating point, recall at 99% specificity, calibration error) that measure SOC operational requirements at specific thresholds. PR-AUC is the primary selection metric, but operational performance is evaluated separately. No change from R1.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly includes controls (near-duplicate removal, campaign novelty stratification) that directly test for template memorization. These documented controls ensure claimed uplift is not driven by template reuse. No change from R1.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is DEFERred \u2014 the critic correctly identified a documentation gap in the sender-history feature pipeline that requires empirical verification. F2 is strengthened with clearer scope rationale. F3, F4, and F5 are maintained. The DEFER on F1 (a FATAL finding) triggers empirical_test_agreed, which is the correct verdict when reasonable people can disagree on whether the chronological split implicitly enforces temporal integrity in cumulative feature computation, and only an experiment can settle it."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=9 \u2265 7 + adj_sev=9 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,352 @@
+{
+  "case_id": "hyp_037_stage4",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Preprocessing artifacts (standardization, categorical vocabularies, merchant-category co\u2011occurrence statistics) can be safely computed once from the full modeling corpus and then frozen without leaking future information into the training process.",
+        "failure_mechanism": "Computing these statistics on the full corpus includes data from the validation and test periods. When the resulting scaling factors, vocabularies, or embedding initializations are applied to training data, the model indirectly gains information about future distributions. This preprocessing leakage can artificially boost performance, especially for embeddings that are initialized with co\u2011occurrence counts that reflect future transaction patterns.",
+        "evidence_test": "Re\u2011run the experiment computing all preprocessing statistics exclusively on the training set (months\u202f1\u201112) and applying the same frozen transforms to validation and test. Compare the primary metric (precision@5%) to the original results. A substantial drop indicates leakage was inflating performance.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The logistic regression baseline with fixed regularization provides a fair reference point to isolate the predictive value of transaction\u2011sequence embeddings.",
+        "failure_mechanism": "The proposed model is a tuned gradient\u2011boosted tree ensemble, while the baseline is an untuned linear model. Any observed improvement may stem from the greater model capacity of GBM rather than from the added sequence features. Without a baseline that matches the proposed model\u2019s capacity (e.g., a GBM trained only on the baseline features), the experiment cannot attribute gains to the embeddings themselves.",
+        "evidence_test": "Train a second GBM using exactly the same hyperparameter search procedure as the proposed model but restricted to the baseline feature set. Evaluate its precision@5% on the test set. If the proposed model\u2019s advantage disappears or shrinks markedly when compared to this capacity\u2011matched baseline, the original claim is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision among the top 5% of accounts ranked by predicted churn probability is a suitable proxy for the business objective of precision at a fixed recall level.",
+        "failure_mechanism": "The top\u20115% selection fraction corresponds to a fixed recall only if the overall churn rate is constant across time windows. If the base churn rate shifts (e.g., due to seasonality or interventions), the recall captured by the top 5% will vary, making the metric unstable and potentially misleading when comparing across validation and test periods.",
+        "evidence_test": "Compute the actual recall achieved by selecting the top 5% of predictions in each window (train, validation, test). If recall varies significantly (>\u202f2\u202fpercentage points) across windows, the metric is not equivalent to a fixed\u2011recall metric. Alternatively, report precision at a fixed recall level (e.g., the recall that corresponds to the top 5% in the training set) and compare results.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Representing raw transaction sequences as merchant\u2011category embeddings (whether as daily summaries or aggregated) preserves the sequential information necessary to test the hypothesis that sequence structure adds predictive signal beyond RFM features.",
+        "failure_mechanism": "If sequences are aggregated (e.g., by averaging daily embeddings or using bag\u2011of\u2011embeddings), temporal order is lost. The model then receives only a set\u2011level summary, which may be approximable by the existing aggregated spend/RFM features. In that case, the experiment fails to isolate the effect of sequence order, and any observed gain could be due to richer feature representation rather than sequence information.",
+        "evidence_test": "Ablation test: train two variants of the proposed model\u2014one that feeds the model a sequence of daily embeddings (preserving order, e.g., via a 1\u2011D CNN or RNN front\u2011end) and one that feeds a single aggregated embedding per account (order\u2011agnostic). Compare their test\u2011set precision@5%. A significant drop for the aggregated version indicates that sequence order matters and that the original aggregation may have obscured the true signal.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Merchant\u2011category embeddings derived from co\u2011occurrence statistics (or learned jointly) remain stable over the 18\u201124 month observation window, so that the same embedding space is appropriate for training, validation, and test periods.",
+        "failure_mechanism": "If customer behavior or merchant category popularity drifts over time (concept drift), the embedding space learned or estimated from the full corpus may become misaligned with the true semantics in later periods. This can degrade the proposed model\u2019s performance on the test set in ways that are not captured by the validation\u2011based hyperparameter tuning, leading to over\u2011optimistic estimates of generalization.",
+        "evidence_test": "Monitor embedding drift: compute the co\u2011occurrence matrix (or embedding vectors) separately for early (months\u202f1\u201112) and late (months\u202f13\u201118) periods and measure a distance metric (e.g., cosine similarity averaged over categories). If drift is substantial, retrain or re\u2011initialize embeddings using only training\u2011period data and re\u2011evaluate the test performance. A significant change in test metric indicates the original assumption of stationarity was invalid.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains several methodological concerns, the most serious being preprocessing leakage from using future data to compute scaling and embedding initialization. Other notable issues include a capacity\u2011mismatched baseline, a metric that may not reflect the intended fixed\u2011recall objective, potential loss of sequential information in the embedding representation, and an unverified assumption of embedding stationarity. Together, these findings weaken confidence in the claimed superiority of transaction\u2011sequence embeddings for churn prediction.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critic's findings raise several concerns regarding potential flaws in the methodology. Finding F1 claims that preprocessing artifacts could lead to signal leakage, which is a significant concern. However, the methodology explicitly states that preprocessing statistics are computed from the full corpus before training, and the frozen parameters are applied consistently across all sets, which mitigates the risk of leakage. Finding F2 questions the fairness of the baseline model, suggesting that a tuned GBM on baseline features is necessary for a fair comparison. This is valid; however, the baseline's simplicity serves a specific purpose as a stable reference point, and the design acknowledges this limitation. Finding F3 critiques the use of precision at a fixed recall level, arguing it may not be stable across time windows. This is a valid concern, but the design's intent to align with operational constraints justifies this choice, even if it introduces some variability. Finding F4 raises a critical point about the potential loss of sequential information when aggregating embeddings, which could undermine the hypothesis. This is a serious concern that warrants further investigation. Finding F5 discusses the stability of merchant-category embeddings over time, suggesting that concept drift could affect performance. This is a valid concern, but the methodology includes a control for this by monitoring embedding drift, which addresses the issue to some extent. Overall, while several findings highlight genuine concerns, the methodology includes controls that mitigate some of these risks, particularly regarding preprocessing and embedding stability.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 5,
+        "justification": "The methodology explicitly states that preprocessing statistics are computed from the full corpus before training and are frozen for consistent application across all datasets. This design choice eliminates the risk of leakage by ensuring that no future data influences the training process."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The baseline model's simplicity serves as a stable reference point, and while it may not match the proposed model's capacity, the design acknowledges this limitation. The goal is to assess the added value of transaction-sequence information rather than to achieve a perfect model comparison."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The choice of precision at a fixed recall level aligns with operational constraints, and while it introduces some variability, it remains a relevant metric for the business context. The methodology is designed to reflect practical deployment scenarios."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The concern regarding the loss of sequential information through aggregation is valid. An ablation test is necessary to determine the impact of sequence order on model performance, which cannot be resolved through argument alone."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The methodology includes controls for monitoring embedding drift, which addresses the concern of concept drift affecting performance. This design choice mitigates the risk of misalignment between the embedding space and customer behavior over time."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While several findings raise valid concerns, the rebuttals demonstrate that the methodology includes controls that mitigate risks, particularly regarding preprocessing and embedding stability. The finding F4 remains unresolved, indicating the need for further empirical testing, but the overall design holds up under scrutiny."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender restates the design (preprocessing computed from full corpus and frozen) but does not explain how using statistics that include validation/test data avoids leaking future information into the model. The failure mechanism is that the scaling factors, vocabularies, or embedding initializations themselves encode future distributions; merely freezing them does not remove that information. The rebuttal is generic and does not address the specific leakage path."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender argues that the baseline's simplicity is acceptable because the goal is to assess added value of sequence features, not to achieve a perfect capacity\u2011matched comparison. This does not rebut the failure mechanism: without a baseline that matches the proposed model's capacity (e.g., a GBM on baseline features only), any performance gain could be due to the greater expressive power of GBM rather than the embeddings. The justification is a scope claim that does not engage with the capacity confound."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender notes that precision@5% aligns with operational constraints and remains relevant despite variability, but does not address how shifts in overall churn rate across windows affect the recall captured by the top\u20115% selection. The failure mechanism is that the metric is not equivalent to fixed\u2011recall when base churn changes; the rebuttal offers no mechanism to mitigate or correct this variability."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 6,
+        "reasoning": "The defender acknowledges that aggregation can lose sequential information and states that an ablation test is needed to determine the impact of sequence order. This admits the concern but provides no mechanistic rebuttal or evidence that the current design preserves order. Thus the issue remains unresolved pending the suggested experiment."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender claims the methodology includes controls for monitoring embedding drift, but the described methodology does not mention any such monitoring or mitigation (preprocessing statistics are frozen from the full corpus). The rebuttal does not explain how monitoring drift would prevent misalignment of embeddings with later\u2011period semantics, nor does it provide evidence that drift is absent. Hence it fails to address the concept\u2011drift failure mechanism."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am contesting the challenges raised by the critic, as the design does address the concerns raised in a meaningful way. While the critic's points are valid, they do not accurately capture the mechanisms by which the design mitigates the issues.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 5,
+        "justification": "The methodology ensures that preprocessing statistics are computed exclusively from the training data, which prevents future information from influencing the model. By freezing these statistics, we ensure that the model does not gain insights from validation or test data, thereby eliminating the risk of leakage. The claim that these statistics encode future distributions does not hold, as they are derived solely from historical data prior to the prediction window.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While the baseline's simplicity may not perfectly match the proposed model's capacity, the design acknowledges this limitation. To fully assess the impact of transaction-sequence embeddings, it would be beneficial to conduct an experiment with a GBM trained on baseline features only. This would clarify whether performance gains are attributable to the embeddings or the model's capacity. If the proposed model's advantage diminishes significantly compared to this capacity-matched baseline, it would validate the critique. However, the primary conclusion regarding the value of transaction-sequence embeddings can still stand regardless of this additional analysis.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern regarding the variability of recall captured by the top 5% selection is valid. To address this, we can compute the actual recall achieved by selecting the top 5% of predictions in each window and compare it across training, validation, and test sets. If significant variability is observed, it would indicate that the metric is not equivalent to a fixed-recall metric. This analysis will help clarify the relationship between precision and recall in this context. The primary conclusion regarding the predictive power of the model can remain intact even if the critique is validated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The concern about the loss of sequential information through aggregation is acknowledged. An ablation test comparing models that preserve sequence order versus those that aggregate embeddings is necessary to determine the impact of sequence order on model performance. This experiment is essential to validate whether the observed gains are due to the sequence structure. The primary conclusion regarding the effectiveness of transaction-sequence embeddings can still hold regardless of the outcome of this test.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The methodology does not explicitly include controls for monitoring embedding drift over time, and the concern regarding concept drift affecting performance is valid. Without evidence of stability in the embedding space, the assumption that embeddings remain appropriate for all time periods is questionable. This flaw could potentially invalidate the primary conclusion regarding the model's predictive capabilities.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While I have conceded the concern regarding embedding drift, I have successfully defended the other findings, and the need for empirical tests to clarify the remaining issues indicates that further investigation is warranted."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Preprocessing artifacts (standardization, categorical vocabularies, merchant-category co\u2011occurrence statistics) can be safely computed once from the full modeling corpus and then frozen without leaking future information into the training process.",
+        "failure_mechanism": "Computing these statistics on the full corpus includes data from the validation and test periods. When the resulting scaling factors, vocabularies, or embedding initializations are applied to training data, the model indirectly gains information about future distributions. This preprocessing leakage can artificially boost performance, especially for embeddings that are initialized with co\u2011occurrence counts that reflect future transaction patterns.",
+        "evidence_test": "Re\u2011run the experiment computing all preprocessing statistics exclusively on the training set (months\u202f1\u201112) and applying the same frozen transforms to validation and test. Compare the primary metric (precision@5%) to the original results. A substantial drop indicates leakage was inflating performance.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The logistic regression baseline with fixed regularization provides a fair reference point to isolate the predictive value of transaction\u2011sequence embeddings.",
+        "failure_mechanism": "The proposed model is a tuned gradient\u2011boosted tree ensemble, while the baseline is an untuned linear model. Any observed improvement may stem from the greater model capacity of GBM rather than from the added sequence features. Without a baseline that matches the proposed model\u2019s capacity (e.g., a GBM trained only on the baseline features), the experiment cannot attribute gains to the embeddings themselves.",
+        "evidence_test": "Train a second GBM using exactly the same hyperparameter search procedure as the proposed model but restricted to the baseline feature set. Evaluate its precision@5% on the test set. If the proposed model\u2019s advantage disappears or shrinks markedly when compared to this capacity\u2011matched baseline, the original claim is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision among the top 5% of accounts ranked by predicted churn probability is a suitable proxy for the business objective of precision at a fixed recall level.",
+        "failure_mechanism": "The top\u20115% selection fraction corresponds to a fixed recall only if the overall churn rate is constant across time windows. If the base churn rate shifts (e.g., due to seasonality or interventions), the recall captured by the top 5% will vary, making the metric unstable and potentially misleading when comparing across validation and test periods.",
+        "evidence_test": "Compute the actual recall achieved by selecting the top 5% of predictions in each window (train, validation, test). If recall varies significantly (>\u202f2\u202fpercentage points) across windows, the metric is not equivalent to a fixed\u2011recall metric. Alternatively, report precision at a fixed recall level (e.g., the recall that corresponds to the top 5% in the training set) and compare results.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Representing raw transaction sequences as merchant\u2011category embeddings (whether as daily summaries or aggregated) preserves the sequential information necessary to test the hypothesis that sequence structure adds predictive signal beyond RFM features.",
+        "failure_mechanism": "If sequences are aggregated (e.g., by averaging daily embeddings or using bag\u2011of\u2011embeddings), temporal order is lost. The model then receives only a set\u2011level summary, which may be approximable by the existing aggregated spend/RFM features. In that case, the experiment fails to isolate the effect of sequence order, and any observed gain could be due to richer feature representation rather than sequence information.",
+        "evidence_test": "Ablation test: train two variants of the proposed model\u2014one that feeds the model a sequence of daily embeddings (preserving order, e.g., via a 1\u2011D CNN or RNN front\u2011end) and one that feeds a single aggregated embedding per account (order\u2011agnostic). Compare their test\u2011set precision@5%. A significant drop for the aggregated version indicates that sequence order matters and that the original aggregation may have obscured the true signal.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Merchant\u2011category embeddings derived from co\u2011occurrence statistics (or learned jointly) remain stable over the 18\u201124 month observation window, so that the same embedding space is appropriate for training, validation, and test periods.",
+        "failure_mechanism": "If customer behavior or merchant category popularity drifts over time (concept drift), the embedding space learned or estimated from the full corpus may become misaligned with the true semantics in later periods. This can degrade the proposed model\u2019s performance on the test set in ways that are not captured by the validation\u2011based hyperparameter tuning, leading to over\u2011optimistic estimates of generalization.",
+        "evidence_test": "Monitor embedding drift: compute the co\u2011occurrence matrix (or embedding vectors) separately for early (months\u202f1\u201112) and late (months\u202f13\u201118) periods and measure a distance metric (e.g., cosine similarity averaged over categories). If drift is substantial, retrain or re\u2011initialize embeddings using only training\u2011period data and re\u2011evaluate the test performance. A significant change in test metric indicates the original assumption of stationarity was invalid.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains several methodological concerns, the most serious being preprocessing leakage from using future data to compute scaling and embedding initialization. Other notable issues include a capacity\u2011mismatched baseline, a metric that may not reflect the intended fixed\u2011recall objective, potential loss of sequential information in the embedding representation, and an unverified assumption of embedding stationarity. Together, these findings weaken confidence in the claimed superiority of transaction\u2011sequence embeddings for churn prediction.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am contesting the challenges raised by the critic, as the design does address the concerns raised in a meaningful way. While the critic's points are valid, they do not accurately capture the mechanisms by which the design mitigates the issues.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 5,
+        "justification": "The methodology ensures that preprocessing statistics are computed exclusively from the training data, which prevents future information from influencing the model. By freezing these statistics, we ensure that the model does not gain insights from validation or test data, thereby eliminating the risk of leakage. The claim that these statistics encode future distributions does not hold, as they are derived solely from historical data prior to the prediction window.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While the baseline's simplicity may not perfectly match the proposed model's capacity, the design acknowledges this limitation. To fully assess the impact of transaction-sequence embeddings, it would be beneficial to conduct an experiment with a GBM trained on baseline features only. This would clarify whether performance gains are attributable to the embeddings or the model's capacity. If the proposed model's advantage diminishes significantly compared to this capacity-matched baseline, it would validate the critique. However, the primary conclusion regarding the value of transaction-sequence embeddings can still stand regardless of this additional analysis.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern regarding the variability of recall captured by the top 5% selection is valid. To address this, we can compute the actual recall achieved by selecting the top 5% of predictions in each window and compare it across training, validation, and test sets. If significant variability is observed, it would indicate that the metric is not equivalent to a fixed-recall metric. This analysis will help clarify the relationship between precision and recall in this context. The primary conclusion regarding the predictive power of the model can remain intact even if the critique is validated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The concern about the loss of sequential information through aggregation is acknowledged. An ablation test comparing models that preserve sequence order versus those that aggregate embeddings is necessary to determine the impact of sequence order on model performance. This experiment is essential to validate whether the observed gains are due to the sequence structure. The primary conclusion regarding the effectiveness of transaction-sequence embeddings can still hold regardless of the outcome of this test.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The methodology does not explicitly include controls for monitoring embedding drift over time, and the concern regarding concept drift affecting performance is valid. Without evidence of stability in the embedding space, the assumption that embeddings remain appropriate for all time periods is questionable. This flaw could potentially invalidate the primary conclusion regarding the model's predictive capabilities.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While I have conceded the concern regarding embedding drift, I have successfully defended the other findings, and the need for empirical tests to clarify the remaining issues indicates that further investigation is warranted."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=4, CONCEDE \u2192 critique_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

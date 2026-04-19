@@ -1,0 +1,175 @@
+{
+  "case_id": "hyp_204_case",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label definition does not incorporate future information unavailable at triage time (i.e., the label can be predicted using only features available at alert generation).",
+        "failure_mechanism": "Labels are finalized after a 30\u2011day post\u2011alert maturation window to allow delayed confirmations. This means the label may change based on events up to 30 days after the alert (e.g., a ticket later reopened or closed). The target variable therefore includes information that is not available at prediction time, causing the model to learn spurious patterns that rely on future events. In production, where labels must be predicted in real time, performance will drop substantially.",
+        "evidence_test": "Train and evaluate models using a label derived solely from information available within, e.g., 24\u202fhours after the alert (ticket opened within 24\u202fh with high/critical severity, ignoring any later changes). Compare Recall@5 to the current label\u2011based results. A significant decrease would confirm leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The observed performance advantage of the LambdaMART ranking model over the logistic regression baseline is due to the learning\u2011to\u2011rank objective, not to richer features or model capacity.",
+        "failure_mechanism": "The ranking model uses LambdaMART (a high\u2011capacity ensemble) and extended features, while the baseline uses logistic regression (a linear model) with only the baseline feature set. Without controlling for model class and feature richness, improvements could stem from either factor. The ablation (LambdaMART on baseline features only) isolates the ranking objective but does not control for model class (both are LambdaMART) and lacks a logistic regression with extended features to isolate feature effects.",
+        "evidence_test": "Add two baselines: (1) logistic regression trained on the extended feature set (same features as the ranking model) and (2) LambdaMART trained with a pointwise classification objective (e.g., predicting incident probability) on the extended feature set. Compare Recall@5 of these models to the ranking model and the ablation. If the ranking model no longer outperforms these baselines, the claim that the ranking objective drives the gain is weakened.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC contains a critical label leakage issue due to using a 30\u2011day maturation window for the target, which likely invalidates the reported performance. Additionally, the experiment lacks necessary baselines to isolate the effect of the learning\u2011to\u2011rank objective from feature richness and model capacity, weakening the causal claim.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "## Analysis of Finding F1 (FATAL, severity 9)\n\nThe critic claims that the label definition incorporates future information because labels are finalized after a 30-day maturation window, causing the label to potentially change based on events up to 30 days later (e.g., ticket reopened or closed).\n\n**This claim is factually incorrect.** The label definition is explicitly stated: \"an alert is marked 'high-priority incident' if an analyst opened an incident ticket within 24 hours AND assigned it severity 'high'/'critical' AND the ticket remained open for >4 hours.\" This label depends ONLY on events within the first 24 hours after the alert. The 30-day maturation window is a data quality control\u2014it's when labels are finalized for analysis, not what defines the label. The label does NOT incorporate information about whether tickets are later reopened, closed, or modified after the initial 24-hour window.\n\nThe critic's evidence test (train with label derived solely from information within 24 hours) is effectively what the current methodology already does. The critic appears to have conflated the label definition (24-hour window) with the data collection window (30-day maturation).\n\n**Conclusion:** This is a REBUT-EVIDENCE situation\u2014the critic's factual premise about the label definition is wrong.\n\n## Analysis of Finding F2 (MATERIAL, severity 5)\n\nThe critic claims the experiment does not adequately control for model class and feature richness when comparing LambdaMART to logistic regression.\n\n**The design does include controls:** (1) Baseline logistic regression on baseline features, (2) LambdaMART ranking on baseline features (ablation), (3) LambdaMART ranking on extended features. This allows decomposition of: (a) feature effect (comparing 1 vs 2), (b) model/ranking effect (comparing 2 vs 3).\n\n**However, the critic raises a valid point about missing controls:** A logistic regression on extended features would isolate whether the extended features themselves improve performance regardless of model class. A pointwise LambdaMART (predicting probability, not ranking) would isolate whether the ranking objective specifically drives gains.\n\n**Is this a genuine flaw or a design choice?** The stated goal is \"whether learning-to-rank with ticket history outperforms binary classification.\" The current design does test this. The critic's proposed baselines would be useful for understanding *why* any advantage exists (feature richness vs. ranking objective vs. model capacity), but they are not necessary to test the primary hypothesis.\n\n**Conclusion:** This is a REBUT-SCOPE issue. The finding is valid in a different context (understanding mechanism of improvement) but does not invalidate the primary comparison within the stated experiment scope. The experiment tests ranking vs. classification; the ablation controls for feature richness.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic's claim that 'the label may change based on events up to 30 days after the alert' is factually incorrect. The label definition explicitly depends only on events within the first 24 hours (ticket opened within 24h, severity high/critical, open >4h). The 30-day maturation window is a data quality control for label finalization, not a feature of the label itself. The label does NOT incorporate information about later ticket status changes. The critic's premise is false\u2014this is not signal leakage. Adjusted to severity 3 (minor) because while the factual premise is wrong, the concern about label quality is a reasonable topic to clarify."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic correctly notes that the experiment does not include a logistic regression on extended features or a pointwise LambdaMART. However, the design already includes an ablation (LambdaMART on baseline features) that partially controls for feature richness. The stated goal is to test 'whether learning-to-rank with ticket history outperforms binary classification'\u2014the current design tests this. The critic's proposed baselines would be valuable for understanding mechanism (why does ranking help?) but are not required to test the primary hypothesis. This is a valid point for future work but not a material flaw in the current scope. Adjusted to severity 2 (minor)."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "Both findings have been rebutted. F1's premise is factually incorrect (the label does not incorporate future information\u2014the 30-day window is a data quality control, not a label feature). F2 raises a valid point about additional baselines but the primary hypothesis (ranking vs. classification) is adequately tested within scope. Both adjusted severities are \u22643, so EXONERATE applies. The methodology is sound."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender\u2019s rebuttal directly refutes the critic\u2019s factual premise: the label definition relies exclusively on events within the first 24\u202fhours (ticket opened within 24\u202fh, high/critical severity, open >\u202f4\u202fh). The 30\u2011day maturation window is described as a data\u2011quality step for label finalization, not a source of later information that leaks into the label. Because the defender explains *how* the label is constructed and shows that no post\u201124\u2011hour events influence it, the failure mechanism (learning from future events) is invalidated. The severity adjustment to 3 (minor) is proportionate to the remaining, residual concern about label quality."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender treats the missing baselines as out of scope, but the core failure mechanism is that the observed advantage of the LambdaMART ranking model could stem from richer features or higher model capacity rather than the ranking objective itself. The existing ablation (LambdaMART on baseline features) only isolates the effect of *features* (comparing extended vs. baseline features) while keeping the model class and objective constant; it does *not* control for model class or compare ranking vs. pointwise objectives. To isolate the ranking objective, one needs (1) logistic regression on the extended feature set and (2) a pointwise LambdaMART on the extended feature set. Without these, the confound remains unaddressed. The defender\u2019s justification does not engage with this specific mechanism, so the rebuttal fails to resolve the concern and the severity should remain at the original level (5)."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "For F1, the critic ACCEPTed my rebuttal - the label construction is clearly defined and no future information leaks. For F2, the challenge is mechanistically valid: the current ablation isolates features but does NOT isolate the ranking objective from model class. The design conflates three variables (model, features, objective). I cannot strengthen the rebuttal without fundamentally changing the experiment, which would be a scope expansion. However, the primary hypothesis ('does ranking outperform classification?') can still be tested with the current design - the mechanism of WHY may be ambiguous, but the comparison is valid. This is a genuine ambiguity best resolved by experiment.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic ACCEPTed this rebuttal. The label definition explicitly depends only on ticket opened within 24 hours, high/critical severity, and open >4 hours - all within the first 24 hours post-alert. The 30-day maturation window is a data quality filter (excluding alerts without mature labels), not a feature of the label. No post-24-hour events influence the label. The failure mechanism (learning from future events) is invalidated.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's challenge is mechanistically correct. The current design conflates three variables: (1) model class (LambdaMART vs LogReg), (2) feature richness (baseline vs extended), and (3) objective (pairwise ranking vs classification). The ablation (LambdaMART on baseline features) isolates feature effects but holds model and objective constant. It does NOT control for model class or isolate the ranking objective from pointwise learning. The critic correctly identifies that without additional baselines (LogReg on extended features, pointwise LambdaMART), we cannot definitively attribute gains to the ranking objective. This is a valid experimental limitation. However, the primary hypothesis 'does learning-to-rank outperform binary classification' can still be tested - the design compares a ranking approach to a classification approach on their respective feature sets. Whether the mechanism is specifically due to the ranking objective or confounders is genuinely ambiguous and would require additional baselines. The appropriate response is `DEFER` to experimental evidence rather than concede the finding entirely.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is substantially rebutted (adjusted severity 3). F2 is DEFERred - the critic correctly identifies that the ablation does not isolate the ranking objective from model class. This is a genuine experimental ambiguity that requires additional baselines to resolve. The primary hypothesis remains testable, but the mechanism (ranking vs. classification objective) is confounded with model capacity. The verdict is 'empirical_test_agreed' because the experiment has surfaced a real uncertainty that additional baselines would resolve."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label definition does not incorporate future information unavailable at triage time (i.e., the label can be predicted using only features available at alert generation).",
+        "failure_mechanism": "Labels are finalized after a 30\u2011day post\u2011alert maturation window to allow delayed confirmations. This means the label may change based on events up to 30 days after the alert (e.g., a ticket later reopened or closed). The target variable therefore includes information that is not available at prediction time, causing the model to learn spurious patterns that rely on future events. In production, where labels must be predicted in real time, performance will drop substantially.",
+        "evidence_test": "Train and evaluate models using a label derived solely from information available within, e.g., 24\u202fhours after the alert (ticket opened within 24\u202fh with high/critical severity, ignoring any later changes). Compare Recall@5 to the current label\u2011based results. A significant decrease would confirm leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The observed performance advantage of the LambdaMART ranking model over the logistic regression baseline is due to the learning\u2011to\u2011rank objective, not to richer features or model capacity.",
+        "failure_mechanism": "The ranking model uses LambdaMART (a high\u2011capacity ensemble) and extended features, while the baseline uses logistic regression (a linear model) with only the baseline feature set. Without controlling for model class and feature richness, improvements could stem from either factor. The ablation (LambdaMART on baseline features only) isolates the ranking objective but does not control for model class (both are LambdaMART) and lacks a logistic regression with extended features to isolate feature effects.",
+        "evidence_test": "Add two baselines: (1) logistic regression trained on the extended feature set (same features as the ranking model) and (2) LambdaMART trained with a pointwise classification objective (e.g., predicting incident probability) on the extended feature set. Compare Recall@5 of these models to the ranking model and the ablation. If the ranking model no longer outperforms these baselines, the claim that the ranking objective drives the gain is weakened.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC contains a critical label leakage issue due to using a 30\u2011day maturation window for the target, which likely invalidates the reported performance. Additionally, the experiment lacks necessary baselines to isolate the effect of the learning\u2011to\u2011rank objective from feature richness and model capacity, weakening the causal claim.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "For F1, the critic ACCEPTed my rebuttal - the label construction is clearly defined and no future information leaks. For F2, the challenge is mechanistically valid: the current ablation isolates features but does NOT isolate the ranking objective from model class. The design conflates three variables (model, features, objective). I cannot strengthen the rebuttal without fundamentally changing the experiment, which would be a scope expansion. However, the primary hypothesis ('does ranking outperform classification?') can still be tested with the current design - the mechanism of WHY may be ambiguous, but the comparison is valid. This is a genuine ambiguity best resolved by experiment.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic ACCEPTed this rebuttal. The label definition explicitly depends only on ticket opened within 24 hours, high/critical severity, and open >4 hours - all within the first 24 hours post-alert. The 30-day maturation window is a data quality filter (excluding alerts without mature labels), not a feature of the label. No post-24-hour events influence the label. The failure mechanism (learning from future events) is invalidated.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's challenge is mechanistically correct. The current design conflates three variables: (1) model class (LambdaMART vs LogReg), (2) feature richness (baseline vs extended), and (3) objective (pairwise ranking vs classification). The ablation (LambdaMART on baseline features) isolates feature effects but holds model and objective constant. It does NOT control for model class or isolate the ranking objective from pointwise learning. The critic correctly identifies that without additional baselines (LogReg on extended features, pointwise LambdaMART), we cannot definitively attribute gains to the ranking objective. This is a valid experimental limitation. However, the primary hypothesis 'does learning-to-rank outperform binary classification' can still be tested - the design compares a ranking approach to a classification approach on their respective feature sets. Whether the mechanism is specifically due to the ranking objective or confounders is genuinely ambiguous and would require additional baselines. The appropriate response is `DEFER` to experimental evidence rather than concede the finding entirely.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is substantially rebutted (adjusted severity 3). F2 is DEFERred - the critic correctly identifies that the ablation does not isolate the ranking objective from model class. This is a genuine experimental ambiguity that requires additional baselines to resolve. The primary hypothesis remains testable, but the mechanism (ranking vs. classification objective) is confounded with model capacity. The verdict is 'empirical_test_agreed' because the experiment has surfaced a real uncertainty that additional baselines would resolve."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

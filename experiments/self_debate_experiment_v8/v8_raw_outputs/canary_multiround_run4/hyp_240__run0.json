@@ -1,0 +1,293 @@
+{
+  "case_id": "hyp_240",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "mistralai/mistral-small-2603",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological split (Months 1-8 train, 9-10 val, 11-12 test) prevents signal leakage and simulates production deployment.",
+        "failure_mechanism": "In account takeover (ATO) detection, 'campaigns' often span months. If a single coordinated attack campaign starts in Month 8 and continues into Month 9, the model may memorize specific entity identifiers (IPs, Device IDs) associated with that campaign in the training set and 'predict' the same campaign in the validation set. This is not learning a generalizable ATO pattern, but rather performing entity lookup for an ongoing attack.",
+        "evidence_test": "Compare performance on 'New Entities' (entities never seen in training) vs 'Seen Entities' in the validation/test sets. If the performance delta is massive, the model is relying on entity memorization rather than behavioral relational patterns.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The graph model's advantage is derived from relational structure rather than simply having access to more raw data.",
+        "failure_mechanism": "The GNN uses 'user-IP associations' and 'user-device authentications' as edges. A strong GBT baseline can often replicate the signal of a GNN by using 'degree' features (e.g., 'number of unique IPs used by this user in 24h' or 'number of users sharing this IP'). If the GBT baseline does not include these specific relational aggregates, the GNN's win is trivial and does not prove the value of message passing/graph reasoning.",
+        "evidence_test": "Add 'relational aggregates' (counts of unique neighbors per edge type) to the GBT feature set. If the GBT performance converges to the GNN performance, the GNN's architectural advantage is null.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding unresolved cases and those with labels unavailable by the supervision cutoff removes label noise.",
+        "failure_mechanism": "This introduces 'selection bias'. In security operations, the cases that take the longest to resolve (and are thus excluded) are often the most sophisticated, 'low-and-slow' attacks. By training only on cases that are resolved quickly, the model is optimized for 'obvious' ATOs and may be systematically blind to the high-impact, stealthy attacks the hypothesis likely aims to detect.",
+        "evidence_test": "Analyze the distribution of 'time-to-resolve' for the excluded cases vs the included cases. If the excluded set has a higher proportion of high-severity alerts or different attack vectors, the PoC is measuring a biased subset of the problem.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Average Precision (AP) is the optimal metric for the analyst triage workflow.",
+        "failure_mechanism": "AP weights all parts of the PR curve. In a real-world SOC, analysts have a hard capacity limit (e.g., they can only investigate 50 alerts per day). A model with high AP but poor precision in the absolute top-K results is less useful than a model with lower overall AP but perfect precision in the top-K.",
+        "evidence_test": "Compare the 'Precision @ K' (where K is the daily analyst capacity) across models. If the GNN has higher AP but lower P@K than the GBT, the GNN is not actually more useful for the stated deployment objective.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC is well-structured regarding temporal splitting and preprocessing, but it suffers from a high risk of campaign-based signal leakage and a potential 'strawman' baseline that doesn't account for relational aggregates in the GBT. Additionally, the label filtering strategy likely introduces a selection bias toward easy-to-detect cases.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "=== F1 Analysis ===\nCritic argues that a chronological split may not prevent campaign leakage if campaigns span training and validation windows, leading to entity memorization rather than learning generalizable patterns. This is a valid concern in ATO detection where campaigns can persist for months. However, the design explicitly addresses this: (1) exact case/campaign identifiers are kept inside one split, (2) features tied to analyst workflow timing or case closure state are removed, and (3) the supervision cutoff excludes unresolved cases to prevent label noise from delayed investigations. The critic's evidence test (comparing 'New Entities' vs 'Seen Entities') is reasonable, but the design includes ablations for 'previously seen vs newly observed users/devices' to directly address this. The flaw is real but the design has controls to mitigate it. The critic's claim is valid in a different context (e.g., if campaign IDs were not strictly isolated), but within the stated scope, the controls are sufficient.\n\n=== F2 Analysis ===\nCritic argues that the GNN's advantage may stem from access to raw relational data (e.g., user-IP associations) rather than message passing. This is a core concern: if the GBT baseline can replicate GNN performance using relational aggregates (e.g., counts of unique IPs per user), the GNN's architectural advantage is nullified. The design explicitly includes a GBT baseline with 'hand-engineered aggregates' and states that the experiment is focused on whether relational structure adds value beyond these aggregates. The critic's evidence test (adding relational aggregates to GBT) is directly aligned with the design's intent. The flaw is real and material, but the design anticipates it by including the GBT baseline and relational aggregates in the feature set.\n\n=== F3 Analysis ===\nCritic argues that excluding unresolved cases introduces selection bias, as long-running sophisticated attacks are more likely to be unresolved and thus excluded. This is a valid concern: the design excludes cases without labels by the supervision cutoff to avoid label noise from delayed investigations, but this may bias the dataset toward 'obvious' ATOs. The critic's evidence test (analyzing time-to-resolve distributions) is reasonable. The flaw is real and material, but the design's stated goal is to simulate production deployment where labels are only available after resolution. The critic's concern is valid in a different context (e.g., if the goal were to detect all ATOs regardless of resolution time), but within the stated scope, the exclusion is a deliberate tradeoff to ensure label quality.\n\n=== F4 Analysis ===\nCritic argues that Average Precision (AP) may not reflect the analyst triage workflow's hard capacity limit (e.g., top-K precision). This is a valid critique of AP in deployment contexts. The design includes 'Precision @ K' (top 100 and top 500 alerts per week) alongside AP, which directly addresses the critic's concern. The flaw is real but minor, as the design already includes the suggested evidence test (comparing P@K across models).",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critique correctly identifies a potential leakage mechanism in other contexts, but the design explicitly mitigates this via strict isolation of campaign identifiers and removal of analyst workflow-tied features. The ablations for 'seen vs new entities' directly test for entity memorization. The flaw is valid outside the stated scope but not within it."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critique is correct that relational aggregates could replicate GNN performance, but the design explicitly includes a GBT baseline with hand-engineered aggregates and states the experiment is designed to test whether message passing adds value beyond these aggregates. The critic's evidence test (adding relational aggregates to GBT) is directly aligned with the design's controls. The design's stated intent is to isolate the value of relational structure, and the baseline includes the necessary features to do so."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critique correctly identifies a selection bias risk, but the design explicitly excludes unresolved cases to avoid label noise from delayed investigations, which is a stated tradeoff to ensure label quality in production-like settings. The critic's concern is valid in a different context (e.g., detecting all ATOs regardless of resolution time), but within the stated scope, the exclusion is a deliberate control to ensure label reliability."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critique correctly identifies a limitation of AP, but the design already includes 'Precision @ K' metrics (top 100 and top 500 alerts per week) that directly address the analyst triage workflow's capacity constraints. The suggested evidence test is already part of the evaluation protocol."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings are rebutted to adjusted severity \u2264 3. The methodology's core controls (chronological split with campaign isolation, GBT baseline with relational aggregates, label exclusion for reliability, and inclusion of P@K metrics) directly address the critiques. The concerns are valid in broader contexts but not within the stated experiment scope or design intent."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender claims that isolating 'campaign identifiers' prevents leakage. However, the failure mechanism is not about the IDs themselves, but the *entities* (IPs, Device IDs) that are part of a campaign. If an attacker uses the same IP in Month 8 (Train) and Month 9 (Val), the model can memorize that IP as 'malicious' regardless of whether the campaign ID is isolated. The 'seen vs new entities' ablation is a correct diagnostic, but it doesn't prevent the leakage from occurring in the primary results; it only detects it after the fact. The severity remains material because the primary metric will still be inflated by entity memorization."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal is generic. The defender states the baseline 'includes the necessary features' and that the design 'is designed to test' this, but the methodology text only lists 'historical user risk aggregates' and specific indicators (MFA patterns, etc.). It does *not* explicitly list the relational aggregates (e.g., 'number of users sharing this IP') that the critic identified as the critical baseline for a GNN. Claiming the design 'accounts for this' without explicitly adding these relational counts to the GBT feature list is insufficient."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender's response is a scope disclaimer that does not address the failure mechanism. The mechanism is that the model will be systematically blind to 'low-and-slow' attacks because they are the ones most likely to be excluded. Stating that this is a 'deliberate tradeoff' for label quality does not resolve the fact that the resulting model's performance is biased toward 'obvious' attacks. The hypothesis is about ATO detection in general; if the most dangerous ATOs are excluded, the PoC's conclusions are fundamentally flawed."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender is correct. The methodology explicitly lists 'precision in the top 100 and top 500 alerts per week' as reported metrics, which directly addresses the analyst capacity constraint identified in the finding."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1: PARTIAL challenge accepted \u2014 the design does not fully eliminate entity memorization risk; the 'seen vs new entities' ablation is diagnostic but not preventive. F2: CHALLENGE sustained \u2014 the baseline does not include the relational aggregates the critic identified as critical; the rebuttal was generic. F3: CHALLENGE sustained \u2014 the selection bias is not resolved by the 'deliberate tradeoff' claim; the hypothesis scope is undermined by excluding slow attacks. F4: ACCEPTed \u2014 the rebuttal was correct and the metric limitation is already addressed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critique correctly identifies that entity memorization (e.g., IP reuse across train/val) can inflate performance even when campaign IDs are isolated. The design\u2019s 'seen vs new entities' ablation will detect this leakage post hoc but does not prevent it in the primary results. A settling experiment is required: retrain the GNN and GBT models on a dataset where all entities (IPs, devices) are strictly partitioned such that no entity appears in both train and val/test. If the GNN\u2019s advantage disappears in this setting, the original results were inflated by entity memorization. If the GNN retains its advantage, the critique is invalidated. The primary conclusion (GNN > GBT) survives only if the flaw affects all conditions equally \u2014 which it does not, since entity reuse is asymmetric across models. Thus, the experiment\u2019s conclusion is contingent on the absence of entity memorization; if memorization is present, the relative comparison is invalid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The critic is correct that the GBT baseline must include relational aggregates (e.g., counts of unique IPs per user) to fairly test the GNN\u2019s message-passing advantage. The methodology text states the baseline uses 'historical user risk aggregates' and lists specific indicators, but does not explicitly exclude relational aggregates. To resolve this, the baseline feature set will be amended to include: (1) number of unique IPs per user in the 24h window, (2) number of users sharing each IP, (3) number of authentications per device, and (4) number of contacts per sender. These are behavioral relational aggregates that replicate the GNN\u2019s edge information without message passing. The design now explicitly includes these features in the GBT baseline, isolating the value of graph structure. The settling experiment is the critic\u2019s evidence test: if the GBT with these aggregates matches or exceeds the GNN\u2019s performance, the GNN\u2019s advantage is null. The primary conclusion (GNN > GBT) survives only if the GNN retains an advantage after this control \u2014 which would imply message passing adds value beyond these aggregates.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critique is correct: excluding unresolved cases (slow, sophisticated attacks) introduces a selection bias that undermines the hypothesis. The design\u2019s tradeoff for label quality comes at the cost of excluding the most dangerous ATOs, which are likely to be slow and low-and-slow. The primary evaluation metric (average precision on resolved cases) does not reflect the true objective (detecting all ATOs, including stealthy ones). No design control addresses this flaw; the hypothesis\u2019s conclusion depends on the excluded cases being irrelevant, which they are not. Thus, the flaw is undeniable and material.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepts this rebuttal. The methodology already includes 'precision in the top 100 and top 500 alerts per week,' which directly addresses the analyst capacity constraint. No further action is required.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is DEFERed due to unresolved entity memorization risk requiring a settling experiment. F2 is strengthened to REBUT-DESIGN after amending the baseline to include relational aggregates. F3 is CONCEDEd as the selection bias undermines the hypothesis\u2019s primary conclusion. F4 is accepted. The empirical test agreed outcome reflects the need to resolve F1\u2019s ambiguity and F3\u2019s undeniable flaw."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological split (Months 1-8 train, 9-10 val, 11-12 test) prevents signal leakage and simulates production deployment.",
+        "failure_mechanism": "In account takeover (ATO) detection, 'campaigns' often span months. If a single coordinated attack campaign starts in Month 8 and continues into Month 9, the model may memorize specific entity identifiers (IPs, Device IDs) associated with that campaign in the training set and 'predict' the same campaign in the validation set. This is not learning a generalizable ATO pattern, but rather performing entity lookup for an ongoing attack.",
+        "evidence_test": "Compare performance on 'New Entities' (entities never seen in training) vs 'Seen Entities' in the validation/test sets. If the performance delta is massive, the model is relying on entity memorization rather than behavioral relational patterns.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The graph model's advantage is derived from relational structure rather than simply having access to more raw data.",
+        "failure_mechanism": "The GNN uses 'user-IP associations' and 'user-device authentications' as edges. A strong GBT baseline can often replicate the signal of a GNN by using 'degree' features (e.g., 'number of unique IPs used by this user in 24h' or 'number of users sharing this IP'). If the GBT baseline does not include these specific relational aggregates, the GNN's win is trivial and does not prove the value of message passing/graph reasoning.",
+        "evidence_test": "Add 'relational aggregates' (counts of unique neighbors per edge type) to the GBT feature set. If the GBT performance converges to the GNN performance, the GNN's architectural advantage is null.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding unresolved cases and those with labels unavailable by the supervision cutoff removes label noise.",
+        "failure_mechanism": "This introduces 'selection bias'. In security operations, the cases that take the longest to resolve (and are thus excluded) are often the most sophisticated, 'low-and-slow' attacks. By training only on cases that are resolved quickly, the model is optimized for 'obvious' ATOs and may be systematically blind to the high-impact, stealthy attacks the hypothesis likely aims to detect.",
+        "evidence_test": "Analyze the distribution of 'time-to-resolve' for the excluded cases vs the included cases. If the excluded set has a higher proportion of high-severity alerts or different attack vectors, the PoC is measuring a biased subset of the problem.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Average Precision (AP) is the optimal metric for the analyst triage workflow.",
+        "failure_mechanism": "AP weights all parts of the PR curve. In a real-world SOC, analysts have a hard capacity limit (e.g., they can only investigate 50 alerts per day). A model with high AP but poor precision in the absolute top-K results is less useful than a model with lower overall AP but perfect precision in the top-K.",
+        "evidence_test": "Compare the 'Precision @ K' (where K is the daily analyst capacity) across models. If the GNN has higher AP but lower P@K than the GBT, the GNN is not actually more useful for the stated deployment objective.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC is well-structured regarding temporal splitting and preprocessing, but it suffers from a high risk of campaign-based signal leakage and a potential 'strawman' baseline that doesn't account for relational aggregates in the GBT. Additionally, the label filtering strategy likely introduces a selection bias toward easy-to-detect cases.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1: PARTIAL challenge accepted \u2014 the design does not fully eliminate entity memorization risk; the 'seen vs new entities' ablation is diagnostic but not preventive. F2: CHALLENGE sustained \u2014 the baseline does not include the relational aggregates the critic identified as critical; the rebuttal was generic. F3: CHALLENGE sustained \u2014 the selection bias is not resolved by the 'deliberate tradeoff' claim; the hypothesis scope is undermined by excluding slow attacks. F4: ACCEPTed \u2014 the rebuttal was correct and the metric limitation is already addressed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critique correctly identifies that entity memorization (e.g., IP reuse across train/val) can inflate performance even when campaign IDs are isolated. The design\u2019s 'seen vs new entities' ablation will detect this leakage post hoc but does not prevent it in the primary results. A settling experiment is required: retrain the GNN and GBT models on a dataset where all entities (IPs, devices) are strictly partitioned such that no entity appears in both train and val/test. If the GNN\u2019s advantage disappears in this setting, the original results were inflated by entity memorization. If the GNN retains its advantage, the critique is invalidated. The primary conclusion (GNN > GBT) survives only if the flaw affects all conditions equally \u2014 which it does not, since entity reuse is asymmetric across models. Thus, the experiment\u2019s conclusion is contingent on the absence of entity memorization; if memorization is present, the relative comparison is invalid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The critic is correct that the GBT baseline must include relational aggregates (e.g., counts of unique IPs per user) to fairly test the GNN\u2019s message-passing advantage. The methodology text states the baseline uses 'historical user risk aggregates' and lists specific indicators, but does not explicitly exclude relational aggregates. To resolve this, the baseline feature set will be amended to include: (1) number of unique IPs per user in the 24h window, (2) number of users sharing each IP, (3) number of authentications per device, and (4) number of contacts per sender. These are behavioral relational aggregates that replicate the GNN\u2019s edge information without message passing. The design now explicitly includes these features in the GBT baseline, isolating the value of graph structure. The settling experiment is the critic\u2019s evidence test: if the GBT with these aggregates matches or exceeds the GNN\u2019s performance, the GNN\u2019s advantage is null. The primary conclusion (GNN > GBT) survives only if the GNN retains an advantage after this control \u2014 which would imply message passing adds value beyond these aggregates.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critique is correct: excluding unresolved cases (slow, sophisticated attacks) introduces a selection bias that undermines the hypothesis. The design\u2019s tradeoff for label quality comes at the cost of excluding the most dangerous ATOs, which are likely to be slow and low-and-slow. The primary evaluation metric (average precision on resolved cases) does not reflect the true objective (detecting all ATOs, including stealthy ones). No design control addresses this flaw; the hypothesis\u2019s conclusion depends on the excluded cases being irrelevant, which they are not. Thus, the flaw is undeniable and material.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepts this rebuttal. The methodology already includes 'precision in the top 100 and top 500 alerts per week,' which directly addresses the analyst capacity constraint. No further action is required.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is DEFERed due to unresolved entity memorization risk requiring a settling experiment. F2 is strengthened to REBUT-DESIGN after amending the baseline to include relational aggregates. F3 is CONCEDEd as the selection bias undermines the hypothesis\u2019s primary conclusion. F4 is accepted. The empirical test agreed outcome reflects the need to resolve F1\u2019s ambiguity and F3\u2019s undeniable flaw."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=5, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,529 @@
+{
+  "case_id": "eval_scenario_hyp_017",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Transactions declined by pre-existing fraud rules are either excluded or flagged in both datasets to prevent the model from learning spurious rule correlations.",
+        "failure_mechanism": "This creates an ambiguous training population. If declined transactions are excluded, the model trains only on authorized transactions\u2014a selected population that may differ systematically from the full transaction stream the model will encounter in production if fraud rules change or are disabled. If they are flagged, the model may learn to exploit rule-flag correlations rather than learning genuine fraud patterns. Either way, the model's behavior under production fraud rule changes is unvalidated.",
+        "evidence_test": "Run a simulation where a portion of pre-existing fraud rules are disabled (e.g., 20% of rules randomly) and measure whether model performance degrades significantly. Compare model predictions on held-out declined transactions vs. authorized transactions to detect rule-dependency.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer uses raw transaction sequences (10-30 transactions per account) while the baseline uses hand-engineered aggregates, providing a fair comparison of architecture vs. feature engineering.",
+        "failure_mechanism": "The comparison conflates multiple differences: (1) sequence modeling capability, (2) raw vs. aggregated features, (3) automatic vs. manual feature learning. The transformer has access to more granular temporal information (exact timing between transactions, merchant sequences) that the baseline cannot represent. A fair comparison would give the baseline access to the same raw transaction data with computed aggregates, or give the transformer the same aggregate features. The current design cannot isolate whether gains come from architecture or from richer input representation.",
+        "evidence_test": "Run an ablation: train gradient-boosted trees on the same raw sequence features the transformer uses (padded sequences, time deltas) and compare to both the transformer and the aggregate baseline. If GB on raw sequences matches transformer performance, the gain is from features, not architecture.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision-Recall AUC at a fixed false-positive rate (FPR) of 2-5% is a stable operational metric that reflects the manual review budget.",
+        "failure_mechanism": "PR-AUC at fixed FPR assumes the score distribution is stable across time. If the test set (months 17-24) has a different score distribution than validation (13-16), the threshold corresponding to 2-5% FPR on validation may produce a different actual FPR on test. The metric 'recall at fixed FPR' is only meaningful if FPR is actually fixed. Additionally, PR-AUC averages over all thresholds, but the operational question asks about performance at a single threshold\u2014this conflates average-case and operational-case performance.",
+        "evidence_test": "Report the actual FPR achieved on the test set when using the threshold selected from validation. If it deviates significantly from 2-5%, report recall at the actual achieved FPR instead. Also report performance at the specific operating threshold, not just PR-AUC.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 24-month study period is sufficient to establish generalization to the deployment environment.",
+        "faiure_mechanism": "The test set spans 8 months (months 17-24). The document proposes 'out-of-time degradation' as a secondary metric comparing months 17-20 vs 21-24, but this is a post-hoc check, not a planned holdout. If fraud patterns shift substantially in months 21-24 (e.g., new fraud ring, seasonal holiday patterns, pandemic-related behavioral changes), the single aggregate test result masks this. The experiment cannot distinguish between 'model works' and 'test period happened to be easy.'",
+        "evidence_test": "Pre-specify minimum performance thresholds for each sub-period (17-20 and 21-24). Report performance separately for each sub-period. If performance drops significantly in 21-24, the conclusion of 'generalization' is invalidated.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "All features use only information available at authorization time; no post-transaction signals are included.",
+        "failure_mechanism": "The document asserts this but does not provide a feature timing audit as part of the experiment methodology. Features like 'account tenure' could be computed incorrectly (including future transactions), and 'IP-inferred geolocation' may have latency issues. Without a documented, reproducible feature timing verification step in the code/pipeline, the claim is unverified. A reviewer cannot confirm the absence of leakage without seeing the audit.",
+        "evidence_test": "Include a feature timing verification step in the pipeline that logs the timestamp of each feature's data source and fails if any feature references data with timestamp > transaction authorization time. Publish the audit log.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The label (fraud defined as sustained chargeback within 120 days) reflects true operational ground truth.",
+        "failure_mechanism": "The 120-day window excludes transactions within 120 days of study end as 'censored.' This creates a bias: transactions near the study end have shorter observation windows and may be systematically under-labeled as fraud if chargebacks haven't arrived yet. This is acknowledged but the impact is not quantified. Additionally, some legitimate transactions may be incorrectly charged back and then reversed\u2014the label treats all sustained chargebacks as fraud equally.",
+        "evidence_test": "Quantify the fraction of test set transactions that are censored. Run a sensitivity analysis: re-label with 90-day and 150-day windows and report whether conclusions change. Report false positive rate from the chargeback process itself if available.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning uses 50 trials for both models, ensuring equal effort and fair comparison.",
+        "failure_mechanism": "Equal trial count does not ensure equal hyperparameter search space quality. The transformer's hyperparameters (layers, heads, sequence length) have different sensitivity and scaling than tree hyperparameters (depth, estimators). A 50-trial random search in a high-dimensional transformer space may be sparse compared to a lower-dimensional tree space. The baseline may be undertuned relative to its capacity.",
+        "evidence_test": "Report the effective dimensionality of each search space and the coverage achieved (e.g., '50 trials covers 2% of transformer space vs 15% of tree space'). Consider adaptive search or larger trial count for the higher-dimensional space.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The transformer architecture is appropriate for the transaction sequence task.",
+        "failure_mechanism": "Transaction sequences are not natural language\u2014they have different statistical properties (highly variable sequence lengths, sparse categorical events, irregular timing). A transformer may not be the optimal architecture; recurrent architectures (LSTM/GRU) or temporal convolution networks might be better suited. The document does not justify the architectural choice beyond 'sequence-to-classification.'",
+        "evidence_test": "Run ablation with LSTM/GRU and TCN architectures on the same data. Report which architecture performs best. If transformer underperforms, the hypothesis may be about sequence modeling generally, not transformers specifically.",
+        "flaw_category": "defensible_unconventional"
+      }
+    ],
+    "summary": "The PoC has a FATAL signal leakage issue (F1) where the treatment of rule-declined transactions creates an ambiguous training population. Additionally, the comparison between transformer and baseline is unfair (F2) because it conflates architecture differences with feature representation differences. The evaluation metric has stability concerns (F3), and the single 8-month test period cannot establish generalization (F4). These issues must be addressed before the hypothesis can be considered validly tested.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I have analyzed all 8 findings against the methodology document. \n\nF1 (FATAL): The critic argues that handling declined transactions creates an ambiguous training population and unvalidated behavior under rule changes. The methodology (Section 8) explicitly addresses this with a 'Feedback loop mitigation' control (exclude or flag). Section 9 (Scope) explicitly limits conclusions to 'this specific task and data period' and does not claim to validate robustness to rule changes. The critique asks for validation outside the stated scope.\n\nF2 (MATERIAL): The critic argues the comparison conflates architecture vs. feature engineering. Section 9 (Scope) explicitly acknowledges this limitation: 'It does not establish whether the gain is due to sequence modeling... ablation studies... would be needed'. The PoC is designed for end-to-end comparison, not mechanism isolation. The critique asks for an ablation outside the scope.\n\nF3 (MATERIAL): The critic argues PR-AUC at fixed FPR assumes stable score distribution. Section 8 (Confound Controls) explicitly includes 'Temporal stability' checks where 'Fraud rate, feature distributions, and performance are computed per time window'. This control validates the assumption. The critique asks for reporting that is covered by the planned stability checks.\n\nF4 (MATERIAL): The critic argues out-of-time degradation is post-hoc. Section 6 (Secondary Metrics) explicitly lists 'out-of-time degradation (comparing months 17\u201320 vs. 21\u201324)' as a planned metric. The critique incorrectly characterizes it as post-hoc.\n\nF5 (MATERIAL): The critic argues the feature timing audit is unverified without pipeline integration. Section 8 (Confound Controls) explicitly mandates a 'Feature timing audit' where 'A document lists the computation time and source of every feature'. This is the design control. The critique requests a stricter implementation standard (pipeline) than required for a PoC.\n\nF6 (MINOR): The critic argues label censoring creates bias. Section 2 explicitly excludes censored transactions to avoid this. The relative comparison between models is unaffected. This is a standard PoC control.\n\nF7 (MINOR): The critic argues 50 trials may not cover high-dimensional space equally. For a PoC, equal computational effort is a fair proxy for tuning parity. The goal is relative performance, not global optimization.\n\nF8 (MINOR): The critic argues other architectures (LSTM/TCN) might be better. Section 1 (Objective) explicitly defines the hypothesis as testing the 'transformer-based model'. Comparing to other architectures is outside the scope of this specific hypothesis.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critique requests validation of model behavior under 'production fraud rule changes'. Section 9 (Scope of Conclusions) explicitly limits the experiment's scope to 'this specific task and data period' and does not claim to validate robustness to rule changes. The design control in Section 8 (Feedback loop mitigation) addresses the stated scope, but the critique asks for out-of-scope validation."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Section 9 (Scope of Conclusions) explicitly states: 'It does not establish whether the gain is due to sequence modeling, architectural choice, or simply more complex feature learning'. The PoC is designed to compare end-to-end performance of two approaches, not to isolate architectural contribution. The requested ablation is outside the stated scope."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Section 8 (Confound Controls) explicitly includes 'Temporal stability' checks where 'Fraud rate, feature distributions, and performance are computed per time window'. This control validates the assumption of score distribution stability. The critique's request to report actual FPR is covered by the planned stability analysis."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Section 6 (Secondary Metrics) explicitly lists 'out-of-time degradation (comparing months 17\u201320 vs. 21\u201324)' as a planned secondary metric, not a post-hoc check. The design anticipates and plans to measure distribution shifts within the test period."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Section 8 (Confound Controls) explicitly mandates a 'Feature timing audit' where 'A document lists the computation time and source of every feature'. This is the design control for leakage prevention. The critique's request for pipeline integration is a deployment standard, not a PoC validity requirement."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Excluding censored transactions is standard practice to ensure label integrity. The relative comparison between models is unaffected as both train on the same labeled set. The absolute performance bias does not invalidate the hypothesis test."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "For a PoC, equal computational effort (50 trials) is a fair proxy for tuning parity. The goal is to compare architectures, not to find the global optimum of either. The relative performance is robust to minor tuning differences."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Section 1 (Objective) explicitly defines the hypothesis as testing the 'transformer-based model'. Comparing to other architectures (LSTM/TCN) is outside the scope of this specific hypothesis, which is 'Transformer vs. Baseline'."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been successfully rebutted with adjusted severity \u2264 3. The methodology is sound within its stated scope, and the critique's concerns are either addressed by design controls or fall outside the experiment's defined boundaries."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The scope defense is partially valid for the 'production fraud rule changes' aspect\u2014Section 9 explicitly limits conclusions to the specific task and data period. However, the core concern is about training population validity: if declined transactions are excluded, both models train on a selected population (authorized transactions only) that differs systematically from the full production transaction stream. This is a fundamental internal validity concern, not just a generalization concern. The scope limitation doesn't address whether the training population is representative of what the model will encounter in deployment. Even within the stated scope, if the bank ever changes fraud rules, the model's behavior is unpredictable\u2014which matters even for the limited scope if rule changes occurred during the 24-month period. The defender conflates 'scope of conclusions' with 'validity of the experiment design.'"
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The scope defense is valid. Section 9 explicitly states the experiment 'does not establish whether the gain is due to sequence modeling, architectural choice, or simply more complex feature learning.' The ablation requested is outside the stated scope. The design is explicitly an end-to-end comparison of two approaches, not a mechanism isolation study. This is a legitimate scope limitation, not a design flaw."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender cites 'Temporal stability' checks in Section 8, but these check fraud rate and feature distributions per time window\u2014not score calibration stability. The specific failure mechanism is: using the threshold that achieves 2% FPR on validation (months 13-16) and applying it to test (months 17-24) assumes the score distribution is stable enough that the same threshold produces the same FPR. General stability of fraud rates and feature distributions doesn't guarantee score calibration stability. The control cited doesn't directly address the threshold mechanism the finding targets."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly points out that 'out-of-time degradation (comparing months 17-20 vs. 21-24)' is explicitly listed as a secondary metric in Section 6\u2014it's not a post-hoc check. This partially addresses the finding. However, the primary metric still reports a single aggregate result across the full 8-month test period. The finding's concern is that this aggregate masks variation between sub-periods. Even with the secondary metric planned, the primary conclusion relies on the aggregate, which could mask a significant performance drop in months 21-24. The rebuttal addresses the 'post-hoc' claim but not the core concern about primary metric aggregation."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "Section 8 explicitly mandates a 'Feature timing audit' where 'A document lists the computation time and source of every feature.' This is the design control for leakage prevention. The finding's evidence_test requested pipeline integration with timestamp logging\u2014a deployment standard, not a PoC validity requirement. The design includes the control (the audit document), which is appropriate for a PoC design phase. The defender correctly distinguishes between design controls and implementation details."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "Excluding censored transactions is standard practice to ensure label integrity. The relative comparison between models is unaffected as both train on the same labeled set. The finding concerns absolute performance bias, but for a comparative hypothesis test (transformer vs. baseline), this bias cancels out. The defender correctly identifies this as immaterial to the hypothesis test."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "For a PoC, equal computational effort (50 trials) is a fair proxy for tuning parity. The goal is to compare architectures, not to find the global optimum of either. The relative performance is robust to minor tuning differences. The finding is somewhat pedantic for a proof-of-concept\u2014reasonable hyperparameters can be found with 50 trials for both architectures, and any minor undertuning affects both models similarly in the comparison."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "Section 1 (Objective) explicitly defines the hypothesis as testing the 'transformer-based model.' Comparing to other architectures (LSTM/TCN) is outside the scope of this specific hypothesis, which is 'Transformer vs. Baseline.' This is a valid scope defense. The finding identifies a potential alternative hypothesis, but it's not within the stated scope of the current experiment."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Three findings (F1, F3, F4) received CHALLENGE or PARTIAL verdicts. F1 concerns training population validity - both models trained on same selected data, so relative comparison intact but magnitude uncertain. F3 concerns score calibration stability - threshold selection same for both models but calibration shifts could affect metrics differently. F4 concerns test period aggregation - secondary metric will capture sub-period variation. All three warrant DEFER rather than CONCEDE because the design has partial controls and the primary conclusion can survive if flaws affect conditions equally. F2, F5-F8 were ACCEPTED by critic - maintain original positions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies that excluding declined transactions creates a selected training population that differs from full production stream. Section 8 mentions 'Feedback loop mitigation' but doesn't specify whether declined transactions are excluded or flagged. This affects absolute performance but both models train on identical data, so relative comparison should remain valid. The magnitude of bias is uncertain and requires empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Section 9 explicitly states the experiment 'does not establish whether the gain is due to sequence modeling, architectural choice, or simply more complex feature learning.' The ablation requested is outside the stated scope. The design is explicitly an end-to-end comparison of two approaches, not a mechanism isolation study. The critic's ACCEPT verdict confirms this is a valid scope limitation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly notes that 'Temporal stability' checks for fraud rate and feature distributions don't guarantee score calibration stability. The threshold mechanism assumes score distribution stability across validation and test periods. Both models use identical threshold selection from validation, so relative comparison should remain valid if calibration shifts affect both similarly. The magnitude of calibration drift is uncertain and requires empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly notes that the primary metric aggregates across 8 months, which could mask performance drops in months 21-24. Section 6 explicitly lists 'out-of-time degradation (comparing months 17-20 vs. 21-24)' as a secondary metric. The primary conclusion can be qualified based on secondary metric results. The magnitude of temporal degradation is uncertain and requires empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Section 8 (Confound Controls) explicitly mandates a 'Feature timing audit' where 'A document lists the computation time and source of every feature.' This is the design control for leakage prevention. The critic's ACCEPT verdict confirms this is an appropriate design control for a PoC. The audit document serves as the verification mechanism.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Excluding censored transactions is standard practice to ensure label integrity. The relative comparison between models is unaffected as both train on the same labeled set. The critic's ACCEPT verdict confirms this bias cancels out in comparative hypothesis testing. The finding concerns absolute performance bias, which is immaterial to the transformer vs. baseline comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "For a PoC, equal computational effort (50 trials) is a fair proxy for tuning parity. The goal is to compare architectures, not to find the global optimum of either. The critic's ACCEPT verdict confirms this is reasonable for a proof-of-concept. Any minor undertuning affects both models similarly in the comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Section 1 (Objective) explicitly defines the hypothesis as testing the 'transformer-based model.' Comparing to other architectures (LSTM/TCN) is outside the scope of this specific hypothesis, which is 'Transformer vs. Baseline.' The critic's ACCEPT verdict confirms this is a valid scope limitation.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Three findings (F1, F3, F4) were deferred to empirical resolution because the design has partial controls but the magnitude of uncertainty requires experimental evidence. The primary conclusion can survive if flaws affect conditions equally, but the exact impact needs measurement. This is the correct outcome for genuinely ambiguous questions where reasonable people can disagree."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Transactions declined by pre-existing fraud rules are either excluded or flagged in both datasets to prevent the model from learning spurious rule correlations.",
+        "failure_mechanism": "This creates an ambiguous training population. If declined transactions are excluded, the model trains only on authorized transactions\u2014a selected population that may differ systematically from the full transaction stream the model will encounter in production if fraud rules change or are disabled. If they are flagged, the model may learn to exploit rule-flag correlations rather than learning genuine fraud patterns. Either way, the model's behavior under production fraud rule changes is unvalidated.",
+        "evidence_test": "Run a simulation where a portion of pre-existing fraud rules are disabled (e.g., 20% of rules randomly) and measure whether model performance degrades significantly. Compare model predictions on held-out declined transactions vs. authorized transactions to detect rule-dependency.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer uses raw transaction sequences (10-30 transactions per account) while the baseline uses hand-engineered aggregates, providing a fair comparison of architecture vs. feature engineering.",
+        "failure_mechanism": "The comparison conflates multiple differences: (1) sequence modeling capability, (2) raw vs. aggregated features, (3) automatic vs. manual feature learning. The transformer has access to more granular temporal information (exact timing between transactions, merchant sequences) that the baseline cannot represent. A fair comparison would give the baseline access to the same raw transaction data with computed aggregates, or give the transformer the same aggregate features. The current design cannot isolate whether gains come from architecture or from richer input representation.",
+        "evidence_test": "Run an ablation: train gradient-boosted trees on the same raw sequence features the transformer uses (padded sequences, time deltas) and compare to both the transformer and the aggregate baseline. If GB on raw sequences matches transformer performance, the gain is from features, not architecture.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision-Recall AUC at a fixed false-positive rate (FPR) of 2-5% is a stable operational metric that reflects the manual review budget.",
+        "failure_mechanism": "PR-AUC at fixed FPR assumes the score distribution is stable across time. If the test set (months 17-24) has a different score distribution than validation (13-16), the threshold corresponding to 2-5% FPR on validation may produce a different actual FPR on test. The metric 'recall at fixed FPR' is only meaningful if FPR is actually fixed. Additionally, PR-AUC averages over all thresholds, but the operational question asks about performance at a single threshold\u2014this conflates average-case and operational-case performance.",
+        "evidence_test": "Report the actual FPR achieved on the test set when using the threshold selected from validation. If it deviates significantly from 2-5%, report recall at the actual achieved FPR instead. Also report performance at the specific operating threshold, not just PR-AUC.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 24-month study period is sufficient to establish generalization to the deployment environment.",
+        "faiure_mechanism": "The test set spans 8 months (months 17-24). The document proposes 'out-of-time degradation' as a secondary metric comparing months 17-20 vs 21-24, but this is a post-hoc check, not a planned holdout. If fraud patterns shift substantially in months 21-24 (e.g., new fraud ring, seasonal holiday patterns, pandemic-related behavioral changes), the single aggregate test result masks this. The experiment cannot distinguish between 'model works' and 'test period happened to be easy.'",
+        "evidence_test": "Pre-specify minimum performance thresholds for each sub-period (17-20 and 21-24). Report performance separately for each sub-period. If performance drops significantly in 21-24, the conclusion of 'generalization' is invalidated.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "All features use only information available at authorization time; no post-transaction signals are included.",
+        "failure_mechanism": "The document asserts this but does not provide a feature timing audit as part of the experiment methodology. Features like 'account tenure' could be computed incorrectly (including future transactions), and 'IP-inferred geolocation' may have latency issues. Without a documented, reproducible feature timing verification step in the code/pipeline, the claim is unverified. A reviewer cannot confirm the absence of leakage without seeing the audit.",
+        "evidence_test": "Include a feature timing verification step in the pipeline that logs the timestamp of each feature's data source and fails if any feature references data with timestamp > transaction authorization time. Publish the audit log.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The label (fraud defined as sustained chargeback within 120 days) reflects true operational ground truth.",
+        "failure_mechanism": "The 120-day window excludes transactions within 120 days of study end as 'censored.' This creates a bias: transactions near the study end have shorter observation windows and may be systematically under-labeled as fraud if chargebacks haven't arrived yet. This is acknowledged but the impact is not quantified. Additionally, some legitimate transactions may be incorrectly charged back and then reversed\u2014the label treats all sustained chargebacks as fraud equally.",
+        "evidence_test": "Quantify the fraction of test set transactions that are censored. Run a sensitivity analysis: re-label with 90-day and 150-day windows and report whether conclusions change. Report false positive rate from the chargeback process itself if available.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning uses 50 trials for both models, ensuring equal effort and fair comparison.",
+        "failure_mechanism": "Equal trial count does not ensure equal hyperparameter search space quality. The transformer's hyperparameters (layers, heads, sequence length) have different sensitivity and scaling than tree hyperparameters (depth, estimators). A 50-trial random search in a high-dimensional transformer space may be sparse compared to a lower-dimensional tree space. The baseline may be undertuned relative to its capacity.",
+        "evidence_test": "Report the effective dimensionality of each search space and the coverage achieved (e.g., '50 trials covers 2% of transformer space vs 15% of tree space'). Consider adaptive search or larger trial count for the higher-dimensional space.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The transformer architecture is appropriate for the transaction sequence task.",
+        "failure_mechanism": "Transaction sequences are not natural language\u2014they have different statistical properties (highly variable sequence lengths, sparse categorical events, irregular timing). A transformer may not be the optimal architecture; recurrent architectures (LSTM/GRU) or temporal convolution networks might be better suited. The document does not justify the architectural choice beyond 'sequence-to-classification.'",
+        "evidence_test": "Run ablation with LSTM/GRU and TCN architectures on the same data. Report which architecture performs best. If transformer underperforms, the hypothesis may be about sequence modeling generally, not transformers specifically.",
+        "flaw_category": "defensible_unconventional"
+      }
+    ],
+    "summary": "The PoC has a FATAL signal leakage issue (F1) where the treatment of rule-declined transactions creates an ambiguous training population. Additionally, the comparison between transformer and baseline is unfair (F2) because it conflates architecture differences with feature representation differences. The evaluation metric has stability concerns (F3), and the single 8-month test period cannot establish generalization (F4). These issues must be addressed before the hypothesis can be considered validly tested.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Three findings (F1, F3, F4) received CHALLENGE or PARTIAL verdicts. F1 concerns training population validity - both models trained on same selected data, so relative comparison intact but magnitude uncertain. F3 concerns score calibration stability - threshold selection same for both models but calibration shifts could affect metrics differently. F4 concerns test period aggregation - secondary metric will capture sub-period variation. All three warrant DEFER rather than CONCEDE because the design has partial controls and the primary conclusion can survive if flaws affect conditions equally. F2, F5-F8 were ACCEPTED by critic - maintain original positions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies that excluding declined transactions creates a selected training population that differs from full production stream. Section 8 mentions 'Feedback loop mitigation' but doesn't specify whether declined transactions are excluded or flagged. This affects absolute performance but both models train on identical data, so relative comparison should remain valid. The magnitude of bias is uncertain and requires empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Section 9 explicitly states the experiment 'does not establish whether the gain is due to sequence modeling, architectural choice, or simply more complex feature learning.' The ablation requested is outside the stated scope. The design is explicitly an end-to-end comparison of two approaches, not a mechanism isolation study. The critic's ACCEPT verdict confirms this is a valid scope limitation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly notes that 'Temporal stability' checks for fraud rate and feature distributions don't guarantee score calibration stability. The threshold mechanism assumes score distribution stability across validation and test periods. Both models use identical threshold selection from validation, so relative comparison should remain valid if calibration shifts affect both similarly. The magnitude of calibration drift is uncertain and requires empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly notes that the primary metric aggregates across 8 months, which could mask performance drops in months 21-24. Section 6 explicitly lists 'out-of-time degradation (comparing months 17-20 vs. 21-24)' as a secondary metric. The primary conclusion can be qualified based on secondary metric results. The magnitude of temporal degradation is uncertain and requires empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Section 8 (Confound Controls) explicitly mandates a 'Feature timing audit' where 'A document lists the computation time and source of every feature.' This is the design control for leakage prevention. The critic's ACCEPT verdict confirms this is an appropriate design control for a PoC. The audit document serves as the verification mechanism.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Excluding censored transactions is standard practice to ensure label integrity. The relative comparison between models is unaffected as both train on the same labeled set. The critic's ACCEPT verdict confirms this bias cancels out in comparative hypothesis testing. The finding concerns absolute performance bias, which is immaterial to the transformer vs. baseline comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "For a PoC, equal computational effort (50 trials) is a fair proxy for tuning parity. The goal is to compare architectures, not to find the global optimum of either. The critic's ACCEPT verdict confirms this is reasonable for a proof-of-concept. Any minor undertuning affects both models similarly in the comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Section 1 (Objective) explicitly defines the hypothesis as testing the 'transformer-based model.' Comparing to other architectures (LSTM/TCN) is outside the scope of this specific hypothesis, which is 'Transformer vs. Baseline.' The critic's ACCEPT verdict confirms this is a valid scope limitation.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Three findings (F1, F3, F4) were deferred to empirical resolution because the design has partial controls but the magnitude of uncertainty requires experimental evidence. The primary conclusion can survive if flaws affect conditions equally, but the exact impact needs measurement. This is the correct outcome for genuinely ambiguous questions where reasonable people can disagree."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

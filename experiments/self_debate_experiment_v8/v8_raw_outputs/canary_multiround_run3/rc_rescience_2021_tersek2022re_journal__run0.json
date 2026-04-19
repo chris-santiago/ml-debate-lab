@@ -1,0 +1,352 @@
+{
+  "case_id": "rc_rescience_2021_tersek2022re_journal",
+  "stratum": "mixed",
+  "flaw_category": "fixable_flaw",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The method refines prediction for the current category using limited supervision available at inference time.",
+        "failure_mechanism": "In few-shot learning, inference time implies no access to ground truth labels for the target image. If 'limited supervision' refers to ground truth counts or labels for the query image (beyond the provided exemplars), this constitutes signal leakage. The model would be optimizing against known answers during the test phase, invalidating the claim of generalization to novel categories.",
+        "evidence_test": "Verify the definition of 'supervision' in the test protocol. If the test loss or refinement step uses the ground truth count of the query image, the experiment is invalid.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model generalizes to novel object categories without category-specific retraining.",
+        "failure_mechanism": "The method requires 'example bounding boxes... taken from the same image' as input. This is a strong prerequisite that assumes the user can provide manual annotations for the target category in the test image. This contradicts the goal of autonomous generalization and limits the 'novelty' claim to 'novelty given user guidance'.",
+        "evidence_test": "Measure performance in a setting where exemplars must be auto-generated versus manually provided. If performance drops significantly without manual boxes, the 'generalization' claim is overstated.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Experiments are conducted on FSC-147 to show effectiveness on multi-category datasets.",
+        "failure_mechanism": "The PoC does not specify the train/test split strategy for FSC-147. If the 'novel' test categories overlap with training categories (even on different images), the generalization claim is false. Without explicit disjoint category splits, performance metrics may be inflated.",
+        "evidence_test": "Verify the category-level split. Ensure test categories are completely disjoint from training categories.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Counting accuracy is estimated via the integral of a predicted density map.",
+        "failure_mechanism": "Density map regression loss (e.g., MSE) does not always correlate perfectly with counting error (MAE). A model could minimize density loss while producing incorrect counts due to smoothing artifacts or blob merging.",
+        "evidence_test": "Report both density map MSE and count-level MAE. Check for divergence between the two metrics.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The approach is compared against prior few-shot counting methods.",
+        "failure_mechanism": "The description is vague ('prior methods'). Without specific baseline names or implementation details, it is impossible to verify if the comparison is fair (e.g., same hyperparameters, same compute budget).",
+        "evidence_test": "List specific baseline models and their implementation sources. Verify hyperparameter parity.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC contains a critical ambiguity regarding test-time supervision that risks data leakage, alongside unverified prerequisites for exemplar availability and evaluation split transparency.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding in sequence, referencing the methodology's design intent and controls.\n\n**F1 (Signal Leakage):** The critic claims that 'limited supervision at inference time' implies using ground truth counts from the query image, which would be fatal signal leakage. This is a misinterpretation of the methodology's design. In few-shot counting, the 'supervision' at inference time refers to the *exemplar bounding boxes provided by the user* (the 'shots'), not the ground truth count of the query image. The model is conditioned on these exemplars to predict the density for the rest of the image. No loss is computed against the query image's true count during inference; the model's parameters are fixed. The 'refinement' mentioned likely refers to the model's internal adaptation *based on the provided exemplars alone*. The design intent is clear: generalization is from exemplars to the rest of the same image, not from a held-out test label. The critic's failure mechanism assumes a protocol that contradicts the fundamental setup of few-shot learning. This is a complete rebuttal based on design scope.\n\n**F2 (Unverified Prereqs - Manual Exemplars):** The critic argues that requiring manual exemplar bounding boxes contradicts 'autonomous generalization.' This misconstrues the problem scope. The paper's hypothesis explicitly targets *few-shot* counting, where a user provides a few examples of what to count. This is the standard formulation for this task (like in few-shot classification with support sets). The claim 'generalizes to novel object categories' means the model, trained on a set of categories, can count objects from a *new* category given a few exemplars of that new category. It does not claim to automatically discover novel categories without any exemplars. The prerequisite of user-provided exemplars is the core of the few-shot paradigm, not a hidden limitation. The design scope is correctly stated, and the critic's proposed test (auto-generated exemplars) is outside that scope.\n\n**F3 (Eval Inflation - Category Split):** The critic correctly identifies a risk: if test categories overlap with training categories, the novelty claim is compromised. This is a material concern that the methodology must address. I must check if the design includes an explicit control for this. The methodology states the FSC-147 dataset is used 'to support broad-category evaluation' and that the approach is intended to generalize 'to novel object categories.' A sound design would enforce a category-disjoint split. The PoC description does not explicitly detail the split strategy, leaving this concern open. This is not a flaw in the stated methodology but an uncertainty in its implementation. The question is empirically resolvable by verifying the split. Since the design's intent (novel category generalization) logically requires a disjoint split, but the PoC doesn't explicitly confirm it, this warrants a DEFER to an empirical check of the data split.\n\n**F4 (Metric Limitations):** The critic notes that density map loss (MSE) may not perfectly correlate with count error (MAE). This is a known limitation of density-based counting methods. The key question is whether the methodology acknowledges this and uses the appropriate primary metric for evaluation. The claim is about 'counting accuracy,' which should be evaluated by count error (e.g., MAE). If the paper only reports density MSE, that's a flaw. If it reports count MAE (the integral of the density map), the limitation is acknowledged and the correct metric is used. The PoC description says 'estimates a density map whose integral gives the final count.' This implies the final evaluated metric is the count derived from the integral. The critic's proposed test (report both metrics) is good practice but not finding a flaw if the primary reported result is the count error. This is a minor methodological note, not a material flaw in the evaluation, given the design's stated output is a count.\n\n**F5 (Missing Baselines):** The critic states the comparison description is vague. This is a minor documentation issue. The PoC summary is a high-level description; the full paper would contain the specific baseline names, implementations, and fairness controls. The absence of these details in the summary does not invalidate the methodology; it merely makes the summary less verifiable. This is a minor finding about communication clarity, not a methodological flaw.\n\nSummary: F1 is rebutted by design scope, F2 by design scope, F3 is a genuine open question requiring empirical verification (DEFER), F4 is a minor note on metric correlation, and F5 is a minor documentation issue.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic misinterprets 'supervision at inference time.' In the few-shot counting paradigm defined by the paper's scope, 'supervision' refers exclusively to the exemplar bounding boxes provided as input (the 'shots'), not the ground truth count of the query image. The model is conditioned on these exemplars to regress a density map for the same image. No optimization occurs using the query image's true count. The failure mechanism assumes a test protocol (using query image labels) that is outside the stated problem formulation. The design intent is clear: generalization is from provided exemplars to the rest of the image."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic's claim that manual exemplars contradict 'autonomous generalization' misidentifies the experiment's scope. The paper's hypothesis explicitly addresses *few-shot* counting, where a user provides a few examples of the novel category. This is the standard and defined setting for this task. The claim 'generalizes to novel object categories' means the model can count new categories *conditioned on these user-provided exemplars*, not that it automatically discovers them. Requiring exemplars is the core premise of the few-shot learning paradigm under investigation, not an unverified prerequisite. The proposed test (auto-generated exemplars) addresses a different problem (zero-shot or detection-based counting)."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The concern about category overlap between train and test splits is valid and material to the novelty claim. The PoC description does not explicitly detail the split strategy for FSC-147. 1) Settling Experiment: Inspect the dataset split definition. 2) Vindication: The split is explicitly category-disjoint (e.g., train/val/test categories are mutually exclusive). 3) Critique Validation: If categories overlap, the novelty claim is inflated and must be downgraded. 4) Conclusion Validity: The primary conclusion (FamNet outperforms baselines) could remain valid *if* the overlap affects all compared methods equally, but the stronger claim of cross-category generalization would be invalid. The magnitude of this concern is empirically uncertain without the split details."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic correctly notes a known limitation of density-based methods: density loss and count error can diverge. However, the methodology's stated output is a *count* derived from the integral of the density map. Therefore, the primary evaluation metric for 'counting accuracy' should be, and in a sound implementation would be, a count-level error metric (e.g., MAE). The observation is a minor methodological note about internal consistency, not a material flaw in the evaluation, as the final reported metric is the count. The divergence between density loss and count error is an implementation detail that does not invalidate the primary count results if they are reported correctly."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The finding identifies a lack of detail in the high-level PoC summary regarding specific baseline names and implementation parity. This is a minor documentation/clarity issue. The full methodological paper would be required to contain these details for verification. The absence of a list in the summary does not constitute a methodological flaw in the experiment itself; it merely makes the summary less self-contained. The concern is below significance for assessing the validity of the experimental conclusions."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One finding (F3) regarding the category-disjoint nature of the train/test split is genuinely uncertain and requires empirical verification (DEFER). All other FATAL and MATERIAL findings have been successfully rebutted, with adjusted severities at or below 3."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly clarifies that 'supervision at inference time' refers to the provided exemplar bounding boxes, not ground truth labels for the query image. This directly negates the signal leakage mechanism identified in the finding. The failure mode (optimizing against known answers) does not exist under the stated protocol."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly identifies that requiring exemplar boxes is the standard definition of the few-shot counting paradigm. The claim of 'generalization' is conditioned on these exemplars, not autonomous discovery. The finding's concern about 'autonomous generalization' stems from a misinterpretation of the task scope."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 6,
+        "reasoning": "The defender admits the PoC description lacks explicit category-split details, validating the finding's premise. However, the impact on validity is deferred pending inspection of the full dataset split. The concern remains unresolved until the split is verified."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal distinguishes between the internal training objective (density loss) and the primary evaluation metric (count-level MAE). Since the reported accuracy relies on the count metric, the divergence between density loss and count error does not invalidate the results, resolving the metric limitation concern."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly distinguishes between the high-level PoC summary and the full methodological paper. The lack of baseline details in the summary is a documentation issue, not a methodological flaw in the experiment itself, resolving the verification concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted three of our R1 rebuttals (F1, F2, F4, F5), confirming our scope and immaterial arguments. For F3, which received a PARTIAL verdict, the design does not contain explicit text guaranteeing a category-disjoint split. However, the core experimental design of few-shot learning on a novel dataset inherently implies a need for novel categories at test time; the absence of explicit split details creates genuine ambiguity. This is a classic case for DEFER: the concern is valid but not undeniable, and the settling experiment (inspecting the split) will determine the claim's validity. The primary conclusion of outperforming baselines could survive even with category overlap if the overlap affects all methods equally, though the novelty claim would be weakened. Therefore, we maintain DEFER for F3.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic's ACCEPT confirms our rebuttal. 'Supervision at inference time' is defined within the paper's scope as the exemplar bounding boxes (the 'shots') provided as input to condition the model. No ground truth count or density map for the query image is used. The failure mechanism of signal leakage is based on a protocol outside the defined problem formulation and is therefore inapplicable.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic's ACCEPT validates our position. The paper's hypothesis investigates *few-shot* counting, where user-provided exemplars are the fundamental input. The claim of generalization to novel categories is explicitly conditioned on this input. The critic's proposed test (auto-generated exemplars) addresses a different task (zero-shot or detection-based counting) and is outside the scope of the investigated methodology.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic's PARTIAL verdict is correct: the PoC summary lacks explicit split details, creating ambiguity. 1) Settling Experiment: Inspect the FSC-147 dataset's official train/val/test split definition for category overlap. 2) Vindication: The split is explicitly category-disjoint (e.g., categories are partitioned across splits), validating the novelty claim. 3) Critique Validation: If categories overlap between train and test sets, the claim of generalization to *novel* categories is inflated and must be qualified. 4) Conclusion Validity: The primary conclusion (FamNet outperforms prior few-shot methods) could remain valid *if* the category overlap affects all compared methods equally under the same evaluation protocol. The relative performance comparison might still hold, but the absolute claim of cross-category generalization would be weakened. This is a genuine ambiguity requiring empirical resolution.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic's ACCEPT agrees with our assessment. The internal density map regression loss is a training objective. The methodology's final output and primary evaluation metric is the count, derived by integrating the density map. Therefore, reported counting accuracy (e.g., MAE) directly measures the quantity of interest. The potential divergence between density loss and count error is a known characteristic of the approach but does not invalidate the count-level results if they are reported correctly, which is the standard in the field.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic's ACCEPT confirms this is a documentation issue, not a methodological flaw. The PoC summary is a high-level description; the full methodological paper must contain specific baseline names, implementation details, and hyperparameter settings for verification. The absence of this list in the summary does not imply the experiment itself was conducted unfairly.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One finding (F3) requires empirical verification of the dataset split to settle a genuine ambiguity about the strength of the novelty claim, leading to a DEFER rebuttal. All other findings have been successfully rebutted to low severity (\u22643)."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The method refines prediction for the current category using limited supervision available at inference time.",
+        "failure_mechanism": "In few-shot learning, inference time implies no access to ground truth labels for the target image. If 'limited supervision' refers to ground truth counts or labels for the query image (beyond the provided exemplars), this constitutes signal leakage. The model would be optimizing against known answers during the test phase, invalidating the claim of generalization to novel categories.",
+        "evidence_test": "Verify the definition of 'supervision' in the test protocol. If the test loss or refinement step uses the ground truth count of the query image, the experiment is invalid.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model generalizes to novel object categories without category-specific retraining.",
+        "failure_mechanism": "The method requires 'example bounding boxes... taken from the same image' as input. This is a strong prerequisite that assumes the user can provide manual annotations for the target category in the test image. This contradicts the goal of autonomous generalization and limits the 'novelty' claim to 'novelty given user guidance'.",
+        "evidence_test": "Measure performance in a setting where exemplars must be auto-generated versus manually provided. If performance drops significantly without manual boxes, the 'generalization' claim is overstated.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Experiments are conducted on FSC-147 to show effectiveness on multi-category datasets.",
+        "failure_mechanism": "The PoC does not specify the train/test split strategy for FSC-147. If the 'novel' test categories overlap with training categories (even on different images), the generalization claim is false. Without explicit disjoint category splits, performance metrics may be inflated.",
+        "evidence_test": "Verify the category-level split. Ensure test categories are completely disjoint from training categories.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Counting accuracy is estimated via the integral of a predicted density map.",
+        "failure_mechanism": "Density map regression loss (e.g., MSE) does not always correlate perfectly with counting error (MAE). A model could minimize density loss while producing incorrect counts due to smoothing artifacts or blob merging.",
+        "evidence_test": "Report both density map MSE and count-level MAE. Check for divergence between the two metrics.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The approach is compared against prior few-shot counting methods.",
+        "failure_mechanism": "The description is vague ('prior methods'). Without specific baseline names or implementation details, it is impossible to verify if the comparison is fair (e.g., same hyperparameters, same compute budget).",
+        "evidence_test": "List specific baseline models and their implementation sources. Verify hyperparameter parity.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC contains a critical ambiguity regarding test-time supervision that risks data leakage, alongside unverified prerequisites for exemplar availability and evaluation split transparency.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted three of our R1 rebuttals (F1, F2, F4, F5), confirming our scope and immaterial arguments. For F3, which received a PARTIAL verdict, the design does not contain explicit text guaranteeing a category-disjoint split. However, the core experimental design of few-shot learning on a novel dataset inherently implies a need for novel categories at test time; the absence of explicit split details creates genuine ambiguity. This is a classic case for DEFER: the concern is valid but not undeniable, and the settling experiment (inspecting the split) will determine the claim's validity. The primary conclusion of outperforming baselines could survive even with category overlap if the overlap affects all methods equally, though the novelty claim would be weakened. Therefore, we maintain DEFER for F3.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic's ACCEPT confirms our rebuttal. 'Supervision at inference time' is defined within the paper's scope as the exemplar bounding boxes (the 'shots') provided as input to condition the model. No ground truth count or density map for the query image is used. The failure mechanism of signal leakage is based on a protocol outside the defined problem formulation and is therefore inapplicable.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic's ACCEPT validates our position. The paper's hypothesis investigates *few-shot* counting, where user-provided exemplars are the fundamental input. The claim of generalization to novel categories is explicitly conditioned on this input. The critic's proposed test (auto-generated exemplars) addresses a different task (zero-shot or detection-based counting) and is outside the scope of the investigated methodology.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic's PARTIAL verdict is correct: the PoC summary lacks explicit split details, creating ambiguity. 1) Settling Experiment: Inspect the FSC-147 dataset's official train/val/test split definition for category overlap. 2) Vindication: The split is explicitly category-disjoint (e.g., categories are partitioned across splits), validating the novelty claim. 3) Critique Validation: If categories overlap between train and test sets, the claim of generalization to *novel* categories is inflated and must be qualified. 4) Conclusion Validity: The primary conclusion (FamNet outperforms prior few-shot methods) could remain valid *if* the category overlap affects all compared methods equally under the same evaluation protocol. The relative performance comparison might still hold, but the absolute claim of cross-category generalization would be weakened. This is a genuine ambiguity requiring empirical resolution.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic's ACCEPT agrees with our assessment. The internal density map regression loss is a training objective. The methodology's final output and primary evaluation metric is the count, derived by integrating the density map. Therefore, reported counting accuracy (e.g., MAE) directly measures the quantity of interest. The potential divergence between density loss and count error is a known characteristic of the approach but does not invalidate the count-level results if they are reported correctly, which is the standard in the field.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic's ACCEPT confirms this is a documentation issue, not a methodological flaw. The PoC summary is a high-level description; the full methodological paper must contain specific baseline names, implementation details, and hyperparameter settings for verification. The absence of this list in the summary does not imply the experiment itself was conducted unfairly.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One finding (F3) requires empirical verification of the dataset split to settle a genuine ambiguity about the strength of the novelty claim, leading to a DEFER rebuttal. All other findings have been successfully rebutted to low severity (\u22643)."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

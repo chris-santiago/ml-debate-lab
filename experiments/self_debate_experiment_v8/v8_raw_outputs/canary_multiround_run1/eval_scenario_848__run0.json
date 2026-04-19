@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_848",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day grace period for label finalization ensures high-quality labels without conflating label quality with model performance.",
+        "failure_mechanism": "The 30-day grace period may introduce a temporal bias where emails that are harder to classify (e.g., subtle phishing attempts) are more likely to receive delayed labels. This could disproportionately exclude harder cases from the train/validation/test sets, inflating performance metrics. The robustness check on unresolved emails does not mitigate this because it is not part of the primary evaluation.",
+        "evidence_test": "Compare the distribution of model confidence scores or feature values between emails included in the primary sets and those excluded due to unresolved labels. If excluded emails are systematically harder (e.g., lower model confidence or more ambiguous features), the evaluation is biased.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) ensures generalization to future, unseen campaigns.",
+        "failure_mechanism": "Phishing campaigns often span multiple months, and a campaign starting in month 12 could leak into the validation or test sets if it persists beyond the split boundary. This violates the assumption of temporal independence and could inflate performance estimates. The near-duplicate removal (same sender, recipient, subject within 7 days) does not address campaign-level leakage.",
+        "evidence_test": "Audit the test set for emails belonging to campaigns that also appear in the training or validation sets. If such overlap exists, re-split the data to ensure campaigns are entirely contained within a single split.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model (logistic regression on header/URL features) is fairly tuned and compared to the transformer model.",
+        "failure_mechanism": "The baseline's hyperparameters (L2 regularization, class weights) are tuned on the validation set, which is also used to select the transformer's configuration. This creates a data dependency where the baseline's performance is indirectly optimized for the test set, violating the independence assumption. The transformer's hyperparameters (e.g., learning rate, focal loss weight) are also tuned on the validation set, compounding the issue.",
+        "evidence_test": "Perform a nested cross-validation where the outer loop is the temporal split, and the inner loop is hyperparameter tuning. If the baseline's performance drops significantly in this setup, the original comparison is inflated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer model's uplift is due to semantic understanding rather than template memorization.",
+        "failure_mechanism": "The near-duplicate removal (same sender, recipient, subject within 7 days) may not fully address template memorization, as attackers often reuse templates with minor variations (e.g., slight subject changes, URL obfuscation). The test set may still contain emails with high lexical similarity to training data, especially if the transformer's tokenizer or embeddings capture semantic rather than lexical patterns.",
+        "evidence_test": "Evaluate the transformer on a synthetic test set where emails are paraphrased versions of training data (e.g., using back-translation or synonym replacement). If performance remains high, the uplift is likely due to semantic generalization; if it drops, memorization is a concern.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The sender-history features are identical for both the transformer and baseline models, isolating the effect of text modeling.",
+        "failure_mechanism": "Sender-history features (e.g., historical phishing rate) are derived from past emails, which may include emails that are also present in the transformer's training data. This creates an implicit dependency where the transformer's performance benefits from its own training data's sender history, while the baseline does not. The features are not independent of the text content.",
+        "evidence_test": "Re-train the transformer and baseline with sender-history features derived only from emails strictly before the training period (e.g., using a 12-month lookback window). If the transformer's uplift diminishes, the sender-history features are confounding the comparison.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate metric for evaluating phishing detection in the operational context.",
+        "failure_mechanism": "PR-AUC is sensitive to class imbalance, but the degree of imbalance may vary across splits or campaigns. In some cases, ROC-AUC or a cost-sensitive metric (e.g., weighted false positives/negatives) may better reflect the SOC's priorities. The metric does not account for the cost of delayed detections (e.g., emails labeled after 30 days).",
+        "evidence_test": "Compare the ranking of models under PR-AUC vs. a cost-sensitive metric that incorporates the SOC's operational costs (e.g., false positives at 95% recall weighted by investigation time). If rankings diverge, PR-AUC may not fully capture the deployment objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The transformer model's performance is robust to label noise, as evaluated on the unresolved email cohort.",
+        "failure_mechanism": "The unresolved email cohort is not representative of label noise in production, as it consists of emails that remain unlabelled after 30 days due to ambiguity or low priority. This may not reflect the types of label errors encountered in practice (e.g., mislabelled benign emails as phishing).",
+        "evidence_test": "Introduce synthetic label noise into the training data (e.g., flip labels for emails with low model confidence) and evaluate the transformer's performance degradation. If the drop is significant, the robustness check is insufficient.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC has critical flaws in label quality control, temporal leakage, and baseline comparison fairness that likely invalidate its core claims. These issues must be addressed before the hypothesis can be meaningfully evaluated.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims the 30-day grace period introduces selection bias by excluding 'hard' cases. However, the design explicitly includes a 'separate robustness check' on these unresolved emails (Section 1 and 7c). While not in the primary metric, this analysis is specifically designed to quantify the gap between the primary set and the 'hard' cases, making the claim of 'conflating' performance a misunderstanding of the design's diagnostic structure. \n\nF2 claims campaign leakage across temporal boundaries. The design addresses this in Section 7a (near-duplicate removal) and 7b (stratification by campaign novelty). By reporting performance specifically on 'novel campaigns' (those first seen in the test period), the design explicitly isolates and measures the effect of campaign leakage, rather than ignoring it. \n\nF3 claims that using the same validation set for both models creates a data dependency that inflates results. This is a fundamental misunderstanding of ML evaluation. Using a shared validation set to tune hyperparameters for two competing models is the standard way to ensure a fair 'apples-to-apples' comparison. It does not leak test set information because the test set remains completely separate (Section 5). \n\nF4 argues that near-duplicate removal is insufficient to stop template memorization. The design addresses this in Section 7b by stratifying by 'campaign novelty'. If a model memorizes a template from a training campaign, it will fail on a novel campaign. This is a direct control for the claimed failure mechanism.\n\nF5 claims sender-history features create a dependency where the transformer benefits more than the baseline. This is logically incorrect; both models receive the *identical* sender-history features (Section 3). Any leakage from sender history affects both models equally, thus it cannot explain the *uplift* of the transformer over the baseline.\n\nF6 questions PR-AUC. The design justifies PR-AUC based on the SOC's priority for low FP rates in imbalanced data (Section 6) and supplements it with secondary metrics (Precision at 95% recall, etc.) to provide a complete operational picture. This is a standard and sound metric choice for this domain.\n\nF7 claims the unresolved cohort doesn't represent production label noise. This is a valid point regarding the *type* of noise, but the purpose of the cohort is to test robustness to *ambiguity* (unresolved labels), not necessarily mislabeling. This is a minor point that doesn't invalidate the primary hypothesis.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The design does not ignore these cases; Section 1 and 7c explicitly mandate a separate robustness check on the unresolved cohort to quantify the impact of excluding these potentially 'harder' cases."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Campaign leakage is explicitly controlled for in Section 7b, where performance is stratified by 'campaign novelty' to isolate generalization to entirely new campaigns from performance on persisting ones."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 1,
+        "justification": "The critic claims a violation of independence, but using a shared validation set for hyperparameter tuning of two competing models is standard practice and does not leak information from the held-out test set (Section 5)."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The concern regarding template memorization is directly addressed by the 'campaign novelty' stratification in Section 7b, which separates known templates from novel ones."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic claims the transformer benefits more from sender history, but Section 3 explicitly states both models receive 'identical sender-history features'. Any leakage is a constant across both models and cannot drive the delta (uplift)."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "PR-AUC is justified by the operational need for low FP rates in imbalanced data, and the design includes four secondary metrics (Section 6) to ensure the SOC's priorities are fully captured."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The unresolved cohort is intended to test robustness to ambiguity, not synthetic label flipping; this is a complementary check, not the primary validation of the hypothesis."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted. The most severe concerns (leakage and bias) were already addressed by explicit confound controls in the design (campaign novelty stratification and unresolved cohort analysis). The remaining findings were based on misunderstandings of standard ML evaluation (shared validation sets) or the feature parity between models."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal cites Section 7c (robustness check on unresolved emails) as addressing the concern, but this does not resolve the core failure mechanism: the 30-day grace period may disproportionately exclude harder-to-classify emails from the primary evaluation sets, inflating performance metrics. The robustness check is not part of the primary evaluation and does not mitigate the bias in the train/validation/test sets. The mechanism (systematic exclusion of harder cases) remains unaddressed."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal cites Section 7b (campaign novelty stratification) as addressing campaign leakage, which partially mitigates the concern by isolating generalization to novel campaigns. However, it does not fully resolve the issue: campaign leakage can still occur if a campaign spans the split boundary (e.g., starts in month 12 and persists into month 13). The stratification does not guarantee that all emails in a campaign are contained within a single split. The mechanism of campaign-level leakage is only partially addressed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly identifies that using a shared validation set for hyperparameter tuning of competing models is standard practice and does not leak information from the held-out test set. The failure mechanism (data dependency inflating performance) is directly addressed."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal cites Section 7b (campaign novelty stratification) as addressing template memorization, which partially mitigates the concern by separating known templates from novel ones. However, it does not fully resolve the issue: minor variations in templates (e.g., subject changes, URL obfuscation) can still lead to memorization, especially if the transformer's embeddings capture semantic patterns. The mechanism of template memorization via lexical/semantic similarity is only partially addressed."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly points out that both models receive identical sender-history features, and any leakage would be a constant across both models, thus not driving the delta in performance. The failure mechanism (sender-history features confounding the comparison) is directly addressed."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal justifies PR-AUC by citing the operational need for low false-positive rates and the inclusion of secondary metrics to capture SOC priorities. The failure mechanism (metric limitations) is directly addressed."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly notes that the unresolved cohort is intended to test robustness to ambiguity, not synthetic label flipping, and is a complementary check. The failure mechanism (label noise representativeness) is directly addressed."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my position on F1 and F4, as the critic's challenges mischaracterize the purpose of the robustness checks and the nature of the 'campaign novelty' control. For F2, I am switching to DEFER because the critic correctly identifies a boundary-condition leakage (campaigns spanning the split) that the current design's stratification identifies but does not prevent. F3, F5, F6, and F7 were accepted by the critic and remain unchanged.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic argues that excluding 'hard' cases from the primary set inflates metrics. However, the purpose of the robustness check in Section 7c is precisely to quantify this inflation. By evaluating the model on the excluded 'unresolved' cohort, we can empirically determine if the primary metrics are overly optimistic. If the model performs significantly worse on the unresolved cohort, the 'inflation' is measured and reported, not hidden. This is a standard design for handling label uncertainty in security datasets.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic makes a valid point: while Section 7b stratifies performance by campaign novelty, it does not prevent a single campaign from appearing in both the training and validation/test sets if it spans the temporal boundary. Whether this leakage is material depends on the average duration of phishing campaigns relative to the split window. This is an empirical question that should be settled by auditing the campaign overlap during the data preparation phase.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 1,
+        "justification": "The critic has accepted that using a shared validation set for competing models is standard practice and does not leak test set information.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic suggests that minor variations in templates still allow for memorization. However, the 'campaign novelty' stratification (Section 7b) is specifically designed to catch this: if the model relies on memorizing specific template patterns, its performance will collapse on 'novel' campaigns (those never seen in training). The delta between 'seen' and 'novel' campaign performance provides a direct measure of semantic generalization versus template memorization.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic has accepted that identical features across both models prevent the features from driving the performance delta.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic has accepted the justification for PR-AUC and the use of secondary metrics.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic has accepted that the unresolved cohort is a complementary check for ambiguity.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were resolved or mitigated, but F2 remains a genuine ambiguity regarding campaign-level leakage across temporal boundaries, which requires an empirical audit of the dataset to resolve."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day grace period for label finalization ensures high-quality labels without conflating label quality with model performance.",
+        "failure_mechanism": "The 30-day grace period may introduce a temporal bias where emails that are harder to classify (e.g., subtle phishing attempts) are more likely to receive delayed labels. This could disproportionately exclude harder cases from the train/validation/test sets, inflating performance metrics. The robustness check on unresolved emails does not mitigate this because it is not part of the primary evaluation.",
+        "evidence_test": "Compare the distribution of model confidence scores or feature values between emails included in the primary sets and those excluded due to unresolved labels. If excluded emails are systematically harder (e.g., lower model confidence or more ambiguous features), the evaluation is biased.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) ensures generalization to future, unseen campaigns.",
+        "failure_mechanism": "Phishing campaigns often span multiple months, and a campaign starting in month 12 could leak into the validation or test sets if it persists beyond the split boundary. This violates the assumption of temporal independence and could inflate performance estimates. The near-duplicate removal (same sender, recipient, subject within 7 days) does not address campaign-level leakage.",
+        "evidence_test": "Audit the test set for emails belonging to campaigns that also appear in the training or validation sets. If such overlap exists, re-split the data to ensure campaigns are entirely contained within a single split.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model (logistic regression on header/URL features) is fairly tuned and compared to the transformer model.",
+        "failure_mechanism": "The baseline's hyperparameters (L2 regularization, class weights) are tuned on the validation set, which is also used to select the transformer's configuration. This creates a data dependency where the baseline's performance is indirectly optimized for the test set, violating the independence assumption. The transformer's hyperparameters (e.g., learning rate, focal loss weight) are also tuned on the validation set, compounding the issue.",
+        "evidence_test": "Perform a nested cross-validation where the outer loop is the temporal split, and the inner loop is hyperparameter tuning. If the baseline's performance drops significantly in this setup, the original comparison is inflated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer model's uplift is due to semantic understanding rather than template memorization.",
+        "failure_mechanism": "The near-duplicate removal (same sender, recipient, subject within 7 days) may not fully address template memorization, as attackers often reuse templates with minor variations (e.g., slight subject changes, URL obfuscation). The test set may still contain emails with high lexical similarity to training data, especially if the transformer's tokenizer or embeddings capture semantic rather than lexical patterns.",
+        "evidence_test": "Evaluate the transformer on a synthetic test set where emails are paraphrased versions of training data (e.g., using back-translation or synonym replacement). If performance remains high, the uplift is likely due to semantic generalization; if it drops, memorization is a concern.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The sender-history features are identical for both the transformer and baseline models, isolating the effect of text modeling.",
+        "failure_mechanism": "Sender-history features (e.g., historical phishing rate) are derived from past emails, which may include emails that are also present in the transformer's training data. This creates an implicit dependency where the transformer's performance benefits from its own training data's sender history, while the baseline does not. The features are not independent of the text content.",
+        "evidence_test": "Re-train the transformer and baseline with sender-history features derived only from emails strictly before the training period (e.g., using a 12-month lookback window). If the transformer's uplift diminishes, the sender-history features are confounding the comparison.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate metric for evaluating phishing detection in the operational context.",
+        "failure_mechanism": "PR-AUC is sensitive to class imbalance, but the degree of imbalance may vary across splits or campaigns. In some cases, ROC-AUC or a cost-sensitive metric (e.g., weighted false positives/negatives) may better reflect the SOC's priorities. The metric does not account for the cost of delayed detections (e.g., emails labeled after 30 days).",
+        "evidence_test": "Compare the ranking of models under PR-AUC vs. a cost-sensitive metric that incorporates the SOC's operational costs (e.g., false positives at 95% recall weighted by investigation time). If rankings diverge, PR-AUC may not fully capture the deployment objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The transformer model's performance is robust to label noise, as evaluated on the unresolved email cohort.",
+        "failure_mechanism": "The unresolved email cohort is not representative of label noise in production, as it consists of emails that remain unlabelled after 30 days due to ambiguity or low priority. This may not reflect the types of label errors encountered in practice (e.g., mislabelled benign emails as phishing).",
+        "evidence_test": "Introduce synthetic label noise into the training data (e.g., flip labels for emails with low model confidence) and evaluate the transformer's performance degradation. If the drop is significant, the robustness check is insufficient.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC has critical flaws in label quality control, temporal leakage, and baseline comparison fairness that likely invalidate its core claims. These issues must be addressed before the hypothesis can be meaningfully evaluated.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my position on F1 and F4, as the critic's challenges mischaracterize the purpose of the robustness checks and the nature of the 'campaign novelty' control. For F2, I am switching to DEFER because the critic correctly identifies a boundary-condition leakage (campaigns spanning the split) that the current design's stratification identifies but does not prevent. F3, F5, F6, and F7 were accepted by the critic and remain unchanged.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic argues that excluding 'hard' cases from the primary set inflates metrics. However, the purpose of the robustness check in Section 7c is precisely to quantify this inflation. By evaluating the model on the excluded 'unresolved' cohort, we can empirically determine if the primary metrics are overly optimistic. If the model performs significantly worse on the unresolved cohort, the 'inflation' is measured and reported, not hidden. This is a standard design for handling label uncertainty in security datasets.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic makes a valid point: while Section 7b stratifies performance by campaign novelty, it does not prevent a single campaign from appearing in both the training and validation/test sets if it spans the temporal boundary. Whether this leakage is material depends on the average duration of phishing campaigns relative to the split window. This is an empirical question that should be settled by auditing the campaign overlap during the data preparation phase.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 1,
+        "justification": "The critic has accepted that using a shared validation set for competing models is standard practice and does not leak test set information.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic suggests that minor variations in templates still allow for memorization. However, the 'campaign novelty' stratification (Section 7b) is specifically designed to catch this: if the model relies on memorizing specific template patterns, its performance will collapse on 'novel' campaigns (those never seen in training). The delta between 'seen' and 'novel' campaign performance provides a direct measure of semantic generalization versus template memorization.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic has accepted that identical features across both models prevent the features from driving the performance delta.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic has accepted the justification for PR-AUC and the use of secondary metrics.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic has accepted that the unresolved cohort is a complementary check for ambiguity.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were resolved or mitigated, but F2 remains a genuine ambiguity regarding campaign-level leakage across temporal boundaries, which requires an empirical audit of the dataset to resolve."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

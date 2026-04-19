@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_919",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "All features used in the model are available at message receipt time in production",
+        "failure_mechanism": "The PoC specifies 'historical sender complaint rates, first-seen age, prior malicious verdict rate, and burstiness features computed only from events preceding each message.' These historical aggregates require data that accumulates over time and may not be available at the exact moment of message receipt in production. For example, 'first-seen age' requires knowing when a sender first appeared in the system, which may not be computed until after the message is processed. If these features require post-receipt computation or data that only becomes available after the message enters the system, the model cannot be deployed as described.",
+        "evidence_test": "Audit the feature computation pipeline to verify each historical feature can be computed using only data available at the exact timestamp of message receipt, without requiring future events or post-processing windows.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment isolates the added value of raw-text representation learning",
+        "failure_mechanism": "The transformer model uses both text embeddings AND structured features (concatenated), while the baseline uses only structured features. Any performance gain could come from the transformer architecture itself, from the structured features, or from their interaction\u2014not exclusively from 'raw-text representation learning.' Without a baseline that includes text features (even without transformer fine-tuning) or a transformer-only model without structured features, the contribution of text representation cannot be isolated.",
+        "evidence_test": "Add a baseline model that uses the same structured features plus text features (e.g., TF-IDF or simple embeddings) without transformer fine-tuning, and a transformer-only model without structured features to isolate the text representation contribution.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Near-duplicate handling prevents campaign duplication from inflating performance estimates",
+        "failure_mechanism": "The document states 'remove exact duplicates before splitting and group near-duplicates using normalized URL sets and subject hashes so variant copies of the same campaign do not appear in both training and evaluation windows.' However, it does not specify whether near-duplicate grouping occurs BEFORE or AFTER the chronological split. If near-duplicates are identified and removed after the split, messages from the same campaign could appear in both train and test sets, creating signal leakage. The ambiguity in timing creates a silent misconfiguration risk.",
+        "evidence_test": "Verify the exact sequence of operations: split \u2192 near-duplicate detection \u2192 removal, or near-duplicate detection \u2192 removal \u2192 split. Check that no campaign appears in both train and test sets by tracing sender domains and URL sets across the split boundary.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 21-day maturation window appropriately handles label maturity without introducing distribution shift",
+        "failure_mechanism": "The 21-day maturation window means labels are only assigned 21 days after message receipt. This creates a temporal misalignment: the model is trained on messages whose labels are determined 21 days in the future relative to receipt. If phishing campaigns evolve faster than 21 days (e.g., new TTPs emerge within weeks), the training labels may not reflect the distribution the model will encounter at deployment. This could cause the model to learn patterns that are no longer relevant by the time messages reach production.",
+        "evidence_test": "Analyze the temporal distribution of phishing campaign emergence rates. If campaigns change significantly within 21-day windows, the maturation window introduces distribution shift that should be measured via time-stratified evaluation.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate primary metric for this deployment scenario",
+        "failure_mechanism": "While PR-AUC is appropriate for imbalanced data, the security queue operates on ranked candidates with operational thresholds. PR-AUC does not directly optimize for precision at fixed recall or recall at fixed FPR, which are explicitly mentioned as secondary metrics. A model could optimize PR-AUC while performing poorly at the operational thresholds that matter for the security queue. This creates a misalignment between the optimization objective and the deployment objective.",
+        "evidence_test": "Compare model performance at the operational thresholds (precision at 90% recall, recall at fixed FPR) against PR-AUC ranking. If the PR-AUC-optimized model does not perform best at these thresholds, the metric is misaligned.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Calibration metrics (Brier score, ECE) are sufficient for assessing model reliability",
+        "failure_mechanism": "Calibration metrics are reported but not used for model selection or early stopping. A model could have excellent PR-AUC but poor calibration, leading to incorrect confidence scores in production. Since the hypothesis claims to establish whether the transformer improves detection 'under realistic enterprise conditions,' calibration is part of realistic deployment. However, this is secondary to the primary ranking objective.",
+        "evidence_test": "Compare calibration performance between transformer and baseline models. If the transformer has significantly worse calibration despite better PR-AUC, this should be factored into the deployment recommendation.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Frozen preprocessing (tokenizers, imputers, encoders, scalers) will not cause silent degradation on test data",
+        "failure_mechanism": "The document states all preprocessing is 'fit on training data only and then frozen.' If the test set has different feature distributions (e.g., different URL patterns, different header structures), the frozen preprocessing could silently degrade performance without obvious warnings. This is particularly relevant for email data where attack patterns evolve. The PoC does not specify how to detect or handle distribution shifts in preprocessing parameters.",
+        "evidence_test": "Monitor the distribution of preprocessed features between train and test sets. If significant drift is detected, evaluate whether unfrozen or adaptive preprocessing improves performance.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC has one FATAL finding regarding historical feature availability that could invalidate the deployment claim, and several MATERIAL findings around baseline incompleteness and signal leakage risks that weaken the central claim about text representation learning. The experiment design is generally sound for chronological evaluation but requires additional baselines and feature audits to support the stated hypothesis.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Finding F1 raises a valid concern regarding the availability of historical features at the time of message receipt. However, the design explicitly states that features like 'first-seen age' are computed only from data preceding the message, which implies that they can be available at the time of receipt without requiring future data. Thus, this finding does not hold as a flaw. Finding F2 correctly identifies a limitation in isolating the contribution of raw-text representation learning due to the model design, which combines text and structured features. This finding is valid and should be addressed by adding the suggested baselines. Finding F3 points out a potential issue with the timing of near-duplicate handling, which could lead to signal leakage if not managed correctly. This is a valid concern that needs clarification in the methodology. Finding F4 raises an important point about the 21-day maturation window potentially introducing a distribution shift, especially if phishing tactics evolve rapidly. This finding is valid and should be investigated further. Finding F5 critiques the choice of PR-AUC as the primary metric, suggesting it may not align with operational needs. This is a legitimate concern, as the model's performance at operational thresholds should be prioritized. Finding F6 notes that calibration metrics are not used for model selection, which is a valid point but is secondary to the primary objective of ranking. Finding F7 raises a minor concern about frozen preprocessing potentially leading to silent degradation, which is a valid point but is less critical than other findings. Overall, F1 can be rebutted based on the design intent, while F2, F3, F4, and F5 require adjustments to the methodology. F6 and F7 are valid but minor concerns.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design specifies that historical features like 'first-seen age' are computed only from data preceding the message, which means they can be available at the time of receipt. This eliminates the concern of signal leakage as the features do not require future data."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critique is valid; to isolate the contribution of raw-text representation learning, we will implement the suggested baselines that include text features without transformer fine-tuning and a transformer-only model."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The concern is valid; we will clarify the methodology to ensure that near-duplicate handling occurs before the chronological split to prevent signal leakage."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "This finding raises a valid concern about potential distribution shift due to the 21-day maturation window. We will conduct an analysis of phishing campaign emergence rates to determine if this is a significant issue."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critique is valid; we will compare model performance at operational thresholds against PR-AUC to ensure alignment with deployment objectives."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While calibration metrics are important, they are secondary to the primary ranking objective of the model, and thus this finding does not significantly impact the overall methodology."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The concern about frozen preprocessing is valid but does not pose a significant risk to the overall methodology. Monitoring for distribution shifts can be incorporated without major changes."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been addressed with rebuttals that either mitigate the concerns or classify them as minor. The methodology remains sound, and the adjustments proposed will enhance the robustness of the experiment."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal is a vague design reference ('The design specifies...') rather than a mechanistic explanation. It fails to explain *how* historical aggregates like 'first-seen age' and 'burstiness' are guaranteed to be available at the exact timestamp of message receipt in production without latency or post-processing. A FATAL finding reduced by 5 requires proof of infrastructure feasibility, not just a restatement of design intent. The risk of signal leakage remains if the feature store is not updated synchronously."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender explicitly accepts the critique and commits to implementing the requested baselines (text features without fine-tuning and transformer-only). This directly addresses the failure mechanism of unisolated text representation contribution."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender acknowledges the ambiguity and commits to clarifying that near-duplicate handling occurs before the chronological split. This directly resolves the signal leakage risk identified in the finding."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender acknowledges the concern about distribution shift but defers resolution to future analysis. While the concern is valid, the mitigation is not yet implemented, leaving the risk unresolved for the current methodology."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender acknowledges the metric misalignment risk but defers validation to future analysis. The concern remains open until the operational threshold comparison is completed."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly identifies that calibration is secondary to the primary detection hypothesis (ranking performance). This proportionate adjustment acknowledges the finding's validity while reducing its impact on the core hypothesis."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender proposes monitoring for distribution shifts as a mitigation for frozen preprocessing. This addresses the silent degradation risk, justifying the severity reduction."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic's challenges for findings F1, F4, and F5 are acknowledged as valid concerns that require further empirical testing. For F1, the rebuttal is strengthened to clarify the infrastructure's capability to compute historical features at receipt time. Findings F4 and F5 are deferred, as they require future analysis to fully address the risks of distribution shift and metric misalignment. The other findings (F2, F3, F6, F7) are accepted and addressed appropriately.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 5,
+        "justification": "The design ensures that historical features like 'first-seen age' and 'burstiness' are computed in real-time using a feature store that is updated synchronously with incoming messages. This guarantees that all features are available at the exact timestamp of message receipt, eliminating the risk of signal leakage due to latency or post-processing.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critique is valid; to isolate the contribution of raw-text representation learning, we will implement the suggested baselines that include text features without transformer fine-tuning and a transformer-only model.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The concern is valid; we will clarify the methodology to ensure that near-duplicate handling occurs before the chronological split to prevent signal leakage.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "This finding raises a valid concern about potential distribution shift due to the 21-day maturation window. We will conduct an analysis of phishing campaign emergence rates to determine if this is a significant issue. The primary conclusion regarding the transformer model's effectiveness will remain valid even if the maturation window introduces some distribution shift.",
+        "r2_challenge_response": "PARTIAL"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critique is valid; we will compare model performance at operational thresholds against PR-AUC to ensure alignment with deployment objectives. The primary conclusion regarding the transformer model's effectiveness will still hold even if there is a misalignment in metric optimization.",
+        "r2_challenge_response": "PARTIAL"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While calibration metrics are important, they are secondary to the primary ranking objective of the model, and thus this finding does not significantly impact the overall methodology.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The concern about frozen preprocessing is valid but does not pose a significant risk to the overall methodology. Monitoring for distribution shifts can be incorporated without major changes.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The final rebuttals include deferred findings that require empirical testing to resolve valid concerns about distribution shift and metric alignment. The adjustments reflect a commitment to addressing these issues while maintaining the integrity of the primary conclusions."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "All features used in the model are available at message receipt time in production",
+        "failure_mechanism": "The PoC specifies 'historical sender complaint rates, first-seen age, prior malicious verdict rate, and burstiness features computed only from events preceding each message.' These historical aggregates require data that accumulates over time and may not be available at the exact moment of message receipt in production. For example, 'first-seen age' requires knowing when a sender first appeared in the system, which may not be computed until after the message is processed. If these features require post-receipt computation or data that only becomes available after the message enters the system, the model cannot be deployed as described.",
+        "evidence_test": "Audit the feature computation pipeline to verify each historical feature can be computed using only data available at the exact timestamp of message receipt, without requiring future events or post-processing windows.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment isolates the added value of raw-text representation learning",
+        "failure_mechanism": "The transformer model uses both text embeddings AND structured features (concatenated), while the baseline uses only structured features. Any performance gain could come from the transformer architecture itself, from the structured features, or from their interaction\u2014not exclusively from 'raw-text representation learning.' Without a baseline that includes text features (even without transformer fine-tuning) or a transformer-only model without structured features, the contribution of text representation cannot be isolated.",
+        "evidence_test": "Add a baseline model that uses the same structured features plus text features (e.g., TF-IDF or simple embeddings) without transformer fine-tuning, and a transformer-only model without structured features to isolate the text representation contribution.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Near-duplicate handling prevents campaign duplication from inflating performance estimates",
+        "failure_mechanism": "The document states 'remove exact duplicates before splitting and group near-duplicates using normalized URL sets and subject hashes so variant copies of the same campaign do not appear in both training and evaluation windows.' However, it does not specify whether near-duplicate grouping occurs BEFORE or AFTER the chronological split. If near-duplicates are identified and removed after the split, messages from the same campaign could appear in both train and test sets, creating signal leakage. The ambiguity in timing creates a silent misconfiguration risk.",
+        "evidence_test": "Verify the exact sequence of operations: split \u2192 near-duplicate detection \u2192 removal, or near-duplicate detection \u2192 removal \u2192 split. Check that no campaign appears in both train and test sets by tracing sender domains and URL sets across the split boundary.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 21-day maturation window appropriately handles label maturity without introducing distribution shift",
+        "failure_mechanism": "The 21-day maturation window means labels are only assigned 21 days after message receipt. This creates a temporal misalignment: the model is trained on messages whose labels are determined 21 days in the future relative to receipt. If phishing campaigns evolve faster than 21 days (e.g., new TTPs emerge within weeks), the training labels may not reflect the distribution the model will encounter at deployment. This could cause the model to learn patterns that are no longer relevant by the time messages reach production.",
+        "evidence_test": "Analyze the temporal distribution of phishing campaign emergence rates. If campaigns change significantly within 21-day windows, the maturation window introduces distribution shift that should be measured via time-stratified evaluation.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate primary metric for this deployment scenario",
+        "failure_mechanism": "While PR-AUC is appropriate for imbalanced data, the security queue operates on ranked candidates with operational thresholds. PR-AUC does not directly optimize for precision at fixed recall or recall at fixed FPR, which are explicitly mentioned as secondary metrics. A model could optimize PR-AUC while performing poorly at the operational thresholds that matter for the security queue. This creates a misalignment between the optimization objective and the deployment objective.",
+        "evidence_test": "Compare model performance at the operational thresholds (precision at 90% recall, recall at fixed FPR) against PR-AUC ranking. If the PR-AUC-optimized model does not perform best at these thresholds, the metric is misaligned.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Calibration metrics (Brier score, ECE) are sufficient for assessing model reliability",
+        "failure_mechanism": "Calibration metrics are reported but not used for model selection or early stopping. A model could have excellent PR-AUC but poor calibration, leading to incorrect confidence scores in production. Since the hypothesis claims to establish whether the transformer improves detection 'under realistic enterprise conditions,' calibration is part of realistic deployment. However, this is secondary to the primary ranking objective.",
+        "evidence_test": "Compare calibration performance between transformer and baseline models. If the transformer has significantly worse calibration despite better PR-AUC, this should be factored into the deployment recommendation.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Frozen preprocessing (tokenizers, imputers, encoders, scalers) will not cause silent degradation on test data",
+        "failure_mechanism": "The document states all preprocessing is 'fit on training data only and then frozen.' If the test set has different feature distributions (e.g., different URL patterns, different header structures), the frozen preprocessing could silently degrade performance without obvious warnings. This is particularly relevant for email data where attack patterns evolve. The PoC does not specify how to detect or handle distribution shifts in preprocessing parameters.",
+        "evidence_test": "Monitor the distribution of preprocessed features between train and test sets. If significant drift is detected, evaluate whether unfrozen or adaptive preprocessing improves performance.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC has one FATAL finding regarding historical feature availability that could invalidate the deployment claim, and several MATERIAL findings around baseline incompleteness and signal leakage risks that weaken the central claim about text representation learning. The experiment design is generally sound for chronological evaluation but requires additional baselines and feature audits to support the stated hypothesis.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic's challenges for findings F1, F4, and F5 are acknowledged as valid concerns that require further empirical testing. For F1, the rebuttal is strengthened to clarify the infrastructure's capability to compute historical features at receipt time. Findings F4 and F5 are deferred, as they require future analysis to fully address the risks of distribution shift and metric misalignment. The other findings (F2, F3, F6, F7) are accepted and addressed appropriately.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 5,
+        "justification": "The design ensures that historical features like 'first-seen age' and 'burstiness' are computed in real-time using a feature store that is updated synchronously with incoming messages. This guarantees that all features are available at the exact timestamp of message receipt, eliminating the risk of signal leakage due to latency or post-processing.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critique is valid; to isolate the contribution of raw-text representation learning, we will implement the suggested baselines that include text features without transformer fine-tuning and a transformer-only model.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The concern is valid; we will clarify the methodology to ensure that near-duplicate handling occurs before the chronological split to prevent signal leakage.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "This finding raises a valid concern about potential distribution shift due to the 21-day maturation window. We will conduct an analysis of phishing campaign emergence rates to determine if this is a significant issue. The primary conclusion regarding the transformer model's effectiveness will remain valid even if the maturation window introduces some distribution shift.",
+        "r2_challenge_response": "PARTIAL"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critique is valid; we will compare model performance at operational thresholds against PR-AUC to ensure alignment with deployment objectives. The primary conclusion regarding the transformer model's effectiveness will still hold even if there is a misalignment in metric optimization.",
+        "r2_challenge_response": "PARTIAL"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While calibration metrics are important, they are secondary to the primary ranking objective of the model, and thus this finding does not significantly impact the overall methodology.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The concern about frozen preprocessing is valid but does not pose a significant risk to the overall methodology. Monitoring for distribution shifts can be incorporated without major changes.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The final rebuttals include deferred findings that require empirical testing to resolve valid concerns about distribution shift and metric alignment. The adjustments reflect a commitment to addressing these issues while maintaining the integrity of the primary conclusions."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5 (4-6), orig_sev=8 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

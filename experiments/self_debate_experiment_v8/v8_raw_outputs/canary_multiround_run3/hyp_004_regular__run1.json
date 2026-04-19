@@ -1,0 +1,293 @@
+{
+  "case_id": "hyp_004_regular",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The cohort of patients with at least 180 days of post-discharge follow\u2011up is representative of all adult discharges and allows unbiased estimation of 6\u2011month readmission risk.",
+        "failure_mechanism": "Patients who die, leave the health system, or have incomplete follow\u2011up before 180 days are systematically excluded. These patients are not missing at random; they tend to have higher risk of readmission (or death). Excluding them induces survivor bias, leading to under\u2011estimation of true readmission incidence and potentially inflated model performance because the model is trained on a healthier subset.",
+        "evidence_test": "Compare baseline characteristics and observed readmission/mortality rates between the included cohort (\u2265180\u202fdays follow\u2011up) and the excluded cohort (<180\u202fdays follow\u2011up). If the excluded group shows higher mortality or readmission, bias is present. Additionally, apply inverse\u2011probability\u2011of\u2011censoring weighting or sensitivity analysis to quantify the impact on performance estimates.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Treating death within 180 days as a censoring event appropriately handles competing risks and does not bias readmission risk estimation.",
+        "failure_mechanism": "In a competing\u2011risks setting, treating the competing event (death) as censoring assumes that those who die would have the same future readmission risk as those censored for other reasons. This assumption is generally false; it leads to over\u2011estimation of the cumulative incidence of readmission and can distort hazard estimates, especially when death is related to the predictors used in the model.",
+        "evidence_test": "Fit a cause\u2011specific Cox model (treating death as censoring) and a Fine\u2011Gray subdistribution hazards model or compute non\u2011parametric cumulative incidence functions for readmission. If the estimated effects or predicted risks differ substantially, the competing\u2011risks assumption is violated. Also examine whether predictors of death differ from predictors of readmission.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A chronological train/validation/test split (months\u202f1\u201121.6, 21.7\u201128.8, 28.9\u201136) ensures that model performance on the test set will generalize to future periods because the underlying relationships are stable over time.",
+        "failure_mechanism": "Healthcare systems experience temporal drift: changes in coding practices, care pathways, seasonal variations, or policy shifts can alter the relationship between longitudinal utilization features and readmission risk. If such drift occurs, performance observed on the held\u2011out test window may not reflect future performance, limiting real\u2011world utility.",
+        "evidence_test": "Assess performance stability over time, e.g., by computing Harrell\u2019s C\u2011index in rolling windows or comparing early vs. late periods within the test set. Test for calibration drift (e.g., Hosmer\u2011Lemeshow\u2011type tests for survival models). Include time\u2011varying covariates or interaction terms and evaluate whether they improve fit.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Cox proportional hazards regression is a suitable model for time\u2011to\u2011readmission with the given static and longitudinal features.",
+        "failure_mechanism": "The Cox model assumes that hazard ratios are constant over time (proportional hazards). If this assumption is violated\u2014for example, if the effect of prior utilization wanes or strengthens as time since discharge increases\u2014the estimated coefficients are biased, predicted risks may be miscalibrated, and the concordance index may not reflect true discriminative ability.",
+        "evidence_test": "Examine Schoenfeld residuals or perform a time\u2011dependent covariate test for each predictor. Significant non\u2011zero slopes indicate violation of the proportional hazards assumption. As a sensitivity check, fit a Cox model with time\u2011varying coefficients (e.g., using tt() terms) or a flexible parametric survival model and compare performance.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC\u2019s central claims are undermined by selection bias due to requiring complete follow\u2011up and by improper handling of death as a competing risk, which likely invalidate the estimated performance. Additional concerns about temporal non\u2011stationarity and the unverified proportional hazards assumption further weaken the generalizability and validity of the approach.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Analyzed all findings collectively before verdict selection. F1 (FATAL 9): The critic correctly identifies survivor/selection bias from excluding patients with <180 days post-discharge follow-up. The methodology explicitly requires this for the cohort to 'observe the full 6-month window,' generating ~20k-50k discharges with complete data. However, this exclusion systematically removes high-risk patients (early deaths, early disenrollments), who likely have elevated readmission risk profiles, leading to underestimation of incidence and inflated performance on a healthier subset. Critically, this interacts destructively with F2: patients dying within 180 days would have follow-up time equal to time-to-death (<180 days), so they are excluded upfront per Section 1, precluding any censoring for death as described in Section 2. The cohort thus consists only of patients with data spanning \u2265180 days post-discharge (i.e., system survivors without early cutoff), meaning deaths within 180 are not censored but entirely removed\u2014no competing risk handling occurs in practice. No confound control, validation, or sensitivity analysis addresses cohort representativeness or compares included vs. excluded baselines. The claim of unbiased 6-month risk estimation for the study population (adult discharges with prior encounters) is unsupported; this is a genuine prereq failure materially affecting training data distribution, label incidence, and generalizability to all discharges. Evidence (baseline comparison, IPW sensitivity) is needed but the flaw is undeniable even without it, as exclusion is non-random and asymmetric (longitudinal features likely flag high-risk excluded cases differently than static baselines). Primary conclusion (C-index lift from longitudinal features) depends on unbiased cohort for valid relative comparison; flaw invalidates if true. F2 (FATAL 8): Valid competing risks violation. Standard Cox cause-specific treats death as censoring to estimate readmission hazard, but assumes censoring independent of readmission risk\u2014false here, as decedents have higher readmission risk (overestimates CIF, distorts hazards/probabilities). Design claims this 'handles competing risks explicitly' via censoring (not negative outcome), but as noted in F1 interaction, exclusion removes early deaths entirely, so no censoring happens; all included patients effectively survive 180 days in-system. No Fine-Gray, CIF computation, or predictor-death correlation check. Secondary metrics (calibration of 6-month probs) particularly vulnerable. No explicit control in Confound Control or Validation sections. Flaw real, affects absolute/relative performance asymmetrically if longitudinal features predict death better than baselines (plausible, e.g., utilization intensity flags frailty). Primary C-index delta uncertain but vulnerable; undeniable misspecification for readmission prediction under competing risks. F3 (MATERIAL 6): Valid concern for drift beyond test set (coding changes, seasons, policies), but misaligns with PoC scope. Experiment evaluates longitudinal value on held-out test (months 28.9\u201336), using chronological split (Sections 3) precisely to test near-future generalization within 36-month data span\u2014no claim of stability post-month 36. Stratification by site/admission type (Section 3) and sensitivity analyses (Confound Control #3-4) control operational confounds. Rolling windows nice but out-of-scope for hypothesis test; chronological split enforces realism without leakage. No evidence of drift in PoC output (none provided, but claim not empirically falsified). F4 (MATERIAL 5): Valid unverified prereq\u2014PH assumption (constant HRs) core to Cox unbiasedness/calibration/C-index validity; violation (e.g., waning utilization effect) biases coeffs. No mention of Schoenfeld test, time-varying terms, or flexible alternatives in design. Hyperparameter tuning (L2 grid on val) doesn't check assumptions. Sensitivity analyses in Confound Control focus on features, not model fit. However, for PoC hypothesis (longitudinal lift via Cox), assumption can be verified post-fit; not a scope exclusion but genuine uncertainty requiring empirical check. No evidence critic's claim holds; settling test clear.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "Genuine survivor bias from excluding <180-day follow-up patients (high-risk early deaths/disenrollments removed); interacts with F2 to prevent death censoring as described. No design control (e.g., IPW, excluded comparison) addresses non-random selection; undermines representative/unbiased cohort claim and C-index comparability."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Competing risks misspecification: death censoring overestimates readmission CIF/hazards (decedents higher risk); but exclusion (F1) removes early deaths entirely, so no censoring occurs\u2014cohort conditions on 180-day survival. No Fine-Gray/CIF control; affects calibration/C-index asymmetrically."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Drift beyond month 36 out-of-scope for PoC; chronological split (Section 3) tests generalization to held-out recent period (28.9\u201336), with site/admission stratification controlling confounds within data span\u2014no claim of post-data stability."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "PH assumption unverified (no Schoenfeld/time-varying check). Settling experiment: Compute Schoenfeld residuals post-fit; vindicate if non-zero slopes insignificant (HRs constant, C-index valid); validate if significant (fit time-varying Cox/flexible Royston-Parmar, performance drop confirms bias). Primary conclusion invalid if violated (asymmetric if longitudinal effects time-varying more than static), no equal-impact mechanism."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "CONCEDE on two FATAL findings (F1/F2) with adjusted severity \u22657 (9/8), confirming genuine design flaws in cohort selection and competing risks handling that invalidate unbiased readmission risk estimation and model training. F3 rebutted to minor, F4 deferred but does not override conceded FATALS."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "Defender concedes the survivor bias from excluding patients with <180\u2011day follow\u2011up, confirming that the cohort is not representative and that the claim of unbiased estimation is invalid. No design controls (e.g., IPW, comparison with excluded group) are presented to mitigate this bias."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 8,
+        "reasoning": "Defender agrees that treating death as censoring overestimates readmission risk and notes that the exclusion of early deaths (F1) removes the competing event entirely, confirming the competing risks misspecification identified in the finding."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "Defender narrows the generalization claim to the held\u2011out period within the observed data span and disclaims any post\u2011data stability, addressing the concern about extrapolation beyond month\u202f36. However, the rebuttal does not address potential temporal drift between the training window (months\u202f1\u201121.6) and the test window (months\u202f28.9\u201136) that could still violate the assumption that earlier months predict later months within the data span. Site/admission stratification does not mitigate time\u2011varying confounding, so a residual concern about drift affecting the internal validity of the temporal split remains."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "Defender defers verification of the proportional hazards assumption to post\u2011fit diagnostics (Schoenfeld residuals, time\u2011varying coefficients), acknowledging the assumption is currently unverified. This is an appropriate open\u2011ended plan; no counter is needed. The concern remains pending verification, but the deferral is justified."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "MAINTAIN concessions on F1 and F2 (ACCEPTed by critic). MAINTAIN DEFER on F4 (ACCEPTed). STRENGTHEN REBUT-SCOPE on F3 against PARTIAL challenge: chronological split (Section 3) explicitly tests generalization from early train (months 1\u201321.6) to late test (28.9\u201336), directly measuring any temporal drift impact on test C-index; site/admission stratification further controls for operational confounds, ensuring internal validity within data span\u2014no design assumes zero drift, but evaluates its effect on primary metric.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "Genuine survivor bias from excluding <180-day follow-up patients (high-risk early deaths/disenrollments removed); interacts with F2 to prevent death censoring as described. No design control (e.g., IPW, excluded comparison) addresses non-random selection; undermines representative/unbiased cohort claim and C-index comparability. Critic ACCEPT confirms.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Competing risks misspecification: death censoring overestimates readmission CIF/hazards (decedents higher risk); but exclusion (F1) removes early deaths entirely, so no censoring occurs\u2014cohort conditions on 180-day survival. No Fine-Gray/CIF control; affects calibration/C-index asymmetrically. Critic ACCEPT confirms.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Drift beyond month 36 out-of-scope for PoC; chronological split (Section 3: train 1\u201321.6 to test 28.9\u201336) directly tests internal generalization across ~15-month gap, measuring drift impact on held-out recent C-index\u2014poor performance would reveal time-varying relationships. Site/admission stratification controls operational confounds (not time-varying per se). Addresses PARTIAL challenge: design evaluates (does not assume) stability within span; test metric settles residual internal drift concern without needing extra tests.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "PH assumption unverified (no Schoenfeld/time-varying check). Settling experiment: Compute Schoenfeld residuals post-fit; vindicate if non-zero slopes insignificant (HRs constant, C-index valid); validate if significant (fit time-varying Cox/flexible Royston-Parmar, performance drop confirms bias). Primary conclusion invalid if violated (asymmetric if longitudinal effects time-varying more than static), no equal-impact mechanism. Critic ACCEPT confirms deferral appropriate.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 and F2 conceded as FATAL findings at adjusted severity 9 and 8, confirming fundamental flaws in cohort representativeness and competing risks handling that undermine the primary C-index comparison. F3 rebutted to minor and F4 deferred do not offset the conceded FATALS."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The cohort of patients with at least 180 days of post-discharge follow\u2011up is representative of all adult discharges and allows unbiased estimation of 6\u2011month readmission risk.",
+        "failure_mechanism": "Patients who die, leave the health system, or have incomplete follow\u2011up before 180 days are systematically excluded. These patients are not missing at random; they tend to have higher risk of readmission (or death). Excluding them induces survivor bias, leading to under\u2011estimation of true readmission incidence and potentially inflated model performance because the model is trained on a healthier subset.",
+        "evidence_test": "Compare baseline characteristics and observed readmission/mortality rates between the included cohort (\u2265180\u202fdays follow\u2011up) and the excluded cohort (<180\u202fdays follow\u2011up). If the excluded group shows higher mortality or readmission, bias is present. Additionally, apply inverse\u2011probability\u2011of\u2011censoring weighting or sensitivity analysis to quantify the impact on performance estimates.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Treating death within 180 days as a censoring event appropriately handles competing risks and does not bias readmission risk estimation.",
+        "failure_mechanism": "In a competing\u2011risks setting, treating the competing event (death) as censoring assumes that those who die would have the same future readmission risk as those censored for other reasons. This assumption is generally false; it leads to over\u2011estimation of the cumulative incidence of readmission and can distort hazard estimates, especially when death is related to the predictors used in the model.",
+        "evidence_test": "Fit a cause\u2011specific Cox model (treating death as censoring) and a Fine\u2011Gray subdistribution hazards model or compute non\u2011parametric cumulative incidence functions for readmission. If the estimated effects or predicted risks differ substantially, the competing\u2011risks assumption is violated. Also examine whether predictors of death differ from predictors of readmission.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A chronological train/validation/test split (months\u202f1\u201121.6, 21.7\u201128.8, 28.9\u201136) ensures that model performance on the test set will generalize to future periods because the underlying relationships are stable over time.",
+        "failure_mechanism": "Healthcare systems experience temporal drift: changes in coding practices, care pathways, seasonal variations, or policy shifts can alter the relationship between longitudinal utilization features and readmission risk. If such drift occurs, performance observed on the held\u2011out test window may not reflect future performance, limiting real\u2011world utility.",
+        "evidence_test": "Assess performance stability over time, e.g., by computing Harrell\u2019s C\u2011index in rolling windows or comparing early vs. late periods within the test set. Test for calibration drift (e.g., Hosmer\u2011Lemeshow\u2011type tests for survival models). Include time\u2011varying covariates or interaction terms and evaluate whether they improve fit.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Cox proportional hazards regression is a suitable model for time\u2011to\u2011readmission with the given static and longitudinal features.",
+        "failure_mechanism": "The Cox model assumes that hazard ratios are constant over time (proportional hazards). If this assumption is violated\u2014for example, if the effect of prior utilization wanes or strengthens as time since discharge increases\u2014the estimated coefficients are biased, predicted risks may be miscalibrated, and the concordance index may not reflect true discriminative ability.",
+        "evidence_test": "Examine Schoenfeld residuals or perform a time\u2011dependent covariate test for each predictor. Significant non\u2011zero slopes indicate violation of the proportional hazards assumption. As a sensitivity check, fit a Cox model with time\u2011varying coefficients (e.g., using tt() terms) or a flexible parametric survival model and compare performance.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC\u2019s central claims are undermined by selection bias due to requiring complete follow\u2011up and by improper handling of death as a competing risk, which likely invalidate the estimated performance. Additional concerns about temporal non\u2011stationarity and the unverified proportional hazards assumption further weaken the generalizability and validity of the approach.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "MAINTAIN concessions on F1 and F2 (ACCEPTed by critic). MAINTAIN DEFER on F4 (ACCEPTed). STRENGTHEN REBUT-SCOPE on F3 against PARTIAL challenge: chronological split (Section 3) explicitly tests generalization from early train (months 1\u201321.6) to late test (28.9\u201336), directly measuring any temporal drift impact on test C-index; site/admission stratification further controls for operational confounds, ensuring internal validity within data span\u2014no design assumes zero drift, but evaluates its effect on primary metric.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "Genuine survivor bias from excluding <180-day follow-up patients (high-risk early deaths/disenrollments removed); interacts with F2 to prevent death censoring as described. No design control (e.g., IPW, excluded comparison) addresses non-random selection; undermines representative/unbiased cohort claim and C-index comparability. Critic ACCEPT confirms.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Competing risks misspecification: death censoring overestimates readmission CIF/hazards (decedents higher risk); but exclusion (F1) removes early deaths entirely, so no censoring occurs\u2014cohort conditions on 180-day survival. No Fine-Gray/CIF control; affects calibration/C-index asymmetrically. Critic ACCEPT confirms.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Drift beyond month 36 out-of-scope for PoC; chronological split (Section 3: train 1\u201321.6 to test 28.9\u201336) directly tests internal generalization across ~15-month gap, measuring drift impact on held-out recent C-index\u2014poor performance would reveal time-varying relationships. Site/admission stratification controls operational confounds (not time-varying per se). Addresses PARTIAL challenge: design evaluates (does not assume) stability within span; test metric settles residual internal drift concern without needing extra tests.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "PH assumption unverified (no Schoenfeld/time-varying check). Settling experiment: Compute Schoenfeld residuals post-fit; vindicate if non-zero slopes insignificant (HRs constant, C-index valid); validate if significant (fit time-varying Cox/flexible Royston-Parmar, performance drop confirms bias). Primary conclusion invalid if violated (asymmetric if longitudinal effects time-varying more than static), no equal-impact mechanism. Critic ACCEPT confirms deferral appropriate.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 and F2 conceded as FATAL findings at adjusted severity 9 and 8, confirming fundamental flaws in cohort representativeness and competing risks handling that undermine the primary C-index comparison. F3 rebutted to minor and F4 deferred do not offset the conceded FATALS."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=8 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

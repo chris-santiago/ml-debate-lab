@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_852",
+  "stratum": "regular",
+  "flaw_category": "eval_inflation",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test period (months 16-18) is split into two random halves: the first half is used for 'deployment-readiness confirmation' to verify the selected configuration remains stable, and the second half is used for final reported metrics.",
+        "failure_mechanism": "This creates a form of data leakage. The model configuration is selected/tuned based partly on performance on the first half of the test data, then metrics are reported on the second half. This is equivalent to using test data for model selection, which inflates apparent performance. The 'confirmation pass' is effectively a second validation step using test data, contaminating the final evaluation.",
+        "evidence_test": "Compare reported metrics when: (1) using the current two-half split approach vs (2) using the full test period as a true holdout with no intermediate confirmation step. If (1) shows significantly higher performance, leakage is confirmed.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sender domain reputation is computed as 'fraction of emails from this domain labeled malicious in the training set only' and used as a feature.",
+        "failure_mechanism": "For new sender domains appearing in validation or test sets that did not appear in training, this feature will be undefined or default to zero. The document does not specify how this is handled. If new domains are common (typical in phishing detection), the model may perform poorly on them, and the feature's value is limited to repeat offenders. Additionally, zero-reputation for new domains could be interpreted as 'trustworthy' when it should mean 'unknown'.",
+        "evidence_test": "Compute the proportion of validation/test emails from domains unseen in training. If >20% of emails come from new domains, the sender reputation feature provides limited signal. Also compare model performance on emails from known vs. unknown sender domains.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment acknowledges 2-5% class imbalance (malicious emails) but does not specify any class weighting, oversampling, or focal loss during training.",
+        "failure_mechanism": "With severe class imbalance, standard cross-entropy loss can cause the model to learn to predict the majority class to minimize loss. Without explicit handling (class weights, focal loss, SMOTE, etc.), the transformer may achieve high accuracy by trivially classifying nearly all emails as benign, providing little operational value. The PR-AUC metric will reveal this if true, but the training process itself may be suboptimal.",
+        "evidence_test": "Inspect the trained model's prediction distribution on the test set. If predictions are heavily skewed toward benign (>95%), the model is likely exploiting class imbalance rather than learning meaningful patterns. Compare with a class-weighted version of the same model.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Campaign leakage detection is performed after training by identifying clusters appearing in both training and test sets, with a 5% threshold triggering re-evaluation.",
+        "failure_mechanism": "This is a post-hoc analysis that may not catch all forms of campaign leakage. The clustering method and parameters are not specified, so the detection could miss subtle campaign patterns (e.g., slight variations in subject lines, coordinated attacks from different subdomains). Furthermore, the 5% threshold is arbitrary\u2014if leakage exists but is below 5%, it still inflates performance. The re-evaluation trigger happens after metrics are computed, potentially requiring revision of already-reported results.",
+        "evidence_test": "Perform a controlled experiment: inject known campaign patterns (e.g., 10 identical emails) into both train and test, verify the detection method catches them. Vary the 5% threshold and show how reported metrics change.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning uses a fixed budget of 50 trials on the validation set for both transformer and baseline.",
+        "failure_mechanism": "With only 50 trials and multiple hyperparameters (learning rate, batch size, epochs, dropout, weight decay), the search space is likely under-explored. The transformer may be under-tuned relative to what a larger search would achieve, potentially underestimating its true performance relative to the baseline. However, this is a minor concern as both models receive equal tuning effort.",
+        "evidence_test": "Run a convergence analysis: plot PR-AUC vs. number of trials. If performance is still improving at trial 50, the search is insufficient. Compare with an expanded search (e.g., 200 trials).",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The inter-rater agreement threshold of 30% disagreement (>30% triggers flagging) and kappa < 0.70 triggers discussion.",
+        "failure_mechanism": "These thresholds are arbitrary. A 30% disagreement rate means the labels have significant noise, which could affect model performance. The kappa threshold of 0.70 is reasonable but not justified. If the actual disagreement is 25%, the data is flagged but the experiment proceeds with potentially noisy labels.",
+        "evidence_test": "Perform a sensitivity analysis: train models on labels with simulated noise (e.g., flip 10%, 20%, 30% of labels) and show how metrics degrade. This quantifies the impact of label noise on conclusions.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses a random split within each temporal fold for stratification by label.",
+        "failure_mechanism": "While stratification preserves class distribution, random shuffling within a temporal fold could still allow emails from the same campaign (sent within a short time window) to appear in both train and validation/test. This is partially addressed by the campaign leakage detection, but that detection happens post-hoc.",
+        "evidence_test": "Analyze the temporal distribution of emails in each fold. If campaigns span fold boundaries, this is a minor form of leakage that the post-hoc detection should catch.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The primary fatal flaw is the test set split into 'deployment-readiness confirmation' and final holdout halves\u2014this creates data leakage by using part of the test data for model selection before evaluating on the remainder. Secondary material concerns include unspecified handling of unseen sender domains in the reputation feature and lack of explicit class imbalance handling during training. The experiment design is otherwise sound with good temporal splitting, appropriate metrics for imbalanced data, and multiple confound controls.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding systematically:\n\nF1 (FATAL - severity 8): The critic claims that splitting the test period into two halves for deployment-readiness confirmation creates data leakage. This is a misunderstanding of the design intent. The methodology explicitly states: \"Once hyperparameters are finalized using the validation set, the test period is partitioned into two random halves.\" This means model selection and tuning are completed BEFORE any test data is seen. The confirmation pass is not used for model selection - it's a final sanity check to ensure the already-selected configuration remains stable under the final attack mix. This is analogous to a final validation step before locking the training recipe, not a tuning step. No metrics from the confirmation pass influence model selection.\n\nF2 (MATERIAL - severity 6): The critic correctly notes that sender domain reputation for new domains is undefined. However, the methodology includes a specific confound control: \"Sender reputation confound: A metadata-only baseline (no text, only sender reputation and structural features) is trained on the same splits. If this model achieves >80% of the transformer's test PR-AUC, the conclusion is that sender reputation, not semantic understanding, drives performance.\" This control directly addresses the concern about whether sender reputation is the primary driver. The handling of new domains is a known limitation, but the control ensures we don't falsely attribute performance to semantic understanding if sender reputation dominates.\n\nF3 (MATERIAL - severity 5): The critic claims lack of class imbalance handling is problematic. However, the methodology explicitly chooses PR-AUC as the primary metric because \"PR-AUC is more sensitive to minority-class performance than ROC-AUC.\" The evaluation strategy is designed to be robust to class imbalance through metric selection. Additionally, the transformer's fine-tuning process with binary cross-entropy loss on imbalanced data is standard practice, and the comparison with BoW logistic regression (which also faces the same imbalance) ensures a fair comparison. The operational metric (Precision at 90% Recall) further ensures practical relevance.\n\nF4 (MATERIAL - severity 4): The critic questions the campaign leakage detection's completeness and the 5% threshold. The methodology acknowledges this is a detection mechanism, not a prevention mechanism. The 5% threshold is indeed arbitrary but serves as a practical trigger for investigation. The key point is that this is a control measure to detect potential inflation, not a guarantee of perfect prevention. The methodology transparently reports the proportion of test predictions from leaked clusters, allowing readers to assess the risk.\n\nF5 (MINOR - severity 3): The critic suggests 50 trials may be insufficient for hyperparameter tuning. This is acknowledged as a minor concern because both models receive equal tuning effort under the same budget. The comparison remains fair. A larger search might improve both models, but the relative comparison is what matters for the hypothesis test.\n\nF6 (MINOR - severity 2): The critic notes the arbitrariness of the 30% disagreement and kappa < 0.70 thresholds. These are indeed arbitrary but serve as practical triggers for investigation, not as pass/fail criteria. The methodology transparently reports inter-rater agreement, allowing readers to assess label quality. The sensitivity analysis suggested by the critic would be valuable but is beyond the PoC scope.\n\nF7 (MINOR - severity 1): The critic notes that random stratification within temporal folds could allow campaign leakage. This is partially addressed by the campaign leakage detection control. The methodology prioritizes temporal integrity over perfect campaign isolation, which is appropriate for real-world deployment simulation.\n\nAfter analyzing all findings: F1 is based on a misunderstanding of the design; F2 and F3 are addressed by explicit controls in the methodology; F4 is a valid concern about detection completeness but is mitigated by transparency; F5-F7 are minor concerns that don't affect the hypothesis test validity.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 2,
+        "justification": "The critique misinterprets the confirmation pass as model selection. The methodology explicitly states hyperparameters are 'finalized using the validation set' BEFORE the test period is partitioned. The confirmation pass is a stability check on the already-selected configuration, not a tuning step. No metrics from this pass influence model selection or hyperparameter choices."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The methodology includes an explicit confound control: 'Sender reputation confound: A metadata-only baseline... If this model achieves >80% of the transformer's test PR-AUC, the conclusion is that sender reputation, not semantic understanding, drives performance.' This control directly addresses whether sender reputation is the primary driver, making the handling of new domains a known limitation that doesn't invalidate the comparison."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly selects PR-AUC as the primary metric because it is 'more sensitive to minority-class performance than ROC-AUC.' This metric choice ensures the evaluation is robust to class imbalance. Both models (transformer and BoW) face the same imbalance, ensuring a fair comparison. The operational metric (Precision at 90% Recall) further ensures practical relevance."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The campaign leakage detection is a control measure, not a prevention guarantee. The methodology transparently reports the proportion of test predictions from leaked clusters, allowing assessment of potential inflation risk. The 5% threshold is a practical trigger for investigation. While not perfect, this control provides visibility into a known confound."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Both models receive identical tuning effort (50 trials), ensuring a fair comparison. While a larger search might improve absolute performance for both, the relative comparison between transformer and BoW under equal tuning conditions is what matters for the hypothesis test."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The thresholds are practical triggers for investigation, not pass/fail criteria. The methodology transparently reports inter-rater agreement (kappa), allowing readers to assess label quality. Label noise is a known limitation in real-world security data, and the reporting provides necessary context."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The campaign leakage detection control addresses this concern. The methodology prioritizes temporal integrity (chronological splits) over perfect campaign isolation, which is appropriate for simulating real-world deployment where campaigns may span time boundaries."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted with adjusted severities \u2264 2, and the methodology's explicit controls address the material concerns about sender reputation confounds and class imbalance evaluation."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly identifies that the methodology explicitly finalizes hyperparameters using the validation set BEFORE partitioning the test period. The 'confirmation pass' is a stability check on an already-selected configuration, not a tuning step. The key factual premise - that model selection occurs using the first half of test data - is incorrect per the methodology. The rebuttal directly addresses the failure mechanism by showing no metrics from the confirmation pass influence model selection."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender's confound control (comparing metadata-only baseline to transformer) addresses whether sender reputation drives performance, but does not resolve the core issue: new domains in validation/test get undefined/zero reputation, which could be misinterpreted as 'trustworthy' rather than 'unknown'. The control makes the comparison fair but doesn't fix the feature engineering problem. The residual issue is that zero-reputation for new domains may encode incorrect semantics."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly notes that PR-AUC will detect if the model trivially predicts majority class - it reveals the problem after training. However, the finding concerns the training process being suboptimal (not learning meaningful patterns), not just the evaluation metric. PR-AUC can identify a model exploiting class imbalance but doesn't prevent it. The rebuttal conflates detection with prevention. Still, the metric does provide a meaningful operational check, partially addressing the concern."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender clarifies that campaign leakage detection is a control measure providing transparency, not a prevention guarantee. The methodology reports the proportion of leaked test predictions and uses a 5% threshold as a trigger for investigation. This is a reasonable approach - it provides visibility into potential inflation rather than claiming perfect prevention. The rebuttal directly addresses the failure mechanism by acknowledging the limitation while providing transparency."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly notes that both models receive identical tuning effort (50 trials), ensuring a fair comparison. The relative performance between transformer and BoW is what matters for the hypothesis test. While a larger search might improve absolute performance, it would affect both models equally. The rebuttal addresses the mechanism by showing the comparison remains valid under equal tuning."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly frames the thresholds as practical triggers for investigation, not pass/fail criteria. The methodology transparently reports inter-rater agreement (kappa), allowing readers to assess label quality. This provides necessary context without invalidating the experiment. The rebuttal addresses the mechanism by showing the thresholds serve a transparency function rather than an arbitrary gatekeeping function."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly argues that temporal integrity (chronological splits) is prioritized over perfect campaign isolation, which is appropriate for simulating real-world deployment where campaigns may span time boundaries. The campaign leakage detection control addresses residual concerns. The rebuttal directly addresses the failure mechanism by justifying the methodological choice and providing a control."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted most rebuttals (F1, F4, F5, F6, F7). For the PARTIAL challenges on F2 and F3, the design contains controls that directly address the core concerns, but my R1 justification did not fully articulate the mechanism. I will strengthen these rebuttals by clarifying how the design handles the specific failure mechanisms. I do not concede, as the methodology includes appropriate safeguards.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly states: 'Once hyperparameters are finalized using the validation set, the test period is partitioned into two random halves.' The confirmation pass uses the first half for a stability check on the already-locked configuration; no metrics from it influence model selection or tuning. This is a deployment simulation, not data leakage.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The design directly addresses the 'unknown domain' issue through the metadata-only baseline control. If the transformer's performance is primarily driven by sender reputation, this baseline will capture it, isolating the text model's contribution. For new domains, the feature is set to zero (unknown), which is a valid encoding\u2014the model must learn from other features (like text). The comparison's validity hinges on this control, not on perfect feature semantics.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The primary metric (PR-AUC) and operational metric (Precision at 90% Recall) are explicitly chosen because they are robust to class imbalance and evaluate the critical operational need: ranking risk accurately when malicious emails are rare. Both models are trained identically; if the transformer fails to learn meaningful patterns due to imbalance, it will be revealed by poor PR-AUC relative to the baseline. The evaluation design ensures the hypothesis test is valid.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The campaign leakage detection is a transparency control, not a prevention claim. The methodology reports the proportion of test predictions from leaked clusters, allowing readers to assess potential inflation. The 5% threshold triggers investigation, not a pass/fail. This is a reasonable approach for real-world data where perfect campaign isolation is impossible.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Both models receive identical tuning effort (50 trials), ensuring a fair comparison. The hypothesis test concerns relative performance, not absolute model optimization. Equal tuning conditions preserve the validity of the comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The thresholds are practical triggers for investigation and reporting, not arbitrary pass/fail gates. The methodology transparently reports inter-rater agreement (kappa), allowing readers to contextualize results. This is appropriate for real-world data with inherent label noise.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The primary defense is chronological splitting to simulate real-world deployment. The secondary campaign leakage control addresses residual concerns. This design prioritizes ecological validity over artificial isolation.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted with design controls or shown to be immaterial, resulting in adjusted severities of 2 or lower. No FATAL or MATERIAL concerns remain above severity 3."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test period (months 16-18) is split into two random halves: the first half is used for 'deployment-readiness confirmation' to verify the selected configuration remains stable, and the second half is used for final reported metrics.",
+        "failure_mechanism": "This creates a form of data leakage. The model configuration is selected/tuned based partly on performance on the first half of the test data, then metrics are reported on the second half. This is equivalent to using test data for model selection, which inflates apparent performance. The 'confirmation pass' is effectively a second validation step using test data, contaminating the final evaluation.",
+        "evidence_test": "Compare reported metrics when: (1) using the current two-half split approach vs (2) using the full test period as a true holdout with no intermediate confirmation step. If (1) shows significantly higher performance, leakage is confirmed.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sender domain reputation is computed as 'fraction of emails from this domain labeled malicious in the training set only' and used as a feature.",
+        "failure_mechanism": "For new sender domains appearing in validation or test sets that did not appear in training, this feature will be undefined or default to zero. The document does not specify how this is handled. If new domains are common (typical in phishing detection), the model may perform poorly on them, and the feature's value is limited to repeat offenders. Additionally, zero-reputation for new domains could be interpreted as 'trustworthy' when it should mean 'unknown'.",
+        "evidence_test": "Compute the proportion of validation/test emails from domains unseen in training. If >20% of emails come from new domains, the sender reputation feature provides limited signal. Also compare model performance on emails from known vs. unknown sender domains.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment acknowledges 2-5% class imbalance (malicious emails) but does not specify any class weighting, oversampling, or focal loss during training.",
+        "failure_mechanism": "With severe class imbalance, standard cross-entropy loss can cause the model to learn to predict the majority class to minimize loss. Without explicit handling (class weights, focal loss, SMOTE, etc.), the transformer may achieve high accuracy by trivially classifying nearly all emails as benign, providing little operational value. The PR-AUC metric will reveal this if true, but the training process itself may be suboptimal.",
+        "evidence_test": "Inspect the trained model's prediction distribution on the test set. If predictions are heavily skewed toward benign (>95%), the model is likely exploiting class imbalance rather than learning meaningful patterns. Compare with a class-weighted version of the same model.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Campaign leakage detection is performed after training by identifying clusters appearing in both training and test sets, with a 5% threshold triggering re-evaluation.",
+        "failure_mechanism": "This is a post-hoc analysis that may not catch all forms of campaign leakage. The clustering method and parameters are not specified, so the detection could miss subtle campaign patterns (e.g., slight variations in subject lines, coordinated attacks from different subdomains). Furthermore, the 5% threshold is arbitrary\u2014if leakage exists but is below 5%, it still inflates performance. The re-evaluation trigger happens after metrics are computed, potentially requiring revision of already-reported results.",
+        "evidence_test": "Perform a controlled experiment: inject known campaign patterns (e.g., 10 identical emails) into both train and test, verify the detection method catches them. Vary the 5% threshold and show how reported metrics change.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning uses a fixed budget of 50 trials on the validation set for both transformer and baseline.",
+        "failure_mechanism": "With only 50 trials and multiple hyperparameters (learning rate, batch size, epochs, dropout, weight decay), the search space is likely under-explored. The transformer may be under-tuned relative to what a larger search would achieve, potentially underestimating its true performance relative to the baseline. However, this is a minor concern as both models receive equal tuning effort.",
+        "evidence_test": "Run a convergence analysis: plot PR-AUC vs. number of trials. If performance is still improving at trial 50, the search is insufficient. Compare with an expanded search (e.g., 200 trials).",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The inter-rater agreement threshold of 30% disagreement (>30% triggers flagging) and kappa < 0.70 triggers discussion.",
+        "failure_mechanism": "These thresholds are arbitrary. A 30% disagreement rate means the labels have significant noise, which could affect model performance. The kappa threshold of 0.70 is reasonable but not justified. If the actual disagreement is 25%, the data is flagged but the experiment proceeds with potentially noisy labels.",
+        "evidence_test": "Perform a sensitivity analysis: train models on labels with simulated noise (e.g., flip 10%, 20%, 30% of labels) and show how metrics degrade. This quantifies the impact of label noise on conclusions.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses a random split within each temporal fold for stratification by label.",
+        "failure_mechanism": "While stratification preserves class distribution, random shuffling within a temporal fold could still allow emails from the same campaign (sent within a short time window) to appear in both train and validation/test. This is partially addressed by the campaign leakage detection, but that detection happens post-hoc.",
+        "evidence_test": "Analyze the temporal distribution of emails in each fold. If campaigns span fold boundaries, this is a minor form of leakage that the post-hoc detection should catch.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The primary fatal flaw is the test set split into 'deployment-readiness confirmation' and final holdout halves\u2014this creates data leakage by using part of the test data for model selection before evaluating on the remainder. Secondary material concerns include unspecified handling of unseen sender domains in the reputation feature and lack of explicit class imbalance handling during training. The experiment design is otherwise sound with good temporal splitting, appropriate metrics for imbalanced data, and multiple confound controls.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted most rebuttals (F1, F4, F5, F6, F7). For the PARTIAL challenges on F2 and F3, the design contains controls that directly address the core concerns, but my R1 justification did not fully articulate the mechanism. I will strengthen these rebuttals by clarifying how the design handles the specific failure mechanisms. I do not concede, as the methodology includes appropriate safeguards.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly states: 'Once hyperparameters are finalized using the validation set, the test period is partitioned into two random halves.' The confirmation pass uses the first half for a stability check on the already-locked configuration; no metrics from it influence model selection or tuning. This is a deployment simulation, not data leakage.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The design directly addresses the 'unknown domain' issue through the metadata-only baseline control. If the transformer's performance is primarily driven by sender reputation, this baseline will capture it, isolating the text model's contribution. For new domains, the feature is set to zero (unknown), which is a valid encoding\u2014the model must learn from other features (like text). The comparison's validity hinges on this control, not on perfect feature semantics.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The primary metric (PR-AUC) and operational metric (Precision at 90% Recall) are explicitly chosen because they are robust to class imbalance and evaluate the critical operational need: ranking risk accurately when malicious emails are rare. Both models are trained identically; if the transformer fails to learn meaningful patterns due to imbalance, it will be revealed by poor PR-AUC relative to the baseline. The evaluation design ensures the hypothesis test is valid.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The campaign leakage detection is a transparency control, not a prevention claim. The methodology reports the proportion of test predictions from leaked clusters, allowing readers to assess potential inflation. The 5% threshold triggers investigation, not a pass/fail. This is a reasonable approach for real-world data where perfect campaign isolation is impossible.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Both models receive identical tuning effort (50 trials), ensuring a fair comparison. The hypothesis test concerns relative performance, not absolute model optimization. Equal tuning conditions preserve the validity of the comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The thresholds are practical triggers for investigation and reporting, not arbitrary pass/fail gates. The methodology transparently reports inter-rater agreement (kappa), allowing readers to contextualize results. This is appropriate for real-world data with inherent label noise.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The primary defense is chronological splitting to simulate real-world deployment. The secondary campaign leakage control addresses residual concerns. This design prioritizes ecological validity over artificial isolation.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted with design controls or shown to be immaterial, resulting in adjusted severities of 2 or lower. No FATAL or MATERIAL concerns remain above severity 3."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "defense_wins",
+    "case_rationale": "all points resolved to defense_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

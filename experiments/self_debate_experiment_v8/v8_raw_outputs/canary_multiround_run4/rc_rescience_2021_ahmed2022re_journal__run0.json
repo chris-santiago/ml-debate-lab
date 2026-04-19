@@ -1,0 +1,531 @@
+{
+  "case_id": "rc_rescience_2021_ahmed2022re_journal",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The methodology can meaningfully isolate individual sources of nondeterminism (initialization, data shuffling, augmentation, hardware) and measure their independent effects.",
+        "failure_mechanism": "In practice, neural network training has complex interactions between nondeterminism sources. Fixing 'data shuffling' does not eliminate initialization effects, but the interaction between initialization and data order is itself a source of variability. Completely isolating sources is technically infeasible \u2014 e.g., 'hardware-level nondeterminism' (floating-point non-associativity, GPU thread scheduling) cannot be turned off while still using the same hardware. The paper's approach assumes sources are independent and additive, but they likely interact non-linearly.",
+        "evidence_test": "A proper isolation would require: (1) fixing random seeds at all levels except the one under test, (2) verifying that the 'fixed' sources actually produce identical results across runs, (3) testing for interactions between sources by comparing single-source variability to combined variability. The paper should report these verification steps.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Different sources of nondeterminism lead to 'similar magnitudes' of variability, and this similarity indicates a common mechanism (optimization instability).",
+        "failure_mechanism": "The claim of 'similar magnitude' requires rigorous statistical testing. Without proper hypothesis testing (e.g., comparing variances with Levene's test or Brown-Forsythe test, confidence intervals, effect size calculations), observed differences could be due to sampling noise. Furthermore, even if magnitudes are similar, attributing this to 'optimization instability' requires controlling for confounds \u2014 different sources may produce similar variability for different reasons.",
+        "evidence_test": "The paper should report: (1) number of training runs per condition (must be sufficient for variance estimation), (2) statistical tests comparing variances across sources with p-values, (3) confidence intervals on variance estimates, (4) ablation showing that fixing the proposed mechanism (e.g., using gradient clipping or learning rate tuning) reduces all sources' variability proportionally.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Inference-time strategies (Accelerated Ensembling, Test-Time Data Augmentation) can mitigate training variability while preserving the original training budget.",
+        "failure_presumed": true,
+        "failure_mechanism": "The claim 'preserving the original training budget' is ambiguous. Accelerated Ensembling (BatchEnsemble-style) modifies the model architecture and typically requires fewer parameters per ensemble member, but the paper doesn't specify whether they're comparing: (1) same total compute with/without ensembling, or (2) same number of forward passes. Test-Time Data Augmentation adds inference compute. If the goal is to reduce variability without retraining, the comparison should be: single model training + inference-time strategy vs. single model training + standard inference. The paper may be conflating 'no additional training' with 'preserving training budget' while adding inference cost.",
+        "evidence_test": "The paper should clearly define the comparison: (1) Total compute (training + inference) must be held constant or reported separately, (2) baseline should be a single deterministic training run, not multiple training runs, (3) report both mean performance AND variance reduction per unit of additional compute.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Results on 'standard deep learning benchmarks' generalize to production deployment conditions.",
+        "failure_mechanism": "Standard benchmarks (ImageNet, WikiText-103, etc.) have specific properties: clean data, fixed train/test splits, no distribution shift. Production systems face covariate shift (different data distribution), concept drift (different label semantics), and adversarial conditions. The paper does not test whether the variability findings hold under distribution shift, which is critical because optimization instability may be exacerbated or diminished under distribution shift.",
+        "evidence_test": "The paper should include experiments on: (1) data with injected distribution shift (e.g., corrupted images, out-of-distribution test sets), (2) different train/test distributions, (3) report whether variance scales with shift magnitude.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The analysis tracks model performance 'throughout the training process' to determine variability patterns.",
+        "failure_mechanism": "If the paper measures performance only at specific checkpoints (e.g., end of each epoch) and reports variance at those points, this conflates two different sources of variability: (1) true training trajectory differences, and (2) variance due to evaluation noise (different mini-batches, different augmentation seeds at evaluation time). Without reporting evaluation-side variance separately, the observed 'training variability' may be inflated by evaluation variability.",
+        "evidence_test": "The paper should: (1) run multiple evaluations per checkpoint using different evaluation seeds, (2) report the evaluation variance separately from training variance, (3) ensure evaluation variance is negligible compared to training variance, or use the same evaluation seed across all runs.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Hardware/library-level nondeterminism is a distinct source that can be controlled or measured separately.",
+        "failure_mechanism": "Hardware nondeterminism (GPU floating-point non-associativity, cuDNN autotuning, thread scheduling) is extremely difficult to measure in isolation because it interacts with all other sources. Moreover, 'library-level' nondeterminism often includes data loading parallelism, which is entangled with data shuffling. The paper likely cannot separate this from other sources without running on highly controlled (e.g., CPU-only, single-threaded) environments that are unrepresentative of actual training.",
+        "evidence_test": "The paper should report: (1) the specific hardware/software configuration used, (2) whether CUDA/deterministic APIs were enabled, (3) a control experiment showing that fixing software seeds actually reduces observed variability (proving the source was active).",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The mitigation strategies are evaluated for their ability to 'reduce variability in final model performance'.",
+        "failure_mechanism": "The paper may be optimizing for the wrong objective. In practice, what matters is not just reduced variance but improved worst-case performance or improved risk-adjusted returns. A strategy that reduces variance but also reduces mean performance may not be beneficial. The paper should report the full distribution of outcomes, not just mean and variance.",
+        "evidence_test": "The paper should report: (1) full performance distributions (histograms or ECDFs), (2) worst-case (5th percentile) performance, (3) risk-adjusted metrics if applicable, (4) whether variance reduction comes at the cost of mean performance.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiments cover both image classification and language modeling tasks, providing breadth.",
+        "failure_mechanism": "Two task types may not be sufficient to establish general claims about neural network training variability. The mechanisms of variability may differ substantially between convolutional architectures (image) and transformer/recurrent architectures (language). The paper should discuss whether findings are architecture-dependent.",
+        "evidence_test": "The paper should include analysis of whether variability magnitude differs by architecture family, and whether the attribution to 'optimization instability' holds differently for different architectures.",
+        "flaw_category": "defensible_unconventional"
+      }
+    ],
+    "summary": "The PoC has significant methodology issues centered on: (1) unverified assumption that nondeterminism sources can be cleanly isolated (F1, FATAL), (2) lack of rigorous statistical testing for the central claim of 'similar magnitudes' of variability (F2, FATAL), and (3) ambiguous comparison framework for inference-time mitigation strategies (F3, MATERIAL). The core experimental design assumes independence and additivity of nondeterminism sources without verification, and the statistical analysis lacks proper hypothesis testing for variance comparisons.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critic's findings primarily target the rigor of the isolation of nondeterminism sources and the statistical strength of the conclusions. \n\nRegarding F1 and F6 (Isolation of Sources): The critic claims that isolating sources like hardware nondeterminism is technically infeasible. However, the design intent of a PoC on nondeterminism is to use available controls (e.g., `torch.use_deterministic_algorithms(True)`, fixed seeds) to minimize known sources and observe the residual. While 'perfect' isolation is a theoretical ideal, the methodology of fixing all but one source is the standard experimental approach for this hypothesis. The claim that interactions exist is true, but the goal is to measure the *marginal* contribution of each source, not to prove they are additive. F6 is a subset of F1.\n\nRegarding F2 (Statistical Rigor): The critic argues that 'similar magnitudes' requires formal hypothesis testing (Levene's, etc.). In a PoC, observing similar variance across multiple runs and tasks is often sufficient to suggest a trend. However, the attribution to 'optimization instability' is a causal claim. If the paper does not provide an ablation (e.g., gradient clipping) to prove this mechanism, the link is an interpretation rather than a proven fact. This is a point of empirical uncertainty.\n\nRegarding F3 (Budget): The critic identifies an ambiguity in 'preserving training budget'. The design intent is to avoid *retraining* (the most expensive part of the pipeline). Adding inference-time compute is a separate cost. The claim is about the training budget, not the total lifecycle budget. This is a scope clarification.\n\nRegarding F4 (Generalization): The critic argues that benchmarks don't represent production (distribution shift). This is outside the scope of a study on *training variability*. The hypothesis is about how the training process itself is unstable, not how that instability interacts with OOD data. This is a scope error.\n\nRegarding F5 (Evaluation Noise): This is a valid technical concern. If the evaluation set is sampled or augmented, the variance measured is $\text{Var}(\text{Training}) + \text{Var}(\text{Eval})$. To isolate training variability, the evaluation must be deterministic. This is a material flaw if not addressed by the design.\n\nRegarding F7 and F8 (Minor): F7 asks for full distributions; while useful, mean/variance are standard for variability studies. F8 asks for more architectures; two distinct families (CNN/Transformer) are generally sufficient for a PoC to suggest a general trend.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design uses a 'ceteris paribus' approach: by fixing all available seeds and using deterministic library flags, the experiment isolates the marginal effect of the remaining active source. The goal is to identify the primary drivers of variability, not to model the non-linear interactions between them. This approach is the standard for isolating variance sources in DL."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The attribution to 'optimization instability' is a causal claim that requires empirical verification. To settle this: (1) Run training with gradient clipping or lower LR to stabilize optimization; (2) If variability across all sources decreases proportionally, the mechanism is vindicated; (3) If only some sources are affected, the 'common mechanism' claim is invalidated. The primary conclusion (that sources have similar magnitudes) remains valid even if the specific mechanism is different."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The 'training budget' refers specifically to the compute cost of the training phase (GPU hours to convergence). The scope of the mitigation analysis is to find ways to reduce variance *without requiring additional training runs*. Inference-time costs are a separate trade-off and do not invalidate the claim regarding the training budget."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The hypothesis concerns the internal nondeterminism of the training process. Distribution shift is a property of the data/deployment environment, not the training's stochasticity. Testing OOD performance is outside the scope of investigating run-to-run training variability."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "If evaluation is not strictly deterministic (e.g., using different seeds for test-time augmentation or random sampling), the measured variance is conflated. This is a genuine flaw in the measurement of training trajectory variability."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "Hardware nondeterminism is measured as the residual variance when all software seeds are fixed and deterministic flags are enabled. This is the only viable way to quantify it in a standard GPU environment."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "While full distributions are informative, mean and variance are the primary metrics for quantifying 'variability' as defined in the hypothesis."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Covering both CNNs (Images) and Transformers (Language) provides sufficient architectural diversity for a PoC to establish a general trend."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The core methodology for isolating sources is sound for a PoC, but the causal attribution to 'optimization instability' (F2) and the potential for evaluation noise (F5) require empirical verification or correction. Since F2 is deferred to a specific settling experiment and no FATAL findings were conceded at high severity, the verdict is empirical_test_agreed."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender's 'ceteris paribus' justification is a valid methodological approach for identifying primary drivers of variability. However, the rebuttal does not address two key concerns: (1) the claim that 'hardware-level nondeterminism' can be isolated as a distinct source - the defender measures 'residual variance' but doesn't demonstrate this is actually attributable to hardware rather than unfixed software sources; (2) the interaction concern remains - the defender acknowledges they're not modeling non-linear interactions but my finding was that the 'similar magnitudes' claim may not hold when interactions are present. The design is reasonable for a first-pass analysis but the stronger claims about isolated source effects are not fully substantiated."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender's DEFER rebuttal addresses the mechanism attribution but does not resolve the core concern about statistical rigor for the 'similar magnitudes' claim. The rebuttal essentially admits the mechanism is uncertain ('requires empirical verification') while claiming the magnitude finding stands. However, my finding was specifically about whether the paper provides sufficient statistical evidence for the magnitude claim itself (sample sizes, variance comparison tests, confidence intervals). The rebuttal does not address this at all - it merely deflects to a different issue (the mechanism). The severity should remain at 7."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The scope defense is partially valid - if the paper explicitly defines 'training budget' as training-phase compute only, then this is a legitimate scope limitation. However, the rebuttal does not demonstrate that the paper clearly acknowledges this distinction or discusses the inference-cost trade-off. The practical concern remains: from a user's perspective, total compute (training + inference) is what matters. The scope defense is valid only if the paper adequately discloses this limitation, which the rebuttal does not verify."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The scope defense fails to address the core claim. The finding states that results on standard benchmarks 'generalize to production deployment conditions' - this is an explicit claim about external validity. The defender's response ('we didn't claim to study production') is a non sequitur - the finding is that the paper DOES make this claim (or at least implies it), and the scope defense doesn't address whether that claim is supported. The defender is essentially redefining the scope to avoid the finding rather than addressing whether the generalization claim is valid. The severity should be increased from 0 toward the original 5."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "The defender correctly conceded this point. No counter needed."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's explanation that hardware nondeterminism is measured as residual variance after fixing software sources is a reasonable practical approach. This is indeed the only viable way to quantify hardware-level effects in standard GPU environments. The defense acknowledges the limitation while providing a sound methodological justification."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly notes that mean and variance are primary metrics for quantifying variability. However, the finding was not that these metrics are wrong, but that additional reporting (full distributions, worst-case performance) would strengthen the analysis. The rebuttal does not address whether these additional metrics should be reported, merely that mean/variance are sufficient for the defined hypothesis. This leaves open whether the paper should provide more complete reporting."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's justification that CNNs + Transformers provide sufficient architectural diversity for a proof-of-concept is reasonable. These represent two very different architecture families (convolutional vs. attention-based), and establishing a general trend has to start somewhere. The scope judgment is defensible."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my positions on F1, F3, and F7, as the critic's partial challenges relate to reporting preferences rather than design flaws. For F2, I am switching to DEFER because the critic correctly identified that my R1 response addressed the causal mechanism but not the statistical rigor of the magnitude claim. For F4, I am switching to CONCEDE because the critic correctly pointed out that the paper's claims regarding generalization to production were not supported by the scope of the experiments.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design's use of 'residual variance' is the only technically feasible way to isolate hardware nondeterminism in standard DL frameworks. By fixing all software seeds and enabling deterministic flags (e.g., cuDNN deterministic), any remaining variance is by definition the hardware/library residual. Regarding interactions: the study's goal is to identify the marginal contribution of each source to total variability. While non-linear interactions exist, the 'similar magnitudes' claim refers to the variance induced when each source is toggled independently, which is a valid and standard first-order analysis of variance sources.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that the statistical rigor of the 'similar magnitudes' claim was not addressed. To settle this: (1) Perform Levene's or Brown-Forsythe tests to compare variances across sources; (2) Calculate 95% confidence intervals for the variance of each source; (3) If p-values > 0.05 and CIs overlap significantly, the 'similar magnitude' claim is vindicated. If variances are statistically distinct, the claim is invalidated. The primary conclusion\u2014that multiple sources of nondeterminism contribute significantly to training variability\u2014remains valid even if the magnitudes are not identical, as any significant variance from any source confirms the core hypothesis.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The term 'training budget' is used strictly to denote the compute resources required to produce a converged model. The mitigation strategies (Ensembling/TTA) are specifically proposed as post-training interventions. The design's objective is to decouple the cost of reducing variance from the cost of training. While inference cost is a real trade-off, it does not invalidate the claim that the training budget is preserved, as no additional training runs or epochs are required to implement these strategies.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic is correct. The paper implies that these findings generalize to production environments, but the methodology only tests standard, clean benchmarks. There is no design control or experimental evidence to support how optimization instability behaves under covariate shift or concept drift, making the generalization claim unsupported.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Conceded in R1; evaluation noise conflates with training trajectory variance.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "Hardware nondeterminism is measured as the residual variance when all software seeds are fixed and deterministic flags are enabled. This is the only viable way to quantify it in a standard GPU environment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The hypothesis specifically targets 'variability,' which is formally defined by variance. While reporting full distributions or 5th-percentile performance is a valuable addition for practitioners, the absence of these metrics does not invalidate the mathematical measurement of variability used to test the hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Covering both CNNs (Images) and Transformers (Language) provides sufficient architectural diversity for a PoC to establish a general trend.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted several material concerns, but F2 remains a point of genuine ambiguity regarding statistical rigor that requires empirical resolution (DEFER). Additionally, F4 was conceded as an unsupported generalization claim."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The methodology can meaningfully isolate individual sources of nondeterminism (initialization, data shuffling, augmentation, hardware) and measure their independent effects.",
+        "failure_mechanism": "In practice, neural network training has complex interactions between nondeterminism sources. Fixing 'data shuffling' does not eliminate initialization effects, but the interaction between initialization and data order is itself a source of variability. Completely isolating sources is technically infeasible \u2014 e.g., 'hardware-level nondeterminism' (floating-point non-associativity, GPU thread scheduling) cannot be turned off while still using the same hardware. The paper's approach assumes sources are independent and additive, but they likely interact non-linearly.",
+        "evidence_test": "A proper isolation would require: (1) fixing random seeds at all levels except the one under test, (2) verifying that the 'fixed' sources actually produce identical results across runs, (3) testing for interactions between sources by comparing single-source variability to combined variability. The paper should report these verification steps.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Different sources of nondeterminism lead to 'similar magnitudes' of variability, and this similarity indicates a common mechanism (optimization instability).",
+        "failure_mechanism": "The claim of 'similar magnitude' requires rigorous statistical testing. Without proper hypothesis testing (e.g., comparing variances with Levene's test or Brown-Forsythe test, confidence intervals, effect size calculations), observed differences could be due to sampling noise. Furthermore, even if magnitudes are similar, attributing this to 'optimization instability' requires controlling for confounds \u2014 different sources may produce similar variability for different reasons.",
+        "evidence_test": "The paper should report: (1) number of training runs per condition (must be sufficient for variance estimation), (2) statistical tests comparing variances across sources with p-values, (3) confidence intervals on variance estimates, (4) ablation showing that fixing the proposed mechanism (e.g., using gradient clipping or learning rate tuning) reduces all sources' variability proportionally.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Inference-time strategies (Accelerated Ensembling, Test-Time Data Augmentation) can mitigate training variability while preserving the original training budget.",
+        "failure_presumed": true,
+        "failure_mechanism": "The claim 'preserving the original training budget' is ambiguous. Accelerated Ensembling (BatchEnsemble-style) modifies the model architecture and typically requires fewer parameters per ensemble member, but the paper doesn't specify whether they're comparing: (1) same total compute with/without ensembling, or (2) same number of forward passes. Test-Time Data Augmentation adds inference compute. If the goal is to reduce variability without retraining, the comparison should be: single model training + inference-time strategy vs. single model training + standard inference. The paper may be conflating 'no additional training' with 'preserving training budget' while adding inference cost.",
+        "evidence_test": "The paper should clearly define the comparison: (1) Total compute (training + inference) must be held constant or reported separately, (2) baseline should be a single deterministic training run, not multiple training runs, (3) report both mean performance AND variance reduction per unit of additional compute.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Results on 'standard deep learning benchmarks' generalize to production deployment conditions.",
+        "failure_mechanism": "Standard benchmarks (ImageNet, WikiText-103, etc.) have specific properties: clean data, fixed train/test splits, no distribution shift. Production systems face covariate shift (different data distribution), concept drift (different label semantics), and adversarial conditions. The paper does not test whether the variability findings hold under distribution shift, which is critical because optimization instability may be exacerbated or diminished under distribution shift.",
+        "evidence_test": "The paper should include experiments on: (1) data with injected distribution shift (e.g., corrupted images, out-of-distribution test sets), (2) different train/test distributions, (3) report whether variance scales with shift magnitude.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The analysis tracks model performance 'throughout the training process' to determine variability patterns.",
+        "failure_mechanism": "If the paper measures performance only at specific checkpoints (e.g., end of each epoch) and reports variance at those points, this conflates two different sources of variability: (1) true training trajectory differences, and (2) variance due to evaluation noise (different mini-batches, different augmentation seeds at evaluation time). Without reporting evaluation-side variance separately, the observed 'training variability' may be inflated by evaluation variability.",
+        "evidence_test": "The paper should: (1) run multiple evaluations per checkpoint using different evaluation seeds, (2) report the evaluation variance separately from training variance, (3) ensure evaluation variance is negligible compared to training variance, or use the same evaluation seed across all runs.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Hardware/library-level nondeterminism is a distinct source that can be controlled or measured separately.",
+        "failure_mechanism": "Hardware nondeterminism (GPU floating-point non-associativity, cuDNN autotuning, thread scheduling) is extremely difficult to measure in isolation because it interacts with all other sources. Moreover, 'library-level' nondeterminism often includes data loading parallelism, which is entangled with data shuffling. The paper likely cannot separate this from other sources without running on highly controlled (e.g., CPU-only, single-threaded) environments that are unrepresentative of actual training.",
+        "evidence_test": "The paper should report: (1) the specific hardware/software configuration used, (2) whether CUDA/deterministic APIs were enabled, (3) a control experiment showing that fixing software seeds actually reduces observed variability (proving the source was active).",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The mitigation strategies are evaluated for their ability to 'reduce variability in final model performance'.",
+        "failure_mechanism": "The paper may be optimizing for the wrong objective. In practice, what matters is not just reduced variance but improved worst-case performance or improved risk-adjusted returns. A strategy that reduces variance but also reduces mean performance may not be beneficial. The paper should report the full distribution of outcomes, not just mean and variance.",
+        "evidence_test": "The paper should report: (1) full performance distributions (histograms or ECDFs), (2) worst-case (5th percentile) performance, (3) risk-adjusted metrics if applicable, (4) whether variance reduction comes at the cost of mean performance.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiments cover both image classification and language modeling tasks, providing breadth.",
+        "failure_mechanism": "Two task types may not be sufficient to establish general claims about neural network training variability. The mechanisms of variability may differ substantially between convolutional architectures (image) and transformer/recurrent architectures (language). The paper should discuss whether findings are architecture-dependent.",
+        "evidence_test": "The paper should include analysis of whether variability magnitude differs by architecture family, and whether the attribution to 'optimization instability' holds differently for different architectures.",
+        "flaw_category": "defensible_unconventional"
+      }
+    ],
+    "summary": "The PoC has significant methodology issues centered on: (1) unverified assumption that nondeterminism sources can be cleanly isolated (F1, FATAL), (2) lack of rigorous statistical testing for the central claim of 'similar magnitudes' of variability (F2, FATAL), and (3) ambiguous comparison framework for inference-time mitigation strategies (F3, MATERIAL). The core experimental design assumes independence and additivity of nondeterminism sources without verification, and the statistical analysis lacks proper hypothesis testing for variance comparisons.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my positions on F1, F3, and F7, as the critic's partial challenges relate to reporting preferences rather than design flaws. For F2, I am switching to DEFER because the critic correctly identified that my R1 response addressed the causal mechanism but not the statistical rigor of the magnitude claim. For F4, I am switching to CONCEDE because the critic correctly pointed out that the paper's claims regarding generalization to production were not supported by the scope of the experiments.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design's use of 'residual variance' is the only technically feasible way to isolate hardware nondeterminism in standard DL frameworks. By fixing all software seeds and enabling deterministic flags (e.g., cuDNN deterministic), any remaining variance is by definition the hardware/library residual. Regarding interactions: the study's goal is to identify the marginal contribution of each source to total variability. While non-linear interactions exist, the 'similar magnitudes' claim refers to the variance induced when each source is toggled independently, which is a valid and standard first-order analysis of variance sources.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that the statistical rigor of the 'similar magnitudes' claim was not addressed. To settle this: (1) Perform Levene's or Brown-Forsythe tests to compare variances across sources; (2) Calculate 95% confidence intervals for the variance of each source; (3) If p-values > 0.05 and CIs overlap significantly, the 'similar magnitude' claim is vindicated. If variances are statistically distinct, the claim is invalidated. The primary conclusion\u2014that multiple sources of nondeterminism contribute significantly to training variability\u2014remains valid even if the magnitudes are not identical, as any significant variance from any source confirms the core hypothesis.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The term 'training budget' is used strictly to denote the compute resources required to produce a converged model. The mitigation strategies (Ensembling/TTA) are specifically proposed as post-training interventions. The design's objective is to decouple the cost of reducing variance from the cost of training. While inference cost is a real trade-off, it does not invalidate the claim that the training budget is preserved, as no additional training runs or epochs are required to implement these strategies.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic is correct. The paper implies that these findings generalize to production environments, but the methodology only tests standard, clean benchmarks. There is no design control or experimental evidence to support how optimization instability behaves under covariate shift or concept drift, making the generalization claim unsupported.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Conceded in R1; evaluation noise conflates with training trajectory variance.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "Hardware nondeterminism is measured as the residual variance when all software seeds are fixed and deterministic flags are enabled. This is the only viable way to quantify it in a standard GPU environment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The hypothesis specifically targets 'variability,' which is formally defined by variance. While reporting full distributions or 5th-percentile performance is a valuable addition for practitioners, the absence of these metrics does not invalidate the mathematical measurement of variability used to test the hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Covering both CNNs (Images) and Transformers (Language) provides sufficient architectural diversity for a PoC to establish a general trend.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted several material concerns, but F2 remains a point of genuine ambiguity regarding statistical rigor that requires empirical resolution (DEFER). Additionally, F4 was conceded as an unsupported generalization claim."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=5, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=4, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

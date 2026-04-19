@@ -1,0 +1,352 @@
+{
+  "case_id": "hyp_155",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline design isolates the contribution of graph and historical context signals by denying the hypothesis model access to non-graph signals (URLs, reputation, attachments).",
+        "failure_mechanism": "The hypothesis model receives Text + Graph + Non-Text (URLs, Reputation, Attachments). The baseline receives Text ONLY. The performance gap therefore measures the value of (Graph + Non-Text) vs Text, not Graph vs Text. The claim that the gap is attributable to 'graph and historical context' is false because non-text signals (e.g., URL blocklists, reputation scores) are known strong predictors of phishing and are present in the hypothesis model but absent in the baseline.",
+        "evidence_test": "Run a second baseline model that receives Text + Non-Text (URLs, Reputation, Attachments) but NO Graph features. If this baseline matches the hypothesis model's performance, the graph contribution is negligible. If the hypothesis model still outperforms this 'Text+Non-Text' baseline, the graph contribution is isolated.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Any performance gap can be attributed to the information source difference, not to model capacity or tuning disparity.",
+        "failure_mechanism": "The hypothesis model includes a 'multi-head attention module over sender-recipient interaction embeddings' which adds parameters and capacity. The baseline is described as 'identical transformer architecture' but receiving only text features. If the fusion head or attention module is not present in the baseline, the hypothesis model has higher capacity. This confounds 'information source' with 'model capacity'.",
+        "evidence_test": "Compare the parameter count and FLOPs of the hypothesis model vs the baseline. If the hypothesis model has significantly more parameters, train a capacity-matched baseline (e.g., text-only with a matching attention head that ignores graph features) to verify the performance gap persists.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Labels are high quality and 'benign' messages are confirmed non-malicious or older than 30 days without subsequent report.",
+        "failure_mechanism": "The 'benign' label definition relies on the absence of a report within 30 days. In spear-phishing, successful attacks are often unreported (silent compromise) or reported significantly later than 30 days. This creates a high false-negative rate in the 'benign' class (actual attacks labeled benign). The exclusion of messages with labels arriving >30 days after the message date further biases the dataset against 'late-reported' malicious messages.",
+        "evidence_test": "Analyze the distribution of report timestamps for confirmed malicious messages. If a significant portion (>10%) of malicious messages are reported >30 days after the message date, the training data is systematically missing these cases, inflating the apparent 'benign' class size and skewing the model's decision boundary.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The frozen graph at the training boundary simulates realistic deployment where the model observes only past communication context.",
+        "failure_mechanism": "The test set (T0+15 to T0+18) contains senders who may not have existed or communicated during the training window (T0 to T0+12). For these 'cold start' senders, graph features (in-degree, PageRank, etc.) will be zero or undefined. The PoC does not specify how these cases are handled (dropped, default values, etc.). If dropped, the test set is biased towards known senders. If zeroed, the model may fail to utilize text features effectively for these cases. This creates a distribution shift between training (all senders have history) and test (some do not).",
+        "evidence_test": "Calculate the percentage of test set senders that have zero history in the training graph. If >5%, evaluate the model's performance on this subset separately. If performance drops significantly, the 'Graph' hypothesis is not robust to cold-start scenarios.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Primary metric is Precision at a fixed recall of 80%. If 80% recall is unattainable, we pivot to recall at a fixed false-positive rate of 2%.",
+        "failure_mechanism": "Pivoting the metric after seeing the results allows the experiment to claim success on a different objective if the primary objective fails. This introduces selection bias in the evaluation criteria. If 80% recall is unattainable, the operational objective is not met, but the experiment can still claim 'success' on the secondary metric.",
+        "evidence_test": "Check if the primary metric (Precision@80% Recall) was achieved on the test set. If not, the claim of meeting the operational objective is invalid regardless of the secondary metric performance.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC contains a FATAL flaw in the baseline design that conflates graph signals with non-text signals, invalidating the claim that graph augmentation is the source of performance gain. Several MATERIAL flaws regarding label noise, model capacity, and cold-start handling further weaken the validity of the conclusions.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "## Analysis of Each Finding\n\n**F1 (FATAL, sev 8):** The critic correctly identifies that the hypothesis model receives Text + Graph + Non-Text signals (URL blocklist, sender reputation, attachment types), while the baseline receives only Text. The methodology's Confound Control section states intent to prevent this: 'preventing the hypothesis model's gain from being driven by access to these non-graph signals rather than graph structure itself.' However, the implementation does not achieve this intent \u2014 the hypothesis model has access to non-text signals the baseline lacks. The critic's proposed evidence test (Text+Non-Text baseline) would isolate the graph contribution. This is a genuine design flaw.\n\n**F2 (MATERIAL, sev 6):** The critic notes the hypothesis model includes a 'multi-head attention module over sender-recipient interaction embeddings' which adds parameters. The baseline is described as 'identical transformer architecture' but the methodology does not explicitly state whether the baseline includes the fusion head/attention module. This creates ambiguity \u2014 if the baseline lacks these components, there is a capacity confound. However, the design intent explicitly states both models use 'identical transformer architecture' with 'same pretrained weights and tuning effort.' The capacity difference is for feature fusion, not general modeling capacity. This is a partial concern \u2014 the design intent is clear but implementation ambiguity exists.\n\n**F3 (MATERIAL, sev 5):** The critic correctly notes that 'benign' labels rely on absence of report within 30 days, which may miss unreported or late-reported spear-phishing. This is a valid concern about label quality. However, both models train on identical labels, so the relative comparison (graph vs text-only) remains valid. The absolute metrics would be affected, but the primary hypothesis (does graph improve over text?) is testable with this label set. This is a scope limitation \u2014 the experiment tests relative performance, not absolute detection quality.\n\n**F4 (MATERIAL, sev 5):** The critic correctly identifies that frozen graph at training boundary creates cold-start problems for senders not in the training window. The methodology explicitly states this is intentional: 'This simulates realistic deployment where the model observes only past communication context.' The design intent is to test performance under realistic cold-start conditions. However, the methodology does not specify how cold-start senders are handled (dropped, zeroed, default values). This is a valid implementation concern but the design choice is deliberate. The critic's evidence test is appropriate.\n\n**F5 (MATERIAL, sev 4):** The critic claims 'pivoting the metric after seeing results allows the experiment to claim success on a different objective.' This is factually incorrect. The methodology specifies the pivot condition upfront: 'If 80% recall is unattainable by either model, we pivot to recall at a fixed false-positive rate of 2%.' This is a pre-specified fallback, not post-hoc selection. The critic misread the methodology.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The design intent in the Confound Control section correctly identifies this as a confound, but the implementation does not achieve the stated intent. The hypothesis model receives non-text signals (URL blocklist, sender reputation, attachment MIME types) that the baseline explicitly does not have. The performance gap measures (Graph + Non-Text) vs Text, not Graph vs Text. The critic's proposed evidence test (Text + Non-Text baseline) would correctly isolate the graph contribution. This is a genuine flaw that affects the primary hypothesis test."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly states both models use 'identical transformer architecture' with 'same pretrained weights and tuning effort.' The multi-head attention module is required to fuse graph features \u2014 it is not extra capacity for text processing but a necessary component for the hypothesis model's input modality. The design intent is to isolate information source difference. However, to eliminate ambiguity, the baseline should explicitly include the fusion head with graph features zeroed or masked, ensuring identical parameter count. The concern is valid enough to warrant this clarification but does not constitute a fatal flaw given the explicit design statement."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The label quality concern is valid but the experiment scope is 'does graph model outperform text-only on this organization's data?' Both models train on identical labels, so the relative comparison remains valid. The critic's evidence test (analyzing report timestamp distribution) would quantify label bias but does not invalidate the comparative hypothesis. The experiment tests relative performance, not absolute detection quality. This is a valid limitation but not a material flaw for the stated scope."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The cold-start scenario is a deliberate design choice explicitly stated in the methodology: 'This simulates realistic deployment where the model observes only past communication context.' The design intent is to test performance under realistic deployment conditions. However, the methodology does not specify how cold-start senders are handled (dropped, zeroed, or default values). The critic's evidence test is appropriate to evaluate robustness. This is a valid implementation concern but the design choice is intentional and justified for the operational scenario."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critic claims 'pivoting the metric after seeing results' but the methodology specifies the pivot condition BEFORE seeing results: 'If 80% recall is unattainable by either model, we pivot to recall at a fixed false-positive rate of 2%.' This is a pre-specified fallback, not post-hoc selection bias. The critic's factual premise is incorrect \u2014 the methodology does not allow adaptive metric selection based on which model performs better."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 was CONCEDEd at adjusted severity 8 (FATAL), representing a genuine baseline design flaw where the hypothesis model has access to non-text signals (URLs, reputation, attachments) that the baseline lacks. This confound invalidates the isolation of graph contribution. F2, F3, and F4 were successfully rebutted with design or scope justifications, bringing their adjusted severities to 3 or below. F5 was fully rebutted (adjusted severity 0) as the critic misread the methodology. Since one FATAL finding remains after rebuttal with adjusted severity \u22657, the verdict is 'empirical_test_agreed' \u2014 the experiment needs the additional baseline (Text+Non-Text) proposed by the critic to isolate graph contribution."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 8,
+        "reasoning": "The defender explicitly concedes the flaw, acknowledging that the current design measures (Graph + Non-Text) vs Text rather than Graph vs Text. They agree the proposed evidence test (Text + Non-Text baseline) is necessary. The finding remains FATAL as the primary hypothesis cannot be tested without this baseline."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender admits the methodology is ambiguous regarding the fusion head ('to eliminate ambiguity, the baseline should explicitly include...'). This confirms the finding's claim that the text does not clearly specify capacity matching. However, the defender argues the design intent is sound ('identical transformer architecture'), justifying a severity reduction. The residual issue is the lack of explicit specification in the text."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender concedes the label bias is valid ('The label quality concern is valid'), confirming the finding's mechanism that 'benign' labels are not high quality. However, they argue the bias cancels out in a relative comparison, mitigating the impact on the hypothesis. The finding's claim about label quality remains true, but the severity is reduced because the comparative validity is preserved."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender admits the methodology does not specify how cold-start senders are handled ('the methodology does not specify how cold-start senders are handled'), confirming the finding's failure mechanism. However, they argue this is a deliberate design choice for realistic deployment, justifying a severity reduction. The residual issue is the missing implementation detail in the methodology."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly identifies a factual error in the finding's premise. The methodology explicitly defines the pivot condition as a pre-specified rule ('If 80% recall is unattainable... we pivot'), not a post-hoc decision based on results. This invalidates the selection bias claim, reducing the severity to 0."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The R2 review largely validates my R1 rebuttals. For F1 and F5, the critic ACCEPTed my positions (concession on F1, evidence rebuttal on F5). For F2, F3, and F4, the critic issued PARTIAL but the updated_severity values match exactly what I had in R1 (3, 2, 3). The PARTIAL indicates the critic acknowledges my arguments but notes residual specification concerns - these are appropriately addressed by my existing REBUT-DESIGN and REBUT-SCOPE responses. No adjustments needed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Maintained from R1. The design fails to isolate graph contribution because the hypothesis model receives non-text signals (URL blocklist, sender reputation, attachment MIME types) that the baseline does not. The performance gap measures (Graph + Non-Text) vs Text, not Graph vs Text. This is a genuine flaw that affects the primary hypothesis test. The critic ACCEPTs this concession.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "Maintained from R1. The methodology states both models use 'identical transformer architecture' with 'same pretrained weights and tuning effort.' The multi-head attention module is required to fuse graph features - it is a necessary component for the hypothesis model's input modality, not extra capacity for text processing. The residual concern is specification ambiguity: the methodology should explicitly state the baseline includes the fusion head with graph features zeroed/masked to ensure identical parameter count. This is a clarity issue, not a design flaw. The critic PARTIALLY accepts with updated_severity=3 matching my adjustment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Maintained from R1. The label quality concern is valid - 'benign' labels based on absence of 30-day reports may include undetected attacks. However, the experiment scope is 'does graph model outperform text-only on this organization's data?' Both models train on identical labels, so the relative comparison remains valid. The bias affects absolute detection quality but cancels out in comparative evaluation. The critic PARTIALLY accepts with updated_severity=2 matching my adjustment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "Maintained from R1. The cold-start scenario is a deliberate design choice: 'This simulates realistic deployment where the model observes only past communication context.' The design intent is justified for the operational scenario. The residual concern is that the methodology does not specify how cold-start senders are handled (dropped, zeroed, or default values). This is an implementation specification gap, not a design flaw. The critic PARTIALLY accepts with updated_severity=3 matching my adjustment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Maintained from R1. The critic's original finding claimed 'pivoting the metric after seeing results' but the methodology specifies the pivot condition BEFORE seeing results: 'If 80% recall is unattainable by either model, we pivot to recall at a fixed false-positive rate of 2%.' This is a pre-specified fallback, not post-hoc selection bias. The critic's factual premise was incorrect. The critic ACCEPTs this rebuttal, reducing severity to 0.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 remains FATAL (severity 8) - the design fails to isolate graph contribution because the hypothesis model receives non-text signals that the baseline does not. This is a conceded flaw that prevents testing the primary hypothesis. All other findings are successfully rebutted to severity \u22643, but the FATAL finding stands."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline design isolates the contribution of graph and historical context signals by denying the hypothesis model access to non-graph signals (URLs, reputation, attachments).",
+        "failure_mechanism": "The hypothesis model receives Text + Graph + Non-Text (URLs, Reputation, Attachments). The baseline receives Text ONLY. The performance gap therefore measures the value of (Graph + Non-Text) vs Text, not Graph vs Text. The claim that the gap is attributable to 'graph and historical context' is false because non-text signals (e.g., URL blocklists, reputation scores) are known strong predictors of phishing and are present in the hypothesis model but absent in the baseline.",
+        "evidence_test": "Run a second baseline model that receives Text + Non-Text (URLs, Reputation, Attachments) but NO Graph features. If this baseline matches the hypothesis model's performance, the graph contribution is negligible. If the hypothesis model still outperforms this 'Text+Non-Text' baseline, the graph contribution is isolated.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Any performance gap can be attributed to the information source difference, not to model capacity or tuning disparity.",
+        "failure_mechanism": "The hypothesis model includes a 'multi-head attention module over sender-recipient interaction embeddings' which adds parameters and capacity. The baseline is described as 'identical transformer architecture' but receiving only text features. If the fusion head or attention module is not present in the baseline, the hypothesis model has higher capacity. This confounds 'information source' with 'model capacity'.",
+        "evidence_test": "Compare the parameter count and FLOPs of the hypothesis model vs the baseline. If the hypothesis model has significantly more parameters, train a capacity-matched baseline (e.g., text-only with a matching attention head that ignores graph features) to verify the performance gap persists.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Labels are high quality and 'benign' messages are confirmed non-malicious or older than 30 days without subsequent report.",
+        "failure_mechanism": "The 'benign' label definition relies on the absence of a report within 30 days. In spear-phishing, successful attacks are often unreported (silent compromise) or reported significantly later than 30 days. This creates a high false-negative rate in the 'benign' class (actual attacks labeled benign). The exclusion of messages with labels arriving >30 days after the message date further biases the dataset against 'late-reported' malicious messages.",
+        "evidence_test": "Analyze the distribution of report timestamps for confirmed malicious messages. If a significant portion (>10%) of malicious messages are reported >30 days after the message date, the training data is systematically missing these cases, inflating the apparent 'benign' class size and skewing the model's decision boundary.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The frozen graph at the training boundary simulates realistic deployment where the model observes only past communication context.",
+        "failure_mechanism": "The test set (T0+15 to T0+18) contains senders who may not have existed or communicated during the training window (T0 to T0+12). For these 'cold start' senders, graph features (in-degree, PageRank, etc.) will be zero or undefined. The PoC does not specify how these cases are handled (dropped, default values, etc.). If dropped, the test set is biased towards known senders. If zeroed, the model may fail to utilize text features effectively for these cases. This creates a distribution shift between training (all senders have history) and test (some do not).",
+        "evidence_test": "Calculate the percentage of test set senders that have zero history in the training graph. If >5%, evaluate the model's performance on this subset separately. If performance drops significantly, the 'Graph' hypothesis is not robust to cold-start scenarios.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Primary metric is Precision at a fixed recall of 80%. If 80% recall is unattainable, we pivot to recall at a fixed false-positive rate of 2%.",
+        "failure_mechanism": "Pivoting the metric after seeing the results allows the experiment to claim success on a different objective if the primary objective fails. This introduces selection bias in the evaluation criteria. If 80% recall is unattainable, the operational objective is not met, but the experiment can still claim 'success' on the secondary metric.",
+        "evidence_test": "Check if the primary metric (Precision@80% Recall) was achieved on the test set. If not, the claim of meeting the operational objective is invalid regardless of the secondary metric performance.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC contains a FATAL flaw in the baseline design that conflates graph signals with non-text signals, invalidating the claim that graph augmentation is the source of performance gain. Several MATERIAL flaws regarding label noise, model capacity, and cold-start handling further weaken the validity of the conclusions.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The R2 review largely validates my R1 rebuttals. For F1 and F5, the critic ACCEPTed my positions (concession on F1, evidence rebuttal on F5). For F2, F3, and F4, the critic issued PARTIAL but the updated_severity values match exactly what I had in R1 (3, 2, 3). The PARTIAL indicates the critic acknowledges my arguments but notes residual specification concerns - these are appropriately addressed by my existing REBUT-DESIGN and REBUT-SCOPE responses. No adjustments needed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Maintained from R1. The design fails to isolate graph contribution because the hypothesis model receives non-text signals (URL blocklist, sender reputation, attachment MIME types) that the baseline does not. The performance gap measures (Graph + Non-Text) vs Text, not Graph vs Text. This is a genuine flaw that affects the primary hypothesis test. The critic ACCEPTs this concession.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "Maintained from R1. The methodology states both models use 'identical transformer architecture' with 'same pretrained weights and tuning effort.' The multi-head attention module is required to fuse graph features - it is a necessary component for the hypothesis model's input modality, not extra capacity for text processing. The residual concern is specification ambiguity: the methodology should explicitly state the baseline includes the fusion head with graph features zeroed/masked to ensure identical parameter count. This is a clarity issue, not a design flaw. The critic PARTIALLY accepts with updated_severity=3 matching my adjustment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Maintained from R1. The label quality concern is valid - 'benign' labels based on absence of 30-day reports may include undetected attacks. However, the experiment scope is 'does graph model outperform text-only on this organization's data?' Both models train on identical labels, so the relative comparison remains valid. The bias affects absolute detection quality but cancels out in comparative evaluation. The critic PARTIALLY accepts with updated_severity=2 matching my adjustment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "Maintained from R1. The cold-start scenario is a deliberate design choice: 'This simulates realistic deployment where the model observes only past communication context.' The design intent is justified for the operational scenario. The residual concern is that the methodology does not specify how cold-start senders are handled (dropped, zeroed, or default values). This is an implementation specification gap, not a design flaw. The critic PARTIALLY accepts with updated_severity=3 matching my adjustment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Maintained from R1. The critic's original finding claimed 'pivoting the metric after seeing results' but the methodology specifies the pivot condition BEFORE seeing results: 'If 80% recall is unattainable by either model, we pivot to recall at a fixed false-positive rate of 2%.' This is a pre-specified fallback, not post-hoc selection bias. The critic's factual premise was incorrect. The critic ACCEPTs this rebuttal, reducing severity to 0.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 remains FATAL (severity 8) - the design fails to isolate graph contribution because the hypothesis model receives non-text signals that the baseline does not. This is a conceded flaw that prevents testing the primary hypothesis. All other findings are successfully rebutted to severity \u22643, but the FATAL finding stands."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=8 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,411 @@
+{
+  "case_id": "hyp_240",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological split (months 1\u20138 train, 9\u201310 validation, 11\u201312 test) prevents campaign leakage and simulates deployment conditions accurately.",
+        "failure_mechanism": "Campaigns may span multiple months, and a chronological split does not guarantee that all entities or behavioral patterns from a campaign are confined to a single split. If a campaign starts in month 8 and continues into month 9, edges or behaviors from the campaign could leak across splits via user-device or user-IP associations, even if case identifiers are held within one split. The removal of analyst workflow timing features does not eliminate temporal leakage if the underlying behavioral patterns (e.g., bursty authentications) are correlated across time.",
+        "evidence_test": "Perform a campaign-aware split: group all events by campaign identifier and assign entire campaigns to splits based on campaign start time. If performance degrades significantly under this split compared to the chronological split, it indicates campaign leakage is inflating results.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The supervision cutoff (excluding unresolved cases and labels not available by the cutoff) eliminates label noise from delayed investigations.",
+        "failure_mechanism": "Delayed investigations do not merely introduce label noise; they introduce a systematic bias where recent events are more likely to be labeled negative (benign) because investigations are still open. This creates a time-dependent label bias: the test set (months 11\u201312) will have a higher proportion of unresolved cases at the time of labeling, biasing labels toward negative. The model may learn to exploit this bias rather than detect ATO patterns.",
+        "evidence_test": "Audit the label distribution over time in the test set. If the proportion of positive labels drops significantly in the second half of the test window, the supervision cutoff introduces a label bias. Alternatively, simulate label delay by artificially censoring labels at earlier time points and measure performance degradation.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The graph model's edge construction (using only data available up to the split boundary) prevents future information from leaking into training or inference.",
+        "failure_mechanism": "Recency-weighted edges (e.g., interaction-count weights) may implicitly encode temporal information that correlates with attack timing. For example, a high interaction-count edge in the training window may indicate a user's 'normal' behavior, but the same pattern in the test window could reflect an attacker building a profile. If the graph model relies on such recency-sensitive features, it may be indirectly using future information to distinguish patterns, even if edges are constructed from past data.",
+        "evidence_test": "Ablate the recency weighting in edge construction and compare performance. If performance drops significantly without recency weighting, the model may be relying on temporal correlations that leak information about the attack window.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Average precision on the validation window is sufficient to select the best model family and hyperparameters.",
+        "failure_mechanism": "Average precision is a rank-based metric that emphasizes early retrieval but does not account for calibration or the absolute number of true positives at operational thresholds. The analyst team may need to act on a fixed number of alerts per week (e.g., top 100 or 500), and precision at these thresholds may not correlate perfectly with average precision. A model with high average precision but poor precision at the top 100 alerts could be less useful in practice.",
+        "evidence_test": "Compare model rankings under average precision versus precision at fixed operational thresholds (e.g., top 100 alerts per week). If rankings diverge, average precision alone is insufficient for model selection.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The gradient-boosted tree baseline is a 'strong feature-only' comparator.",
+        "failure_mechanism": "The baseline's feature set is not described in sufficient detail to assess strength. For example, if the baseline includes historical user risk aggregates that are themselves derived from graph-like relational features (e.g., 'number of distinct devices used in the last 30 days'), the baseline may indirectly capture relational structure. Without a full list of features and their construction, the comparison is not fair.",
+        "evidence_test": "Provide the full feature list for the baseline, including how historical aggregates are computed. If aggregates rely on relational patterns, the baseline is not purely feature-based, and the comparison is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment will establish whether relational modeling improves future-window detection under realistic drift and label delay.",
+        "failure_mechanism": "The experiment design does not include a stress test for extreme distribution shift (e.g., a sudden change in attacker infrastructure or user behavior). While the chronological split addresses gradual drift, it may not capture abrupt shifts that could invalidate the model's assumptions.",
+        "evidence_test": "Simulate an abrupt shift by training on months 1\u20138 and testing on a synthetic or historical dataset representing a known shift (e.g., a new ATO campaign using novel TTPs). Measure performance degradation.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws: potential campaign leakage across splits (F1), label bias from delayed investigations (F2), and silent misconfiguration via recency-weighted edges (F3). Two MATERIAL flaws weaken the evaluation and baseline comparison (F4, F5). A MINOR flaw notes a lack of stress testing for abrupt distribution shift (F6).",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Analyzing each finding against the methodology's design intent, which is a time-respecting PoC to test if heterogeneous graph modeling adds value over strong tabular baselines for future-window ATO detection under realistic drift and label delay. Scope explicitly simulates deployment (chronological splits, data cutoff at boundaries), controls confounds via ID confinement, ablations, and frozen preprocessing, and focuses on AP for ranking under imbalance while reporting operational metrics.\n\nF1 (FATAL 9, campaign leakage in chrono split): Critic claims chrono split fails to prevent leakage if campaigns span splits, via shared entities/behaviors even with ID confinement. Design intent: chrono split deliberately simulates deployment where models use all historical data up to inference time, so entity/behavior overlap from prior campaigns is expected and realistic (e.g., attackers reuse IPs/devices across time). Named controls: 'keep exact case or campaign identifiers inside one split' confines labels/cases; graphs use 'data available up to the relevant split boundary'; features exclude 'analyst workflow timing'. This eliminates label/case ID leakage by construction but allows behavioral overlap, which is not a flaw\u2014it's the point of testing relational structure on recurring entities. Ablations on 'previously seen versus newly observed users and devices' directly address entity reuse. Campaign-aware split (critic's test) is stricter than deployment sim, so out-of-scope. No uncertainty: mechanism eliminated for labels, behavioral overlap deliberate.\n\nF2 (FATAL 8, supervision cutoff label bias): Critic claims excluding unresolved cases biases test toward negatives due to longer delays recently. Design: 'Exclude unresolved cases and any examples whose labels are not available by the supervision cutoff, since delayed security investigations otherwise inject label noise.' This is a named control to ensure labels are final/accurate at cutoff, simulating resolved cases analysts would triage (unresolved aren't actionable). Applied uniformly across splits, so if delay patterns differ temporally, label proportions might shift\u2014but this is realistic drift already captured by chrono split. No evidence critic's bias exists (e.g., pos rate drop); design doesn't promise uniform label dist, only noise-free labels. Uncertainty low: exclusion ensures quality over quantity; if bias present, ablations/seen-new could detect exploitation. But to confirm no dist shift affects metric, empirical audit needed? No\u2014design anticipates label delay via exclusion.\n\nF3 (FATAL 7, recency edges leak future info): Critic claims recency/interaction weights encode attack timing, indirectly leaking. Design: 'Construct graphs using only data available up to the relevant split boundary so future edges never enter training or inference'; weights are from past data only (recency relative to boundary). No future info by construction\u2014model learning temporal patterns (e.g., bursty auth) is intended for detection. Ablating recency tests utility, not leakage. Claim empirically unsupported; no mechanism for future leak. Uncertainty none.\n\nF4 (MATERIAL 6, AP for selection): Critic: AP ignores calibration/fixed thresholds. Design: 'using average precision as the primary metric... concentrating true takeovers near the top'; explicitly 'report recall at fixed precision levels, precision in the top 100 and top 500 alerts per week, AUROC, and calibration diagnostics.' Selection on AP (rank-focused for imbalance) deliberate; others for analysis. Rankings may diverge, but scope prioritizes AP for triage queue. No flaw.\n\nF5 (MATERIAL 5, baseline strength): Critic: features vague, may capture relations. Design lists explicitly: 'login failure and MFA patterns, impossible-travel indicators, first-seen device/IP flags, device health and posture, sender novelty, burstiness of inbound email, mailbox rule changes, and historical user risk aggregates.' These are per-instance tabular signals/aggregates (e.g., burstiness is time-series summary, not graph prop); graph adds 'typed edges... recency and interaction-count weights.' 'Feature-only' means no message passing/relations, deliberate contrast. Full list provided, no indirect graph.\n\nF6 (MINOR 4, no extreme shift test): Critic: lacks stress for abrupt shifts. Design scope: 'under realistic drift' via chrono split (gradual); ablations for new entities. Extreme shifts out-of-scope for PoC hypothesis (relational value under typical drift); not needed for primary conclusion. Minor as stated.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "Chrono split deliberate for deployment simulation where past behaviors inform future; campaign IDs confined to one split eliminates label leakage by construction (named control), entity overlap realistic and addressed by seen/new ablations\u2014campaign-aware split exceeds PoC scope."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Exclusion of unresolved cases is named control for noise-free final labels, applied uniformly; simulates triage on resolved cases under label delay (explicitly acknowledged)\u2014any temporal label dist shift is realistic drift captured by chrono split, not a bias flaw."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Graphs strictly from data up to boundary (named control), so no future leak by construction; recency weights from past only, learning temporal patterns is intended for ATO detection\u2014ablation tests utility, not leakage."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "AP deliberate primary for imbalanced ranking/triage (stated rationale); fixed thresholds, top-k precision, calibration explicitly reported for operational insight\u2014selection scope focused on concentration at top."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Baseline features explicitly listed as tabular aggregates (e.g., burstiness, first-seen flags) without message passing; graph adds edges explicitly\u2014'feature-only' contrast holds, no relational capture in baseline."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "PoC scope 'realistic drift' via chrono split and new/seen ablations; extreme abrupt shifts exceed hypothesis test for relational value under typical conditions."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted with design controls, scope alignment, or evidence from explicit methodology sections, yielding adjusted severities \u22644 (all \u22643 except one partial at 4, but fully resolved per EXONERATE conditions as no unresolved concerns remain material). Methodology sound for PoC intent."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal argues that campaign IDs are confined to one split and entity overlap is addressed by seen/new ablations, but it does not address the core failure mechanism: campaigns spanning split boundaries can still leak behavioral patterns (e.g., user-device associations) even if case identifiers are held within one split. The defender claims campaign-aware splitting 'exceeds PoC scope,' but this does not resolve the leakage mechanism. The mechanism (behavioral patterns correlating across time) remains unaddressed, and the severity adjustment is disproportionate given the unresolved leakage risk."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal states that excluding unresolved cases simulates triage under label delay and that any temporal label distribution shift is 'realistic drift captured by chrono split.' However, the failure mechanism is a systematic bias where the test set's labels are biased toward negative due to unresolved cases, not merely a shift in distribution. The defender does not explain how excluding unresolved cases addresses this bias; it only acknowledges label delay as realistic drift. The mechanism (systematic negative bias in recent labels) remains unresolved."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal asserts that graphs are constructed from data up to the boundary and that recency weights are from past data, so no future leak occurs. However, the failure mechanism is not about explicit future data leakage but about recency-weighted edges implicitly encoding temporal correlations that correlate with attack timing. The defender does not address whether these temporal patterns could indirectly leak information about the attack window (e.g., high interaction counts in training may reflect normal behavior, but the same pattern in testing may reflect attacker profiling). The mechanism of 'silent misconfig' via temporal correlations remains unaddressed."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal explicitly states that average precision is chosen for imbalanced ranking/triage and that fixed thresholds, top-k precision, and calibration are reported for operational insight. This directly addresses the failure mechanism (metric limitations for operational use) by acknowledging the need for additional metrics. The severity adjustment is proportionate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal provides a clear list of baseline features (tabular aggregates like burstiness and first-seen flags) and contrasts them with the graph's relational edges, directly addressing the failure mechanism (baseline capturing relational structure). The evidence test is satisfied, and the severity adjustment is appropriate."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly identifies that extreme distribution shifts exceed the PoC scope and are not part of the hypothesis test for relational value under typical conditions. This is a valid scope disclaimer, and the severity adjustment is proportionate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Contesting all CHALLENGEs: F1 and F3 strengthened REBUT-DESIGN citing specific controls (campaign ID confinement, split-boundary graph construction, seen/new ablations) that eliminate leakage mechanisms as mischaracterizations of intended deployment-realistic temporal continuity; F2 switched to DEFER as exclusion mitigates noise but empirical audit needed for bias magnitude, with symmetric impact preserving relative conclusion; F4-F6 maintained as ACCEPTed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "Campaign identifiers confined to one split (named control) prevents label leakage by construction; behavioral continuity across splits via shared entities is not leakage but essential for deployment simulation where historical user-device/IP patterns inform future scoring (explicit chrono split rationale). Seen/new entity ablations (named control) directly test/eliminate overfitting to recurrent campaign patterns vs general relational gains, addressing the mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Uniform exclusion of unresolved cases (named control) eliminates label noise across splits but only mitigates potential systematic negative bias in recent test labels. Settling experiment: audit positive label proportions by time bucket (e.g., weekly) across splits. Vindicates design if rates stable/similar (no bias). Validates critique if sharp drop in recent test positives, requiring caveat on absolute performance. Primary conclusion (graph vs baseline AP difference) remains valid even if critique correct: bias affects train/test supervision signal equally for both models (same labels used), preserving relative relational value.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Graphs/edges strictly from past data up to boundary (named control), so no future leakage; recency/interaction weights encode valid historical temporal patterns (e.g., bursty attacker vs normal behavior) as intended signals for ATO detection, not 'implicit leak' of attack timing\u2014model learning such correlations is the hypothesis under test, addressed by seen/new ablations distinguishing recurrent vs novel patterns.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "AP deliberate primary for imbalanced ranking/triage (stated rationale); fixed thresholds, top-k precision, calibration explicitly reported for operational insight\u2014selection scope focused on concentration at top.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Baseline features explicitly listed as tabular aggregates (e.g., burstiness, first-seen flags) without message passing; graph adds edges explicitly\u2014'feature-only' contrast holds, no relational capture in baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "PoC scope 'realistic drift' via chrono split and new/seen ablations; extreme abrupt shifts exceed hypothesis test for relational value under typical conditions.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One DEFER on F2 surfaces genuine uncertainty on label bias magnitude resolvable empirically without invalidating relative primary metric; all other findings rebutted to \u22644 with strengthened design citations, including partial rebut of FATALs."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological split (months 1\u20138 train, 9\u201310 validation, 11\u201312 test) prevents campaign leakage and simulates deployment conditions accurately.",
+        "failure_mechanism": "Campaigns may span multiple months, and a chronological split does not guarantee that all entities or behavioral patterns from a campaign are confined to a single split. If a campaign starts in month 8 and continues into month 9, edges or behaviors from the campaign could leak across splits via user-device or user-IP associations, even if case identifiers are held within one split. The removal of analyst workflow timing features does not eliminate temporal leakage if the underlying behavioral patterns (e.g., bursty authentications) are correlated across time.",
+        "evidence_test": "Perform a campaign-aware split: group all events by campaign identifier and assign entire campaigns to splits based on campaign start time. If performance degrades significantly under this split compared to the chronological split, it indicates campaign leakage is inflating results.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The supervision cutoff (excluding unresolved cases and labels not available by the cutoff) eliminates label noise from delayed investigations.",
+        "failure_mechanism": "Delayed investigations do not merely introduce label noise; they introduce a systematic bias where recent events are more likely to be labeled negative (benign) because investigations are still open. This creates a time-dependent label bias: the test set (months 11\u201312) will have a higher proportion of unresolved cases at the time of labeling, biasing labels toward negative. The model may learn to exploit this bias rather than detect ATO patterns.",
+        "evidence_test": "Audit the label distribution over time in the test set. If the proportion of positive labels drops significantly in the second half of the test window, the supervision cutoff introduces a label bias. Alternatively, simulate label delay by artificially censoring labels at earlier time points and measure performance degradation.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The graph model's edge construction (using only data available up to the split boundary) prevents future information from leaking into training or inference.",
+        "failure_mechanism": "Recency-weighted edges (e.g., interaction-count weights) may implicitly encode temporal information that correlates with attack timing. For example, a high interaction-count edge in the training window may indicate a user's 'normal' behavior, but the same pattern in the test window could reflect an attacker building a profile. If the graph model relies on such recency-sensitive features, it may be indirectly using future information to distinguish patterns, even if edges are constructed from past data.",
+        "evidence_test": "Ablate the recency weighting in edge construction and compare performance. If performance drops significantly without recency weighting, the model may be relying on temporal correlations that leak information about the attack window.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Average precision on the validation window is sufficient to select the best model family and hyperparameters.",
+        "failure_mechanism": "Average precision is a rank-based metric that emphasizes early retrieval but does not account for calibration or the absolute number of true positives at operational thresholds. The analyst team may need to act on a fixed number of alerts per week (e.g., top 100 or 500), and precision at these thresholds may not correlate perfectly with average precision. A model with high average precision but poor precision at the top 100 alerts could be less useful in practice.",
+        "evidence_test": "Compare model rankings under average precision versus precision at fixed operational thresholds (e.g., top 100 alerts per week). If rankings diverge, average precision alone is insufficient for model selection.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The gradient-boosted tree baseline is a 'strong feature-only' comparator.",
+        "failure_mechanism": "The baseline's feature set is not described in sufficient detail to assess strength. For example, if the baseline includes historical user risk aggregates that are themselves derived from graph-like relational features (e.g., 'number of distinct devices used in the last 30 days'), the baseline may indirectly capture relational structure. Without a full list of features and their construction, the comparison is not fair.",
+        "evidence_test": "Provide the full feature list for the baseline, including how historical aggregates are computed. If aggregates rely on relational patterns, the baseline is not purely feature-based, and the comparison is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment will establish whether relational modeling improves future-window detection under realistic drift and label delay.",
+        "failure_mechanism": "The experiment design does not include a stress test for extreme distribution shift (e.g., a sudden change in attacker infrastructure or user behavior). While the chronological split addresses gradual drift, it may not capture abrupt shifts that could invalidate the model's assumptions.",
+        "evidence_test": "Simulate an abrupt shift by training on months 1\u20138 and testing on a synthetic or historical dataset representing a known shift (e.g., a new ATO campaign using novel TTPs). Measure performance degradation.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws: potential campaign leakage across splits (F1), label bias from delayed investigations (F2), and silent misconfiguration via recency-weighted edges (F3). Two MATERIAL flaws weaken the evaluation and baseline comparison (F4, F5). A MINOR flaw notes a lack of stress testing for abrupt distribution shift (F6).",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Contesting all CHALLENGEs: F1 and F3 strengthened REBUT-DESIGN citing specific controls (campaign ID confinement, split-boundary graph construction, seen/new ablations) that eliminate leakage mechanisms as mischaracterizations of intended deployment-realistic temporal continuity; F2 switched to DEFER as exclusion mitigates noise but empirical audit needed for bias magnitude, with symmetric impact preserving relative conclusion; F4-F6 maintained as ACCEPTed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "Campaign identifiers confined to one split (named control) prevents label leakage by construction; behavioral continuity across splits via shared entities is not leakage but essential for deployment simulation where historical user-device/IP patterns inform future scoring (explicit chrono split rationale). Seen/new entity ablations (named control) directly test/eliminate overfitting to recurrent campaign patterns vs general relational gains, addressing the mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Uniform exclusion of unresolved cases (named control) eliminates label noise across splits but only mitigates potential systematic negative bias in recent test labels. Settling experiment: audit positive label proportions by time bucket (e.g., weekly) across splits. Vindicates design if rates stable/similar (no bias). Validates critique if sharp drop in recent test positives, requiring caveat on absolute performance. Primary conclusion (graph vs baseline AP difference) remains valid even if critique correct: bias affects train/test supervision signal equally for both models (same labels used), preserving relative relational value.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Graphs/edges strictly from past data up to boundary (named control), so no future leakage; recency/interaction weights encode valid historical temporal patterns (e.g., bursty attacker vs normal behavior) as intended signals for ATO detection, not 'implicit leak' of attack timing\u2014model learning such correlations is the hypothesis under test, addressed by seen/new ablations distinguishing recurrent vs novel patterns.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "AP deliberate primary for imbalanced ranking/triage (stated rationale); fixed thresholds, top-k precision, calibration explicitly reported for operational insight\u2014selection scope focused on concentration at top.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Baseline features explicitly listed as tabular aggregates (e.g., burstiness, first-seen flags) without message passing; graph adds edges explicitly\u2014'feature-only' contrast holds, no relational capture in baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "PoC scope 'realistic drift' via chrono split and new/seen ablations; extreme abrupt shifts exceed hypothesis test for relational value under typical conditions.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One DEFER on F2 surfaces genuine uncertainty on label bias magnitude resolvable empirically without invalidating relative primary metric; all other findings rebutted to \u22644 with strengthened design citations, including partial rebut of FATALs."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=8 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

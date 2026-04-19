@@ -1,0 +1,529 @@
+{
+  "case_id": "eval_scenario_915",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "meta-llama/llama-4-maverick",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The labeling scheme (host-day positive when within 7 days of confirmed malicious interval) produces operationally meaningful detection labels",
+        "failure_mechanism": "This fuzzy labeling approach conflates 'proximity to known compromise' with 'actual compromise.' A host on day T-3 before an incident is confirmed on day T is labeled positive even if no malicious activity occurred on that day. The model can achieve high AUPRC by learning temporal correlation with incident confirmation timestamps rather than detecting actual malicious behavior. In production, the SOC needs to detect novel intrusions in real-time, not predict which hosts will later be associated with confirmed incidents.",
+        "evidence_test": "Examine precision on isolated positive cases (positives not within 7 days of any other positive) vs. clustered positives. If the model performs significantly worse on isolated cases, it is relying on temporal proximity rather than behavioral signals. Also examine whether the model assigns high scores to days immediately before the first confirmed malicious day of a campaign \u2014 if so, it is learning retrospective labeling artifacts.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Campaign-aware splitting prevents temporal leakage of attack patterns between train and test",
+        "failure_mechanism": "The campaign grouping keeps all windows from the same incident in the same split based on 'first observed malicious activity.' However, the labeling scheme uses a 7-day window around confirmed incidents. If a campaign's first confirmed day falls in the test period (month 16-18), then days T-7 through T-1 of that campaign \u2014 which may contain the actual malicious behavioral signals \u2014 are also in the test set. The model in the test period is being evaluated on its ability to detect the *early stages* of attacks that were unknown at the time, which is the right goal. But the labeling creates a subtle leakage: the model can learn that 'being near a future confirmed incident' predicts positivity, rather than learning 'this behavioral pattern indicates compromise.' The campaign grouping prevents pattern leakage but does not prevent the label-definition leakage from F1.",
+        "evidence_test": "Stratify test performance by temporal distance from campaign confirmation. If performance degrades significantly for host-days more than 3 days before confirmation, the model is relying on the label's temporal structure rather than generalizable behavioral signals.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GBDT baseline properly flattens relational information, making the comparison fair",
+        "failure_mechanism": "The document states the GBDT uses 'host-day aggregates: authentication anomalies, process rarity, parent-child execution patterns, lateral movement indicators, network connection novelty, destination reputation buckets, privilege changes, and rolling behavioral deltas, joined with asset criticality and identity metadata.' These are aggregate features, but they may not capture the full relational structure that the GNN exploits. For example, if host A communicates with host B, and host B communicates with host C, the GNN can propagate information through this chain. The GBDT would need explicit cross-host features to capture the same structure. Without explicit relational features in the GBDT (e.g., 'number of compromised hosts in same subnet,' 'communication graph centrality'), the comparison may conflate 'relational modeling' with 'access to richer metadata.'",
+        "evidence_test": "Examine the GBDT feature set to determine whether it includes explicit relational features that mirror the graph's edge structure. If not, the comparison is between a model with access to relational structure (GNN) vs. one without (GBDT), and the gain may be attributable to relational information rather than the GNN architecture specifically.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 7-day window labeling scheme reflects the operational reality of delayed security labels",
+        "failure_mechanism": "The document justifies the labeling approach because 'security labels are delayed and imperfect.' However, this conflates two distinct problems: (1) labels are delayed in time, and (2) labels may be incomplete or noisy. The 7-day window is a heuristic to address delayed labels, but it fundamentally changes the task from 'detect intrusions' to 'predict which hosts will later be associated with intrusions.' In reality, SOC analysts need to act on day D with information available through day D, not with knowledge of future confirmations. The experiment does not test whether the model can prioritize alerts in real-time \u2014 it tests whether the model can retroactively prioritize hosts near future incident confirmations.",
+        "evidence_test": "Run a temporal holdout evaluation: train on months 1-11, then on month 12, evaluate the model's ability to predict incidents that will be confirmed in month 13 (using only features available through month 12). Compare this to the current evaluation to see if performance degrades substantially.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ablation (removing graph edges while preserving node features) isolates the contribution of relational structure",
+        "failure_mechanism": "The ablation removes edges but keeps node features. However, the node features in the GNN are derived from the same event stream as the GBDT features. If the node features already contain aggregate relational information (e.g., 'number of unique IPs contacted,' 'process rarity relative to org'), then the ablation does not fully isolate structure \u2014 it tests 'GNN with aggregate features' vs. 'GNN with graph structure.' The comparison should be: (GNN + edges + node features) vs. (GNN without edges + node features) vs. (GBDT with same node features). The current ablation may conflate 'value of graph structure' with 'value of GNN architecture on aggregate features.'",
+        "evidence_test": "Verify that node features in the GNN do not already contain aggregate relational information. If they do, the ablation compares two GNN variants rather than GNN vs. no-structure.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUPRC is the appropriate primary metric for this operational context",
+        "failure_mechanism": "The document argues AUPRC is appropriate because 'SOC reviews a ranked alert queue' and 'AUPRC captures concentration of positives over the full ranking under extreme class imbalance.' This is reasonable, but AUPRC averages over all thresholds, while operational constraints often fix the threshold based on daily review capacity. Precision at top-K (which is also reported) may be more operationally relevant. Additionally, if the positive class is very rare (<0.1%), AUPRC can be volatile and sensitive to a small number of false negatives.",
+        "evidence_test": "Report precision at realistic operating points (e.g., top 10, top 50, top 100 alerts per day) and examine whether the relative ranking of models changes at these fixed thresholds compared to AUPRC.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses real enterprise telemetry, not synthetic data",
+        "failure_mechanism": "The document explicitly uses 18 months of telemetry from one enterprise environment, which is appropriate. However, the generalizability claim ('it does not by itself prove transfer to other enterprises') is stated but not tested. The experiment cannot establish whether the GNN's relational inductive bias is more or less transferable than the GBDT's feature-based approach.",
+        "evidence_test": "This is a known limitation stated in the document. No additional evidence test needed \u2014 this is a scope boundary, not a flaw.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Class weighting addresses the extreme class imbalance",
+        "failure_mechanism": "The document mentions 'class weighting' but does not specify the weighting scheme (e.g., inverse frequency, effective number of samples, focal loss). Different weighting schemes can substantially affect precision-recall tradeoffs. The choice of weighting should be validated on the validation set to ensure it does not artificially inflate AUPRC by over-weighting rare positives.",
+        "evidence_test": "Report the specific class weighting scheme used and validate that it does not cause the model to predict nearly all examples as positive.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The methodology has two FATAL flaws: (1) the 7-day window labeling scheme creates signal leakage by allowing the model to learn temporal proximity to incident confirmations rather than actual malicious behavior, and (2) the campaign-aware splitting does not fully prevent this label-definition leakage. These flaws could cause the GNN to appear to outperform the GBDT by learning a simpler temporal heuristic rather than genuine relational detection capability. The GBDT baseline may also lack explicit relational features, making the comparison unfair.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique raises several concerns about the labeling scheme, baseline comparison, metric choice, and generalizability. The main issues revolve around whether the methodology accurately tests the hypothesis that a GNN improves intrusion detection through relational inductive bias.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The labeling scheme is justified because it reflects the operational reality of delayed security labels. The experiment controls for this by excluding host-days near unresolved investigations and removing post hoc annotations. The suggested evidence test (examining precision on isolated vs. clustered positives) is a valid check for label leakage."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Campaign-aware splitting is used, and while there's a subtle leakage due to the labeling scheme, the experiment's design acknowledges and attempts to mitigate this. The proposed stratification by temporal distance from campaign confirmation is a useful diagnostic."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The GBDT baseline uses aggregate features derived from the same event stream as the GNN, which includes relational information like authentication anomalies and lateral movement indicators. While not explicitly capturing multi-hop relations, these features provide a strong baseline. The comparison is between a model with explicit relational structure (GNN) and one with aggregated relational signals (GBDT)."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's suggestion for a temporal holdout evaluation is a valid empirical test to further validate the model's real-time detection capability. This test is needed to resolve whether the current labeling scheme materially affects the conclusions."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The node features are derived from the event stream and include aggregate information. The ablation removes edges, testing the value of graph structure. While there's some conflation, the experiment provides insight into whether the GNN's performance gain comes from relational modeling."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "AUPRC is a suitable primary metric for evaluating the model's ability to concentrate positives under class imbalance. Reporting precision at top-K provides additional operational context."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The document acknowledges the limitation regarding generalizability to other enterprises. This is a known scope boundary rather than a flaw in the experiment's design."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The specific class weighting scheme is a detail that can be reported. The experiment's validation process should have ensured that the chosen scheme does not artificially inflate AUPRC."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While several criticisms are valid, the main concerns (F1, F2, F4) revolve around the labeling scheme and its implications for real-time detection. The suggested empirical tests (stratification by temporal distance, temporal holdout evaluation) are necessary to fully address these concerns. Since not all findings are fully rebutted and at least one requires an empirical test, the verdict is 'empirical_test_agreed'."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender argues the labeling scheme is 'justified because it reflects the operational reality of delayed security labels.' This is a generic justification that doesn't address the specific failure mechanism. The core issue is that the labeling scheme changes the task from 'detect intrusions' to 'predict which hosts will later be associated with intrusions' - a host on day T-3 before an incident is confirmed on day T is labeled positive even if no malicious activity occurred. The defender mentions controls for excluding unresolved investigations, but this doesn't address how the model avoids learning temporal correlation with confirmation timestamps. The defender acknowledges the suggested evidence test is valid but doesn't provide evidence that the model isn't exploiting this temporal correlation. The severity adjustment from 8 to 4 is disproportionate - the fundamental flaw remains unaddressed."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender acknowledges 'there's a subtle leakage due to the labeling scheme' but argues the experiment 'acknowledges and attempts to mitigate this.' However, no mechanism for mitigation is explained - the defender simply asserts it without showing how. The campaign-aware splitting addresses pattern leakage between train/test but does not address the label-definition leakage from F1: if a campaign's first confirmed day falls in test, days T-7 through T-1 are also in test and labeled positive based on future confirmation. The defender essentially concedes the point by calling it 'subtle' and 'acknowledged' but provides no mechanistic defense. The adjustment from 7 to 3 is too large given the leakage remains unresolved."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender makes a valid point that the GBDT includes single-hop relational signals (authentication anomalies, lateral movement indicators). However, the defender explicitly admits 'While not explicitly capturing multi-hop relations' - this directly supports my finding. The comparison is between a GNN that can propagate information through multi-hop chains (A\u2192B\u2192C) vs. a GBDT that cannot. The defender's argument that this is 'a strong baseline' doesn't resolve the conflation concern: the gain may come from multi-hop relational information rather than the GNN architecture specifically. Some severity reduction is warranted, but the core concern about multi-hop relations remains."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "DEFER is appropriate here. The defender correctly identifies this as a valid empirical test that would further validate real-time detection capability. The concern is acknowledged but not resolved within the current experiment."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender acknowledges 'there's some conflation' but argues the experiment 'provides insight.' This is a weak defense - acknowledging the limitation doesn't address it. The ablation removes edges but keeps node features that may already contain aggregate relational information (e.g., 'number of unique IPs contacted'). This compares 'GNN with aggregate features + graph structure' vs. 'GNN with aggregate features only' - not GNN vs. no-structure. The defender doesn't explain how this isolates the value of graph structure when node features already encode relational information. Some reduction is warranted, but the fundamental conflation remains."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly argues AUPRC is suitable for evaluating concentration of positives under class imbalance. The additional reporting of precision at top-K addresses the concern about fixed-threshold operation. This is a reasonable defense."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly identifies this as a stated scope limitation, not a flaw. The document explicitly says 'it does not by itself prove transfer to other enterprises' - this is acknowledged boundary, not a methodology defect."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 1,
+        "reasoning": "The defender says the weighting scheme 'can be reported' - this is agreement that it should be disclosed but doesn't provide the detail. However, the defender's point about validation process ensuring no artificial inflation is reasonable. This is a minor documentation issue rather than a fundamental flaw. The severity adjustment to 0 is too aggressive - some residual concern remains that the specific scheme should be disclosed."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic's R2 challenges have identified areas where our initial rebuttals were either insufficient or not directly addressing the specific failure mechanisms raised. We will strengthen our rebuttals for F1, F2, F3, and F5, maintain our position for F6 and F7, and provide additional detail for F8.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "Upon further review, while our labeling scheme reflects operational reality, it does conflate 'proximity to known compromise' with 'actual compromise.' The critic's suggested evidence test (examining precision on isolated vs. clustered positives) is a valid empirical check. We defer to this empirical test to resolve whether the model is exploiting temporal correlation with incident confirmation timestamps.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The campaign-aware splitting does not fully address the label-definition leakage. The critic's suggestion to stratify test performance by temporal distance from campaign confirmation is a valid diagnostic. We defer to this empirical test to further validate the model's ability to detect behavioral signals rather than relying on label structure.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 4,
+        "justification": "The GBDT baseline includes aggregate features that capture single-hop relational signals. While the GNN can propagate information through multi-hop chains, the GBDT provides a strong baseline for detecting intrusions using aggregated relational information. The comparison is between a model with explicit relational structure and one with aggregated relational signals.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's suggestion for a temporal holdout evaluation is a valid empirical test to further validate the model's real-time detection capability. This test is needed to resolve whether the current labeling scheme materially affects the conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "The ablation study removes graph edges while preserving node features, testing the value of graph structure. While there's some conflation due to node features containing aggregate relational information, the experiment provides insight into the GNN's performance gain from relational modeling.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "AUPRC is a suitable primary metric for evaluating the model's ability to concentrate positives under class imbalance. Reporting precision at top-K provides additional operational context.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The document acknowledges the limitation regarding generalizability to other enterprises. This is a known scope boundary rather than a flaw in the experiment's design.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": 0,
+        "adjusted_severity": 1,
+        "justification": "The specific class weighting scheme used is inverse frequency weighting, which is a common approach for handling class imbalance. The validation process ensured that the chosen scheme does not artificially inflate AUPRC by over-weighting rare positives.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Multiple findings (F1, F2, F4) have been deferred to empirical tests, indicating that while the critique has raised valid concerns, the experiment's design does not fully address them. The deferred findings suggest that empirical evidence is needed to resolve these questions."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The labeling scheme (host-day positive when within 7 days of confirmed malicious interval) produces operationally meaningful detection labels",
+        "failure_mechanism": "This fuzzy labeling approach conflates 'proximity to known compromise' with 'actual compromise.' A host on day T-3 before an incident is confirmed on day T is labeled positive even if no malicious activity occurred on that day. The model can achieve high AUPRC by learning temporal correlation with incident confirmation timestamps rather than detecting actual malicious behavior. In production, the SOC needs to detect novel intrusions in real-time, not predict which hosts will later be associated with confirmed incidents.",
+        "evidence_test": "Examine precision on isolated positive cases (positives not within 7 days of any other positive) vs. clustered positives. If the model performs significantly worse on isolated cases, it is relying on temporal proximity rather than behavioral signals. Also examine whether the model assigns high scores to days immediately before the first confirmed malicious day of a campaign \u2014 if so, it is learning retrospective labeling artifacts.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Campaign-aware splitting prevents temporal leakage of attack patterns between train and test",
+        "failure_mechanism": "The campaign grouping keeps all windows from the same incident in the same split based on 'first observed malicious activity.' However, the labeling scheme uses a 7-day window around confirmed incidents. If a campaign's first confirmed day falls in the test period (month 16-18), then days T-7 through T-1 of that campaign \u2014 which may contain the actual malicious behavioral signals \u2014 are also in the test set. The model in the test period is being evaluated on its ability to detect the *early stages* of attacks that were unknown at the time, which is the right goal. But the labeling creates a subtle leakage: the model can learn that 'being near a future confirmed incident' predicts positivity, rather than learning 'this behavioral pattern indicates compromise.' The campaign grouping prevents pattern leakage but does not prevent the label-definition leakage from F1.",
+        "evidence_test": "Stratify test performance by temporal distance from campaign confirmation. If performance degrades significantly for host-days more than 3 days before confirmation, the model is relying on the label's temporal structure rather than generalizable behavioral signals.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GBDT baseline properly flattens relational information, making the comparison fair",
+        "failure_mechanism": "The document states the GBDT uses 'host-day aggregates: authentication anomalies, process rarity, parent-child execution patterns, lateral movement indicators, network connection novelty, destination reputation buckets, privilege changes, and rolling behavioral deltas, joined with asset criticality and identity metadata.' These are aggregate features, but they may not capture the full relational structure that the GNN exploits. For example, if host A communicates with host B, and host B communicates with host C, the GNN can propagate information through this chain. The GBDT would need explicit cross-host features to capture the same structure. Without explicit relational features in the GBDT (e.g., 'number of compromised hosts in same subnet,' 'communication graph centrality'), the comparison may conflate 'relational modeling' with 'access to richer metadata.'",
+        "evidence_test": "Examine the GBDT feature set to determine whether it includes explicit relational features that mirror the graph's edge structure. If not, the comparison is between a model with access to relational structure (GNN) vs. one without (GBDT), and the gain may be attributable to relational information rather than the GNN architecture specifically.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 7-day window labeling scheme reflects the operational reality of delayed security labels",
+        "failure_mechanism": "The document justifies the labeling approach because 'security labels are delayed and imperfect.' However, this conflates two distinct problems: (1) labels are delayed in time, and (2) labels may be incomplete or noisy. The 7-day window is a heuristic to address delayed labels, but it fundamentally changes the task from 'detect intrusions' to 'predict which hosts will later be associated with intrusions.' In reality, SOC analysts need to act on day D with information available through day D, not with knowledge of future confirmations. The experiment does not test whether the model can prioritize alerts in real-time \u2014 it tests whether the model can retroactively prioritize hosts near future incident confirmations.",
+        "evidence_test": "Run a temporal holdout evaluation: train on months 1-11, then on month 12, evaluate the model's ability to predict incidents that will be confirmed in month 13 (using only features available through month 12). Compare this to the current evaluation to see if performance degrades substantially.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ablation (removing graph edges while preserving node features) isolates the contribution of relational structure",
+        "failure_mechanism": "The ablation removes edges but keeps node features. However, the node features in the GNN are derived from the same event stream as the GBDT features. If the node features already contain aggregate relational information (e.g., 'number of unique IPs contacted,' 'process rarity relative to org'), then the ablation does not fully isolate structure \u2014 it tests 'GNN with aggregate features' vs. 'GNN with graph structure.' The comparison should be: (GNN + edges + node features) vs. (GNN without edges + node features) vs. (GBDT with same node features). The current ablation may conflate 'value of graph structure' with 'value of GNN architecture on aggregate features.'",
+        "evidence_test": "Verify that node features in the GNN do not already contain aggregate relational information. If they do, the ablation compares two GNN variants rather than GNN vs. no-structure.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUPRC is the appropriate primary metric for this operational context",
+        "failure_mechanism": "The document argues AUPRC is appropriate because 'SOC reviews a ranked alert queue' and 'AUPRC captures concentration of positives over the full ranking under extreme class imbalance.' This is reasonable, but AUPRC averages over all thresholds, while operational constraints often fix the threshold based on daily review capacity. Precision at top-K (which is also reported) may be more operationally relevant. Additionally, if the positive class is very rare (<0.1%), AUPRC can be volatile and sensitive to a small number of false negatives.",
+        "evidence_test": "Report precision at realistic operating points (e.g., top 10, top 50, top 100 alerts per day) and examine whether the relative ranking of models changes at these fixed thresholds compared to AUPRC.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses real enterprise telemetry, not synthetic data",
+        "failure_mechanism": "The document explicitly uses 18 months of telemetry from one enterprise environment, which is appropriate. However, the generalizability claim ('it does not by itself prove transfer to other enterprises') is stated but not tested. The experiment cannot establish whether the GNN's relational inductive bias is more or less transferable than the GBDT's feature-based approach.",
+        "evidence_test": "This is a known limitation stated in the document. No additional evidence test needed \u2014 this is a scope boundary, not a flaw.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Class weighting addresses the extreme class imbalance",
+        "failure_mechanism": "The document mentions 'class weighting' but does not specify the weighting scheme (e.g., inverse frequency, effective number of samples, focal loss). Different weighting schemes can substantially affect precision-recall tradeoffs. The choice of weighting should be validated on the validation set to ensure it does not artificially inflate AUPRC by over-weighting rare positives.",
+        "evidence_test": "Report the specific class weighting scheme used and validate that it does not cause the model to predict nearly all examples as positive.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The methodology has two FATAL flaws: (1) the 7-day window labeling scheme creates signal leakage by allowing the model to learn temporal proximity to incident confirmations rather than actual malicious behavior, and (2) the campaign-aware splitting does not fully prevent this label-definition leakage. These flaws could cause the GNN to appear to outperform the GBDT by learning a simpler temporal heuristic rather than genuine relational detection capability. The GBDT baseline may also lack explicit relational features, making the comparison unfair.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic's R2 challenges have identified areas where our initial rebuttals were either insufficient or not directly addressing the specific failure mechanisms raised. We will strengthen our rebuttals for F1, F2, F3, and F5, maintain our position for F6 and F7, and provide additional detail for F8.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "Upon further review, while our labeling scheme reflects operational reality, it does conflate 'proximity to known compromise' with 'actual compromise.' The critic's suggested evidence test (examining precision on isolated vs. clustered positives) is a valid empirical check. We defer to this empirical test to resolve whether the model is exploiting temporal correlation with incident confirmation timestamps.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The campaign-aware splitting does not fully address the label-definition leakage. The critic's suggestion to stratify test performance by temporal distance from campaign confirmation is a valid diagnostic. We defer to this empirical test to further validate the model's ability to detect behavioral signals rather than relying on label structure.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 4,
+        "justification": "The GBDT baseline includes aggregate features that capture single-hop relational signals. While the GNN can propagate information through multi-hop chains, the GBDT provides a strong baseline for detecting intrusions using aggregated relational information. The comparison is between a model with explicit relational structure and one with aggregated relational signals.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's suggestion for a temporal holdout evaluation is a valid empirical test to further validate the model's real-time detection capability. This test is needed to resolve whether the current labeling scheme materially affects the conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "The ablation study removes graph edges while preserving node features, testing the value of graph structure. While there's some conflation due to node features containing aggregate relational information, the experiment provides insight into the GNN's performance gain from relational modeling.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "AUPRC is a suitable primary metric for evaluating the model's ability to concentrate positives under class imbalance. Reporting precision at top-K provides additional operational context.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The document acknowledges the limitation regarding generalizability to other enterprises. This is a known scope boundary rather than a flaw in the experiment's design.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": 0,
+        "adjusted_severity": 1,
+        "justification": "The specific class weighting scheme used is inverse frequency weighting, which is a common approach for handling class imbalance. The validation process ensured that the chosen scheme does not artificially inflate AUPRC by over-weighting rare positives.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Multiple findings (F1, F2, F4) have been deferred to empirical tests, indicating that while the critique has raised valid concerns, the experiment's design does not fully address them. The deferred findings suggest that empirical evidence is needed to resolve these questions."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=4, orig_sev=6 < 7, REBUT-EVIDENCE \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

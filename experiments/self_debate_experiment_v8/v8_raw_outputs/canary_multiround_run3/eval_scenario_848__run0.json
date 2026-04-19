@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_848",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day grace period for label finalization ensures high-quality labels without conflating label quality with model performance.",
+        "failure_mechanism": "The 30-day grace period may introduce a temporal bias where emails with delayed detections (e.g., those requiring incident response confirmation) are systematically different from those with immediate detections. If the transformer model is better at catching phishing emails that are harder to label (e.g., delayed compromise indicators), it could appear to outperform the baseline not due to semantic understanding but because it aligns better with the labeling process. This conflates model performance with label reliability.",
+        "evidence_test": "Compare model performance on emails labeled within 7 days vs. those labeled after 7 days (but within 30 days). If the transformer's advantage is concentrated in the delayed-label subset, the uplift is likely driven by label timing rather than semantic improvement. Additionally, evaluate performance on the held-out 'label-uncertain' cohort (unresolved after 30 days) \u2014 if the transformer performs poorly here, it suggests the model is overfitting to the labeling process rather than generalizing to true phishing signals.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) ensures generalization to future, unseen campaigns.",
+        "failure_mechanism": "A chronological split does not guarantee generalization to future campaigns if the temporal distribution shift is non-stationary in a way that the split fails to capture. For example, if phishing campaigns exhibit seasonal patterns (e.g., tax-season scams) or if the organization's email traffic changes (e.g., shift to remote work), the test set may not reflect the true deployment distribution. The design does not explicitly test for or mitigate such shifts.",
+        "evidence_test": "Evaluate performance on a held-out 'recent training cohort' (months 10\u201312) as planned, but also compare it to the validation and test sets. If performance degrades significantly on the recent cohort, it indicates temporal drift that the split did not address. Additionally, perform a 'leave-one-month-out' cross-validation to quantify month-to-month variability in performance.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer model's uplift is due to semantic understanding rather than template memorization or data leakage.",
+        "failure_mechanism": "The near-duplicate removal (same sender, recipient, subject within 7 days) and campaign novelty stratification are good controls, but they may not fully eliminate the risk of template memorization. For example, if the transformer has seen similar email bodies in training (even if not exact duplicates), it could still memorize phrasing patterns associated with phishing. The baseline (header/URL features) may also memorize templates if it relies on keyword matching or URL patterns seen in training.",
+        "evidence_test": "Ablate the transformer's ability to memorize by training it on a synthetic dataset where phishing emails are randomly shuffled (breaking sender-recipient-subject coherence) but retain the same semantic content. If the transformer's performance drops significantly, memorization is a major contributor to uplift. Similarly, evaluate the baseline on the same shuffled dataset \u2014 if it retains performance, the baseline is template-dependent.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (logistic regression on header/URL features) receives equivalent tuning effort to the transformer model.",
+        "failure_mechanism": "The baseline's tuning is described as 'grid-searched on the validation set' and 'class weights tuned to match the transformer's operating point post-hoc.' This introduces a risk of overfitting the baseline to the validation set or to the transformer's performance, which could inflate the apparent fairness of the comparison. The transformer's operating point is determined after validation, so tuning the baseline to match it retroactively biases the comparison.",
+        "evidence_test": "Re-tune the baseline independently of the transformer (e.g., using a separate validation split or cross-validation) and compare performance. If the baseline's performance changes significantly, the original tuning was overfit. Additionally, report the baseline's performance on the validation set before any post-hoc adjustments.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer model's sender-history features are identical to the baseline's, isolating the effect of text modeling.",
+        "failure_mechanism": "The sender-history features (e.g., sender domain reputation, historical phishing rate) may interact with the text features in non-linear ways. For example, a sender with a high historical phishing rate might be more likely to send phishing emails, but the text features could also encode sender-specific patterns (e.g., signature styles). The design does not test whether the sender-history features are redundant or complementary to the text features.",
+        "evidence_test": "Train the transformer model with and without sender-history features and compare performance. If the uplift is primarily driven by sender-history features rather than text modeling, the hypothesis is not supported. Additionally, perform an ablation where sender-history features are randomized (breaking their correlation with phishing) to test their importance.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate primary metric for phishing detection in the operational context.",
+        "failure_mechanism": "PR-AUC is a reasonable choice for imbalanced data, but it may not fully reflect the operational priorities. For example, if the SOC prioritizes minimizing false positives at a specific recall threshold (e.g., 95% recall), PR-AUC could mask poor performance at that threshold. The secondary metrics include precision at 95% recall, but the primary metric does not directly optimize for this operating point.",
+        "evidence_test": "Report the model's precision at the 95% recall operating point as the primary metric and compare it to the baseline. If the transformer's advantage is not significant at this threshold, PR-AUC may be masking a critical failure mode. Additionally, evaluate calibration error \u2014 if the model is poorly calibrated, PR-AUC may overestimate its utility in deployment.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC has several critical flaws that could invalidate its conclusions, including potential label leakage, temporal distribution shift, and template memorization. These issues primarily affect the validity of the uplift claim and the generalization to deployment. Material flaws include baseline tuning biases and metric limitations.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims the 30-day grace period introduces temporal bias. However, the grace period is a labeling requirement, not a feature. The labels are finalized *after* the window, but the emails are still split chronologically. The critic suggests the transformer might be better at 'harder to label' cases, but this is a property of the signal, not a flaw in the methodology. The design already includes a robustness check on 'label-uncertain' emails (Section 7c), which directly addresses the critic's concern about label reliability. \n\nF2 argues that a chronological split doesn't guarantee generalization due to non-stationarity. This is the definition of non-stationarity. The design explicitly chooses a chronological split *because* of this (Section 2). The critic suggests 'leave-one-month-out' CV, but that would violate the temporal constraint and introduce leakage. The design already includes a 'recent training cohort' evaluation (Section 7d) to quantify drift. The split is the industry standard for this problem; the critic is asking for a guarantee that no distribution shift exists, which is impossible by definition.\n\nF3 suggests that near-duplicate removal isn't enough to stop template memorization. The design already implements campaign novelty stratification (Section 7b), which separates campaigns seen in training from those seen in testing. This is the primary control for template memorization. The critic's suggestion to 'shuffle' text is a synthetic test that doesn't reflect real-world phishing (where structure matters), and the design's stratification is a more rigorous, empirical control on real data.\n\nF4 claims that tuning the baseline's operating point post-hoc to match the transformer's is unfair. In a real-world SOC deployment, you don't pick a random threshold; you pick the threshold that meets your FP/FN budget. By matching the operating point, we are comparing the models at the same 'cost' to the SOC. This is a fair comparison of model capacity, not an overfit. The baseline's hyperparameters (L2) are grid-searched on validation, which is standard.\n\nF5 argues that sender-history features might interact non-linearly or be redundant. This is a request for an ablation study, not a flaw in the current design. The hypothesis is whether the transformer *with* history outperforms the baseline *with* history. The design isolates the text modeling by giving both models the same history features (Section 3). Whether they are redundant is an interesting secondary question, but it doesn't invalidate the primary hypothesis test.\n\nF6 claims PR-AUC might mask performance at specific thresholds. The design explicitly lists 'precision at 95% recall' and 'recall at 99% specificity' as secondary metrics (Section 6). PR-AUC is the standard for imbalanced data to evaluate the overall trade-off curve. Using it as primary while reporting specific operating points as secondary is the correct way to evaluate a classifier before a final threshold is chosen for deployment.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The concern regarding label reliability and the 'hard-to-label' subset is explicitly addressed in Section 7(c), which mandates a separate evaluation on the 'label-uncertain' cohort to ensure robustness to label noise. The grace period ensures label completeness, not bias."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly acknowledges non-stationarity in Section 2 and implements a chronological split to prevent leakage. Temporal drift is further quantified via the 'recent training cohort' analysis in Section 7(d). The critic's suggested CV would introduce the very leakage the design is built to avoid."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Template memorization is directly controlled by the campaign novelty stratification in Section 7(b), which evaluates performance on campaigns never seen during training. This is a more valid measure of generalization than the critic's proposed synthetic shuffling."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "Matching the operating point post-hoc is a deliberate design choice to ensure the models are compared at the same operational cost (FP rate), which is the only meaningful way to compare classifiers for SOC deployment. Hyperparameter tuning (L2) is correctly isolated to the validation set."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The hypothesis is whether the transformer-based approach outperforms the baseline. By providing identical sender-history features to both, the design correctly isolates the variable being tested (text modeling). An ablation of the history features is outside the scope of the primary hypothesis."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The design uses PR-AUC as a global measure of model quality but explicitly includes the SOC's critical operating points (precision at 95% recall, etc.) as secondary metrics in Section 6, ensuring that the primary metric does not mask operational failures."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were rebutted by existing design controls. However, F1 remains at adjusted severity 4 because while the 'label-uncertain' cohort is tested, the specific interaction between label delay and model type (the 'harder to label' hypothesis) requires an empirical check to fully resolve."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender cites Section 7(c) (evaluation on 'label-uncertain' cohort) as addressing label reliability concerns, but this does not directly address the core failure mechanism: whether the transformer's advantage is concentrated in emails with delayed labels (e.g., those requiring incident response confirmation). The 'label-uncertain' cohort is a robustness check for noise, not a mechanistic test of temporal bias in label timing. The defender does not provide evidence that performance gaps between transformer and baseline are not driven by alignment with delayed-labeling processes. The severity adjustment (-5) is disproportionate because the rebuttal does not resolve the specific conflation of model performance with label reliability."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender's justification directly addresses the failure mechanism by citing the chronological split (Section 2) and the 'recent training cohort' analysis (Section 7(d)) as controls for temporal drift. The critic's suggested leave-one-month-out CV is correctly dismissed as introducing leakage. The rebuttal is mechanistic and specific, and the severity adjustment (-5) is proportionate."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender cites campaign novelty stratification (Section 7(b)) as addressing template memorization, which is a valid control but does not fully eliminate the risk. The critic's proposed synthetic shuffling ablation would directly test whether the transformer's performance relies on coherent sender-recipient-subject patterns (a stronger test for memorization). The rebuttal reduces the concern but does not fully resolve it, as memorization could still occur via partial patterns or URL/header features. The severity adjustment (-4) is partially justified but underestimates residual risk."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender argues that matching operating points post-hoc is deliberate to ensure fair comparison at the same FP rate, but this does not address the failure mechanism: the baseline's tuning is retroactively adjusted to the transformer's performance, risking overfitting to the validation set. The rebuttal conflates 'fair comparison' with 'valid comparison'\u2014the latter requires independent tuning. The defender does not provide evidence that the baseline's performance is stable under independent tuning, leaving the risk of inflated comparison unresolved. The severity adjustment (-3) is disproportionate given the unresolved overfitting risk."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly argues that the hypothesis is about transformer text modeling vs. baseline, and identical sender-history features isolate this variable. The rebuttal is scope-based and directly addresses the finding's claim. The severity adjustment (-4) is proportionate."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender cites Section 6, which includes SOC-critical operating points (e.g., precision at 95% recall) as secondary metrics, ensuring PR-AUC does not mask operational failures. The rebuttal is mechanistic and specific, and the severity adjustment (-3) is proportionate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining positions on F2, F5, and F6 as they were accepted. For F1, the critic correctly notes that the 'label-uncertain' cohort tests noise, not the timing of the label; since the design lacks a specific control for label-timing bias, I am deferring to an empirical test. For F3, the campaign novelty stratification is a strong control but doesn't eliminate all memorization; I am deferring to the shuffling experiment. For F4, the critic's point about retroactive tuning is a valid methodological concern regarding validation leakage; I am deferring to an independent tuning test.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that Section 7(c) addresses label noise (uncertainty) rather than the temporal bias of label arrival (timing). To settle this, we will implement the suggested evidence test: comparing model performance on emails labeled within 7 days vs. those labeled between 8-30 days. If the transformer's uplift is consistent across both subsets, the design is vindicated. If the uplift is concentrated in the 8-30 day subset, the critique is validated, and we would need to re-evaluate the 'semantic' claim. The primary conclusion (transformer > baseline) remains valid if the transformer outperforms the baseline on both subsets, even if the magnitude differs, as the baseline also benefits from the same labels.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly acknowledges non-stationarity in Section 2 and implements a chronological split to prevent leakage. Temporal drift is further quantified via the 'recent training cohort' analysis in Section 7(d). The critic's suggested CV would introduce the very leakage the design is built to avoid.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "While campaign novelty stratification (Section 7(b)) controls for known templates, it cannot mathematically rule out the memorization of sub-template semantic fragments. We will settle this by performing the suggested synthetic shuffling ablation. If the transformer's performance remains stable on shuffled text, the design is vindicated. If it drops significantly, the critique is validated, suggesting the model relies on structural coherence. The primary conclusion survives if the baseline also shows a performance drop or if the relative uplift of the transformer persists despite the drop, as this would indicate the transformer is simply more efficient at using the available signals.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic's concern regarding the retroactive tuning of the baseline to the transformer's operating point is a valid point regarding validation set leakage. To resolve this, we will perform an independent tuning of the baseline using a separate validation fold. If the baseline's PR-AUC remains stable, the design is vindicated. If it drops significantly, the critique is validated. The primary conclusion survives because the transformer's performance is determined independently; a weaker baseline only increases the observed uplift, so an independent baseline can only either maintain or decrease the claimed advantage, not invert it.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The hypothesis is whether the transformer-based approach outperforms the baseline. By providing identical sender-history features to both, the design correctly isolates the variable being tested (text modeling). An ablation of the history features is outside the scope of the primary hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The design uses PR-AUC as a global measure of model quality but explicitly includes the SOC's critical operating points (precision at 95% recall, etc.) as secondary metrics in Section 6, ensuring that the primary metric does not mask operational failures.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While several findings were successfully rebutted, three material/fatal concerns (F1, F3, F4) were moved to DEFER as the design provided partial controls but not absolute mechanistic elimination of the failure modes. These will be settled by the named empirical tests."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day grace period for label finalization ensures high-quality labels without conflating label quality with model performance.",
+        "failure_mechanism": "The 30-day grace period may introduce a temporal bias where emails with delayed detections (e.g., those requiring incident response confirmation) are systematically different from those with immediate detections. If the transformer model is better at catching phishing emails that are harder to label (e.g., delayed compromise indicators), it could appear to outperform the baseline not due to semantic understanding but because it aligns better with the labeling process. This conflates model performance with label reliability.",
+        "evidence_test": "Compare model performance on emails labeled within 7 days vs. those labeled after 7 days (but within 30 days). If the transformer's advantage is concentrated in the delayed-label subset, the uplift is likely driven by label timing rather than semantic improvement. Additionally, evaluate performance on the held-out 'label-uncertain' cohort (unresolved after 30 days) \u2014 if the transformer performs poorly here, it suggests the model is overfitting to the labeling process rather than generalizing to true phishing signals.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) ensures generalization to future, unseen campaigns.",
+        "failure_mechanism": "A chronological split does not guarantee generalization to future campaigns if the temporal distribution shift is non-stationary in a way that the split fails to capture. For example, if phishing campaigns exhibit seasonal patterns (e.g., tax-season scams) or if the organization's email traffic changes (e.g., shift to remote work), the test set may not reflect the true deployment distribution. The design does not explicitly test for or mitigate such shifts.",
+        "evidence_test": "Evaluate performance on a held-out 'recent training cohort' (months 10\u201312) as planned, but also compare it to the validation and test sets. If performance degrades significantly on the recent cohort, it indicates temporal drift that the split did not address. Additionally, perform a 'leave-one-month-out' cross-validation to quantify month-to-month variability in performance.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer model's uplift is due to semantic understanding rather than template memorization or data leakage.",
+        "failure_mechanism": "The near-duplicate removal (same sender, recipient, subject within 7 days) and campaign novelty stratification are good controls, but they may not fully eliminate the risk of template memorization. For example, if the transformer has seen similar email bodies in training (even if not exact duplicates), it could still memorize phrasing patterns associated with phishing. The baseline (header/URL features) may also memorize templates if it relies on keyword matching or URL patterns seen in training.",
+        "evidence_test": "Ablate the transformer's ability to memorize by training it on a synthetic dataset where phishing emails are randomly shuffled (breaking sender-recipient-subject coherence) but retain the same semantic content. If the transformer's performance drops significantly, memorization is a major contributor to uplift. Similarly, evaluate the baseline on the same shuffled dataset \u2014 if it retains performance, the baseline is template-dependent.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (logistic regression on header/URL features) receives equivalent tuning effort to the transformer model.",
+        "failure_mechanism": "The baseline's tuning is described as 'grid-searched on the validation set' and 'class weights tuned to match the transformer's operating point post-hoc.' This introduces a risk of overfitting the baseline to the validation set or to the transformer's performance, which could inflate the apparent fairness of the comparison. The transformer's operating point is determined after validation, so tuning the baseline to match it retroactively biases the comparison.",
+        "evidence_test": "Re-tune the baseline independently of the transformer (e.g., using a separate validation split or cross-validation) and compare performance. If the baseline's performance changes significantly, the original tuning was overfit. Additionally, report the baseline's performance on the validation set before any post-hoc adjustments.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer model's sender-history features are identical to the baseline's, isolating the effect of text modeling.",
+        "failure_mechanism": "The sender-history features (e.g., sender domain reputation, historical phishing rate) may interact with the text features in non-linear ways. For example, a sender with a high historical phishing rate might be more likely to send phishing emails, but the text features could also encode sender-specific patterns (e.g., signature styles). The design does not test whether the sender-history features are redundant or complementary to the text features.",
+        "evidence_test": "Train the transformer model with and without sender-history features and compare performance. If the uplift is primarily driven by sender-history features rather than text modeling, the hypothesis is not supported. Additionally, perform an ablation where sender-history features are randomized (breaking their correlation with phishing) to test their importance.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate primary metric for phishing detection in the operational context.",
+        "failure_mechanism": "PR-AUC is a reasonable choice for imbalanced data, but it may not fully reflect the operational priorities. For example, if the SOC prioritizes minimizing false positives at a specific recall threshold (e.g., 95% recall), PR-AUC could mask poor performance at that threshold. The secondary metrics include precision at 95% recall, but the primary metric does not directly optimize for this operating point.",
+        "evidence_test": "Report the model's precision at the 95% recall operating point as the primary metric and compare it to the baseline. If the transformer's advantage is not significant at this threshold, PR-AUC may be masking a critical failure mode. Additionally, evaluate calibration error \u2014 if the model is poorly calibrated, PR-AUC may overestimate its utility in deployment.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC has several critical flaws that could invalidate its conclusions, including potential label leakage, temporal distribution shift, and template memorization. These issues primarily affect the validity of the uplift claim and the generalization to deployment. Material flaws include baseline tuning biases and metric limitations.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining positions on F2, F5, and F6 as they were accepted. For F1, the critic correctly notes that the 'label-uncertain' cohort tests noise, not the timing of the label; since the design lacks a specific control for label-timing bias, I am deferring to an empirical test. For F3, the campaign novelty stratification is a strong control but doesn't eliminate all memorization; I am deferring to the shuffling experiment. For F4, the critic's point about retroactive tuning is a valid methodological concern regarding validation leakage; I am deferring to an independent tuning test.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that Section 7(c) addresses label noise (uncertainty) rather than the temporal bias of label arrival (timing). To settle this, we will implement the suggested evidence test: comparing model performance on emails labeled within 7 days vs. those labeled between 8-30 days. If the transformer's uplift is consistent across both subsets, the design is vindicated. If the uplift is concentrated in the 8-30 day subset, the critique is validated, and we would need to re-evaluate the 'semantic' claim. The primary conclusion (transformer > baseline) remains valid if the transformer outperforms the baseline on both subsets, even if the magnitude differs, as the baseline also benefits from the same labels.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly acknowledges non-stationarity in Section 2 and implements a chronological split to prevent leakage. Temporal drift is further quantified via the 'recent training cohort' analysis in Section 7(d). The critic's suggested CV would introduce the very leakage the design is built to avoid.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "While campaign novelty stratification (Section 7(b)) controls for known templates, it cannot mathematically rule out the memorization of sub-template semantic fragments. We will settle this by performing the suggested synthetic shuffling ablation. If the transformer's performance remains stable on shuffled text, the design is vindicated. If it drops significantly, the critique is validated, suggesting the model relies on structural coherence. The primary conclusion survives if the baseline also shows a performance drop or if the relative uplift of the transformer persists despite the drop, as this would indicate the transformer is simply more efficient at using the available signals.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic's concern regarding the retroactive tuning of the baseline to the transformer's operating point is a valid point regarding validation set leakage. To resolve this, we will perform an independent tuning of the baseline using a separate validation fold. If the baseline's PR-AUC remains stable, the design is vindicated. If it drops significantly, the critique is validated. The primary conclusion survives because the transformer's performance is determined independently; a weaker baseline only increases the observed uplift, so an independent baseline can only either maintain or decrease the claimed advantage, not invert it.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The hypothesis is whether the transformer-based approach outperforms the baseline. By providing identical sender-history features to both, the design correctly isolates the variable being tested (text modeling). An ablation of the history features is outside the scope of the primary hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The design uses PR-AUC as a global measure of model quality but explicitly includes the SOC's critical operating points (precision at 95% recall, etc.) as secondary metrics in Section 6, ensuring that the primary metric does not mask operational failures.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While several findings were successfully rebutted, three material/fatal concerns (F1, F3, F4) were moved to DEFER as the design provided partial controls but not absolute mechanistic elimination of the failure modes. These will be settled by the named empirical tests."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=9 \u2265 7 + adj_sev=9 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

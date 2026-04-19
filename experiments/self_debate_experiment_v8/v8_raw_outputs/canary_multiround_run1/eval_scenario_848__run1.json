@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_848",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Excluding emails without confirmed labels after 30 days ensures label quality is not conflated with model performance without affecting evaluation validity",
+        "failure_mechanism": "Excluding unconfirmed emails creates systematic selection bias. These emails are likely the hardest cases (ambiguous, low-confidence, or delayed-detection scenarios). By removing them from the primary evaluation, the model is never tested on the cases where it would most likely fail in production. This artificially inflates performance estimates and the excluded emails are only evaluated in a 'separate robustness check' that doesn't count toward the primary hypothesis verdict.",
+        "evidence_test": "Compare the distribution of excluded emails vs. included emails on key features (sender reputation, text complexity, time-to-label). If excluded emails have systematically different characteristics, the primary evaluation does not represent the full deployment distribution.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Chronological split (months 1-12 train, 13-15 validation, 16-18 test) prevents leakage from recurring campaigns",
+        "failure_mechanism": "Phishing campaigns often span multiple months. Without explicit campaign-level tracking and blocking, emails from the same campaign could appear in both training and test sets (e.g., campaign starts month 11, continues through month 16). This creates signal leakage where the model has seen similar attack patterns during training, inflating test performance estimates.",
+        "evidence_test": "Cluster emails by campaign indicators (sender infrastructure, subject patterns, URL domains) and verify no campaign appears in both training and test sets. Check if any campaign spans across the temporal split boundaries.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "DistilBERT pretrained encoder is appropriate for phishing detection without domain-specific pretraining",
+        "failure_mechanism": "DistilBERT was pretrained on general web text, not security-specific content. Phishing detection requires understanding of security-relevant patterns (URL obfuscation, social engineering language, attachment naming tricks) that may not be well-represented in general pretraining. The model may underperform not because transformers are inferior, but because the pretrained weights are suboptimal for this domain.",
+        "evidence_test": "Compare performance with security-specific pretrained models (e.g., models pretrained on phishing datasets or security corpora). If performance gap disappears, the pretrained encoder choice is the limiting factor.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Three-month validation set (months 13-15) is sufficient for hyperparameter tuning without overfitting",
+        "failure_mechanism": "With only 3 months of validation data, the validation set may not represent the deployment distribution. Hyperparameters could overfit to this specific validation period, leading to poor generalization to the test set. The validation set is also temporally adjacent to the test set, which may not capture the full range of distribution shift the model will face in production.",
+        "evidence_test": "Check if validation set distribution matches test set distribution on key features. Run cross-validation within the validation period to assess stability of hyperparameter selection.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is appropriate as the primary metric for phishing detection given operational priorities",
+        "failure_mechanism": "PR-AUC is an aggregate metric that doesn't directly measure performance at the specific operating point the SOC cares about (low false-positive rates). A model could have high PR-AUC but poor performance at the actual deployment operating point. The secondary metrics (precision at 95% recall, FPR at operating point) are reported but don't drive model selection.",
+        "evidence_test": "Compare PR-AUC rankings with performance at the actual deployment operating point. If models rank differently, the metric is misaligned with the deployment objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Transformer training strategy ('lightly fine-tuned or frozen, to be determined in ablation') will not affect the validity of the comparison",
+        "failure_mechanism": "The decision between fine-tuning vs. frozen encoder significantly affects model capacity and performance. Making this decision after seeing results (or during ablation) introduces selection bias. The comparison may favor whichever strategy produces better results rather than testing the true transformer capability.",
+        "evidence_test": "Run the experiment with both strategies fixed before evaluation. Compare whether the conclusion (transformer outperforms baseline) holds across both strategies.",
+        "flaw_category": "ambiguous_evidence"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Logistic regression on header/URL features is a fair baseline for transformer comparison",
+        "failure_mechanism": "While this is a reasonable baseline, there may be other reasonable baselines (e.g., rule-based phishing filters, ensemble methods, or other ML models). The claim of 'outperforms' is relative to this specific baseline, not to the state of the art in phishing detection.",
+        "evidence_test": "Compare against additional baselines (rule-based filters, other ML models). If transformer doesn't outperform these, the claim of superiority is weakened.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC has two FATAL flaws (label exclusion bias and potential campaign leakage) that could invalidate the primary conclusion. Three MATERIAL flaws (pretrained encoder suitability, validation set representativeness, and metric-objective mismatch) weaken the central claim but do not fully invalidate it. The design is generally sound for temporal evaluation but requires verification of campaign-level separation and label exclusion impact before deployment.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Analyzing each finding in turn:\n\n**F1 (severity 8):** The critic claims excluding unconfirmed emails after 30 days creates selection bias by removing hardest cases. However, the methodology explicitly acknowledges this and includes a separate robustness check for these emails. This is a deliberate design choice: in operational phishing detection, you cannot evaluate model performance on ambiguous labels. The critic's concern is valid in principle, but the design choice is justified - you need confirmed labels to evaluate model performance, and the robustness check provides additional signal. The evidence test (comparing distributions) would be informative but doesn't invalidate the primary evaluation design.\n\n**F2 (severity 7):** The critic claims chronological split alone doesn't prevent campaign-level leakage. However, the methodology explicitly includes campaign novelty stratification: 'test performance is stratified by campaign novelty (campaigns first seen in training vs. test period) to assess generalization to novel campaigns.' This is a form of campaign-level tracking that addresses the concern. The critic is correct that explicit campaign blocking isn't described, but the stratification allows assessment of whether uplift comes from novel campaigns. This is a partial control, not a complete absence of mitigation.\n\n**F3 (severity 6):** The critic claims DistilBERT lacks security-specific pretraining. This is a valid concern about domain mismatch, but it's explicitly marked for ablation exploration ('lightly fine-tuned or frozen, to be determined in ablation'). Comparing against security-specific models is a reasonable follow-up but beyond the PoC scope - the hypothesis tests whether transformer-based text understanding helps, not whether security-specific pretraining is optimal.\n\n**F4 (severity 5):** The critic claims 3-month validation set may overfit. This is a reasonable concern, but the temporal adjacency is deliberate - it reflects the deployment scenario where validation data is recent. Early stopping on PR-AUC provides regularization. Cross-validation within the period would be informative but the current design is reasonable for a PoC.\n\n**F5 (severity 5):** The critic claims PR-AUC doesn't directly measure performance at the operating point. This is technically true, but the methodology explicitly includes secondary metrics (precision at 95% recall, FPR at operating point) that address this. Using PR-AUC for model selection in a PoC is standard practice - the secondary metrics provide additional operational insight.\n\n**F6 (severity 4):** The critic claims fine-tuning vs. frozen decision made during ablation introduces selection bias. However, ablation studies are standard ML practice. The methodology doesn't suggest cherry-picking - it plans to explore both strategies systematically. This is an acceptable practice for a PoC.\n\n**F7 (severity 3):** The critic claims logistic regression may not be a comprehensive baseline. This is true but the baseline is reasonable and standard in phishing research. The hypothesis is specifically about transformer vs. header/URL approaches, not vs. all possible baselines.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The exclusion of unconfirmed emails is a deliberate design choice explicitly acknowledged in the methodology. The 30-day grace period ensures label quality - evaluating on ambiguous labels would conflate model performance with label uncertainty. The methodology includes a separate robustness check for these excluded emails, providing additional signal about model behavior on uncertain cases. The critic's concern is valid in principle (harder cases are excluded), but the design choice is justified: confirmed labels are necessary for valid evaluation, and the robustness check addresses the concern partially. This is a known trade-off in operational ML evaluation, not a flaw."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly includes campaign novelty stratification: 'test performance is stratified by campaign novelty (campaigns first seen in training vs. test period) to assess generalization to novel campaigns.' This provides a mechanism to detect whether uplift is driven by novel campaigns vs. recurring campaigns. While explicit campaign-level blocking isn't described, the stratification allows assessment of whether the transformer generalizes to unseen campaigns. The critic correctly notes that campaigns could span temporal boundaries, but the design includes a control to measure this effect. This is a partial mitigation, not an absence of concern handling."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The concern about DistilBERT's general-domain pretraining is valid in a production context, but the methodology explicitly marks this for ablation: 'lightly fine-tuned or frozen, to be determined in ablation.' The hypothesis under test is whether transformer-based text understanding outperforms header/URL baselines - not whether security-specific pretraining is optimal. Comparing against security-specific pretrained models (as the critic suggests) is a reasonable follow-up investigation but beyond the PoC scope. The design appropriately plans to explore this dimension empirically."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The 3-month validation period is a deliberate design choice. Temporal adjacency to the test set is intentional - it reflects the operational deployment scenario where validation data represents recent data. Early stopping on validation PR-AUC provides regularization against overfitting. While cross-validation within the period would be more robust, the current design is reasonable for a PoC. The critic's concern about validation set representativeness is valid but does not invalidate the design."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "PR-AUC is an aggregate metric that doesn't directly measure operating point performance, but the methodology explicitly includes secondary metrics (precision at 95% recall, FPR at operating point, recall at 99% specificity, calibration error) that address this. Using PR-AUC for model selection in a PoC is standard practice - it provides a balanced view across thresholds. The secondary metrics are reported to provide operational insight. The design choice is deliberate and justified."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The decision between fine-tuning vs. frozen encoder is marked for ablation exploration. Ablation studies are standard ML practice to understand model behavior. The methodology doesn't suggest cherry-picking results - it plans to explore both strategies systematically. This is an acceptable practice for a PoC. The critic's concern about selection bias is valid in principle but the design appropriately plans to investigate this empirically rather than fixing a single strategy a priori."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Logistic regression on header/URL features is a reasonable and standard baseline in phishing detection research. The hypothesis specifically tests transformer-based text understanding vs. header/URL approaches, not vs. all possible baselines. Additional baselines (rule-based filters, ensemble methods) could be explored in follow-up work but are not necessary for the core hypothesis test. This is a minor limitation that doesn't affect the validity of the primary comparison."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All seven findings have been rebutted with adjusted severities \u2264 3. F1 and F2 (the two FATAL findings) are addressed through REBUT-DESIGN with explicit citations to design controls (robustness check for F1, campaign novelty stratification for F2). F3-F6 are either REBUT-DESIGN or REBUT-SCOPE, appropriately categorized. F7 is REBUT-IMMATERIAL. The methodology includes deliberate design choices with documented rationales for each concern raised. No finding remains above adjusted severity 3, so EXONERATE applies and defense_wins is the correct verdict."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The robustness check is explicitly separate from the primary evaluation. The finding concerns the validity of the *primary hypothesis verdict*, which relies on the biased test set. A separate check does not correct the bias in the primary metric. The severity reduction from 8 to 3 is disproportionate; the fundamental validity of the primary claim remains compromised because the excluded emails are not part of the primary test distribution."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "Stratification is an analysis technique, not a data split control. It measures the *impact* of leakage but does not prevent the leakage itself. If campaigns span splits, the test set performance is still inflated by training on similar patterns. The finding's concern about signal leakage remains unresolved because the split strategy does not explicitly block campaign overlap."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The ablation plan acknowledges the uncertainty regarding pretraining, but the primary result still depends on the unverified assumption that DistilBERT is appropriate. The severity reduction is too aggressive; the risk of suboptimal weights affecting the outcome remains, even if the scope is limited to the architecture class."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The design admits the limitation ('reasonable for a PoC') but does not eliminate the risk of overfitting to the specific validation period. Early stopping mitigates but does not resolve the representativeness concern. The validation set may still not capture the full range of distribution shift."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "Reporting secondary metrics does not prevent the selection bias introduced by using PR-AUC for model selection. The model is still tuned to optimize PR-AUC, not the operational operating point. The finding's mechanism regarding metric misalignment with the selection process remains valid."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "While ablation is planned, the final model choice still depends on the results of the ablation, which constitutes a form of selection. The finding's concern about selection bias is partially mitigated by the planned exploration, but the final claim still relies on the best-performing strategy, leaving residual bias."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The hypothesis is explicitly scoped to comparing text modeling against header/URL features. The baseline choice is consistent with this scope. The finding challenges a broader claim ('outperforms state of the art') which is not the defined hypothesis. The scope argument is valid and resolves the concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am defending against 3 CHALLENGEs (F1, F2, F5) and 3 PARTIALs (F3, F4, F6). For F1: the design explicitly controls for label quality via 30-day grace period - the trade-off (excluding harder cases) is acknowledged with a robustness check. This is a design control, not an absence of concern handling. For F2: the critic correctly notes that stratification is analysis, not prevention - I CONCEDE that explicit campaign-level blocking is absent. For F5: model selection uses PR-AUC but the design explicitly includes secondary metrics for operational insight - this is a deliberate design choice acknowledged in the methodology. F3, F4, F6 are PARTIAL where my scope/rationale arguments remain valid but residual uncertainty exists.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The design control is the 30-day grace period ensuring confirmed labels. The methodology explicitly acknowledges the trade-off: 'Any email without a confirmed label after 30 days is excluded from the primary train/validation/test sets but held out for a separate robustness check.' This is not an unaddressed concern - it's a deliberate design choice with explicit mitigation (robustness check). The claim in the finding ('without affecting evaluation validity') overstates what the methodology claims - the methodology acknowledges the evaluation is on confirmed labels only. The design appropriately controls for label quality, which is necessary for valid comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies that stratification is an analysis technique, not a prevention mechanism. While the methodology includes campaign novelty stratification, there is no explicit campaign-level blocking in the data split to prevent emails from the same campaign appearing in both training and test sets. The design does not have a control mechanism to ensure campaign-level separation across the temporal split. This is a valid concern that would require explicit campaign tracking and blocking to resolve.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The hypothesis under test is whether transformer-based text understanding outperforms header/URL baselines - not whether security-specific pretraining is optimal. The scope is explicitly limited to the architecture class comparison. The ablation plan to explore fine-tuning vs. frozen is standard ML practice to understand model behavior. The critic's PARTIAL acceptance correctly acknowledges the scope limitation. The residual risk the critic notes (suboptimal weights affecting outcome) is acknowledged and planned for empirical investigation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly acknowledges this is a PoC-level choice. The temporal adjacency to test set is intentional - it reflects operational deployment where validation represents recent data. Early stopping on validation PR-AUC provides regularization. The design choice is deliberate and justified for the PoC scope. The PARTIAL challenge accepts the limitation is acknowledged but notes residual risk - which is the nature of a PoC evaluation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Model selection uses PR-AUC as the primary metric, but the design explicitly includes secondary metrics (precision at 95% recall, FPR at operating point, recall at 99% specificity, calibration error) 'to provide operational insight.' This is a deliberate design choice - the primary metric optimizes for aggregate ranking while secondary metrics inform operating point selection. The methodology explicitly acknowledges PR-AUC doesn't directly measure operating point performance and provides additional metrics to address this. The CHALLENGE conflates selection metric with operational reporting - the design explicitly provides both.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The ablation study is planned exploration to understand model behavior - it's not cherry-picking but systematic investigation. The methodology doesn't suggest selecting the best result post-hoc; it plans to explore both strategies empirically. This is standard ML practice. The PARTIAL challenge accepts the plan but notes residual selection - which is inherent to any ablation study and acceptable for PoC scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The hypothesis explicitly scopes the comparison to 'transformer-based classifier with full message text and sender history' vs. 'header/URL-based baseline.' The baseline choice is consistent with this scope. The ACCEPT verdict is appropriate.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F2 (campaign leakage) is CONCEDED as a FATAL finding (original severity 7) with adjusted_severity 7 > 3. While I successfully defended other findings (F1, F3-F7), the CONCEDE on F2 represents an undeniable flaw in the temporal split strategy - without explicit campaign-level blocking, the methodology cannot ensure campaigns don't span split boundaries, which would inflate test performance. This single CONCEDED FATAL finding triggers the critique_wins verdict."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Excluding emails without confirmed labels after 30 days ensures label quality is not conflated with model performance without affecting evaluation validity",
+        "failure_mechanism": "Excluding unconfirmed emails creates systematic selection bias. These emails are likely the hardest cases (ambiguous, low-confidence, or delayed-detection scenarios). By removing them from the primary evaluation, the model is never tested on the cases where it would most likely fail in production. This artificially inflates performance estimates and the excluded emails are only evaluated in a 'separate robustness check' that doesn't count toward the primary hypothesis verdict.",
+        "evidence_test": "Compare the distribution of excluded emails vs. included emails on key features (sender reputation, text complexity, time-to-label). If excluded emails have systematically different characteristics, the primary evaluation does not represent the full deployment distribution.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Chronological split (months 1-12 train, 13-15 validation, 16-18 test) prevents leakage from recurring campaigns",
+        "failure_mechanism": "Phishing campaigns often span multiple months. Without explicit campaign-level tracking and blocking, emails from the same campaign could appear in both training and test sets (e.g., campaign starts month 11, continues through month 16). This creates signal leakage where the model has seen similar attack patterns during training, inflating test performance estimates.",
+        "evidence_test": "Cluster emails by campaign indicators (sender infrastructure, subject patterns, URL domains) and verify no campaign appears in both training and test sets. Check if any campaign spans across the temporal split boundaries.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "DistilBERT pretrained encoder is appropriate for phishing detection without domain-specific pretraining",
+        "failure_mechanism": "DistilBERT was pretrained on general web text, not security-specific content. Phishing detection requires understanding of security-relevant patterns (URL obfuscation, social engineering language, attachment naming tricks) that may not be well-represented in general pretraining. The model may underperform not because transformers are inferior, but because the pretrained weights are suboptimal for this domain.",
+        "evidence_test": "Compare performance with security-specific pretrained models (e.g., models pretrained on phishing datasets or security corpora). If performance gap disappears, the pretrained encoder choice is the limiting factor.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Three-month validation set (months 13-15) is sufficient for hyperparameter tuning without overfitting",
+        "failure_mechanism": "With only 3 months of validation data, the validation set may not represent the deployment distribution. Hyperparameters could overfit to this specific validation period, leading to poor generalization to the test set. The validation set is also temporally adjacent to the test set, which may not capture the full range of distribution shift the model will face in production.",
+        "evidence_test": "Check if validation set distribution matches test set distribution on key features. Run cross-validation within the validation period to assess stability of hyperparameter selection.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is appropriate as the primary metric for phishing detection given operational priorities",
+        "failure_mechanism": "PR-AUC is an aggregate metric that doesn't directly measure performance at the specific operating point the SOC cares about (low false-positive rates). A model could have high PR-AUC but poor performance at the actual deployment operating point. The secondary metrics (precision at 95% recall, FPR at operating point) are reported but don't drive model selection.",
+        "evidence_test": "Compare PR-AUC rankings with performance at the actual deployment operating point. If models rank differently, the metric is misaligned with the deployment objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Transformer training strategy ('lightly fine-tuned or frozen, to be determined in ablation') will not affect the validity of the comparison",
+        "failure_mechanism": "The decision between fine-tuning vs. frozen encoder significantly affects model capacity and performance. Making this decision after seeing results (or during ablation) introduces selection bias. The comparison may favor whichever strategy produces better results rather than testing the true transformer capability.",
+        "evidence_test": "Run the experiment with both strategies fixed before evaluation. Compare whether the conclusion (transformer outperforms baseline) holds across both strategies.",
+        "flaw_category": "ambiguous_evidence"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Logistic regression on header/URL features is a fair baseline for transformer comparison",
+        "failure_mechanism": "While this is a reasonable baseline, there may be other reasonable baselines (e.g., rule-based phishing filters, ensemble methods, or other ML models). The claim of 'outperforms' is relative to this specific baseline, not to the state of the art in phishing detection.",
+        "evidence_test": "Compare against additional baselines (rule-based filters, other ML models). If transformer doesn't outperform these, the claim of superiority is weakened.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC has two FATAL flaws (label exclusion bias and potential campaign leakage) that could invalidate the primary conclusion. Three MATERIAL flaws (pretrained encoder suitability, validation set representativeness, and metric-objective mismatch) weaken the central claim but do not fully invalidate it. The design is generally sound for temporal evaluation but requires verification of campaign-level separation and label exclusion impact before deployment.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am defending against 3 CHALLENGEs (F1, F2, F5) and 3 PARTIALs (F3, F4, F6). For F1: the design explicitly controls for label quality via 30-day grace period - the trade-off (excluding harder cases) is acknowledged with a robustness check. This is a design control, not an absence of concern handling. For F2: the critic correctly notes that stratification is analysis, not prevention - I CONCEDE that explicit campaign-level blocking is absent. For F5: model selection uses PR-AUC but the design explicitly includes secondary metrics for operational insight - this is a deliberate design choice acknowledged in the methodology. F3, F4, F6 are PARTIAL where my scope/rationale arguments remain valid but residual uncertainty exists.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The design control is the 30-day grace period ensuring confirmed labels. The methodology explicitly acknowledges the trade-off: 'Any email without a confirmed label after 30 days is excluded from the primary train/validation/test sets but held out for a separate robustness check.' This is not an unaddressed concern - it's a deliberate design choice with explicit mitigation (robustness check). The claim in the finding ('without affecting evaluation validity') overstates what the methodology claims - the methodology acknowledges the evaluation is on confirmed labels only. The design appropriately controls for label quality, which is necessary for valid comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies that stratification is an analysis technique, not a prevention mechanism. While the methodology includes campaign novelty stratification, there is no explicit campaign-level blocking in the data split to prevent emails from the same campaign appearing in both training and test sets. The design does not have a control mechanism to ensure campaign-level separation across the temporal split. This is a valid concern that would require explicit campaign tracking and blocking to resolve.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The hypothesis under test is whether transformer-based text understanding outperforms header/URL baselines - not whether security-specific pretraining is optimal. The scope is explicitly limited to the architecture class comparison. The ablation plan to explore fine-tuning vs. frozen is standard ML practice to understand model behavior. The critic's PARTIAL acceptance correctly acknowledges the scope limitation. The residual risk the critic notes (suboptimal weights affecting outcome) is acknowledged and planned for empirical investigation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly acknowledges this is a PoC-level choice. The temporal adjacency to test set is intentional - it reflects operational deployment where validation represents recent data. Early stopping on validation PR-AUC provides regularization. The design choice is deliberate and justified for the PoC scope. The PARTIAL challenge accepts the limitation is acknowledged but notes residual risk - which is the nature of a PoC evaluation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Model selection uses PR-AUC as the primary metric, but the design explicitly includes secondary metrics (precision at 95% recall, FPR at operating point, recall at 99% specificity, calibration error) 'to provide operational insight.' This is a deliberate design choice - the primary metric optimizes for aggregate ranking while secondary metrics inform operating point selection. The methodology explicitly acknowledges PR-AUC doesn't directly measure operating point performance and provides additional metrics to address this. The CHALLENGE conflates selection metric with operational reporting - the design explicitly provides both.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The ablation study is planned exploration to understand model behavior - it's not cherry-picking but systematic investigation. The methodology doesn't suggest selecting the best result post-hoc; it plans to explore both strategies empirically. This is standard ML practice. The PARTIAL challenge accepts the plan but notes residual selection - which is inherent to any ablation study and acceptable for PoC scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The hypothesis explicitly scopes the comparison to 'transformer-based classifier with full message text and sender history' vs. 'header/URL-based baseline.' The baseline choice is consistent with this scope. The ACCEPT verdict is appropriate.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F2 (campaign leakage) is CONCEDED as a FATAL finding (original severity 7) with adjusted_severity 7 > 3. While I successfully defended other findings (F1, F3-F7), the CONCEDE on F2 represents an undeniable flaw in the temporal split strategy - without explicit campaign-level blocking, the methodology cannot ensure campaigns don't span split boundaries, which would inflate test performance. This single CONCEDED FATAL finding triggers the critique_wins verdict."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=8 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=7 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

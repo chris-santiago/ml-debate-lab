@@ -1,0 +1,352 @@
+{
+  "case_id": "eval_scenario_819",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "meta-llama/llama-4-maverick",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The validation set (months 25-30) is used for both hyperparameter tuning via grid search AND 5-fold cross-validation model selection, with the best configuration locked based on mean AUROC across folds.",
+        "failure_mechanism": "This creates a form of optimistic bias: the model selection process itself is fitting to the validation set's distribution. While the test set remains held out, the validation set effectively becomes part of the development process. The 5-fold CV mean is a point estimate with variance; selecting the highest mean AUROC configuration can overfit to noise in the validation folds. This is particularly concerning when the search space is large relative to the validation set size.",
+        "evidence_test": "Compare validation set AUROC (after model selection) against a nested cross-validation estimate done within the training set. If validation AUROC is significantly higher than nested CV estimates, this indicates selection bias. Alternatively, use a nested CV approach where inner folds select hyperparameters and outer fold evaluates.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Pre-trained biomedical language model embeddings (BioBERT/ClinicalBERT) trained on external clinical corpora will capture clinically relevant signals in ED triage notes without domain shift issues.",
+        "failure_mechanism": "BioBERT and ClinicalBERT are typically trained on discharge summaries, clinical notes, and biomedical literature. ED triage notes have distinct linguistic characteristics: they are brief, use telegraphic style, contain nursing assessment language, and focus on initial presentation rather than diagnosis. There is no verification that the embedding space is appropriate for this specific document type. The model may fail to capture the relevant clinical concepts or may capture them suboptimally.",
+        "evidence_test": "Evaluate embedding quality on a held-out sample of ED triage notes: (1) perform nearest-neighbor analysis on embeddings to see if clinically similar presentations cluster, (2) evaluate zero-shot classification performance on triage note tasks, or (3) compare performance of embeddings from models fine-tuned on ED notes vs. frozen general clinical models.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The multimodal model's performance gains (if any) are attributable to clinical signal in text content, not to confounding factors like documentation practices.",
+        "failure_mechanism": "Triage note length is included as an explicit feature, which controls for one confounding pathway. However, the text embeddings may still capture indirect admission predictors: (1) nursing documentation style varies by acuity and correlates with admission probability, (2) sicker patients may trigger more detailed notes with specific phrases, (3) the presence of specific clinical concerns in notes (e.g., 'monitor', 'observed', 'concerning') may encode judgment that's part of the admission decision pathway. The experiment does not distinguish between the model learning clinical content vs. learning documentation patterns that are themselves influenced by admission likelihood.",
+        "evidence_test": "Run a perturbation analysis: (1) shuffle words within each note to destroy clinical content while preserving length and style, (2) compare performance on notes from high-admission-rate sites vs. low-admission-rate sites after controlling for acuity, (3) use attention visualization or feature ablation to identify which text segments drive predictions.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUROC is an appropriate primary metric for this deployment scenario, as it measures discrimination across all thresholds without requiring a specific operating point.",
+        "failure_mechanism": "AUROC measures rank-order discrimination but is insensitive to calibration and does not reflect operational utility at any specific threshold. For bed planning and triage escalation, the actual probability estimates matter\u2014not just the ordering. A model could have excellent AUROC but poor calibration (overconfident or underconfident), leading to incorrect resource allocation decisions. The secondary metrics include calibration error, but AUROC as primary may not align with deployment needs.",
+        "evidence_test": "If the deployment use case requires probability thresholds for action (e.g., 'if P(admission) > X, escalate'), evaluate primary metric as precision-recall curve or Brier score, or report AUROC alongside calibration curves at operationally relevant thresholds.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 6-month test set (months 31-36) provides sufficient sample size for stable AUROC estimates with confidence intervals narrow enough to detect meaningful performance differences.",
+        "failure_mechanism": "With 36 months total and roughly balanced admission rates (typically 15-25% for ED admissions), the test set contains approximately 6/36 = 1/6 of the data. If the system sees ~100,000 visits annually, the test set has ~50,000 visits. While this is reasonable, the confidence interval width depends on the number of positive cases (admissions), not just total visits. With ~20% admission rate, that's ~10,000 positive cases, yielding AUROC CI of approximately \u00b10.01-0.02, which may be too wide to detect small but clinically meaningful improvements.",
+        "evidence_test": "Calculate required sample size for detecting the expected effect size (e.g., 0.02 AUROC improvement) at 80% power. Report bootstrapped confidence intervals for AUROC in the test set.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC has solid foundational design with proper temporal splits and fair model comparison. However, three material concerns exist: (1) validation set is used for both tuning and selection without nested CV, creating potential optimistic bias; (2) pre-trained embeddings from general clinical models may not be appropriate for ED triage note language without verification; (3) the confound control for note length may be insufficient to distinguish clinical signal from documentation patterns. These issues weaken the interpretability of any performance difference between multimodal and structured models.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Detailed analysis of each finding is provided in the Pass 1 Analysis section.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The concern about validation set reuse for hyperparameter tuning and model selection is valid. A nested CV approach is suggested to resolve this uncertainty."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern about domain shift for pre-trained language models is valid. Evaluating embedding quality on ED triage notes is necessary."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern about confounding factors in text embeddings is valid. Perturbation analysis or feature ablation is needed to address this."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "While AUROC has limitations, the methodology includes secondary metrics that address calibration. The primary metric choice is reasonable for evaluating discrimination."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The test set size appears sufficient for a reasonable AUROC estimate. Reporting bootstrapped confidence intervals would provide additional clarity but is not critical."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Multiple MATERIAL findings were deferred for empirical testing, indicating that while the methodology is sound, certain aspects require further validation to fully address the critic's concerns."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 6,
+        "reasoning": "The defender used DEFER, acknowledging the concern is valid and that nested CV would resolve it. This appropriately defers the methodological question without attempting to rebut the concern. No counter needed - the finding remains material pending resolution."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender used DEFER, acknowledging domain shift evaluation is necessary. This is appropriate - the concern about BioBERT/ClinicalBERT appropriateness for ED triage notes is valid and requires empirical verification. No counter needed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "The defender used DEFER, acknowledging the confounding concern is valid and perturbation analysis is needed. This appropriately defers - the concern that text embeddings may capture documentation patterns rather than clinical content is legitimate and requires investigation. No counter needed."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender's REBUT-IMMATERIAL is valid. The finding argued AUROC as primary doesn't align with deployment needs because it ignores calibration. The methodology explicitly includes expected calibration error as a secondary metric, which directly addresses this limitation. While AUROC remains the primary metric, the design acknowledges and measures calibration separately. This is a reasonable design choice - using AUROC for discrimination comparison while evaluating calibration as a separate property. The severity adjustment to 1 is proportionate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender's REBUT-IMMATERIAL is valid. The concern was that the test set may be too small to detect small improvements. With ~50,000 visits and ~10,000 positive cases (at 20% admission rate), the AUROC confidence interval would be approximately \u00b10.01-0.02. While this limits detection of very small effect sizes, it's sufficient for detecting clinically meaningful differences (typically 0.02-0.05 AUROC). The defender correctly notes that bootstrapped CIs would add clarity but aren't critical. The severity adjustment to 1 is proportionate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic has accepted our rebuttals for F1, F2, and F3, acknowledging that deferring these concerns is appropriate. For F4 and F5, the critic accepted our REBUT-IMMATERIAL arguments, adjusting the severity downward. We will maintain our positions for F1-F3 and stand firm on F4 and F5.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic ACCEPTed our DEFER rebuttal, acknowledging that nested CV is needed to resolve the concern about validation set reuse. We maintain that deferring is appropriate until this analysis is performed.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic ACCEPTed our DEFER rebuttal, recognizing that evaluating embedding quality on ED triage notes is necessary. We stand by our decision to defer this concern.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic ACCEPTed our DEFER rebuttal, agreeing that perturbation analysis or feature ablation is needed to address confounding factors in text embeddings. We maintain that deferring is appropriate.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed our REBUT-IMMATERIAL, agreeing that including expected calibration error as a secondary metric addresses the limitation of AUROC as a primary metric. We stand firm that our methodology is reasonable.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed our REBUT-IMMATERIAL, agreeing that the test set size is sufficient for a reasonable AUROC estimate and that reporting bootstrapped confidence intervals, while useful, is not critical. We maintain our original position.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Multiple MATERIAL findings were deferred pending additional analyses, indicating that empirical testing is required to resolve these concerns."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The validation set (months 25-30) is used for both hyperparameter tuning via grid search AND 5-fold cross-validation model selection, with the best configuration locked based on mean AUROC across folds.",
+        "failure_mechanism": "This creates a form of optimistic bias: the model selection process itself is fitting to the validation set's distribution. While the test set remains held out, the validation set effectively becomes part of the development process. The 5-fold CV mean is a point estimate with variance; selecting the highest mean AUROC configuration can overfit to noise in the validation folds. This is particularly concerning when the search space is large relative to the validation set size.",
+        "evidence_test": "Compare validation set AUROC (after model selection) against a nested cross-validation estimate done within the training set. If validation AUROC is significantly higher than nested CV estimates, this indicates selection bias. Alternatively, use a nested CV approach where inner folds select hyperparameters and outer fold evaluates.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Pre-trained biomedical language model embeddings (BioBERT/ClinicalBERT) trained on external clinical corpora will capture clinically relevant signals in ED triage notes without domain shift issues.",
+        "failure_mechanism": "BioBERT and ClinicalBERT are typically trained on discharge summaries, clinical notes, and biomedical literature. ED triage notes have distinct linguistic characteristics: they are brief, use telegraphic style, contain nursing assessment language, and focus on initial presentation rather than diagnosis. There is no verification that the embedding space is appropriate for this specific document type. The model may fail to capture the relevant clinical concepts or may capture them suboptimally.",
+        "evidence_test": "Evaluate embedding quality on a held-out sample of ED triage notes: (1) perform nearest-neighbor analysis on embeddings to see if clinically similar presentations cluster, (2) evaluate zero-shot classification performance on triage note tasks, or (3) compare performance of embeddings from models fine-tuned on ED notes vs. frozen general clinical models.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The multimodal model's performance gains (if any) are attributable to clinical signal in text content, not to confounding factors like documentation practices.",
+        "failure_mechanism": "Triage note length is included as an explicit feature, which controls for one confounding pathway. However, the text embeddings may still capture indirect admission predictors: (1) nursing documentation style varies by acuity and correlates with admission probability, (2) sicker patients may trigger more detailed notes with specific phrases, (3) the presence of specific clinical concerns in notes (e.g., 'monitor', 'observed', 'concerning') may encode judgment that's part of the admission decision pathway. The experiment does not distinguish between the model learning clinical content vs. learning documentation patterns that are themselves influenced by admission likelihood.",
+        "evidence_test": "Run a perturbation analysis: (1) shuffle words within each note to destroy clinical content while preserving length and style, (2) compare performance on notes from high-admission-rate sites vs. low-admission-rate sites after controlling for acuity, (3) use attention visualization or feature ablation to identify which text segments drive predictions.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUROC is an appropriate primary metric for this deployment scenario, as it measures discrimination across all thresholds without requiring a specific operating point.",
+        "failure_mechanism": "AUROC measures rank-order discrimination but is insensitive to calibration and does not reflect operational utility at any specific threshold. For bed planning and triage escalation, the actual probability estimates matter\u2014not just the ordering. A model could have excellent AUROC but poor calibration (overconfident or underconfident), leading to incorrect resource allocation decisions. The secondary metrics include calibration error, but AUROC as primary may not align with deployment needs.",
+        "evidence_test": "If the deployment use case requires probability thresholds for action (e.g., 'if P(admission) > X, escalate'), evaluate primary metric as precision-recall curve or Brier score, or report AUROC alongside calibration curves at operationally relevant thresholds.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 6-month test set (months 31-36) provides sufficient sample size for stable AUROC estimates with confidence intervals narrow enough to detect meaningful performance differences.",
+        "failure_mechanism": "With 36 months total and roughly balanced admission rates (typically 15-25% for ED admissions), the test set contains approximately 6/36 = 1/6 of the data. If the system sees ~100,000 visits annually, the test set has ~50,000 visits. While this is reasonable, the confidence interval width depends on the number of positive cases (admissions), not just total visits. With ~20% admission rate, that's ~10,000 positive cases, yielding AUROC CI of approximately \u00b10.01-0.02, which may be too wide to detect small but clinically meaningful improvements.",
+        "evidence_test": "Calculate required sample size for detecting the expected effect size (e.g., 0.02 AUROC improvement) at 80% power. Report bootstrapped confidence intervals for AUROC in the test set.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC has solid foundational design with proper temporal splits and fair model comparison. However, three material concerns exist: (1) validation set is used for both tuning and selection without nested CV, creating potential optimistic bias; (2) pre-trained embeddings from general clinical models may not be appropriate for ED triage note language without verification; (3) the confound control for note length may be insufficient to distinguish clinical signal from documentation patterns. These issues weaken the interpretability of any performance difference between multimodal and structured models.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic has accepted our rebuttals for F1, F2, and F3, acknowledging that deferring these concerns is appropriate. For F4 and F5, the critic accepted our REBUT-IMMATERIAL arguments, adjusting the severity downward. We will maintain our positions for F1-F3 and stand firm on F4 and F5.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic ACCEPTed our DEFER rebuttal, acknowledging that nested CV is needed to resolve the concern about validation set reuse. We maintain that deferring is appropriate until this analysis is performed.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic ACCEPTed our DEFER rebuttal, recognizing that evaluating embedding quality on ED triage notes is necessary. We stand by our decision to defer this concern.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic ACCEPTed our DEFER rebuttal, agreeing that perturbation analysis or feature ablation is needed to address confounding factors in text embeddings. We maintain that deferring is appropriate.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed our REBUT-IMMATERIAL, agreeing that including expected calibration error as a secondary metric addresses the limitation of AUROC as a primary metric. We stand firm that our methodology is reasonable.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed our REBUT-IMMATERIAL, agreeing that the test set size is sufficient for a reasonable AUROC estimate and that reporting bootstrapped confidence intervals, while useful, is not critical. We maintain our original position.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Multiple MATERIAL findings were deferred pending additional analyses, indicating that empirical testing is required to resolve these concerns."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

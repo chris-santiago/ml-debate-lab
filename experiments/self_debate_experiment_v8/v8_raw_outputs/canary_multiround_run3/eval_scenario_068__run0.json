@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_068",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The sequence model and baseline logistic regression are compared fairly to determine whether sequence models exploit temporal structure",
+        "failure_mechanism": "The baseline uses summary statistics from the first 12 hours for ALL predictions (hours 6-60), while the sequence model uses data up to prediction time t (6-60 hours). At prediction hour 60, the sequence model has 60 hours of data while the baseline only has 12 hours. This creates an asymmetric information advantage that could explain any performance difference independent of temporal structure exploitation. The comparison is fundamentally confounded by unequal information windows.",
+        "evidence_test": "Train a sequence model restricted to the first 12 hours and compare to the baseline. If performance gap disappears, the original advantage was due to information window, not temporal structure.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The validation set provides reliable estimates for hyperparameter tuning and threshold selection",
+        "failure_mechanism": "Validation set is 5 months while training is 21 months (1:4 ratio). This small validation set could lead to unstable hyperparameter selection and threshold tuning. The operating point (FPR=10%) is selected on validation, then applied to test, which could inflate test performance if validation doesn't represent test distribution well.",
+        "evidence_test": "Perform nested cross-validation within training period to estimate variance in validation performance. Compare threshold selection stability across different validation splits.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sequence models exploit temporal structure in irregular ICU data for early sepsis prediction",
+        "failure_mechanism": "No baseline comparison uses the same temporal window as the sequence model. Without a sequence model restricted to 12 hours (matching baseline window) or a baseline that uses the same information window as the sequence model, claims about 'temporal structure exploitation' are not fully supported. The performance difference could be due to information quantity rather than temporal modeling.",
+        "evidence_test": "Train a sequence model with 12-hour window and compare to baseline. Train baseline with extended window matching sequence model and compare to sequence model.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hospital stratification ensures robustness across the health system and prevents site-specific overfitting",
+        "failure_mechanism": "The wording 'all sites appear in each split in equal proportions' is ambiguous. If this means global stratification rather than per-hospital stratification, there could be patient-level leakage across splits. Even with per-hospital stratification, if the same patient has multiple admissions, those admissions could appear in multiple splits.",
+        "evidence_test": "Verify that no patient ID appears in multiple splits. Verify that per-hospital stratification is implemented (each hospital's admissions split 60/20/20).",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Sepsis onset timestamp accurately reflects true physiological onset",
+        "failure_mechanism": "Clinical documentation of sepsis is retrospective and noisy. The 'onset timestamp' based on when clinicians documented sepsis may not reflect when sepsis physiologically occurred. This label noise affects both models but could impact absolute performance estimates and threshold selection.",
+        "evidence_test": "Compare model performance using expert-verified sepsis onset timestamps versus documentation-based timestamps. Assess label noise rate through chart review.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Manual review of 100 test predictions confirms sepsis onset is after prediction time",
+        "failure_mechanism": "100 predictions may not be representative of the full test set, especially if the test set is large. This spot-check could miss systematic leakage patterns that only appear in certain patient subgroups or time periods.",
+        "evidence_test": "Perform automated audit of all test predictions for temporal consistency. Verify that no prediction time has sepsis onset before prediction time.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC contains one FATAL flaw (baseline feature window mismatch) that fundamentally invalidates the comparison between sequence models and baseline. Three MATERIAL findings (validation set size, missing temporal baseline, hospital stratification ambiguity) significantly weaken confidence in the conclusions. Two MINOR findings (label noise, spot-check sample size) are noted but do not substantially affect the verdict.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Analyzing each finding:\n\n**F1 (FATAL, sev 8):** The critic correctly identifies that the baseline uses fixed 12-hour summary features while the sequence model uses data up to prediction time t (6-60 hours). This creates an information asymmetry where the sequence model has up to 60 hours of data at hour 60 vs. baseline's 12 hours. The methodology includes a \"Recency ablation\" control using only the most recent 6 hours to isolate temporal pattern gains. However, this ablation compares 6-hour sequence model vs full sequence model, not 12-hour sequence model vs baseline. The fundamental confounding remains: at any prediction time >12 hours, the sequence model has more raw data, not just more sophisticated temporal modeling. This DOES conflate information quantity with temporal structure exploitation. The control doesn't fully address this because it uses a 6-hour window, not a 12-hour window matching the baseline.\n\n**F2 (MATERIAL, sev 5):** The critic raises a valid concern about validation set size (5 months vs 21 months training). This is a standard ML practice concern - single validation sets are common. The methodology doesn't explicitly address validation stability. This is a legitimate concern about statistical reliability of hyperparameter selection, but it's a common practice and not a fundamental design flaw.\n\n**F3 (MATERIAL, sev 4):** This is essentially a restatement of F1's core concern. The methodology's recency ablation addresses comparing sequence models with different temporal windows, but doesn't provide a 12-hour sequence model for direct comparison. The concern is valid and overlaps with F1.\n\n**F4 (MATERIAL, sev 5):** The critic correctly identifies ambiguity: \"stratified by hospital site to ensure all sites appear in each split in equal proportions\" could mean global stratification (each site's overall proportion is maintained across splits) rather than per-hospital stratification (each hospital's admissions are split 60/20/20). The methodology doesn't mention patient-level deduplication - if the same patient has multiple ICU admissions, those could appear in different splits, causing leakage. This is a legitimate concern not addressed by any control.\n\n**F5 (MINOR, sev 3):** The label noise concern is real but affects both models equally since they use the same labels. This doesn't invalidate the comparative conclusion - both models are trained on the same noisy labels. The relative performance comparison remains valid.\n\n**F6 (MINOR, sev 2):** The spot-check concern is minor - 100 samples is a reasonable sanity check. This is standard practice for audit purposes.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly identifies that the baseline uses fixed 12-hour summary features while the sequence model uses data up to prediction time t. At prediction hour 60, the sequence model has 60 hours of data vs. baseline's 12 hours. While the methodology includes a 'Recency ablation' using 6 hours, this doesn't provide a 12-hour sequence model for direct comparison to the baseline. The information window asymmetry is real and confounds the claim about 'temporal structure exploitation' - the performance difference could be due to information quantity rather than temporal modeling sophistication. This is a genuine FATAL flaw."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern about validation set size (5 months vs 21 months training) is valid - smaller validation sets can lead to unstable hyperparameter selection. The methodology doesn't explicitly address validation stability. An empirical test comparing nested CV performance variance across training data would settle whether this causes actual instability. However, this is standard ML practice, and the experiment could still produce valid relative comparisons even with some hyperparameter noise."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Similar to F1 - without a sequence model trained on exactly the same 12-hour window as the baseline, or a baseline trained on extended windows, we cannot isolate temporal structure gains from information quantity gains. The recency ablation uses a 6-hour window, not 12-hour, so it doesn't provide the direct comparison needed. This concern is valid and overlaps with F1."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The stratification wording is genuinely ambiguous - 'ensure all sites appear in each split in equal proportions' could mean global stratification rather than per-hospital stratification. The methodology doesn't mention patient-level deduplication (preventing same patient from appearing in multiple splits). An empirical test checking for patient ID overlap across splits would settle this. However, this may or may not be a real issue depending on implementation - the concern is plausible but unverified."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Label noise in sepsis onset timestamps is a valid concern but affects both models equally since they use identical labels. This noise impacts absolute performance estimates but not the relative comparison between models. The comparative conclusion - whether sequence models outperform baseline - remains valid even with noisy labels, as long as both models train on the same data."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "Manual review of 100 predictions is a standard sanity check practice. While not comprehensive, it's a reasonable audit mechanism. Systematic leakage would likely be caught in this sample. This is a minor evaluation limitation, not a material flaw affecting the core comparison."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 (FATAL, adjusted severity 8) and F3 (MATERIAL, adjusted severity 4) were CONCEDED - both identify a genuine confounding where the sequence model has more information (up to 60 hours) than the baseline (fixed 12 hours), which invalidates the claim that performance differences are due to 'temporal structure exploitation.' F2 and F4 are DEFERRED (valid concerns requiring empirical verification). F5 and F6 are REBUT-IMMATERIAL (minor concerns not affecting comparative conclusions). With a FATAL finding remaining at adjusted severity 8, the critique prevails."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 8,
+        "reasoning": "Defender correctly conceded the information window asymmetry is a genuine FATAL flaw. The recency ablation (6-hour window) does not address the 12-hour baseline window mismatch. The severity remains 8 as the flaw fundamentally confounds the temporal structure claim."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "Defender deferred on validation set stability, acknowledging the concern is valid but noting it's standard ML practice. The open question remains unresolved, but the concern is acknowledged. Severity remains 5."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "Defender correctly conceded that without a 12-hour sequence model baseline, temporal structure gains cannot be isolated from information quantity gains. This overlaps with F1 but remains a distinct finding about missing baselines. Severity remains 4."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "Defender deferred on the stratification ambiguity, acknowledging the wording is genuinely unclear and patient-level leakage is unverified. The concern remains open pending empirical verification. Severity remains 5."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "Defender's argument that label noise affects both models equally is sound for comparative conclusions, but the finding claim is about absolute timestamp accuracy, not just relative performance. The rebuttal addresses comparative validity but not the absolute accuracy concern. Severity reduced from 3 to 2 (not to 1 as defender suggested)."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 1,
+        "reasoning": "Defender's argument that 100 predictions is standard practice is reasonable, but doesn't fully eliminate the representativeness concern. Systematic leakage in specific subgroups could still be missed. Severity reduced from 2 to 1 as defender suggested, but the concern remains partially unresolved."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic ACCEPTed my rebuttals for F1-F4 (three concessions, one deferral remain unchanged). For F5 and F6 (PARTIAL challenges), I strengthen my REBUT-IMMATERIAL position: both concerns are valid but neither invalidates the primary comparative conclusion between sequence model and baseline. Both models use identical labels (F5) and the 100-sample spot-check is standard practice supplemented by other leakage controls (F6). The critic correctly reduced their own severity estimates (3\u21922 for F5, 2\u21921 for F6) to reflect partial validity of my positions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Information window asymmetry remains unconceded. The baseline uses fixed 12-hour summary features while the sequence model uses data up to prediction time t. At hour 60, the sequence model has 60 hours vs. baseline's 12 hours. This confounds the temporal structure claim. The recency ablation uses 6 hours, not 12 hours, so it doesn't provide the needed comparison. This FATAL flaw fundamentally undermines the primary comparison.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Validation set size (5 months vs 21 months training) could cause unstable hyperparameter selection. The methodology doesn't explicitly address validation stability. An empirical test comparing nested CV variance across training data would settle this. However, this is standard ML practice and the relative comparison between models could still be valid despite some hyperparameter noise. The primary conclusion (sequence vs baseline) survives if the critique is correct - both models face the same validation instability.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Without a sequence model trained on exactly the 12-hour window matching the baseline, or a baseline trained on extended windows, temporal structure gains cannot be isolated from information quantity gains. The recency ablation uses a 6-hour window, not 12-hour. This concern overlaps with F1 but remains a distinct finding about missing baselines.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The stratification wording is ambiguous - could mean global rather than per-hospital stratification. Methodology doesn't mention patient-level deduplication. An empirical test checking for patient ID overlap across splits would settle this. However, this may or may not be a real issue depending on implementation. The primary conclusion survives if the critique is correct - any patient overlap would affect both models equally in the comparative evaluation.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "Label noise in sepsis onset timestamps affects both models equally since they use identical labels. The critic correctly notes my rebuttal addressed comparative validity but not absolute timestamp accuracy. However, the experiment's primary claim is about relative performance (sequence model vs baseline), not absolute timestamp accuracy. The comparative conclusion remains valid with noisy labels - both models learn from the same noisy signal. This is an immaterial limitation for the primary conclusion. The severity adjustment reflects the residual concern about absolute estimates while acknowledging the comparative claim is intact.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "Manual review of 100 predictions is standard sanity-check practice. While not comprehensive, it's a reasonable audit mechanism supplemented by other leakage controls: temporal split, feature availability audit, and recency ablation. Systematic leakage would likely surface in this sample or through the other controls. The 100-sample check is a standard practice that doesn't materially affect the core comparative evaluation.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 (severity 8) is CONCEDED - the information window asymmetry is a genuine FATAL flaw that fundamentally confounds the temporal structure claim. F3 (severity 4) is also CONCEDED - missing baselines prevent isolating temporal structure gains. F2 and F4 remain DEFERRED with severity 5 each. With a FATAL finding remaining unconceded above severity 3, the critique prevails."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The sequence model and baseline logistic regression are compared fairly to determine whether sequence models exploit temporal structure",
+        "failure_mechanism": "The baseline uses summary statistics from the first 12 hours for ALL predictions (hours 6-60), while the sequence model uses data up to prediction time t (6-60 hours). At prediction hour 60, the sequence model has 60 hours of data while the baseline only has 12 hours. This creates an asymmetric information advantage that could explain any performance difference independent of temporal structure exploitation. The comparison is fundamentally confounded by unequal information windows.",
+        "evidence_test": "Train a sequence model restricted to the first 12 hours and compare to the baseline. If performance gap disappears, the original advantage was due to information window, not temporal structure.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The validation set provides reliable estimates for hyperparameter tuning and threshold selection",
+        "failure_mechanism": "Validation set is 5 months while training is 21 months (1:4 ratio). This small validation set could lead to unstable hyperparameter selection and threshold tuning. The operating point (FPR=10%) is selected on validation, then applied to test, which could inflate test performance if validation doesn't represent test distribution well.",
+        "evidence_test": "Perform nested cross-validation within training period to estimate variance in validation performance. Compare threshold selection stability across different validation splits.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sequence models exploit temporal structure in irregular ICU data for early sepsis prediction",
+        "failure_mechanism": "No baseline comparison uses the same temporal window as the sequence model. Without a sequence model restricted to 12 hours (matching baseline window) or a baseline that uses the same information window as the sequence model, claims about 'temporal structure exploitation' are not fully supported. The performance difference could be due to information quantity rather than temporal modeling.",
+        "evidence_test": "Train a sequence model with 12-hour window and compare to baseline. Train baseline with extended window matching sequence model and compare to sequence model.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hospital stratification ensures robustness across the health system and prevents site-specific overfitting",
+        "failure_mechanism": "The wording 'all sites appear in each split in equal proportions' is ambiguous. If this means global stratification rather than per-hospital stratification, there could be patient-level leakage across splits. Even with per-hospital stratification, if the same patient has multiple admissions, those admissions could appear in multiple splits.",
+        "evidence_test": "Verify that no patient ID appears in multiple splits. Verify that per-hospital stratification is implemented (each hospital's admissions split 60/20/20).",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Sepsis onset timestamp accurately reflects true physiological onset",
+        "failure_mechanism": "Clinical documentation of sepsis is retrospective and noisy. The 'onset timestamp' based on when clinicians documented sepsis may not reflect when sepsis physiologically occurred. This label noise affects both models but could impact absolute performance estimates and threshold selection.",
+        "evidence_test": "Compare model performance using expert-verified sepsis onset timestamps versus documentation-based timestamps. Assess label noise rate through chart review.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Manual review of 100 test predictions confirms sepsis onset is after prediction time",
+        "failure_mechanism": "100 predictions may not be representative of the full test set, especially if the test set is large. This spot-check could miss systematic leakage patterns that only appear in certain patient subgroups or time periods.",
+        "evidence_test": "Perform automated audit of all test predictions for temporal consistency. Verify that no prediction time has sepsis onset before prediction time.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC contains one FATAL flaw (baseline feature window mismatch) that fundamentally invalidates the comparison between sequence models and baseline. Three MATERIAL findings (validation set size, missing temporal baseline, hospital stratification ambiguity) significantly weaken confidence in the conclusions. Two MINOR findings (label noise, spot-check sample size) are noted but do not substantially affect the verdict.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic ACCEPTed my rebuttals for F1-F4 (three concessions, one deferral remain unchanged). For F5 and F6 (PARTIAL challenges), I strengthen my REBUT-IMMATERIAL position: both concerns are valid but neither invalidates the primary comparative conclusion between sequence model and baseline. Both models use identical labels (F5) and the 100-sample spot-check is standard practice supplemented by other leakage controls (F6). The critic correctly reduced their own severity estimates (3\u21922 for F5, 2\u21921 for F6) to reflect partial validity of my positions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Information window asymmetry remains unconceded. The baseline uses fixed 12-hour summary features while the sequence model uses data up to prediction time t. At hour 60, the sequence model has 60 hours vs. baseline's 12 hours. This confounds the temporal structure claim. The recency ablation uses 6 hours, not 12 hours, so it doesn't provide the needed comparison. This FATAL flaw fundamentally undermines the primary comparison.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Validation set size (5 months vs 21 months training) could cause unstable hyperparameter selection. The methodology doesn't explicitly address validation stability. An empirical test comparing nested CV variance across training data would settle this. However, this is standard ML practice and the relative comparison between models could still be valid despite some hyperparameter noise. The primary conclusion (sequence vs baseline) survives if the critique is correct - both models face the same validation instability.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Without a sequence model trained on exactly the 12-hour window matching the baseline, or a baseline trained on extended windows, temporal structure gains cannot be isolated from information quantity gains. The recency ablation uses a 6-hour window, not 12-hour. This concern overlaps with F1 but remains a distinct finding about missing baselines.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The stratification wording is ambiguous - could mean global rather than per-hospital stratification. Methodology doesn't mention patient-level deduplication. An empirical test checking for patient ID overlap across splits would settle this. However, this may or may not be a real issue depending on implementation. The primary conclusion survives if the critique is correct - any patient overlap would affect both models equally in the comparative evaluation.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "Label noise in sepsis onset timestamps affects both models equally since they use identical labels. The critic correctly notes my rebuttal addressed comparative validity but not absolute timestamp accuracy. However, the experiment's primary claim is about relative performance (sequence model vs baseline), not absolute timestamp accuracy. The comparative conclusion remains valid with noisy labels - both models learn from the same noisy signal. This is an immaterial limitation for the primary conclusion. The severity adjustment reflects the residual concern about absolute estimates while acknowledging the comparative claim is intact.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "Manual review of 100 predictions is standard sanity-check practice. While not comprehensive, it's a reasonable audit mechanism supplemented by other leakage controls: temporal split, feature availability audit, and recency ablation. Systematic leakage would likely surface in this sample or through the other controls. The 100-sample check is a standard practice that doesn't materially affect the core comparative evaluation.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 (severity 8) is CONCEDED - the information window asymmetry is a genuine FATAL flaw that fundamentally confounds the temporal structure claim. F3 (severity 4) is also CONCEDED - missing baselines prevent isolating temporal structure gains. F2 and F4 remain DEFERRED with severity 5 each. With a FATAL finding remaining unconceded above severity 3, the critique prevails."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=8 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=4, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_hyp_140_0",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Analyst disposition decisions recorded within 7 days of each alert provide reliable ground truth labels for malicious vs. benign alerts.",
+        "failure_mechanism": "The 7-day window may be too short to capture the full lifecycle of sophisticated attacks, leading to false negatives where malicious alerts are labeled benign due to delayed analyst responses. Conversely, benign alerts may be labeled malicious if analysts overreact to initial indicators that later prove inconclusive. This introduces label noise that disproportionately affects rare classes (malicious alerts), inflating PR-AUC by making the task artificially easier.",
+        "evidence_test": "Compare PR-AUC on alerts with dispositions recorded within 7 days vs. alerts with dispositions recorded after 7 days (but still within 30 days). If the former shows significantly higher PR-AUC, the label noise hypothesis is supported. Alternatively, measure inter-analyst agreement on a subset of alerts to quantify label reliability.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) prevents leakage of future information, including analyst responses and incident context.",
+        "failure_mechanism": "The split does not account for analyst drift or evolving attack tactics over time. If attack patterns change significantly between months 12 and 16 (e.g., due to new malware or bypass techniques), the test set may represent a distribution shift not reflected in training. Additionally, the 30-day lookback window could inadvertently include post-alert context if alerts are part of a larger incident chain (e.g., an alert on day 12 of the window is part of an incident that peaks after the alert). This violates the temporal integrity of the split.",
+        "evidence_test": "Measure performance degradation on test subsets grouped by time (e.g., first vs. last 3 months of the test set). If PR-AUC drops significantly in later months, distribution shift is likely. Alternatively, audit a sample of test-set alerts to check if any include post-alert context in their 30-day windows.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The GNN's advantage over baselines (if observed) is attributable to its ability to exploit relational structure in entity interactions.",
+        "failure_mechanism": "The transformer/LSTM baseline may not be a fair control for temporal modeling. Transformers are highly expressive and can implicitly model relationships between events without explicit graph structure. If the transformer outperforms the tabular baseline, the tGNN's advantage may stem from temporal attention rather than graph structure. The experiment does not test whether the tGNN's relational inductive bias is necessary or sufficient for observed gains.",
+        "evidence_test": "Ablation studies: (1) Train a tGNN with graph structure randomized (edges shuffled) to test if relational structure is critical. (2) Train a transformer with explicit pairwise attention between events (not just sequential) to test if relational modeling alone drives performance. If either variant matches the tGNN's performance, the claim is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate metric for operational goals, as it reflects the ability to rank alerts so analysts see true incidents first.",
+        "failure_mechanism": "PR-AUC emphasizes ranking quality but does not directly measure analyst labor reduction or incident response outcomes. In practice, SOCs care about the *number of incidents caught* at a fixed analyst effort (e.g., 100 alerts reviewed per analyst per shift). A model with high PR-AUC might still miss critical incidents if they are ranked low, or might prioritize many low-severity alerts. The secondary metrics (P@R, FP@FPR) partially address this but are not tied to concrete operational thresholds.",
+        "evidence_test": "Simulate analyst workflow: For a fixed number of alerts reviewed (e.g., 100), measure the number of true incidents caught by the model vs. baselines. Alternatively, measure mean time to detection (MTTD) for incidents in the test set under a fixed alert review cadence.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 30-day lookback window captures sufficient historical context for accurate triage.",
+        "failure_mechanism": "The window size is arbitrary and may not reflect the true temporal scope of attacks. For example, advanced persistent threats (APTs) may span months, while fast-moving ransomware may require only hours. A fixed 30-day window could exclude critical pre-attack behavior for some incidents or include irrelevant noise for others, leading to inconsistent performance across attack types.",
+        "evidence_test": "Ablation over window sizes (e.g., 7, 14, 30, 60, 90 days) and measure PR-AUC stability. If performance varies significantly with window size, the claim is unsupported. Alternatively, analyze test-set incidents to determine the minimal window required to capture their full lifecycle.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The frozen scaling (fit on training set only) prevents data leakage and ensures fair comparison.",
+        "failure_mechanism": "Frozen scaling assumes that the distribution of tabular features is stationary between training and test sets. If the enterprise environment changes (e.g., new user cohorts, updated software), feature scales may shift, degrading baseline performance. The tGNN may be more robust to such shifts due to its relational inductive bias, but this is not tested.",
+        "evidence_test": "Measure performance on test subsets grouped by time (e.g., early vs. late test set) or by feature distributions (e.g., KL divergence between training and test feature histograms). If baselines degrade significantly while the tGNN is stable, scaling assumptions are violated.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC has critical flaws in label reliability, temporal integrity, and baseline design that undermine its central claims. The 7-day label window and fixed 30-day lookback introduce noise and potential leakage, while the transformer baseline may not adequately control for temporal modeling. PR-AUC is a reasonable metric but does not fully capture operational goals. These issues are FATAL or MATERIAL and must be addressed before the hypothesis can be evaluated.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims the 7-day labeling window is too short, leading to false negatives. However, the design explicitly states that alerts without a disposition after 7 days are excluded. This means the model is trained and tested on a subset of data that *has* a confirmed analyst decision. While this might introduce a selection bias (excluding very slow-to-resolve cases), it does not introduce 'label noise' in the sense of mislabeling malicious as benign; it simply removes the ambiguous cases. This is a standard operational constraint for PoCs to ensure label quality.\n\nF2 raises two points: distribution shift and lookback leakage. Distribution shift is a reality of all ML in security, but the design includes a 'stratified post-hoc analysis on test subsets (by month)' specifically to check for stability over time (Control 3). Regarding leakage, the lookback window is strictly 'preceding 30 days' relative to the alert timestamp. By definition, it cannot include post-alert context. The critic's claim that an alert on day 12 of a window might be part of an incident that peaks later is irrelevant because the model only sees the window *up to* that alert's timestamp.\n\nF3 argues the Transformer baseline is insufficient to isolate the 'graph' effect. The design includes both a tabular baseline (no sequence/graph) and a Transformer/LSTM baseline (sequence/temporal). If the tGNN beats the Transformer, the difference is specifically the relational/graph structure versus the sequential structure. This is a standard and sufficient control for this hypothesis.\n\nF4 argues PR-AUC doesn't measure labor reduction. The design explicitly includes secondary metrics: 'Precision at fixed recall thresholds (P@R=0.8, P@R=0.9) to quantify analyst labor reduction'. This directly addresses the critic's concern by mapping ranking quality to the amount of effort required to hit a specific detection target.\n\nF5 claims the 30-day window is arbitrary. In a PoC, window sizes are always a design choice. The hypothesis is whether a tGNN improves triage given a specific context window. The validity of the comparison between tGNN and baselines holds regardless of whether 30 days is 'optimal' for all APTs, as all models use the same window.\n\nF6 claims frozen scaling might degrade baselines due to shift. This is actually a requirement for a valid temporal split. If we re-scaled on the test set, we would be using future information (the test set's distribution) to normalize training-time features. Any degradation caused by shift is a real-world performance characteristic that the model must handle; 'fixing' it with test-set scaling would be data leakage.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The design does not label delayed alerts as benign; it explicitly excludes alerts without a disposition within 7 days. This eliminates the mechanism of 'false negatives due to delayed response' by ensuring only alerts with confirmed ground truth are used."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Distribution shift is explicitly addressed by the 'stratified post-hoc analysis on test subsets (by month)' in Control 3. Leakage is impossible by construction as the lookback window is strictly defined as the 'preceding 30 days' relative to the alert timestamp."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The inclusion of both a tabular baseline (no temporal/relational) and a Transformer baseline (temporal/sequential) allows the experiment to isolate the specific contribution of the graph structure. If tGNN > Transformer > Tabular, the relational inductive bias is the driver."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly includes P@R (Precision at Recall) metrics specifically to 'quantify analyst labor reduction,' directly addressing the operational requirement to measure effort vs. detection."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The PoC tests the relative advantage of tGNN over baselines given a fixed context window. Optimizing the window size is a separate hyperparameter tuning problem and does not invalidate the comparison of model architectures on the chosen window."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Frozen scaling is a mandatory control to prevent data leakage in temporal splits. Any performance degradation due to distribution shift is a genuine signal of model robustness (or lack thereof) and must be captured, not hidden via test-set normalization."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were rebutted by existing design controls. However, F1 remains at adjusted severity 4 because while the design prevents mislabeling, the exclusion of alerts taking >7 days to resolve may introduce a selection bias that requires empirical verification to ensure the results generalize to the most complex (slowest) incidents."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal correctly addresses the exclusion of alerts without dispositions within 7 days, which mitigates the risk of false negatives due to delayed analyst responses. However, it does not address the converse risk: benign alerts may still be labeled malicious if analysts overreact to initial indicators that later prove inconclusive within the 7-day window. The failure mechanism of label noise due to premature analyst decisions is not resolved by excluding unlabeled alerts. The rebuttal's justification is incomplete because it does not account for potential mislabeling within the included alerts."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal directly addresses the failure mechanism by citing the stratified post-hoc analysis by month, which explicitly tests for distribution shift. The design also ensures no leakage by strictly defining the lookback window as preceding 30 days. The mechanism is fully addressed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal correctly identifies the inclusion of both a tabular baseline and a Transformer baseline as controls to isolate the contribution of graph structure. The mechanism (relational inductive bias) is directly addressed by the experimental design, and the cited_text explicitly describes how performance comparisons will isolate the tGNN's advantage."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal directly addresses the failure mechanism by citing the inclusion of P@R metrics to quantify analyst labor reduction. The operational goal of measuring effort vs. detection is explicitly addressed by the design."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly identifies the PoC's focus on relative advantage over baselines with a fixed context window as a scope limitation. The claim that optimizing window size is a separate hyperparameter tuning problem is valid, and the failure mechanism (arbitrary window size) is outside the scope of the current experiment's goals."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal directly addresses the failure mechanism by citing frozen scaling as a mandatory control to prevent data leakage. The justification is mechanistically sound and fully resolves the concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted the rebuttals for F2, F3, F4, F5, and F6. The only remaining point of contention is F1. The critic argues that while excluding unlabeled alerts prevents false negatives from delayed responses, it does not prevent 'false positives' in the labels (benign alerts labeled malicious due to premature analyst overreaction). I have evaluated whether the design contains a control for this specific label noise mechanism. Since the design relies on analyst disposition as ground truth without a secondary verification step (like a gold-standard audit), the design only mitigates the 'missing label' problem, not the 'incorrect label' problem. However, this noise likely affects all models (tGNN and baselines) equally. I am switching F1 to DEFER because the magnitude of this noise can be empirically measured, and the relative comparison between models remains valid even if the labels are noisy.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that excluding alerts without dispositions does not eliminate the risk of incorrect labels (overreactions) within the 7-day window. This is a known challenge in using analyst labels as ground truth. To settle this: (1) We will perform a retrospective audit on a random sample of 500 labeled alerts, where a senior security architect reviews the full incident lifecycle (beyond 7 days) to verify the label. (2) If the audit shows high agreement (>90%), the design is vindicated. (3) If agreement is low, we will calculate the 'label noise rate' and re-evaluate PR-AUC using the audited subset. (4) The primary conclusion (tGNN vs. Baselines) remains valid because this label noise is inherent to the dataset and affects all models identically; it shifts the absolute PR-AUC but does not systematically favor the tGNN's relational inductive bias over the baselines' features.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Distribution shift is explicitly addressed by the 'stratified post-hoc analysis on test subsets (by month)' in Control 3. Leakage is impossible by construction as the lookback window is strictly defined as the 'preceding 30 days' relative to the alert timestamp.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The inclusion of both a tabular baseline (no temporal/relational) and a Transformer baseline (temporal/sequential) allows the experiment to isolate the specific contribution of the graph structure. If tGNN > Transformer > Tabular, the relational inductive bias is the driver.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly includes P@R (Precision at Recall) metrics specifically to 'quantify analyst labor reduction,' directly addressing the operational requirement to measure effort vs. detection.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The PoC tests the relative advantage of tGNN over baselines given a fixed context window. Optimizing the window size is a separate hyperparameter tuning problem and does not invalidate the comparison of model architectures on the chosen window.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Frozen scaling is a mandatory control to prevent data leakage in temporal splits. Any performance degradation due to distribution shift is a genuine signal of model robustness (or lack thereof) and must be captured, not hidden via test-set normalization.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were successfully rebutted or accepted. F1 remains a point of genuine ambiguity regarding label noise that requires an empirical audit to resolve, leading to an 'empirical_test_agreed' verdict."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Analyst disposition decisions recorded within 7 days of each alert provide reliable ground truth labels for malicious vs. benign alerts.",
+        "failure_mechanism": "The 7-day window may be too short to capture the full lifecycle of sophisticated attacks, leading to false negatives where malicious alerts are labeled benign due to delayed analyst responses. Conversely, benign alerts may be labeled malicious if analysts overreact to initial indicators that later prove inconclusive. This introduces label noise that disproportionately affects rare classes (malicious alerts), inflating PR-AUC by making the task artificially easier.",
+        "evidence_test": "Compare PR-AUC on alerts with dispositions recorded within 7 days vs. alerts with dispositions recorded after 7 days (but still within 30 days). If the former shows significantly higher PR-AUC, the label noise hypothesis is supported. Alternatively, measure inter-analyst agreement on a subset of alerts to quantify label reliability.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) prevents leakage of future information, including analyst responses and incident context.",
+        "failure_mechanism": "The split does not account for analyst drift or evolving attack tactics over time. If attack patterns change significantly between months 12 and 16 (e.g., due to new malware or bypass techniques), the test set may represent a distribution shift not reflected in training. Additionally, the 30-day lookback window could inadvertently include post-alert context if alerts are part of a larger incident chain (e.g., an alert on day 12 of the window is part of an incident that peaks after the alert). This violates the temporal integrity of the split.",
+        "evidence_test": "Measure performance degradation on test subsets grouped by time (e.g., first vs. last 3 months of the test set). If PR-AUC drops significantly in later months, distribution shift is likely. Alternatively, audit a sample of test-set alerts to check if any include post-alert context in their 30-day windows.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The GNN's advantage over baselines (if observed) is attributable to its ability to exploit relational structure in entity interactions.",
+        "failure_mechanism": "The transformer/LSTM baseline may not be a fair control for temporal modeling. Transformers are highly expressive and can implicitly model relationships between events without explicit graph structure. If the transformer outperforms the tabular baseline, the tGNN's advantage may stem from temporal attention rather than graph structure. The experiment does not test whether the tGNN's relational inductive bias is necessary or sufficient for observed gains.",
+        "evidence_test": "Ablation studies: (1) Train a tGNN with graph structure randomized (edges shuffled) to test if relational structure is critical. (2) Train a transformer with explicit pairwise attention between events (not just sequential) to test if relational modeling alone drives performance. If either variant matches the tGNN's performance, the claim is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate metric for operational goals, as it reflects the ability to rank alerts so analysts see true incidents first.",
+        "failure_mechanism": "PR-AUC emphasizes ranking quality but does not directly measure analyst labor reduction or incident response outcomes. In practice, SOCs care about the *number of incidents caught* at a fixed analyst effort (e.g., 100 alerts reviewed per analyst per shift). A model with high PR-AUC might still miss critical incidents if they are ranked low, or might prioritize many low-severity alerts. The secondary metrics (P@R, FP@FPR) partially address this but are not tied to concrete operational thresholds.",
+        "evidence_test": "Simulate analyst workflow: For a fixed number of alerts reviewed (e.g., 100), measure the number of true incidents caught by the model vs. baselines. Alternatively, measure mean time to detection (MTTD) for incidents in the test set under a fixed alert review cadence.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 30-day lookback window captures sufficient historical context for accurate triage.",
+        "failure_mechanism": "The window size is arbitrary and may not reflect the true temporal scope of attacks. For example, advanced persistent threats (APTs) may span months, while fast-moving ransomware may require only hours. A fixed 30-day window could exclude critical pre-attack behavior for some incidents or include irrelevant noise for others, leading to inconsistent performance across attack types.",
+        "evidence_test": "Ablation over window sizes (e.g., 7, 14, 30, 60, 90 days) and measure PR-AUC stability. If performance varies significantly with window size, the claim is unsupported. Alternatively, analyze test-set incidents to determine the minimal window required to capture their full lifecycle.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The frozen scaling (fit on training set only) prevents data leakage and ensures fair comparison.",
+        "failure_mechanism": "Frozen scaling assumes that the distribution of tabular features is stationary between training and test sets. If the enterprise environment changes (e.g., new user cohorts, updated software), feature scales may shift, degrading baseline performance. The tGNN may be more robust to such shifts due to its relational inductive bias, but this is not tested.",
+        "evidence_test": "Measure performance on test subsets grouped by time (e.g., early vs. late test set) or by feature distributions (e.g., KL divergence between training and test feature histograms). If baselines degrade significantly while the tGNN is stable, scaling assumptions are violated.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC has critical flaws in label reliability, temporal integrity, and baseline design that undermine its central claims. The 7-day label window and fixed 30-day lookback introduce noise and potential leakage, while the transformer baseline may not adequately control for temporal modeling. PR-AUC is a reasonable metric but does not fully capture operational goals. These issues are FATAL or MATERIAL and must be addressed before the hypothesis can be evaluated.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted the rebuttals for F2, F3, F4, F5, and F6. The only remaining point of contention is F1. The critic argues that while excluding unlabeled alerts prevents false negatives from delayed responses, it does not prevent 'false positives' in the labels (benign alerts labeled malicious due to premature analyst overreaction). I have evaluated whether the design contains a control for this specific label noise mechanism. Since the design relies on analyst disposition as ground truth without a secondary verification step (like a gold-standard audit), the design only mitigates the 'missing label' problem, not the 'incorrect label' problem. However, this noise likely affects all models (tGNN and baselines) equally. I am switching F1 to DEFER because the magnitude of this noise can be empirically measured, and the relative comparison between models remains valid even if the labels are noisy.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that excluding alerts without dispositions does not eliminate the risk of incorrect labels (overreactions) within the 7-day window. This is a known challenge in using analyst labels as ground truth. To settle this: (1) We will perform a retrospective audit on a random sample of 500 labeled alerts, where a senior security architect reviews the full incident lifecycle (beyond 7 days) to verify the label. (2) If the audit shows high agreement (>90%), the design is vindicated. (3) If agreement is low, we will calculate the 'label noise rate' and re-evaluate PR-AUC using the audited subset. (4) The primary conclusion (tGNN vs. Baselines) remains valid because this label noise is inherent to the dataset and affects all models identically; it shifts the absolute PR-AUC but does not systematically favor the tGNN's relational inductive bias over the baselines' features.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Distribution shift is explicitly addressed by the 'stratified post-hoc analysis on test subsets (by month)' in Control 3. Leakage is impossible by construction as the lookback window is strictly defined as the 'preceding 30 days' relative to the alert timestamp.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The inclusion of both a tabular baseline (no temporal/relational) and a Transformer baseline (temporal/sequential) allows the experiment to isolate the specific contribution of the graph structure. If tGNN > Transformer > Tabular, the relational inductive bias is the driver.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly includes P@R (Precision at Recall) metrics specifically to 'quantify analyst labor reduction,' directly addressing the operational requirement to measure effort vs. detection.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The PoC tests the relative advantage of tGNN over baselines given a fixed context window. Optimizing the window size is a separate hyperparameter tuning problem and does not invalidate the comparison of model architectures on the chosen window.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Frozen scaling is a mandatory control to prevent data leakage in temporal splits. Any performance degradation due to distribution shift is a genuine signal of model robustness (or lack thereof) and must be captured, not hidden via test-set normalization.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were successfully rebutted or accepted. F1 remains a point of genuine ambiguity regarding label noise that requires an empirical audit to resolve, leading to an 'empirical_test_agreed' verdict."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=9 \u2265 7 + adj_sev=9 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

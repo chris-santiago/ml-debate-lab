@@ -1,0 +1,352 @@
+{
+  "case_id": "eval_scenario_hyp132",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Agent seniority level at assignment is available at the time of prediction (ticket creation)",
+        "failure_mechanism": "In a real-time deployment scenario, the model would need to predict SLA breach risk at ticket creation time, before an agent is assigned. The agent assignment typically occurs after ticket creation (or may change). Using agent seniority as a feature creates a silent misconfiguration: the model produces plausible-looking evaluation results but relies on information that does not exist at prediction time in production. The model will fail silently when deployed.",
+        "evidence_test": "Verify the ticket assignment workflow in the production system: does agent assignment happen after ticket creation? If so, remove this feature and re-run the experiment. Alternatively, if the use case is batch scoring after assignment, explicitly state this deployment scenario.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Prior customer SLA compliance rate (90-day lookback) is available for all customers at prediction time",
+        "failure_mechanism": "New customers or customers with less than 90 days of history will have missing or unreliable compliance rate values. The experiment does not specify how missing values are handled (imputation? default? exclusion?). This creates two problems: (1) the training distribution differs from deployment distribution for new customers, and (2) imputation strategy could introduce bias. The model may perform well on established customers but fail on the growth cohort that the business cares about catching.",
+        "evidence_test": "Report the proportion of customers in each split with <90 days of history. Specify the imputation strategy (e.g., default to mean compliance, or exclude). Evaluate model performance separately on customers with vs. without full history. If significant performance degradation exists for new customers, this invalidates the claim for the deployment scenario.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The training data (tickets with first-response events) is representative of the deployment scenario (all incoming tickets)",
+        "failure_mechanism": "The experiment explicitly excludes tickets that were auto-closed or never received a response. In production, the model must score tickets at creation time\u2014before knowing whether they will receive a response. These excluded tickets may have different characteristics (e.g., low-priority issues, spam, customer abandonment) that correlate with breach risk. Training only on responded tickets creates a selection bias: the model learns from a filtered dataset that does not match the production inference distribution.",
+        "evidence_test": "Include a proportion of auto-closed or never-responded tickets in the test set (with appropriate labels, e.g., treat as 'no breach' or exclude from metric computation). Evaluate whether the model produces reasonable predictions on these cases. If performance degrades significantly, the hypothesis does not hold for the full deployment population.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Post-hoc audit for response phrases ('assigned to', 'resolved') is sufficient to detect text feature contamination",
+        "failure_mechanism": "The audit is reactive rather than preventive and relies on keyword matching. Subtle contamination (rephrased responses, internal notes, agent signatures, system-generated acknowledgments) may evade detection. If contaminated text leaks into training, the model learns spurious correlations between response language and breach outcomes, inflating apparent performance. The evaluation metric would then reflect text patterns from responses rather than predictive signal from ticket creation.",
+        "evidence_test": "Perform manual sampling of text features across splits to verify absence of response content. Consider automated detection of system-generated prefixes, agent signatures, and timestamps. Report the audit's detection rate on a held-out sample of known-contaminated cases.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Prior ticket count (30-day lookback) is computed using only information available at ticket creation time",
+        "failure_mechanism": "While this feature is less problematic than the 90-day compliance rate, the experiment does not specify the exact computation window. If the 30-day window includes the current ticket (i.e., counting up to 'now' including the ticket being scored), this leaks information. The feature must be computed as of ticket creation timestamp, excluding the current ticket.",
+        "evidence_test": "Verify that the 30-day window is defined as [ticket_creation - 30 days, ticket_creation), not including the current ticket. Check for any tickets with creation timestamps that fall within the counting window to ensure no leakage.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The PoC has a critical silent misconfiguration: agent seniority at assignment is used as a feature but is not available at prediction time in production. Additionally, there are material issues around handling new customers without 90-day history, selection bias from excluding non-responded tickets, and weak text contamination detection. These issues would cause the model to fail in production despite passing evaluation.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL 8): Critic claims agent seniority at assignment is unavailable at ticket creation time, leading to deployment mismatch where the feature cannot be used in real-time prediction. Design intent is to predict first-response SLA breaches using features available in historical records, including agent assignment history, with baseline and enhanced models both using identical structured metadata features (explicitly listed, including 'agent seniority level at assignment'). No explicit prediction timestamp is stated beyond 'chronologically held-out support tickets,' but objective implies creation-time ingestion of ticket body and history. Confound Controls address 'Metadata leakage' by ensuring baseline uses metadata only, attributing gains to text\u2014symmetric use of any potentially post-creation metadata (like agent info) across models means relative outperformance isolates text contribution, even if absolute performance drops in deployment without it. No evidence of asymmetric reliance; workflow timing uncertain without production logs, but does not invalidate PoC hypothesis on relative gains. Genuine concern for deployment but resolved for experiment scope by symmetry. F2 (MATERIAL 6): Critic claims prior 90-day SLA compliance unavailable for new customers (<90 days history), unspecified handling (imputation/exclusion) causes train-deploy mismatch, especially for growth cohorts. Design lists feature without detailing missing-value strategy, but preprocessing is identical for both models (fit on train only), and customer history is symmetric across baseline/enhanced. Temporal splits (train early, test late) introduce some new-customer drift, but stratification by tier/channel balances operational conditions; Confound Controls note 'Operational drift' via chronological separation. Proportion of new customers across splits uncertain without data, but symmetry preserves relative text gains; flaw real but does not differentially affect hypothesis. F3 (MATERIAL 5): Critic claims excluding auto-closed/no-response tickets biases train/test away from full deployment distribution (all incoming tickets scored at creation). Design explicitly filters to 'tickets with non-null first-response events and complete metadata' before splitting (Data Curation), so all splits represent the same population: tickets that receive a first response. Scope/Claims: tests performance 'on chronologically held-out support tickets' (post-filter), not claiming full-population deployment; label defined only for first-response events. If deployment scores all tickets, extrapolation needed, but PoC hypothesis holds within scoped population. No evidence test run, but scope alignment eliminates failure mechanism for stated claims. F4 (MATERIAL 5): Critic claims post-hoc keyword audit insufficient, missing subtle contamination (signatures, rephrasings). Design prevents via 'text features extracted strictly at ticket creation time, before any agent response or internal notes' + 'post-hoc audit scans for response phrases' (Feature Engineering); Confound Controls explicitly: 'Temporal leakage: Text is extracted at ticket creation; post-hoc audit verifies no response phrases.' This dual control (preventive extraction + verification) eliminates contamination mechanism by construction; audit detects obvious cases, extraction blocks rest. Manual sampling uncertain but not required for PoC validity given controls. F5 (MATERIAL 4): Critic claims 30-day prior ticket count may include current ticket, leaking info. Design specifies 'prior ticket count in the last 30 days' (emphasis on 'prior'), standard interpretation excludes current ([creation-30, creation)). No mention of inclusion; preprocessing fit on train only. No evidence of leakage in description; minor clarification gap but mechanism prevented by wording and convention. All findings resolved by design intent (symmetry, scope, explicit controls), no genuine uncertainties requiring deferral\u2014empirical tests suggested by critic would confirm but not change PoC conclusions, as relative hypothesis holds under controls.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Flaw real (potential post-creation availability), but symmetric across baseline and enhanced models (both use identical metadata features); Confound Controls 'Metadata leakage' ensures relative gains attributable to text features alone, eliminating differential impact on hypothesis even if feature unavailable in deployment."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Missing-value handling unspecified but symmetric preprocessing pipelines (fit on train only) and identical feature use across models preserve relative performance; temporal splits + stratification control drift, with Confound Controls addressing operational drift\u2014new-customer effects do not invalidate text-outperformance claim."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Experiment scoped to filtered population ('tickets with non-null first-response events') per Data Curation\u2014splits applied post-filter, testing hypothesis on representative held-out support tickets within that scope, not full incoming distribution."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Extraction strictly at ticket creation time prevents contamination by construction, verified by post-hoc audit (Feature Engineering + Confound Controls 'Temporal leakage'); eliminates mechanism, as text excludes post-creation content regardless of audit sensitivity."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "No evidence supports inclusion of current ticket\u2014feature explicitly 'prior ticket count in the last 30 days,' standardly excluding current per convention; preprocessing fit on train precludes leakage."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted with adjusted severity \u22643 via design controls (symmetry, explicit leakage prevention), scope alignment, and lack of supporting evidence, fully exonerating the methodology. No concessions or deferrals needed, as no unresolved concerns affect the relative performance hypothesis."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender's symmetry argument is valid for measuring relative performance between baseline and enhanced models, but does not resolve the core deployment validity concern. The finding was not about whether we can measure text-feature contribution\u2014it was about whether the model can be deployed in production. Using agent seniority (available only after assignment) as a feature means the model cannot be used for real-time scoring at ticket creation. The defender conflates 'valid experiment' with 'deployable model.' The severity adjustment from 8 to 3 is disproportionate; while the relative comparison is valid, the model remains fundamentally non-deployable as designed."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender does not actually specify the imputation strategy\u2014they merely assert it is 'symmetric.' The core concern remains unresolved: new customers with <90 days of history have missing compliance rates, and the experiment provides no evidence that performance is validated on this population. The symmetry argument preserves relative performance but does not address whether the model works for new customers in deployment. The severity adjustment from 6 to 2 is too aggressive; the finding remains material for deployment validity."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly identifies that the experiment is scoped to tickets with first-response events, and the hypothesis test is valid within that scope. However, this scope limitation means the model cannot be deployed to score all incoming tickets in production. The finding is partially conceded: the internal validity is sound, but the deployment scope concern remains. The severity adjustment from 5 to 0 is too aggressive; a residual deployment validity concern remains."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly identifies that the contamination mechanism is prevented by design: text is extracted strictly at ticket creation time, before any response exists. The post-hoc audit is verification, not the primary prevention mechanism. This directly addresses the failure mechanism\u2014contamination cannot occur because the text window excludes post-creation content. The rebuttal is mechanistically sound."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender's interpretation of 'prior ticket count in the last 30 days' as standardly excluding the current ticket is reasonable. However, the experiment does not explicitly state this exclusion, leaving ambiguity. The concern is relatively minor compared to F1-F3, but the lack of explicit specification leaves the door open. The severity adjustment from 4 to 0 is too aggressive; a minor residual ambiguity remains."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Deferred F1 and F2 due to partial design controls (symmetric feature use preserves relative PR-AUC) but genuine uncertainty on deployment prereqs requiring empirical settlement; strengthened REBUT-SCOPE for F3 and REBUT-DESIGN for F5 to directly cite methodology text addressing mechanisms; maintained REBUT-DESIGN for ACCEPTed F4. Design validity holds for core hypothesis via symmetry and explicit scoping.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Critic correctly notes deployment concern but overlooks symmetric impact: agent feature used identically in both models, so relative PR-AUC isolates text contribution regardless. However, no explicit methodology text on prediction timing vs. assignment workflow; switching to DEFER as control only mitigates via symmetry, not eliminates. Settling experiment: Verify production workflow timing (creation-to-assignment delta) and intended deployment (real-time creation vs. post-assignment batch). Vindicate design: Immediate/auto-assignment makes feature available at prediction. Validate critique: Delayed/manual assignment post-creation; remove feature or shift timing, re-evaluate. Primary conclusion survives critique: Yes, symmetric removal affects baseline/enhanced equally, preserving delta PR-AUC as text value measure.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "Symmetry via identical preprocessing/feature use across models (fit on train only) mitigates differential impact on relative performance, but imputation unspecified leaves new-customer distribution shift uncertain. DEFER as control partial. Settling experiment: Report % tickets/customers with <90-day history per split; detail imputation (e.g., train-mean, median); stratified PR-AUC/recall by history length. Vindicate design: Comparable relative outperformance on new customers. Validate critique: Asymmetric drop (e.g., enhanced suffers more from poor text signal on sparse history); limit claim to established customers. Primary conclusion survives: Yes, symmetric handling affects both models equally if imputed consistently.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Methodology explicitly scopes to 'tickets with non-null first-response events and complete metadata; tickets that were auto-closed or never received a response are excluded from analysis' (Data Curation), with splits post-filter and hypothesis testing performance on this representative population of actionable support tickets where SLA breaches are defined. Deployment to full incoming distribution (including non-responded) is out-of-scope per Section 8; residual concern is scope mismatch, not internal validity flaw.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Extraction 'strictly at ticket creation time, before any agent response or internal notes are added' (Feature Engineering) eliminates contamination mechanism by construction; audit verifies. Directly addresses critic ACCEPT reasoning.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "'Prior ticket count in the last 30 days' (Baseline features) explicitly uses 'prior,' excluding current ticket by definition/standard time-series convention; computed at creation timestamp with preprocessing fit on train only (Section 3), preventing leakage. Residual ambiguity minor as mechanism eliminated.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "DEFER on F1/F2 identifies resolvable prereq uncertainties via targeted experiments that preserve the symmetric relative PR-AUC claim; remaining findings rebutted to <=3 via design/scope controls. Empirical resolution needed for deployment details, but core hypothesis test sound."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Agent seniority level at assignment is available at the time of prediction (ticket creation)",
+        "failure_mechanism": "In a real-time deployment scenario, the model would need to predict SLA breach risk at ticket creation time, before an agent is assigned. The agent assignment typically occurs after ticket creation (or may change). Using agent seniority as a feature creates a silent misconfiguration: the model produces plausible-looking evaluation results but relies on information that does not exist at prediction time in production. The model will fail silently when deployed.",
+        "evidence_test": "Verify the ticket assignment workflow in the production system: does agent assignment happen after ticket creation? If so, remove this feature and re-run the experiment. Alternatively, if the use case is batch scoring after assignment, explicitly state this deployment scenario.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Prior customer SLA compliance rate (90-day lookback) is available for all customers at prediction time",
+        "failure_mechanism": "New customers or customers with less than 90 days of history will have missing or unreliable compliance rate values. The experiment does not specify how missing values are handled (imputation? default? exclusion?). This creates two problems: (1) the training distribution differs from deployment distribution for new customers, and (2) imputation strategy could introduce bias. The model may perform well on established customers but fail on the growth cohort that the business cares about catching.",
+        "evidence_test": "Report the proportion of customers in each split with <90 days of history. Specify the imputation strategy (e.g., default to mean compliance, or exclude). Evaluate model performance separately on customers with vs. without full history. If significant performance degradation exists for new customers, this invalidates the claim for the deployment scenario.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The training data (tickets with first-response events) is representative of the deployment scenario (all incoming tickets)",
+        "failure_mechanism": "The experiment explicitly excludes tickets that were auto-closed or never received a response. In production, the model must score tickets at creation time\u2014before knowing whether they will receive a response. These excluded tickets may have different characteristics (e.g., low-priority issues, spam, customer abandonment) that correlate with breach risk. Training only on responded tickets creates a selection bias: the model learns from a filtered dataset that does not match the production inference distribution.",
+        "evidence_test": "Include a proportion of auto-closed or never-responded tickets in the test set (with appropriate labels, e.g., treat as 'no breach' or exclude from metric computation). Evaluate whether the model produces reasonable predictions on these cases. If performance degrades significantly, the hypothesis does not hold for the full deployment population.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Post-hoc audit for response phrases ('assigned to', 'resolved') is sufficient to detect text feature contamination",
+        "failure_mechanism": "The audit is reactive rather than preventive and relies on keyword matching. Subtle contamination (rephrased responses, internal notes, agent signatures, system-generated acknowledgments) may evade detection. If contaminated text leaks into training, the model learns spurious correlations between response language and breach outcomes, inflating apparent performance. The evaluation metric would then reflect text patterns from responses rather than predictive signal from ticket creation.",
+        "evidence_test": "Perform manual sampling of text features across splits to verify absence of response content. Consider automated detection of system-generated prefixes, agent signatures, and timestamps. Report the audit's detection rate on a held-out sample of known-contaminated cases.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Prior ticket count (30-day lookback) is computed using only information available at ticket creation time",
+        "failure_mechanism": "While this feature is less problematic than the 90-day compliance rate, the experiment does not specify the exact computation window. If the 30-day window includes the current ticket (i.e., counting up to 'now' including the ticket being scored), this leaks information. The feature must be computed as of ticket creation timestamp, excluding the current ticket.",
+        "evidence_test": "Verify that the 30-day window is defined as [ticket_creation - 30 days, ticket_creation), not including the current ticket. Check for any tickets with creation timestamps that fall within the counting window to ensure no leakage.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The PoC has a critical silent misconfiguration: agent seniority at assignment is used as a feature but is not available at prediction time in production. Additionally, there are material issues around handling new customers without 90-day history, selection bias from excluding non-responded tickets, and weak text contamination detection. These issues would cause the model to fail in production despite passing evaluation.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Deferred F1 and F2 due to partial design controls (symmetric feature use preserves relative PR-AUC) but genuine uncertainty on deployment prereqs requiring empirical settlement; strengthened REBUT-SCOPE for F3 and REBUT-DESIGN for F5 to directly cite methodology text addressing mechanisms; maintained REBUT-DESIGN for ACCEPTed F4. Design validity holds for core hypothesis via symmetry and explicit scoping.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Critic correctly notes deployment concern but overlooks symmetric impact: agent feature used identically in both models, so relative PR-AUC isolates text contribution regardless. However, no explicit methodology text on prediction timing vs. assignment workflow; switching to DEFER as control only mitigates via symmetry, not eliminates. Settling experiment: Verify production workflow timing (creation-to-assignment delta) and intended deployment (real-time creation vs. post-assignment batch). Vindicate design: Immediate/auto-assignment makes feature available at prediction. Validate critique: Delayed/manual assignment post-creation; remove feature or shift timing, re-evaluate. Primary conclusion survives critique: Yes, symmetric removal affects baseline/enhanced equally, preserving delta PR-AUC as text value measure.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "Symmetry via identical preprocessing/feature use across models (fit on train only) mitigates differential impact on relative performance, but imputation unspecified leaves new-customer distribution shift uncertain. DEFER as control partial. Settling experiment: Report % tickets/customers with <90-day history per split; detail imputation (e.g., train-mean, median); stratified PR-AUC/recall by history length. Vindicate design: Comparable relative outperformance on new customers. Validate critique: Asymmetric drop (e.g., enhanced suffers more from poor text signal on sparse history); limit claim to established customers. Primary conclusion survives: Yes, symmetric handling affects both models equally if imputed consistently.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Methodology explicitly scopes to 'tickets with non-null first-response events and complete metadata; tickets that were auto-closed or never received a response are excluded from analysis' (Data Curation), with splits post-filter and hypothesis testing performance on this representative population of actionable support tickets where SLA breaches are defined. Deployment to full incoming distribution (including non-responded) is out-of-scope per Section 8; residual concern is scope mismatch, not internal validity flaw.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Extraction 'strictly at ticket creation time, before any agent response or internal notes are added' (Feature Engineering) eliminates contamination mechanism by construction; audit verifies. Directly addresses critic ACCEPT reasoning.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "'Prior ticket count in the last 30 days' (Baseline features) explicitly uses 'prior,' excluding current ticket by definition/standard time-series convention; computed at creation timestamp with preprocessing fit on train only (Section 3), preventing leakage. Residual ambiguity minor as mechanism eliminated.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "DEFER on F1/F2 identifies resolvable prereq uncertainties via targeted experiments that preserve the symmetric relative PR-AUC claim; remaining findings rebutted to <=3 via design/scope controls. Empirical resolution needed for deployment details, but core hypothesis test sound."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

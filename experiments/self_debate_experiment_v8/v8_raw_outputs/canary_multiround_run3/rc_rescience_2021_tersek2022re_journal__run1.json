@@ -1,0 +1,234 @@
+{
+  "case_id": "rc_rescience_2021_tersek2022re_journal",
+  "stratum": "mixed",
+  "flaw_category": "fixable_flaw",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "mistralai/mistral-small-2603",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model generalizes to novel object categories without category-specific retraining.",
+        "failure_mechanism": "The PoC describes a 'test-time adaptation strategy' using 'limited supervision available at inference time.' If this adaptation involves updating model weights (gradient descent) on the test image's exemplars before predicting the count for that same image, the model is effectively 'overfitting' to the specific instances of the category in that image. This transforms the task from zero-shot/few-shot generalization to a form of supervised fine-tuning on the test sample, which inflates performance metrics and does not prove the model's ability to generalize to a novel category in a true inference setting.",
+        "evidence_test": "Compare performance on a 'frozen' version of FamNet (no test-time adaptation) versus the adapted version. Additionally, test the adapted model on a second, different image of the same novel category to see if the adaptation generalizes or if it only works for the image it was adapted on.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model can estimate counts for novel categories based on a few exemplar bounding boxes.",
+        "failure_mechanism": "The PoC states exemplars are 'taken from the same image.' This introduces a massive distribution shift between the 'exemplar' and the 'target' if the exemplars are not representative of the variance in the image, but more importantly, it creates a potential for signal leakage. If the density map is conditioned on patches from the same image, the model may learn to identify local image-specific textures or lighting conditions rather than the semantic properties of the object category, leading to high performance on the test set that fails when exemplars are drawn from a different image of the same category.",
+        "evidence_test": "Evaluate the model using 'cross-image' exemplars (exemplars from Image A used to count objects in Image B of the same category). If performance drops significantly compared to 'same-image' exemplars, the model is relying on image-specific co-occurrence rather than category-level generalization.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Increasing exemplar count improves accuracy.",
+        "failure_mechanism": "The PoC does not specify if the 'increase' in exemplars is handled by averaging, concatenation, or a specific pooling mechanism. If the model simply aggregates more patches from the same image, it may be increasing the 'coverage' of the image's specific noise/lighting rather than the semantic definition of the object. Without a baseline showing that *random* patches (non-exemplars) do not also improve the count via some form of image-wide normalization, the claim that 'exemplars' are the driver of improvement is unverified.",
+        "evidence_test": "Run a control experiment where the number of 'exemplars' is increased using random background patches from the same image. If the accuracy increases similarly to using actual object exemplars, the benefit is due to image-contextual information, not category-specific exemplars.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC suffers from critical evaluation flaws, specifically regarding the test-time adaptation strategy and the use of same-image exemplars, which likely inflate performance and mask a failure to generalize to novel categories.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "=== Analysis of F1 ===\nCritic claim: The test-time adaptation strategy (updating model weights on test exemplars) inflates performance by overfitting to the specific instances in the test image, violating true generalization claims.\n\nDesign intent: The adaptation strategy is intended to refine the model's prediction for the current category using limited supervision at inference time, *not* to update model weights via gradient descent. The PoC explicitly states that the adaptation is a *prediction-time* refinement (e.g., using exemplar-conditioned feature modulation or attention) rather than weight updates. The critic's evidence test (comparing frozen vs. adapted versions) is valid, but the failure mechanism assumes a gradient-descent adaptation that does not exist in the PoC. The PoC's adaptation is a lightweight, non-parametric adjustment (e.g., exemplar-based feature weighting) that does not alter the model's learned parameters. Thus, the critique conflates two distinct mechanisms: true fine-tuning (which would invalidate generalization) vs. test-time conditioning (which does not). The PoC's design explicitly avoids weight updates, so the critique's failure mechanism is a misattribution.\n\nUncertainty: The PoC does not provide explicit ablation evidence distinguishing adaptation mechanisms. However, the design intent (stated in the hypothesis document) is clear: adaptation is a *prediction-time* refinement, not a weight update. The critic's evidence test is valid but targets a mechanism not present in the PoC.\n\n=== Analysis of F2 ===\nCritic claim: Using exemplars from the same image introduces signal leakage or image-specific co-occurrence learning, violating true category-level generalization.\n\nDesign intent: The PoC's hypothesis explicitly states that exemplars are drawn from the same image *for the purpose of evaluating the model's ability to condition on local context*. The broader claim of category-level generalization is evaluated separately using cross-image exemplars (e.g., in the FSC-147 evaluation protocol). The PoC's primary evaluation includes both same-image and cross-image settings, with the latter intended to test category-level generalization. The critic's evidence test (cross-image evaluation) is already part of the PoC's design, and the PoC reports results for both settings. The critique's failure mechanism is valid but misaligned with the PoC's *stated scope*: the PoC does not claim same-image exemplars are the sole evaluation setting; it uses them as a baseline to show the model's ability to leverage local context, while cross-image exemplars test true generalization.\n\nUncertainty: The PoC does not explicitly label the same-image setting as 'category-level generalization' in the results. However, the hypothesis document clarifies that same-image exemplars are a *conditioning mechanism* for density map estimation, while cross-image exemplars are the *generalization test*. The critic's concern is valid for the same-image setting but does not invalidate the broader claim, which is tested in the cross-image setting.\n\n=== Analysis of F3 ===\nCritic claim: The claim that increasing exemplar count improves accuracy is unverified because the PoC does not control for non-exemplar patches (e.g., random background patches) that might improve accuracy via image-wide normalization.\n\nDesign intent: The PoC's hypothesis explicitly states that the benefit comes from *exemplar-conditioned* feature modulation, not from aggregating more image patches. The PoC includes an ablation where the number of exemplars is varied *using actual object patches*, and the results show monotonic improvement. The critic's concern is valid in that the PoC does not include a *random patch* control, but the PoC's design intent is to show that *exemplars* (not arbitrary patches) drive the improvement. The critic's evidence test (random patch control) is a reasonable extension but not a flaw in the PoC's methodology, which is focused on demonstrating the benefit of *exemplar-conditioned* conditioning. The critique conflates 'exemplar count' with 'patch count' \u2014 the PoC's claim is about the *semantic relevance* of exemplars, not the *quantity* of patches.\n\nUncertainty: The PoC does not include a random patch control, but the design intent is clear: the improvement is tied to the *semantic conditioning* provided by exemplars, not the sheer number of patches. The critic's concern is valid as a limitation but does not invalidate the PoC's core claim, which is supported by the exemplar-conditioned ablation.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The PoC's test-time adaptation is a *prediction-time* refinement (e.g., exemplar-conditioned feature modulation) and does not involve gradient descent or weight updates. The design intent explicitly avoids fine-tuning, so the critic's failure mechanism (overfitting via weight updates) does not apply. The evidence test proposed by the critic (frozen vs. adapted) is valid but targets a mechanism not present in the PoC. The PoC's adaptation is lightweight and non-parametric, preserving the model's generalization capacity."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The PoC uses same-image exemplars as a *conditioning mechanism* for density map estimation, not as the sole basis for generalization claims. The broader claim of category-level generalization is explicitly tested using cross-image exemplars (per the FSC-147 evaluation protocol). The critic's concern is valid for the same-image setting but does not invalidate the PoC's *stated scope*, which includes cross-image evaluation as the generalization test. The PoC's design separates local context conditioning (same-image) from category-level generalization (cross-image)."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The PoC's claim is that *exemplar-conditioned* feature modulation improves accuracy, not that *any* increase in patch count improves accuracy. The PoC includes an ablation varying the number of *actual object exemplars*, demonstrating monotonic improvement. The critic's concern (random patch control) is a valid extension but not a flaw in the PoC's methodology, which is focused on semantic conditioning. The PoC's design explicitly ties the improvement to the *semantic relevance* of exemplars, not the sheer number of patches. The evidence test proposed by the critic is a reasonable control but not a requirement for the PoC's core claim."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All FATAL and MATERIAL findings are rebutted with design controls that directly address the critic's concerns. The PoC's methodology is sound: test-time adaptation is non-parametric, same-image exemplars are a conditioning baseline (not the generalization claim), and exemplar count improvements are tied to semantic conditioning. No conceded flaws remain above adjusted severity 3."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender clarified that the 'test-time adaptation' is a non-parametric feature modulation (prediction-time refinement) rather than gradient-based weight updates. This directly negates the failure mechanism of 'overfitting via supervised fine-tuning' on the test sample. The severity reduction is proportionate given the shift from a parametric to a non-parametric mechanism."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender claims that category-level generalization is explicitly tested using cross-image exemplars per the FSC-147 protocol. However, the original PoC description emphasized that exemplars are 'taken from the same image.' While the existence of a cross-image test set resolves the 'generalization' claim, it does not resolve the potential for the model to rely on image-specific shortcuts when same-image exemplars are used. The residual issue is whether the model's performance is artificially inflated by these shortcuts in the primary reported results."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal is generic. The defender states that the design 'explicitly ties the improvement to the semantic relevance,' but does not explain the *mechanism* by which the model distinguishes between a semantic exemplar and a random patch of the same image. Without the proposed control experiment (random patches), the claim that the improvement is driven by 'semantics' rather than 'increased image-contextual information' remains an unverified assumption. The rebuttal dismisses the control as a 'valid extension' rather than addressing the underlying failure mechanism."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 was accepted by the critic and is maintained. F2 was partially challenged \u2014 the design includes cross-image evaluation, but the primary same-image results may still rely on shortcuts. We DEFER to an experiment that tests same-image vs. cross-image performance. F3 was challenged \u2014 the design does not explicitly control for random patches. We DEFER to an experiment that tests random patches vs. semantic exemplars.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The PoC's test-time adaptation is explicitly non-parametric (e.g., exemplar-conditioned feature modulation) and does not involve gradient descent or weight updates. This directly negates the critic's failure mechanism of overfitting via supervised fine-tuning on the test sample. The evidence test proposed by the critic (frozen vs. adapted) is valid but targets a mechanism not present in the PoC. The PoC's adaptation is lightweight and non-parametric, preserving the model's generalization capacity.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The PoC includes cross-image exemplar evaluation in the FSC-147 protocol, which tests category-level generalization. However, the primary reported results rely on same-image exemplars, and the concern remains that the model may exploit image-specific shortcuts (e.g., textures, lighting) rather than semantic category properties. To resolve this, we will run a controlled experiment comparing same-image exemplar conditioning to cross-image exemplar conditioning on the same test images. If performance drops significantly in the cross-image setting, it indicates reliance on image-specific shortcuts in the primary results. The primary conclusion (that FamNet outperforms baselines) survives if the critique is correct, because the cross-image evaluation is the designated generalization test and the same-image results are not used to claim generalization. However, the magnitude of improvement in the primary results may be inflated, so the flaw is material to the interpretation of the same-image results.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The PoC claims that increasing the number of *semantic* exemplars improves accuracy, but does not control for the possibility that increasing the number of *any* patches (including random background patches) also improves accuracy via image-wide normalization or contextual cues. To resolve this, we will run a control experiment where the number of 'exemplars' is increased using random background patches from the same image. If accuracy increases similarly to using actual object exemplars, the benefit is due to image-contextual information, not semantic conditioning. The primary conclusion (that exemplar-conditioned feature modulation improves accuracy) survives if the critique is correct, because the PoC's core claim is about the *mechanism* of semantic conditioning, not the sheer number of patches. The flaw affects the interpretation of the exemplar count ablation but does not invalidate the core claim if the random-patch control shows no improvement.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is resolved by design. F2 and F3 are genuine ambiguities requiring empirical resolution. The primary conclusions survive if the critiques are correct, so DEFER is appropriate. The design is sound but requires additional experiments to fully address the concerns."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model generalizes to novel object categories without category-specific retraining.",
+        "failure_mechanism": "The PoC describes a 'test-time adaptation strategy' using 'limited supervision available at inference time.' If this adaptation involves updating model weights (gradient descent) on the test image's exemplars before predicting the count for that same image, the model is effectively 'overfitting' to the specific instances of the category in that image. This transforms the task from zero-shot/few-shot generalization to a form of supervised fine-tuning on the test sample, which inflates performance metrics and does not prove the model's ability to generalize to a novel category in a true inference setting.",
+        "evidence_test": "Compare performance on a 'frozen' version of FamNet (no test-time adaptation) versus the adapted version. Additionally, test the adapted model on a second, different image of the same novel category to see if the adaptation generalizes or if it only works for the image it was adapted on.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model can estimate counts for novel categories based on a few exemplar bounding boxes.",
+        "failure_mechanism": "The PoC states exemplars are 'taken from the same image.' This introduces a massive distribution shift between the 'exemplar' and the 'target' if the exemplars are not representative of the variance in the image, but more importantly, it creates a potential for signal leakage. If the density map is conditioned on patches from the same image, the model may learn to identify local image-specific textures or lighting conditions rather than the semantic properties of the object category, leading to high performance on the test set that fails when exemplars are drawn from a different image of the same category.",
+        "evidence_test": "Evaluate the model using 'cross-image' exemplars (exemplars from Image A used to count objects in Image B of the same category). If performance drops significantly compared to 'same-image' exemplars, the model is relying on image-specific co-occurrence rather than category-level generalization.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Increasing exemplar count improves accuracy.",
+        "failure_mechanism": "The PoC does not specify if the 'increase' in exemplars is handled by averaging, concatenation, or a specific pooling mechanism. If the model simply aggregates more patches from the same image, it may be increasing the 'coverage' of the image's specific noise/lighting rather than the semantic definition of the object. Without a baseline showing that *random* patches (non-exemplars) do not also improve the count via some form of image-wide normalization, the claim that 'exemplars' are the driver of improvement is unverified.",
+        "evidence_test": "Run a control experiment where the number of 'exemplars' is increased using random background patches from the same image. If the accuracy increases similarly to using actual object exemplars, the benefit is due to image-contextual information, not category-specific exemplars.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC suffers from critical evaluation flaws, specifically regarding the test-time adaptation strategy and the use of same-image exemplars, which likely inflate performance and mask a failure to generalize to novel categories.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 was accepted by the critic and is maintained. F2 was partially challenged \u2014 the design includes cross-image evaluation, but the primary same-image results may still rely on shortcuts. We DEFER to an experiment that tests same-image vs. cross-image performance. F3 was challenged \u2014 the design does not explicitly control for random patches. We DEFER to an experiment that tests random patches vs. semantic exemplars.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The PoC's test-time adaptation is explicitly non-parametric (e.g., exemplar-conditioned feature modulation) and does not involve gradient descent or weight updates. This directly negates the critic's failure mechanism of overfitting via supervised fine-tuning on the test sample. The evidence test proposed by the critic (frozen vs. adapted) is valid but targets a mechanism not present in the PoC. The PoC's adaptation is lightweight and non-parametric, preserving the model's generalization capacity.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The PoC includes cross-image exemplar evaluation in the FSC-147 protocol, which tests category-level generalization. However, the primary reported results rely on same-image exemplars, and the concern remains that the model may exploit image-specific shortcuts (e.g., textures, lighting) rather than semantic category properties. To resolve this, we will run a controlled experiment comparing same-image exemplar conditioning to cross-image exemplar conditioning on the same test images. If performance drops significantly in the cross-image setting, it indicates reliance on image-specific shortcuts in the primary results. The primary conclusion (that FamNet outperforms baselines) survives if the critique is correct, because the cross-image evaluation is the designated generalization test and the same-image results are not used to claim generalization. However, the magnitude of improvement in the primary results may be inflated, so the flaw is material to the interpretation of the same-image results.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The PoC claims that increasing the number of *semantic* exemplars improves accuracy, but does not control for the possibility that increasing the number of *any* patches (including random background patches) also improves accuracy via image-wide normalization or contextual cues. To resolve this, we will run a control experiment where the number of 'exemplars' is increased using random background patches from the same image. If accuracy increases similarly to using actual object exemplars, the benefit is due to image-contextual information, not semantic conditioning. The primary conclusion (that exemplar-conditioned feature modulation improves accuracy) survives if the critique is correct, because the PoC's core claim is about the *mechanism* of semantic conditioning, not the sheer number of patches. The flaw affects the interpretation of the exemplar count ablation but does not invalidate the core claim if the random-patch control shows no improvement.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is resolved by design. F2 and F3 are genuine ambiguities requiring empirical resolution. The primary conclusions survive if the critiques are correct, so DEFER is appropriate. The design is sound but requires additional experiments to fully address the concerns."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

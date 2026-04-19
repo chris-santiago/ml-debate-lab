@@ -1,0 +1,529 @@
+{
+  "case_id": "hyp_016_case_1",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 10,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The evaluation uses max(predicted risk in 6-48h window) as the patient-level score, which measures whether the model ever predicts sepsis during the window, not whether it predicts before sepsis onset.",
+        "failure_mechanism": "A model that outputs high risk at ANY hour in the 6-48h window for a patient who eventually develops sepsis (after 48h) will be scored as a true positive, even if the prediction is made AFTER sepsis onset or has no temporal relationship to onset. This maximally inflates AUC because the model effectively gets credit for predicting sepsis at any point during a window where sepsis cannot yet have occurred (by label definition), and the max operation ensures a single lucky timestamp drives the entire admission's score.",
+        "evidence_test": "Run a 'counterfactual' experiment: shuffle the temporal order of predictions within each admission (e.g., reverse the sequence). If AUC drops substantially, the original metric was exploiting temporal alignment. If AUC remains similar, the metric is not actually measuring temporal prediction capability.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 10,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Sepsis labels require onset >48 hours post-admission, while predictions are evaluated in the 6-48 hour window. The model is tasked with predicting sepsis that cannot yet have occurred by definition.",
+        "failure_mechanism": "The label definition explicitly states sepsis must occur >48 hours post-admission. The prediction window is 6-48 hours. This means for any patient who develops sepsis, the label timestamp is AFTER the prediction window closes. The model is being evaluated on predicting a condition that, by the experiment's own definition, cannot exist during the prediction window. This creates an impossible learning objective - the model cannot learn the association between pre-sepsis features and sepsis onset because all positive cases have onset after the prediction horizon.",
+        "evidence_test": "Check the temporal relationship: for positive cases, compute the time between the prediction window (6-48h) and the actual sepsis onset time. If onset is always >48h, the task is impossible. If some onsets fall within 6-48h, the label definition is internally inconsistent.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 24-hour forward-fill window for vital signs creates artificial stability by propagating stale values forward, potentially masking patient deterioration.",
+        "failure_mechanism": "If a patient's condition deteriorates between hours 1-24, the forward-filled values will continue to show the pre-deterioration state for up to 24 hours. This creates a temporal mismatch between the feature representation and the patient's actual clinical state. The model learns from features that do not reflect reality. In sepsis prediction, where temporal dynamics are critical, this could cause the model to miss deterioration signals that manifest between fill windows.",
+        "evidence_test": "Ablate the forward-fill: use only observed values (with heavy imputation or exclusion) and compare test AUC. If performance drops significantly with no-forward-fill, the forward-fill was providing artificial signal. If performance is similar, forward-fill is benign.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 6-month gap between training (ends June 2022) and validation (July-Dec 2022) plus the 12-month test set (2023) captures seasonal variation and concept drift.",
+        "failure_mechanism": "The gap doesn't 'capture' concept drift - it creates it. The validation set is 6 months away from training distribution, and the test set is 12-18 months away. Any model selected on validation set may be optimized for a distribution that no longer exists in test. The experiment conflates 'temporal split prevents leakage' with 'temporal split produces stable performance,' but the latter is not verified. Concept drift could cause severe test-set degradation that the validation set cannot predict.",
+        "evidence_test": "Compute distribution shift metrics (KL divergence, covariate balance) between train/val and val/test splits on key features. Report performance broken out by month/quarter in test set - if there's a trend downward over 2023, drift is present.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The claim of 'equal tuning effort' between logistic regression and LSTM ensures a fair comparison.",
+        "failure_mechanism": "The hyperparameter search spaces differ fundamentally: logistic regression has 5\u00d72=10 combinations (C values \u00d7 class weights), while LSTM has 3\u00d73\u00d72\u00d72\u00d72=72 combinations (lr \u00d7 dropout \u00d7 heads \u00d7 batch sizes \u00d7 baseline). Even with equal effort, the larger space for LSTM increases chance of finding a better configuration by chance alone. Additionally, the baseline has no architecture choices while LSTM has multiple. The claim of fairness is not substantiated.",
+        "evidence_test": "Report the number of hyperparameter combinations tried for each model. If the ratio differs substantially from 1:1, the 'equal effort' claim is weakened. Consider reporting the variance in validation AUC across all tried configurations to show the search was comprehensive.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 2-hour exclusion window around ICU/ward transfers prevents label leakage from documentation artifacts.",
+        "failure_mechanism": "Transfers are high-stakes clinical events often accompanied by documentation reviews, medication changes, and new monitoring. A 2-hour window may be insufficient to exclude artifacts. If a transfer occurs and triggers retrospective chart review that backdates sepsis criteria, the 2-hour window would not exclude this. The window size is not justified by analysis.",
+        "evidence_test": "Vary the exclusion window (0h, 2h, 4h, 8h, 24h) and report test AUC for each. If performance changes substantially with larger windows, the original 2h window was insufficient.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The sepsis label definition combining (1) blood culture + antibiotics, (2) ICD code + organ dysfunction, or (3) qSOFA \u22652 + organ dysfunction is clinically valid.",
+        "failure_mechanism": "These three criteria are not equivalent - blood culture + antibiotic could represent prophylactic treatment or non-infectious fever, ICD codes have known accuracy issues, and qSOFA has limited sensitivity. The \u00b112 hour window for culture/antibiotic concordance is arbitrary. The 48-hour threshold is also arbitrary. These choices introduce label noise that affects all downstream metrics.",
+        "evidence_test": "Run the sensitivity analysis mentioned (6-hour concordance window) and report how many labels change. If label changes are substantial, the original label definition was unstable.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratification by hospital site and sepsis prevalence quartile ensures no single site dominates any fold.",
+        "failure_note": "This is a reasonable design choice but the stratification is only applied within splits, not across them. The temporal split already ensures different sites appear in train/val/test, but the relative proportions could shift over time.",
+        "evidence_test": "Report the distribution of sites and sepsis prevalence across train/val/test splits. If any site or prevalence quartile is absent or severely underrepresented in any split, stratification failed.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "Two FATAL flaws invalidate this experiment: (1) the evaluation metric uses max risk in a window where sepsis cannot yet have occurred, massively inflating AUC, and (2) the label definition creates an impossible learning objective by requiring sepsis onset >48h while predicting in the 6-48h window. Additional concerns include 24-hour forward-fill creating artificial stability, untested distribution shift across the 18-month gap between training and test, and an unfair comparison due to unequal hyperparameter search spaces.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critic raises several significant concerns regarding the evaluation methodology and design choices. For finding F1, the critique correctly identifies that using the maximum predicted risk within the 6-48 hour window can inflate the AUC by allowing the model to score true positives based on predictions made after sepsis onset. This is a valid concern that undermines the temporal integrity of the evaluation metric. For finding F2, the critique points out a fundamental flaw in the task definition, as the model is asked to predict sepsis that cannot occur within the defined prediction window. This creates an impossible learning objective, which is a critical issue that must be acknowledged. Finding F3 highlights the potential issue of forward-filling vital signs, which could mask patient deterioration, but this may not be as severe as the previous two findings. Finding F4 discusses the potential for concept drift due to the temporal splits used in the validation and test sets, which is a valid concern but may not be fatal if the model is robust to such variations. Finding F5 questions the fairness of hyperparameter tuning efforts between the logistic regression and LSTM models, which is a material concern but does not fundamentally invalidate the methodology. Finding F6 raises a valid point about the 2-hour exclusion window for transfers, suggesting it may not adequately prevent label leakage. Finally, findings F7 and F8, while valid, are classified as minor concerns that do not significantly impact the overall methodology. Overall, findings F1 and F2 represent critical flaws that warrant serious consideration, while the remaining findings highlight areas for improvement but do not fundamentally undermine the methodology.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 10,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 10,
+        "justification": "The critique correctly identifies that the evaluation metric allows for inflated AUC scores by scoring true positives based on predictions made after sepsis onset. This fundamentally undermines the validity of the evaluation."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 10,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 10,
+        "justification": "The critique accurately points out that the model is tasked with predicting sepsis that cannot occur within the defined prediction window, creating an impossible learning objective. This is a critical flaw in the design."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "While the concern about forward-filling is valid, the design choice was made to ensure continuity in the data representation. The impact of forward-filling can be assessed in future work, but it does not fundamentally invalidate the model's ability to learn from the temporal data."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critique raises a valid concern about concept drift, but the methodology includes controls for temporal splits that aim to mitigate this issue. The model's performance will be monitored over time to ensure robustness against potential drift."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The claim of equal tuning effort is based on the intention to provide a fair comparison. While the hyperparameter spaces differ, the rigorous tuning process applied to both models aims to ensure comparability."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The 2-hour exclusion window was chosen based on clinical insights into transfer events. While the critique suggests it may be insufficient, the design rationale is grounded in practical considerations of clinical workflow."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the concerns about label definition are valid, they are not significant enough to undermine the overall methodology. The model's performance will be evaluated in light of these definitions."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The stratification approach is reasonable and serves to mitigate potential biases. While the critique raises a valid point, it does not significantly impact the overall methodology."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Findings F1 and F2 are critical flaws that undermine the validity of the evaluation methodology, leading to a concession on both. The remaining findings, while valid, do not fundamentally invalidate the overall approach."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 10,
+        "reasoning": "The defender CONCEDED this finding. The critique correctly identifies that the evaluation metric allows for inflated AUC scores by scoring true positives based on predictions made after sepsis onset. This fundamentally undermines the validity of the evaluation."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 10,
+        "reasoning": "The defender CONCEDED this finding. The critique accurately points out that the model is tasked with predicting sepsis that cannot occur within the defined prediction window, creating an impossible learning objective. This is a critical flaw in the design."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal is generic. It states the design choice was made 'to ensure continuity in the data representation' but does not explain WHY 24 hours is the appropriate window, or HOW this continuity benefit outweighs the specific failure mechanism I identified: that forward-filling can mask patient deterioration for up to 24 hours. The rebuttal provides a design rationale but does not address the actual concern about temporal mismatch between features and clinical state. No mechanistic explanation is given for why 24-hour forward-fill does not cause the model to miss deterioration signals."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal is a scope deflection that does not address the specific failure mechanism. It claims 'methodology includes controls for temporal splits that aim to mitigate this issue' but does not specify what those controls are or provide evidence they work. The statement 'the model will be monitored over time' is a future-work statement, not a defense of the current experiment's design. The specific failure mechanism is that the experiment does not verify performance stability across temporal splits - the rebuttal offers no evidence this verification occurs."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal is generic. It claims 'rigorous tuning process' but does not address the specific failure mechanism: that 72 hyperparameter combinations for LSTM versus 10 for logistic regression creates different odds of finding optimal configurations by chance. The rebuttal does not explain why this imbalance does not favor the LSTM. No quantitative argument is provided."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal is generic. It claims the 2-hour window 'was chosen based on clinical insights into transfer events' but does not specify what those insights are, why 2 hours is sufficient, or how this addresses the specific failure mechanism: that transfers trigger documentation reviews that can backdate sepsis criteria, and 2 hours may not exclude this artifact. No mechanistic justification is provided for the window size."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal type is REBUT-IMMATERIAL, claiming the concerns 'are not significant enough to undermine the overall methodology.' This is not a factual correction - my factual premise remains correct: the three criteria are not equivalent, the \u00b112 hour window is arbitrary, and the 48-hour threshold is arbitrary. These do introduce label noise. The rebuttal does not identify any error in my factual premise; it merely dismisses the concern's significance without justification. The specific failure mechanism (label noise affecting all downstream metrics) is not addressed."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal type is REBUT-IMMATERIAL, claiming the concern 'does not significantly impact the overall methodology.' This is not a factual correction - my factual premise remains correct: stratification is only applied within splits, not across them, and relative proportions could shift over time. The rebuttal does not identify any error in my factual premise; it merely dismisses the concern's significance without justification. The specific failure mechanism (site proportions could shift, causing distribution mismatch) is not addressed."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted my rebuttals for findings F1 and F2, which I will maintain. For findings F3, F4, F5, F6, F7, and F8, I will strengthen my arguments to address the specific concerns raised by the critic, as they identified valid points regarding the design's handling of temporal dynamics, hyperparameter tuning fairness, exclusion window justification, label noise, and stratification effectiveness.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 10,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 10,
+        "justification": "The critique correctly identifies that the evaluation metric allows for inflated AUC scores by scoring true positives based on predictions made after sepsis onset. This fundamentally undermines the validity of the evaluation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 10,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 10,
+        "justification": "The critique accurately points out that the model is tasked with predicting sepsis that cannot occur within the defined prediction window, creating an impossible learning objective. This is a critical flaw in the design.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The 24-hour forward-fill was chosen to maintain continuity in the data representation, allowing the model to leverage historical data for predictions. However, I acknowledge that this could mask deterioration signals. Future work will investigate the impact of varying the forward-fill duration on model performance, ensuring that we balance data continuity with the need for accurate temporal representation.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "While the critique raises concerns about concept drift, the design includes temporal splits to mitigate information leakage and ensure that the model is evaluated on data that reflects the temporal dynamics of sepsis onset. Additionally, we will conduct a thorough analysis of model performance across different temporal splits to verify stability and robustness, addressing the concern of potential drift.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The claim of equal tuning effort is based on the rigorous process applied to both models, with the intention of ensuring a fair comparison. I recognize that the hyperparameter search spaces differ significantly, but the tuning process for the LSTM was designed to comprehensively explore its larger space. We will report the number of configurations tested and the variance in validation AUC to substantiate the fairness of the comparison.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The 2-hour exclusion window was chosen based on clinical insights that suggest most documentation reviews and significant changes occur shortly after transfer. However, I acknowledge that this window may not be sufficient to exclude all artifacts. Future work will explore varying the exclusion window to assess its impact on model performance and ensure that documentation artifacts are adequately controlled.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the concerns about label definition are valid, they do not significantly undermine the overall methodology. However, I recognize the importance of addressing label noise. We will conduct sensitivity analyses to evaluate the impact of different label definitions on model performance, ensuring that our findings remain robust.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The stratification approach is reasonable and serves to mitigate potential biases. However, I acknowledge that stratification is only applied within splits, and we will report the distribution of sites and sepsis prevalence across train/val/test splits to ensure that no significant shifts occur that could impact the model's performance.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The acceptance of findings F1 and F2 indicates critical flaws in the design that warrant empirical testing. Additionally, the strengthened rebuttals for the remaining findings highlight the need for further investigation into the identified concerns, making empirical testing the appropriate next step."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 10,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The evaluation uses max(predicted risk in 6-48h window) as the patient-level score, which measures whether the model ever predicts sepsis during the window, not whether it predicts before sepsis onset.",
+        "failure_mechanism": "A model that outputs high risk at ANY hour in the 6-48h window for a patient who eventually develops sepsis (after 48h) will be scored as a true positive, even if the prediction is made AFTER sepsis onset or has no temporal relationship to onset. This maximally inflates AUC because the model effectively gets credit for predicting sepsis at any point during a window where sepsis cannot yet have occurred (by label definition), and the max operation ensures a single lucky timestamp drives the entire admission's score.",
+        "evidence_test": "Run a 'counterfactual' experiment: shuffle the temporal order of predictions within each admission (e.g., reverse the sequence). If AUC drops substantially, the original metric was exploiting temporal alignment. If AUC remains similar, the metric is not actually measuring temporal prediction capability.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 10,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Sepsis labels require onset >48 hours post-admission, while predictions are evaluated in the 6-48 hour window. The model is tasked with predicting sepsis that cannot yet have occurred by definition.",
+        "failure_mechanism": "The label definition explicitly states sepsis must occur >48 hours post-admission. The prediction window is 6-48 hours. This means for any patient who develops sepsis, the label timestamp is AFTER the prediction window closes. The model is being evaluated on predicting a condition that, by the experiment's own definition, cannot exist during the prediction window. This creates an impossible learning objective - the model cannot learn the association between pre-sepsis features and sepsis onset because all positive cases have onset after the prediction horizon.",
+        "evidence_test": "Check the temporal relationship: for positive cases, compute the time between the prediction window (6-48h) and the actual sepsis onset time. If onset is always >48h, the task is impossible. If some onsets fall within 6-48h, the label definition is internally inconsistent.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 24-hour forward-fill window for vital signs creates artificial stability by propagating stale values forward, potentially masking patient deterioration.",
+        "failure_mechanism": "If a patient's condition deteriorates between hours 1-24, the forward-filled values will continue to show the pre-deterioration state for up to 24 hours. This creates a temporal mismatch between the feature representation and the patient's actual clinical state. The model learns from features that do not reflect reality. In sepsis prediction, where temporal dynamics are critical, this could cause the model to miss deterioration signals that manifest between fill windows.",
+        "evidence_test": "Ablate the forward-fill: use only observed values (with heavy imputation or exclusion) and compare test AUC. If performance drops significantly with no-forward-fill, the forward-fill was providing artificial signal. If performance is similar, forward-fill is benign.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 6-month gap between training (ends June 2022) and validation (July-Dec 2022) plus the 12-month test set (2023) captures seasonal variation and concept drift.",
+        "failure_mechanism": "The gap doesn't 'capture' concept drift - it creates it. The validation set is 6 months away from training distribution, and the test set is 12-18 months away. Any model selected on validation set may be optimized for a distribution that no longer exists in test. The experiment conflates 'temporal split prevents leakage' with 'temporal split produces stable performance,' but the latter is not verified. Concept drift could cause severe test-set degradation that the validation set cannot predict.",
+        "evidence_test": "Compute distribution shift metrics (KL divergence, covariate balance) between train/val and val/test splits on key features. Report performance broken out by month/quarter in test set - if there's a trend downward over 2023, drift is present.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The claim of 'equal tuning effort' between logistic regression and LSTM ensures a fair comparison.",
+        "failure_mechanism": "The hyperparameter search spaces differ fundamentally: logistic regression has 5\u00d72=10 combinations (C values \u00d7 class weights), while LSTM has 3\u00d73\u00d72\u00d72\u00d72=72 combinations (lr \u00d7 dropout \u00d7 heads \u00d7 batch sizes \u00d7 baseline). Even with equal effort, the larger space for LSTM increases chance of finding a better configuration by chance alone. Additionally, the baseline has no architecture choices while LSTM has multiple. The claim of fairness is not substantiated.",
+        "evidence_test": "Report the number of hyperparameter combinations tried for each model. If the ratio differs substantially from 1:1, the 'equal effort' claim is weakened. Consider reporting the variance in validation AUC across all tried configurations to show the search was comprehensive.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 2-hour exclusion window around ICU/ward transfers prevents label leakage from documentation artifacts.",
+        "failure_mechanism": "Transfers are high-stakes clinical events often accompanied by documentation reviews, medication changes, and new monitoring. A 2-hour window may be insufficient to exclude artifacts. If a transfer occurs and triggers retrospective chart review that backdates sepsis criteria, the 2-hour window would not exclude this. The window size is not justified by analysis.",
+        "evidence_test": "Vary the exclusion window (0h, 2h, 4h, 8h, 24h) and report test AUC for each. If performance changes substantially with larger windows, the original 2h window was insufficient.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The sepsis label definition combining (1) blood culture + antibiotics, (2) ICD code + organ dysfunction, or (3) qSOFA \u22652 + organ dysfunction is clinically valid.",
+        "failure_mechanism": "These three criteria are not equivalent - blood culture + antibiotic could represent prophylactic treatment or non-infectious fever, ICD codes have known accuracy issues, and qSOFA has limited sensitivity. The \u00b112 hour window for culture/antibiotic concordance is arbitrary. The 48-hour threshold is also arbitrary. These choices introduce label noise that affects all downstream metrics.",
+        "evidence_test": "Run the sensitivity analysis mentioned (6-hour concordance window) and report how many labels change. If label changes are substantial, the original label definition was unstable.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratification by hospital site and sepsis prevalence quartile ensures no single site dominates any fold.",
+        "failure_note": "This is a reasonable design choice but the stratification is only applied within splits, not across them. The temporal split already ensures different sites appear in train/val/test, but the relative proportions could shift over time.",
+        "evidence_test": "Report the distribution of sites and sepsis prevalence across train/val/test splits. If any site or prevalence quartile is absent or severely underrepresented in any split, stratification failed.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "Two FATAL flaws invalidate this experiment: (1) the evaluation metric uses max risk in a window where sepsis cannot yet have occurred, massively inflating AUC, and (2) the label definition creates an impossible learning objective by requiring sepsis onset >48h while predicting in the 6-48h window. Additional concerns include 24-hour forward-fill creating artificial stability, untested distribution shift across the 18-month gap between training and test, and an unfair comparison due to unequal hyperparameter search spaces.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted my rebuttals for findings F1 and F2, which I will maintain. For findings F3, F4, F5, F6, F7, and F8, I will strengthen my arguments to address the specific concerns raised by the critic, as they identified valid points regarding the design's handling of temporal dynamics, hyperparameter tuning fairness, exclusion window justification, label noise, and stratification effectiveness.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 10,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 10,
+        "justification": "The critique correctly identifies that the evaluation metric allows for inflated AUC scores by scoring true positives based on predictions made after sepsis onset. This fundamentally undermines the validity of the evaluation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 10,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 10,
+        "justification": "The critique accurately points out that the model is tasked with predicting sepsis that cannot occur within the defined prediction window, creating an impossible learning objective. This is a critical flaw in the design.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The 24-hour forward-fill was chosen to maintain continuity in the data representation, allowing the model to leverage historical data for predictions. However, I acknowledge that this could mask deterioration signals. Future work will investigate the impact of varying the forward-fill duration on model performance, ensuring that we balance data continuity with the need for accurate temporal representation.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "While the critique raises concerns about concept drift, the design includes temporal splits to mitigate information leakage and ensure that the model is evaluated on data that reflects the temporal dynamics of sepsis onset. Additionally, we will conduct a thorough analysis of model performance across different temporal splits to verify stability and robustness, addressing the concern of potential drift.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The claim of equal tuning effort is based on the rigorous process applied to both models, with the intention of ensuring a fair comparison. I recognize that the hyperparameter search spaces differ significantly, but the tuning process for the LSTM was designed to comprehensively explore its larger space. We will report the number of configurations tested and the variance in validation AUC to substantiate the fairness of the comparison.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The 2-hour exclusion window was chosen based on clinical insights that suggest most documentation reviews and significant changes occur shortly after transfer. However, I acknowledge that this window may not be sufficient to exclude all artifacts. Future work will explore varying the exclusion window to assess its impact on model performance and ensure that documentation artifacts are adequately controlled.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the concerns about label definition are valid, they do not significantly undermine the overall methodology. However, I recognize the importance of addressing label noise. We will conduct sensitivity analyses to evaluate the impact of different label definitions on model performance, ensuring that our findings remain robust.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The stratification approach is reasonable and serves to mitigate potential biases. However, I acknowledge that stratification is only applied within splits, and we will report the distribution of sites and sepsis prevalence across train/val/test splits to ensure that no significant shifts occur that could impact the model's performance.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The acceptance of findings F1 and F2 indicates critical flaws in the design that warrant empirical testing. Additionally, the strengthened rebuttals for the remaining findings highlight the need for further investigation into the identified concerns, making empirical testing the appropriate next step."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 10,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=10 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 10,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=10 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

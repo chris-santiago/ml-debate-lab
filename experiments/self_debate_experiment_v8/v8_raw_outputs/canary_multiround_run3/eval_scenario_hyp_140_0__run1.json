@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_hyp_140_0",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split at the alert level prevents leakage of future information.",
+        "failure_mechanism": "In cybersecurity, a single 'incident' often generates a burst of multiple alerts over several days. If Alert A (Day 1) and Alert B (Day 3) belong to the same incident, and the split boundary falls between them, the model may see Alert A in the training set and Alert B in the test set. Because the GNN uses a 30-day lookback window, the graph for Alert B (test) will contain the edges and nodes created by Alert A (train). The model can then 'cheat' by recognizing the specific graph signature of a known incident it already saw during training, rather than learning to detect the underlying malicious behavior.",
+        "evidence_test": "Perform a 'Grouped Temporal Split' where all alerts associated with the same Incident ID or the same Entity within a specific time-cluster are moved together to either the train or test set. If PR-AUC drops significantly compared to the alert-level split, leakage is confirmed.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Labels derived from analyst disposition decisions serve as ground truth.",
+        "failure_mechanism": "The PoC excludes alerts without a disposition after 7 days to 'minimize noise.' However, in SOC operations, the most complex, stealthy, or high-impact intrusions often take longer than 7 days to investigate and close. By dropping these, the dataset is biased toward 'easy' cases (quickly closed benigns or obvious malicious alerts). The model is not being tested on the hardest cases the hypothesis targets, leading to an inflated sense of performance that will collapse when faced with slow-burning APTs in production.",
+        "evidence_test": "Compare the distribution of alert types and 'time-to-close' for the excluded alerts versus the included alerts. If excluded alerts have a higher correlation with high-severity tags or specific complex detection types, the dataset is biased.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GNN's advantage comes from exploiting relational structure in entity interactions.",
+        "failure_mechanism": "The PoC compares the tGNN to a tabular baseline and a sequence baseline. However, it does not explicitly control for 'node degree' or 'entity popularity' (e.g., a domain server that appears in 90% of alerts). GNNs are notorious for picking up on high-degree node bias (structural shortcuts) rather than semantic relational patterns. The model might simply be learning that 'alerts involving the Domain Controller are more likely to be malicious'\u2014a pattern the tabular baseline might miss if not explicitly engineered, but which is not 'relational reasoning' in the way the hypothesis claims.",
+        "evidence_test": "Ablation study: Replace the GNN's edge features with random noise while keeping the graph topology, or compare against a baseline that simply adds 'node degree' as a tabular feature.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The model is evaluated on a locked test set (months 16\u201318) to ensure generalizability.",
+        "failure_mechanism": "Cybersecurity data is non-stationary. Attack patterns in months 1\u201315 may be entirely different from months 16\u201318 (concept drift). While the temporal split is correct, the PoC lacks a mechanism to quantify how much of the performance drop is due to model failure versus a fundamental shift in the threat landscape (e.g., a new zero-day exploit appearing in month 17).",
+        "evidence_test": "Calculate the 'feature drift' (e.g., Population Stability Index) between the training and test sets for the top 10 most important features.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC suffers from a critical signal leakage flaw where alerts from the same incident likely span the train/test boundary, and a selection bias that removes the most complex cases from the evaluation set.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding in order.\n\n**F1 (Severity 8 - FATAL):** The critic claims that alert-level temporal splits can leak information because alerts from the same incident might be split across train/test, and the GNN's 30-day lookback window could include training alerts when processing test alerts. This is a valid concern for graph-based models that aggregate historical data. However, the methodology explicitly states: 'No post-alert information (analyst actions, subsequent incidents) is included.' The design intent is to use only the 30-day window *preceding* the alert timestamp. If Alert A (train) occurs on Day 1 and Alert B (test) occurs on Day 3, the graph for Alert B would include events from Day -27 to Day 3. Alert A (Day 1) would indeed appear in that window. This is leakage by the critic's definition. The methodology does not mention any control for incident grouping or entity clustering across the split boundary. This is a genuine design gap that could inflate performance. The magnitude of the effect is uncertain\u2014it depends on how often multi-alert incidents cross the temporal boundary and how distinctive their graph signatures are. The design currently lacks a control for this.\n\n**F2 (Severity 7 - FATAL):** The critic claims that excluding alerts without a disposition after 7 days biases the dataset toward 'easy' cases, missing complex, slow-burning attacks. The methodology states this exclusion is to 'minimize label noise' and that labels are 'operationally realistic.' The critic's point is valid: SOCs often have alerts that take >7 days to investigate, especially for sophisticated incidents. By excluding them, we are not evaluating on the full spectrum of alerts, potentially inflating performance. The methodology does not address this bias explicitly in the 'Controls for Confounds' section. There is no analysis comparing included vs. excluded alerts. The concern is that the model's performance on 'hard' cases (which are most important) is unknown. This is a material flaw in the evaluation scope.\n\n**F3 (Severity 5 - MATERIAL):** The critic claims the GNN's advantage might come from learning simple structural shortcuts (like node degree) rather than relational reasoning. The methodology includes a control: 'a transformer sequence baseline provides additional control that the tGNN's gain is from graph structure, not temporal encoding.' However, this does not directly control for node-degree bias. The critic suggests an ablation (replacing edge features with noise) or adding node degree as a tabular feature. The methodology's current controls address temporal encoding vs. graph structure but do not isolate 'relational reasoning' from 'structural popularity.' This is a valid concern that the existing controls do not fully address. The significance is material but not fatal, as it questions the interpretation of results, not the validity of the split or labels.\n\n**F4 (Severity 2 - MINOR):** The critic notes that cybersecurity data is non-stationary and performance drops could be due to concept drift rather than model failure. The methodology mentions 'Stratified post-hoc analysis on test subsets (by month, incident type, or analyst) checks whether performance is stable over time.' This is a direct, though implicit, control for drift\u2014analyzing performance by month can reveal if drops correlate with time. The critic suggests calculating feature drift metrics (PSI). While that would be a more quantitative measure, the existing monthly analysis is a reasonable, if coarse, check for the PoC stage. The concern is below significance for the experiment's primary conclusion (comparing model architectures), as drift would affect all models trained on the same temporal data equally. It's a valid point for future work but not a flaw in the current design.\n\nNow, I will assign rebuttals.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly identifies a potential leakage mechanism: alerts from the same incident split across train/test could allow the GNN to 'recognize' incident signatures via the 30-day lookback window. The methodology does not explicitly address this with a control like incident-grouped splits. The concern is genuine and material. However, the magnitude of the effect is empirically uncertain\u2014it depends on incident frequency and signature distinctiveness. A settling experiment is needed: perform the 'Grouped Temporal Split' test the critic suggests. If PR-AUC drops significantly, leakage is confirmed and the evaluation is invalid. If PR-AUC remains stable, the design is vindicated\u2014the leakage risk is negligible. The experiment's primary conclusion (tGNN vs. baseline comparison) cannot remain valid if the critique is correct, as it would inflate tGNN performance asymmetrically (the baseline uses the same window but may not memorize graph signatures as effectively). Therefore, this is a DEFER, not a CONCEDE, because the design has a partial control (strict chronological split prevents future info leakage) but the cross-incident leakage magnitude is unknown and needs testing."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct: excluding alerts without a disposition after 7 days likely biases the dataset toward quicker, potentially easier decisions. The methodology's stated goal is to 'minimize label noise,' but this comes at the cost of excluding the very alerts that might represent sophisticated, slow-burning attacks\u2014the primary target of the hypothesis. The 'Controls for Confounds' section does not address this bias. There is no analysis comparing included vs. excluded alerts. This is a material flaw in the evaluation scope that could lead to inflated performance estimates. If the excluded alerts are systematically different (e.g., more complex), the model is not being tested on the hardest cases. This directly affects the validity of the primary metric (PR-AUC) for the intended use case. No design control or rationale in the methodology mitigates this; it is a conceded flaw."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic raises a valid concern: the tGNN's perceived advantage might stem from learning simple structural shortcuts (e.g., node degree) rather than relational reasoning. The methodology includes a transformer sequence baseline to control for temporal encoding, but this does not isolate 'graph structure' from 'node popularity.' The design currently lacks an explicit control for node-degree bias. The significance is material but not fatal to the overall experiment\u2014it questions the interpretation, not the validity of the comparison. The magnitude of this effect is empirically uncertain. A settling experiment is needed: perform the ablation study suggested (replace edge features with noise) or add node degree as a tabular feature to the baseline. If the tGNN's advantage persists, the design is vindicated; if it vanishes, the critique is validated. The experiment's primary conclusion can remain tentatively valid even if the critique is correct, as the comparison between tGNN and baseline is still fair\u2014both could be exploiting the same shortcut. However, the hypothesis about 'relational structure' would need revision."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic notes the lack of a quantitative concept drift measure. However, the methodology includes 'Stratified post-hoc analysis on test subsets (by month...)' which serves as a control for performance stability over time. This is sufficient for a PoC to check if drift is a major factor. Moreover, concept drift would affect all models (tGNN and baselines) trained on the same temporal data equally, so the relative comparison of architectures remains valid. The concern is below significance for the experiment's primary conclusion. Adding a Population Stability Index (PSI) analysis would be a refinement for future work but is not required to validate the PoC's core comparison."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 (adjusted severity 8) and F2 (adjusted severity 7) are conceded as FATAL flaws with no design controls that fully resolve them. F2 is a direct CONCEDE on label bias, and F1 is a DEFER but remains at high severity because the leakage risk is material and unresolved. Since at least one FATAL/MATERIAL finding was conceded and remains above adjusted severity 3, the critique wins."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 8,
+        "reasoning": "The defender has deferred the finding, acknowledging the mechanism of cross-incident leakage and agreeing that a grouped temporal split is the necessary settling experiment. No counter-argument was provided to reduce severity."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 7,
+        "reasoning": "The defender has conceded the finding in full, acknowledging that the 7-day cutoff biases the dataset against the most complex cases."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender has deferred the finding, admitting that the current baselines do not isolate node-degree bias from relational reasoning and agreeing to the suggested ablation study."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 1,
+        "reasoning": "The defender argues that drift affects all models equally, which is generally true for relative performance. However, the claim that post-hoc analysis by month is 'sufficient' to quantify drift is only partially true; it measures performance decay, not the underlying feature drift (the 'why'). While the severity is low, reducing it to 0 is premature as the experiment still lacks a way to distinguish between a model that fails to generalize and a dataset that has fundamentally shifted. I will reduce severity to 1, but not 0."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted our R1 positions on F1, F2, and F3 (all deferred or conceded). For F4, which received a PARTIAL challenge, we will strengthen our REBUT-IMMATERIAL argument. The critic's challenge hinges on the distinction between measuring performance decay and measuring feature drift. However, the methodology's design\u2014specifically the temporal split and the evaluation of relative model performance\u2014makes the precise quantification of feature drift immaterial to the primary conclusion. The post-hoc analysis by month is a sufficient control for the PoC's goal of comparing architectures under realistic temporal conditions. The severity adjustment to 0 is justified.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic's ACCEPT of our DEFER is correct. The design's strict chronological split prevents future information leakage but does not explicitly guard against cross-incident leakage via the 30-day lookback window. This is a genuine ambiguity requiring empirical resolution. The settling experiment is the 'Grouped Temporal Split' test. A result showing stable PR-AUC would vindicate the design by showing incident signatures are not memorizable via the lookback. A significant drop would validate the critique. The primary conclusion (tGNN vs. baseline) cannot remain valid if the critique is correct, as the GNN could exploit this leakage asymmetrically. Therefore, DEFER is the correct stance.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's ACCEPT of our CONCEDE is correct. The methodology's 7-day label cutoff is a design choice to reduce noise, but it introduces a selection bias against complex, slow-burning attacks. No design control or analysis in the methodology addresses this bias. This flaw is material and directly impacts the validity of the performance evaluation for the intended use case. The primary conclusion about model performance on real-world incidents is compromised.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's ACCEPT of our DEFER is correct. The methodology includes a transformer sequence baseline to control for temporal encoding, but it does not have a specific control to isolate node-degree bias from relational reasoning. The concern is valid and its magnitude is empirically uncertain. The settling experiment is the suggested ablation: adding node-degree as a tabular feature or replacing GNN edge features with noise. If the tGNN's advantage persists, the design's hypothesis about relational structure is strengthened. If it vanishes, the critique is validated. The primary conclusion about the tGNN's relative performance can remain tentatively valid even if the critique is correct, as both the tGNN and baseline could be exploiting the same structural shortcut, preserving the fairness of the comparison. However, the interpretation of *why* the tGNN wins would need revision.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic's PARTIAL challenge argues that post-hoc analysis by month only measures performance decay, not the underlying feature drift. However, for the PoC's primary goal\u2014comparing the relative performance of a tGNN against baselines under realistic temporal conditions\u2014quantifying the precise cause of any decay is immaterial. The temporal split is the core design control ensuring models are evaluated on future data, simulating deployment. Any concept drift affects all models trained on the same historical data equally; the relative comparison of architectures remains valid. The stratified analysis by month is a sufficient check for stability. Adding a Population Stability Index (PSI) is a useful refinement but not required to validate the core comparison. The original severity was MINOR (2), and the concern does not affect the experiment's primary conclusion.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F3) have been deferred to empirical tests, indicating genuine ambiguities in the design that require settling experiments. While one finding (F2) is conceded, the remaining findings are either rebutted or deferred, leading to a verdict where empirical resolution is needed for key aspects of the evaluation."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split at the alert level prevents leakage of future information.",
+        "failure_mechanism": "In cybersecurity, a single 'incident' often generates a burst of multiple alerts over several days. If Alert A (Day 1) and Alert B (Day 3) belong to the same incident, and the split boundary falls between them, the model may see Alert A in the training set and Alert B in the test set. Because the GNN uses a 30-day lookback window, the graph for Alert B (test) will contain the edges and nodes created by Alert A (train). The model can then 'cheat' by recognizing the specific graph signature of a known incident it already saw during training, rather than learning to detect the underlying malicious behavior.",
+        "evidence_test": "Perform a 'Grouped Temporal Split' where all alerts associated with the same Incident ID or the same Entity within a specific time-cluster are moved together to either the train or test set. If PR-AUC drops significantly compared to the alert-level split, leakage is confirmed.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Labels derived from analyst disposition decisions serve as ground truth.",
+        "failure_mechanism": "The PoC excludes alerts without a disposition after 7 days to 'minimize noise.' However, in SOC operations, the most complex, stealthy, or high-impact intrusions often take longer than 7 days to investigate and close. By dropping these, the dataset is biased toward 'easy' cases (quickly closed benigns or obvious malicious alerts). The model is not being tested on the hardest cases the hypothesis targets, leading to an inflated sense of performance that will collapse when faced with slow-burning APTs in production.",
+        "evidence_test": "Compare the distribution of alert types and 'time-to-close' for the excluded alerts versus the included alerts. If excluded alerts have a higher correlation with high-severity tags or specific complex detection types, the dataset is biased.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GNN's advantage comes from exploiting relational structure in entity interactions.",
+        "failure_mechanism": "The PoC compares the tGNN to a tabular baseline and a sequence baseline. However, it does not explicitly control for 'node degree' or 'entity popularity' (e.g., a domain server that appears in 90% of alerts). GNNs are notorious for picking up on high-degree node bias (structural shortcuts) rather than semantic relational patterns. The model might simply be learning that 'alerts involving the Domain Controller are more likely to be malicious'\u2014a pattern the tabular baseline might miss if not explicitly engineered, but which is not 'relational reasoning' in the way the hypothesis claims.",
+        "evidence_test": "Ablation study: Replace the GNN's edge features with random noise while keeping the graph topology, or compare against a baseline that simply adds 'node degree' as a tabular feature.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The model is evaluated on a locked test set (months 16\u201318) to ensure generalizability.",
+        "failure_mechanism": "Cybersecurity data is non-stationary. Attack patterns in months 1\u201315 may be entirely different from months 16\u201318 (concept drift). While the temporal split is correct, the PoC lacks a mechanism to quantify how much of the performance drop is due to model failure versus a fundamental shift in the threat landscape (e.g., a new zero-day exploit appearing in month 17).",
+        "evidence_test": "Calculate the 'feature drift' (e.g., Population Stability Index) between the training and test sets for the top 10 most important features.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC suffers from a critical signal leakage flaw where alerts from the same incident likely span the train/test boundary, and a selection bias that removes the most complex cases from the evaluation set.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted our R1 positions on F1, F2, and F3 (all deferred or conceded). For F4, which received a PARTIAL challenge, we will strengthen our REBUT-IMMATERIAL argument. The critic's challenge hinges on the distinction between measuring performance decay and measuring feature drift. However, the methodology's design\u2014specifically the temporal split and the evaluation of relative model performance\u2014makes the precise quantification of feature drift immaterial to the primary conclusion. The post-hoc analysis by month is a sufficient control for the PoC's goal of comparing architectures under realistic temporal conditions. The severity adjustment to 0 is justified.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic's ACCEPT of our DEFER is correct. The design's strict chronological split prevents future information leakage but does not explicitly guard against cross-incident leakage via the 30-day lookback window. This is a genuine ambiguity requiring empirical resolution. The settling experiment is the 'Grouped Temporal Split' test. A result showing stable PR-AUC would vindicate the design by showing incident signatures are not memorizable via the lookback. A significant drop would validate the critique. The primary conclusion (tGNN vs. baseline) cannot remain valid if the critique is correct, as the GNN could exploit this leakage asymmetrically. Therefore, DEFER is the correct stance.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's ACCEPT of our CONCEDE is correct. The methodology's 7-day label cutoff is a design choice to reduce noise, but it introduces a selection bias against complex, slow-burning attacks. No design control or analysis in the methodology addresses this bias. This flaw is material and directly impacts the validity of the performance evaluation for the intended use case. The primary conclusion about model performance on real-world incidents is compromised.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's ACCEPT of our DEFER is correct. The methodology includes a transformer sequence baseline to control for temporal encoding, but it does not have a specific control to isolate node-degree bias from relational reasoning. The concern is valid and its magnitude is empirically uncertain. The settling experiment is the suggested ablation: adding node-degree as a tabular feature or replacing GNN edge features with noise. If the tGNN's advantage persists, the design's hypothesis about relational structure is strengthened. If it vanishes, the critique is validated. The primary conclusion about the tGNN's relative performance can remain tentatively valid even if the critique is correct, as both the tGNN and baseline could be exploiting the same structural shortcut, preserving the fairness of the comparison. However, the interpretation of *why* the tGNN wins would need revision.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic's PARTIAL challenge argues that post-hoc analysis by month only measures performance decay, not the underlying feature drift. However, for the PoC's primary goal\u2014comparing the relative performance of a tGNN against baselines under realistic temporal conditions\u2014quantifying the precise cause of any decay is immaterial. The temporal split is the core design control ensuring models are evaluated on future data, simulating deployment. Any concept drift affects all models trained on the same historical data equally; the relative comparison of architectures remains valid. The stratified analysis by month is a sufficient check for stability. Adding a Population Stability Index (PSI) is a useful refinement but not required to validate the core comparison. The original severity was MINOR (2), and the concern does not affect the experiment's primary conclusion.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F3) have been deferred to empirical tests, indicating genuine ambiguities in the design that require settling experiments. While one finding (F2) is conceded, the remaining findings are either rebutted or deferred, leading to a verdict where empirical resolution is needed for key aspects of the evaluation."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=8 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=7 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

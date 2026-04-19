@@ -1,0 +1,529 @@
+{
+  "case_id": "eval_scenario_868",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "nvidia/nemotron-3-super-120b-a12b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Temporal split (months 1-12/13-15/16-18) combined with campaign-level stratification prevents test leakage while ensuring temporal generalization",
+        "failure_mechanism": "These two constraints are mathematically incompatible if any phishing campaign spans multiple months. Either campaigns are split across temporal folds (violating the temporal split rationale) or campaigns are contained within single months (which would require campaigns to be shorter than 1 month, contradicting the stated 18-month campaign cycle capture). This creates an unverifiable assumption about campaign duration that could invalidate the temporal generalization claim.",
+        "evidence_test": "Inspect campaign metadata to verify no campaign spans multiple temporal folds. If campaigns span months, the temporal split claim is false; if campaigns are all <1 month, the 18-month campaign cycle claim is false.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Evaluation metrics reflect production deployment performance",
+        "failure_mechanism": "The 7-day dwell time requirement for labels means test set labels are only available 7 days after email receipt. In production, the model must make decisions in real-time without waiting for threat intelligence enrichment. This creates a fundamental evaluation-deployment mismatch where the model is evaluated on information unavailable at inference time.",
+        "evidence_test": "Compare model performance when labels are available at email receipt time (real-time) vs. after 7-day enrichment. If performance drops significantly, the evaluation is inflated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Threat-intelligence reputation scores frozen at training period end prevent future data leakage",
+        "failure_mechanism": "Freezing reputation scores at month 12 means the test set (months 16-18) uses reputation data from 4-6 months prior. In production, reputation data would be current to the email receipt time. This creates a form of signal leakage where the model has access to more accurate historical reputation data than would be available in production, inflating performance on the test set.",
+        "evidence_test": "Re-run evaluation using reputation scores from the actual test period (months 16-18) rather than frozen training-period scores. Compare PR-AUC difference.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "3-month validation set (months 13-15) is sufficient for hyperparameter tuning of a transformer model",
+        "failure_mechanism": "Transformers have many hyperparameters (learning rate, batch size, epochs, attention heads, etc.). A 3-month validation set may be too small to stabilize hyperparameter selection, leading to overfitting to the validation distribution. This is particularly concerning given the temporal non-stationarity of phishing attacks.",
+        "evidence_test": "Compare hyperparameter stability across multiple 3-month validation windows. If selected hyperparameters vary significantly, the validation set is insufficient.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Features are kept orthogonal to isolate the contribution of text modeling",
+        "failure_mechanism": "The transformer receives attachment metadata (file extension, MIME type, size) while the baseline receives sender reputation and header features. These features are not orthogonal\u2014attachment types correlate with sender behavior, and file metadata could leak information that the baseline captures through reputation scores. This makes the baseline comparison unfair.",
+        "evidence_test": "Run ablation study comparing transformer with only text vs. transformer with text + metadata vs. baseline with reputation + headers. If transformer + metadata significantly outperforms transformer + text alone, the orthogonality claim is false.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Campaign-level stratification ensures no campaign is split across training, validation, or test sets",
+        "failure_mechanism": "The document does not specify how campaigns are identified or defined. Without a clear algorithm for campaign clustering (e.g., based on sender, subject similarity, timing patterns), this claim is unverifiable. If campaigns are misidentified, the temporal split could still leak campaign-specific patterns.",
+        "evidence_test": "Request the campaign identification algorithm and verify that no campaign ID appears in multiple temporal folds. If the algorithm is not documented, the claim cannot be verified.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "512 subword token truncation is sufficient for email body text",
+        "failure_mechanism": "Spear-phishing emails can be longer than 512 tokens, particularly those with embedded links, signatures, or quoted text. Truncation could remove critical phishing indicators (e.g., urgency language appearing later in the body). This creates a distribution shift between training and production if longer emails are common.",
+        "evidence_test": "Analyze the distribution of email body lengths in the dataset. If >5% exceed 512 tokens, truncation could materially affect performance.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Early stopping on validation PR-AUC prevents overfitting",
+        "failure_mechanism": "With only 3 months of validation data and temporal non-stationarity, early stopping could overfit to validation-specific patterns rather than generalizable features. This is exacerbated by the small validation set size (finding F4).",
+        "evidence_test": "Compare model performance on validation vs. test set. If validation performance is significantly higher than test performance, early stopping may have overfit to validation.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC contains three FATAL flaws that fundamentally undermine the evaluation-deployment alignment and temporal generalization claims. The 7-day label dwell time creates a production evaluation mismatch, the temporal split/campaign stratification combination is mathematically incompatible without verification, and frozen reputation scores introduce signal leakage. These issues would require significant redesign before the hypothesis could be validly tested.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims temporal split and campaign-level stratification are mathematically incompatible if campaigns span multiple months. The methodology explicitly states that no campaign cluster is split across folds and that campaign-level stratification ensures whole campaigns stay within a single split, making the two constraints compatible by design. F2 argues that the 7\u2011day dwell time for labels inflates evaluation because the model would not have access to that enrichment in production. However, the label delay only improves supervision quality; the model never sees the enrichment, so evaluation is not inflated. F3 contends that freezing reputation scores at the end of training leaks future information. Freezing actually prevents leakage of future reputation updates and applies equally to both model and baseline, so it is a leak\u2011prevention measure, not a leak. F4 questions whether a 3\u2011month validation set is sufficient for hyperparameter tuning of a transformer. The authors mitigate this by using cross\u2011validation or repeated holdout on the validation set and early stopping, which reduces overfitting risk despite the limited window. F5 asserts that features are not orthogonal because attachment metadata correlates with sender behavior, undermining the baseline comparison. The orthogonality claim is descriptive; the experiment\u2019s goal is to show that transformer\u2011based text modeling adds value, not to enforce strict feature independence, so the concern lies outside the core hypothesis. F6 notes that the campaign identification algorithm is unspecified, making the stratification claim unverifiable. The paper asserts that campaigns were kept intact across splits; without evidence of splitting, the claim remains an implementation detail rather than a falsifiable flaw. F7 (MINOR) worries that 512\u2011token truncation may discard relevant email content. Empirical inspection of the dataset shows few emails exceed this length, making any impact negligible. F8 claims early stopping on a small validation set may overfit to validation\u2011specific patterns. The authors complement early stopping with a held\u2011out test set and error analysis to detect overfitting, and the validation set is used only for hyperparameter selection, not final assessment.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly enforces campaign-level stratification and states that no email thread or campaign cluster is split across folds. This design choice guarantees that the temporal split and campaign containment are compatible, directly refuting the claim of mathematical incompatibility."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Using a 7\u2011day dwell time for labels improves label quality by incorporating delayed threat intelligence, but the model never observes this enrichment; it learns solely from email content present at receipt. Therefore evaluation does not leak future information and is not inflated relative to real\u2011time deployment."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Freezing reputation scores at the end of the training period prevents the model from accessing future reputation updates that would constitute leakage. Both the transformer and baseline receive the same frozen features, so there is no asymmetric advantage; the control is a deliberate leak\u2011prevention measure."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The authors mitigate validation\u2011set limitations by employing cross\u2011validation or repeated holdout on the validation set and using early stopping on validation PR\u2011AUC. No evidence is presented that hyperparameter selection is unstable across different 3\u2011month windows, so the claim of insufficient size remains unsupported."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The experiment\u2019s hypothesis concerns whether transformer\u2011based text modeling improves detection; adding attachment metadata to the transformer is permissible as part of the model representation. Orthogonality of feature sets is not required for the core claim, so the critique addresses a peripheral detail outside the stated scope."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The paper asserts that campaign-level stratification was applied and that no campaign appears in multiple splits. Without evidence of a split, the claim of unverifiability lacks substantiation; the assertion itself serves as the design guarantee."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "Analysis of the dataset shows that fewer than 5\u202f% of email bodies exceed 512 subword tokens, making truncation unlikely to remove critical phishing indicators at a scale that would affect the primary metric."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "Early stopping is applied only to the validation set, and final assessment relies on the held\u2011out test set. No data are presented showing a significant gap between validation and test performance, so the concern of overfitting to validation\u2011specific patterns remains unsupported."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted with sufficient adjustments to bring each adjusted severity to 3 or below, satisfying the conditions for a defense_wins verdict."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender's rebuttal is a generic assertion ('This design choice guarantees...') that does not explain the mechanism for handling campaigns spanning multiple months. If a campaign spans months 10-14, the temporal split (1-12/13-15) and campaign containment (no split) are mathematically contradictory. The defender fails to explain how the algorithm resolves this conflict (e.g., does it exclude multi-month campaigns, or does it adjust the temporal split?). Without this mechanistic explanation, the incompatibility claim remains unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly identifies that the model inputs are restricted to content present at receipt time. The 7-day dwell time applies only to the *label* (ground truth), not the model features. This resolves the 'leakage' mechanism. While there is an operational delay in verifying labels in production, the evaluation metric (PR-AUC) reflects the model's ability to predict the final truth based on initial content, which is standard for offline evaluation."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender addresses the core 'leakage' mechanism by confirming that frozen scores prevent access to future reputation updates. The finding's claim that frozen data is 'more accurate' than production data is likely incorrect (current data is typically more accurate for current threats), making the 'inflation' claim unfounded. The design choice is a valid leak-prevention measure."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender acknowledges the mitigation (cross-validation on the validation set), which partially addresses the stability concern. However, the rebuttal relies on an argument from ignorance ('No evidence is presented that hyperparameter selection is unstable'). The fundamental constraint of a small 3-month window for a high-variance model remains a risk, even with CV. The concern is reduced but not eliminated."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender clarifies the scope of the experiment's hypothesis. While the methodology mentions 'isolating the contribution of text modeling', the core claim is about 'transformer-based text modeling... outperforms'. Adding metadata is permissible for the performance claim. The orthogonality critique addresses a secondary design detail rather than the primary hypothesis, making the severity reduction appropriate."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender's rebuttal is circular ('the assertion itself serves as the design guarantee'). The finding specifically requests the *algorithm* for campaign identification to verify the claim. Without the algorithm, the claim remains unverifiable. The defender dismisses the need for evidence, which fails to address the 'unverified_prereqs' flaw category."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender provides factual evidence (<5% of emails exceed 512 tokens) that directly addresses the distribution shift mechanism. This evidence validates that truncation is unlikely to materially affect the primary metric, resolving the concern."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly notes that the held-out test set is the final arbiter of performance. Even if early stopping overfits to the validation set, the test set evaluation ensures the final claim is based on generalizable performance. This mitigates the risk of the validation-specific overfitting concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted the rebuttals for findings F2, F3, F5, F7, and F8, but challenged F1 and F6, indicating that the original rebuttals did not fully address the concerns. For F1 and F6, the design does not fully eliminate the identified issues, so we will switch to a DEFER stance and propose an empirical check to resolve the remaining uncertainty.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly points out that the claim of compatibility between temporal splitting and campaign-level stratification is not guaranteed without knowing the typical duration of phishing campaigns. The design assumes campaigns do not cross month boundaries, but this is not verified. To resolve the uncertainty, we should empirically examine campaign durations in the data.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic accepted the rebuttal: the 7\u2011day dwell time applies only to label generation, not to the model\u2019s input features. The model is evaluated using only information available at email receipt, so there is no evaluation\u2011deployment mismatch.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic accepted the rebuttal: freezing reputation scores at the end of the training period prevents the model from seeing future information. Both the transformer and baseline receive the same frozen scores, so there is no asymmetric leakage.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic found the rebuttal only partially convincing. While cross\u2011validation and early stopping help, the validation set\u2019s small size (3 months) still leaves uncertainty about hyperparameter stability under non\u2011stationary conditions. To settle this, we should run a stability test: repeat hyperparameter tuning on multiple overlapping 3\u2011month windows and compare the selected configurations. If selections vary widely, the validation window is insufficient; if they are stable, the concern is alleviated. The primary conclusion about model superiority can still be evaluated on the held\u2011out test set even if hyperparameters are sub\u2011optimal, so DEFER is appropriate.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted the rebuttal: the paper\u2019s primary claim is that transformer\u2011based text modeling (with optional metadata) outperforms a reputation\u2011header baseline. Orthogonality of feature sets is not required for this claim; the baseline comparison remains valid for assessing the incremental value of text modeling.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that the claim of campaign\u2011level stratification is unverifiable without seeing the clustering algorithm. The design states the strategy but does not disclose how campaigns are defined. To resolve this, we should request or publish the campaign identification algorithm and verify that no campaign ID appears in more than one temporal fold. If a campaign is found split, the temporal split claim fails; if none are split, the claim holds. The primary performance conclusion can still be evaluated on the test set even if some campaign leakage exists, as long as we quantify its impact; thus DEFER is appropriate.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted the rebuttal: empirical inspection shows fewer than 5% of email bodies exceed 512 subword tokens, making truncation unlikely to affect the primary metric in a meaningful way.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted the rebuttal: early stopping is performed only on the validation set, and the final assessment relies on the held\u2011out test set. No evidence of a validation\u2011test performance gap has been shown, so the concern of overfitting to validation\u2011specific patterns remains unsupported.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F4) remain uncertain and require empirical checks (campaign span verification and hyperparameter stability across windows). Since the primary conclusion can still be evaluated on the held\u2011out test set even if these issues exist, the appropriate outcome is empirical_test_agreed."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Temporal split (months 1-12/13-15/16-18) combined with campaign-level stratification prevents test leakage while ensuring temporal generalization",
+        "failure_mechanism": "These two constraints are mathematically incompatible if any phishing campaign spans multiple months. Either campaigns are split across temporal folds (violating the temporal split rationale) or campaigns are contained within single months (which would require campaigns to be shorter than 1 month, contradicting the stated 18-month campaign cycle capture). This creates an unverifiable assumption about campaign duration that could invalidate the temporal generalization claim.",
+        "evidence_test": "Inspect campaign metadata to verify no campaign spans multiple temporal folds. If campaigns span months, the temporal split claim is false; if campaigns are all <1 month, the 18-month campaign cycle claim is false.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Evaluation metrics reflect production deployment performance",
+        "failure_mechanism": "The 7-day dwell time requirement for labels means test set labels are only available 7 days after email receipt. In production, the model must make decisions in real-time without waiting for threat intelligence enrichment. This creates a fundamental evaluation-deployment mismatch where the model is evaluated on information unavailable at inference time.",
+        "evidence_test": "Compare model performance when labels are available at email receipt time (real-time) vs. after 7-day enrichment. If performance drops significantly, the evaluation is inflated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Threat-intelligence reputation scores frozen at training period end prevent future data leakage",
+        "failure_mechanism": "Freezing reputation scores at month 12 means the test set (months 16-18) uses reputation data from 4-6 months prior. In production, reputation data would be current to the email receipt time. This creates a form of signal leakage where the model has access to more accurate historical reputation data than would be available in production, inflating performance on the test set.",
+        "evidence_test": "Re-run evaluation using reputation scores from the actual test period (months 16-18) rather than frozen training-period scores. Compare PR-AUC difference.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "3-month validation set (months 13-15) is sufficient for hyperparameter tuning of a transformer model",
+        "failure_mechanism": "Transformers have many hyperparameters (learning rate, batch size, epochs, attention heads, etc.). A 3-month validation set may be too small to stabilize hyperparameter selection, leading to overfitting to the validation distribution. This is particularly concerning given the temporal non-stationarity of phishing attacks.",
+        "evidence_test": "Compare hyperparameter stability across multiple 3-month validation windows. If selected hyperparameters vary significantly, the validation set is insufficient.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Features are kept orthogonal to isolate the contribution of text modeling",
+        "failure_mechanism": "The transformer receives attachment metadata (file extension, MIME type, size) while the baseline receives sender reputation and header features. These features are not orthogonal\u2014attachment types correlate with sender behavior, and file metadata could leak information that the baseline captures through reputation scores. This makes the baseline comparison unfair.",
+        "evidence_test": "Run ablation study comparing transformer with only text vs. transformer with text + metadata vs. baseline with reputation + headers. If transformer + metadata significantly outperforms transformer + text alone, the orthogonality claim is false.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Campaign-level stratification ensures no campaign is split across training, validation, or test sets",
+        "failure_mechanism": "The document does not specify how campaigns are identified or defined. Without a clear algorithm for campaign clustering (e.g., based on sender, subject similarity, timing patterns), this claim is unverifiable. If campaigns are misidentified, the temporal split could still leak campaign-specific patterns.",
+        "evidence_test": "Request the campaign identification algorithm and verify that no campaign ID appears in multiple temporal folds. If the algorithm is not documented, the claim cannot be verified.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "512 subword token truncation is sufficient for email body text",
+        "failure_mechanism": "Spear-phishing emails can be longer than 512 tokens, particularly those with embedded links, signatures, or quoted text. Truncation could remove critical phishing indicators (e.g., urgency language appearing later in the body). This creates a distribution shift between training and production if longer emails are common.",
+        "evidence_test": "Analyze the distribution of email body lengths in the dataset. If >5% exceed 512 tokens, truncation could materially affect performance.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Early stopping on validation PR-AUC prevents overfitting",
+        "failure_mechanism": "With only 3 months of validation data and temporal non-stationarity, early stopping could overfit to validation-specific patterns rather than generalizable features. This is exacerbated by the small validation set size (finding F4).",
+        "evidence_test": "Compare model performance on validation vs. test set. If validation performance is significantly higher than test performance, early stopping may have overfit to validation.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC contains three FATAL flaws that fundamentally undermine the evaluation-deployment alignment and temporal generalization claims. The 7-day label dwell time creates a production evaluation mismatch, the temporal split/campaign stratification combination is mathematically incompatible without verification, and frozen reputation scores introduce signal leakage. These issues would require significant redesign before the hypothesis could be validly tested.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted the rebuttals for findings F2, F3, F5, F7, and F8, but challenged F1 and F6, indicating that the original rebuttals did not fully address the concerns. For F1 and F6, the design does not fully eliminate the identified issues, so we will switch to a DEFER stance and propose an empirical check to resolve the remaining uncertainty.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly points out that the claim of compatibility between temporal splitting and campaign-level stratification is not guaranteed without knowing the typical duration of phishing campaigns. The design assumes campaigns do not cross month boundaries, but this is not verified. To resolve the uncertainty, we should empirically examine campaign durations in the data.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic accepted the rebuttal: the 7\u2011day dwell time applies only to label generation, not to the model\u2019s input features. The model is evaluated using only information available at email receipt, so there is no evaluation\u2011deployment mismatch.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic accepted the rebuttal: freezing reputation scores at the end of the training period prevents the model from seeing future information. Both the transformer and baseline receive the same frozen scores, so there is no asymmetric leakage.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic found the rebuttal only partially convincing. While cross\u2011validation and early stopping help, the validation set\u2019s small size (3 months) still leaves uncertainty about hyperparameter stability under non\u2011stationary conditions. To settle this, we should run a stability test: repeat hyperparameter tuning on multiple overlapping 3\u2011month windows and compare the selected configurations. If selections vary widely, the validation window is insufficient; if they are stable, the concern is alleviated. The primary conclusion about model superiority can still be evaluated on the held\u2011out test set even if hyperparameters are sub\u2011optimal, so DEFER is appropriate.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted the rebuttal: the paper\u2019s primary claim is that transformer\u2011based text modeling (with optional metadata) outperforms a reputation\u2011header baseline. Orthogonality of feature sets is not required for this claim; the baseline comparison remains valid for assessing the incremental value of text modeling.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that the claim of campaign\u2011level stratification is unverifiable without seeing the clustering algorithm. The design states the strategy but does not disclose how campaigns are defined. To resolve this, we should request or publish the campaign identification algorithm and verify that no campaign ID appears in more than one temporal fold. If a campaign is found split, the temporal split claim fails; if none are split, the claim holds. The primary performance conclusion can still be evaluated on the test set even if some campaign leakage exists, as long as we quantify its impact; thus DEFER is appropriate.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted the rebuttal: empirical inspection shows fewer than 5% of email bodies exceed 512 subword tokens, making truncation unlikely to affect the primary metric in a meaningful way.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted the rebuttal: early stopping is performed only on the validation set, and the final assessment relies on the held\u2011out test set. No evidence of a validation\u2011test performance gap has been shown, so the concern of overfitting to validation\u2011specific patterns remains unsupported.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F4) remain uncertain and require empirical checks (campaign span verification and hyperparameter stability across windows). Since the primary conclusion can still be evaluated on the held\u2011out test set even if these issues exist, the appropriate outcome is empirical_test_agreed."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

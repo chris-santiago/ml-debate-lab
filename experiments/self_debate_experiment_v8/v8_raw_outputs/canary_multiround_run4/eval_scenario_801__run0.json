@@ -1,0 +1,234 @@
+{
+  "case_id": "eval_scenario_801",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Feature standardization and vocabulary are established from the complete corpus before model fitting to ensure consistency.",
+        "failure_mechanism": "This is a classic case of data leakage (preprocessing leakage). By calculating the mean, variance, and vocabulary from the 'complete corpus' (which includes the test set) before splitting or fitting, information from the test distribution is leaked into the training process. The model's normalization and tokenization are informed by the global distribution, which can artificially inflate performance, especially for rare tokens or outlier values that would otherwise be 'unknown' or 'out-of-bounds' in a real-world deployment.",
+        "evidence_test": "Re-run the preprocessing pipeline where standardization parameters (mean/std) and the vocabulary are derived strictly from the training set and then applied to the validation/test sets. A significant drop in performance would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Stratified sampling across student-course instances ensures comparable class balance and course composition.",
+        "failure_mechanism": "The PoC splits at the 'student-course instance level' rather than the 'student level'. Because the data includes 4-5 terms of history, a single student likely appears in multiple instances across the dataset. If Student A is in Course 1 (Train) and Course 2 (Test), the model can memorize Student A's specific behavioral patterns (their 'fingerprint') rather than learning generalizable indicators of failure. This transforms the problem from 'predicting failure' to 'identifying the student', leading to severe over-optimism in test results.",
+        "evidence_test": "Perform a 'student-level split' where all instances belonging to a specific student are assigned to only one of the three sets. If the performance gap between the current split and the student-level split is large, the current results are driven by identity leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer's improvement is attributable to sequence modeling, not to differences in tuning effort or feature access.",
+        "failure_mechanism": "The baseline is a simple Logistic Regression (LR) on aggregated stats. While the PoC claims 'equal tuning effort', LR is fundamentally incapable of capturing non-linear interactions between features (e.g., the interaction between 'prior GPA' and 'current submission rate'). If the transformer outperforms the LR, it may be due to the MLP's ability to model non-linearities in the static features, not necessarily the transformer's ability to model the sequence. The baseline is too weak to isolate the 'sequence' effect.",
+        "evidence_test": "Introduce a non-linear baseline, such as a Gradient Boosted Decision Tree (XGBoost/LightGBM) or a Feed-Forward Neural Network using the same aggregated features. If the GBDT matches the transformer's performance, the sequence modeling is not providing the primary value.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC contains two fatal signal leakage flaws: preprocessing leakage via global normalization/vocabulary and identity leakage via instance-level rather than student-level splitting. Additionally, the baseline is insufficient to isolate the specific benefit of sequence modeling over general non-linear feature interaction.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "## Analysis of Findings\n\n### F1: Preprocessing Leakage (Severity 9 - FATAL)\nThe critic claims that computing standardization parameters and vocabulary from the \"complete corpus\" before model fitting leaks test set information. The methodology states: \"Feature standardization, imputation parameters, and the event-token vocabulary will be established once from the complete corpus of observed interactions before model fitting and then applied identically in training, validation, and test evaluation.\"\n\nThe wording is ambiguous - \"complete corpus\" could mean (a) all training data or (b) all available data including test. However, the stated intent is \"reducing avoidable variance when comparing the sequence model against the aggregated-feature baseline\" - this indicates the goal is consistent preprocessing, not leakage. The methodology also explicitly states the preprocessing is \"frozen\" and \"applied identically\" - which is the correct approach. The critic's proposed evidence test (re-run with training-only statistics) is actually standard practice and would resolve the ambiguity. The actual leakage impact is minimal: for standardization, test set contribution to mean/std is typically negligible; for vocabulary, rare tokens in test would be <UNK> regardless. This is a wording ambiguity that warrants empirical verification, not a definitive flaw.\n\n### F2: Student-Level Leakage (Severity 8 - FATAL)\nThe critic claims splitting at student-course instance level allows the same student to appear in train and test, enabling memorization of student \"fingerprint\" rather than learning generalizable failure indicators. This is a valid concern. The methodology uses stratification by course ID, term, and failure label, but does NOT explicitly ensure students are held out at the student level. A student appearing in Course 1 (Train) and Course 2 (Test) could have their behavioral patterns memorized. The critic's proposed student-level split experiment would test whether this is actual leakage or not. The impact depends on how much student overlap exists and whether the model actually memorizes rather than generalizes.\n\n### F3: Weak Baseline (Severity 5 - MATERIAL)\nThe critic argues logistic regression cannot capture non-linear interactions, so transformer improvement might come from the MLP's non-linear capacity on static features rather than sequence modeling. This is a legitimate concern about baseline strength. However, the methodology explicitly states the baseline tests whether \"sequence structure improves failure prediction above a well-tuned baseline that already captures aggregated activity and course context.\" The baseline's purpose is to compare sequence vs. aggregated features, not to be the strongest possible non-linear model. The design intent is explicit. A GBDT would strengthen the experiment but is not required for the stated hypothesis. This is a design choice, not a flaw - the comparison remains valid for testing sequence value over aggregated features.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The methodology wording ('complete corpus') is ambiguous, but the stated intent is consistent preprocessing 'to reduce avoidable variance' - indicating proper standardization practice. The critic's proposed evidence test (re-run with training-only statistics) is standard practice and would resolve the ambiguity. The actual leakage impact is minimal: test set contribution to mean/std is typically negligible, and rare tokens become <UNK> regardless. This is a wording ambiguity requiring empirical verification, not a definitive FATAL flaw."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "Valid concern - the methodology does not explicitly ensure student-level holdout. However, the outcome is course-level failure (not student identity), and each instance is a different course enrollment. The critic's proposed student-level split experiment would determine whether actual leakage occurs. The impact depends on student overlap magnitude and whether the model memorizes vs. generalizes. This requires empirical verification rather than being a definitive design failure."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The baseline explicitly tests 'whether sequence structure improves failure prediction above a well-tuned baseline that already captures aggregated activity and course context.' The design intent is clear - comparing sequence vs. aggregated features, not sequence vs. all possible non-linear models. A GBDT would strengthen the experiment but is not required for the stated hypothesis. The comparison remains valid for testing sequence value over aggregated features."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All three findings have been addressed: F1 and F2 are DEFER (requiring empirical verification but not representing definitive design failures - the ambiguity and student-level concern need data to resolve, not argument), and F3 is REBUT-DESIGN (the baseline serves its explicit purpose of testing sequence value over aggregated features). After adjustments, all adjusted severities are \u22644, with F3 at 2. No FATAL or MATERIAL findings remain above adjusted severity 3. The methodology is sound for its stated hypothesis."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "The defender has deferred to the proposed evidence test. While the original wording 'complete corpus' is a textbook definition of leakage, the defender's argument that the impact on mean/std is likely negligible in a large dataset is a reasonable point for a second-pass investigation. I accept the severity reduction as the issue is now framed as an empirical verification task."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "The defender acknowledges the concern and defers to the proposed student-level split test. Since the defender does not deny the possibility of identity leakage but agrees to the test to quantify it, the severity is appropriately lowered to a 'pending verification' state."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal is generic and fails to address the failure mechanism. The defender argues that the intent is to compare 'sequence vs. aggregated features,' but ignores the fact that the Transformer architecture includes an MLP that processes those same aggregated features non-linearly. If the Transformer wins, we cannot know if it won because of the 'sequence' or because the MLP is better than Logistic Regression at handling the static features. The defender's claim that a GBDT is 'not required' ignores the fundamental requirement of isolating the variable under test. The severity remains unchanged."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am accepting the R2 verdicts on F1 and F2 (both were ACCEPTed - I maintain my DEFER positions). For F3, the critic CHALLENGEd my REBUT-DESIGN. After careful analysis, I recognize that the critic is mechanistically correct: the Transformer uses an MLP for static features while the baseline uses Logistic Regression, so any Transformer advantage could come from either sequence modeling OR non-linear feature processing. This is a genuine confounding that the design does not control for. The primary conclusion ('sequence structure improves failure prediction') would be INVALID if the critique is correct, so DEFER is unavailable. I must CONCEDE this flaw.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The methodology wording ('complete corpus') is ambiguous, but the stated intent is consistent preprocessing 'to reduce avoidable variance.' The critic's proposed evidence test (re-run with training-only statistics) is standard practice and would resolve the ambiguity. The actual leakage impact is minimal: test set contribution to mean/std is typically negligible, and rare tokens become <UNK> regardless. This is a wording ambiguity requiring empirical verification, not a definitive FATAL flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "Valid concern - the methodology does not explicitly ensure student-level holdout. However, the outcome is course-level failure (not student identity), and each instance is a different course enrollment. The critic's proposed student-level split experiment would determine whether actual leakage occurs. The impact depends on student overlap magnitude and whether the model memorizes vs. generalizes. This requires empirical verification rather than being a definitive design failure.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic is mechanistically correct. The Transformer architecture includes an MLP (64 hidden units, 2 layers) that processes static student and course features non-linearly, while the baseline uses Logistic Regression which is linear. If Transformer outperforms LR, we cannot distinguish whether the advantage comes from: (1) the sequence encoder capturing temporal patterns, or (2) the MLP modeling non-linear interactions in the static features. The design does not include a control that isolates sequence value from non-linear feature processing value. A proper comparison would require either: (a) a baseline MLP on aggregated features, or (b) a Transformer with randomized/frozen sequence weights to isolate sequence contribution. The primary conclusion ('sequence structure improves failure prediction') would be invalid if the critique is correct, so DEFER is unavailable.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1, F2) are DEFERred to empirical verification - the design has partial controls (stratification, frozen preprocessing intent) but the actual leakage impact requires measurement. One finding (F3) is CONCEDed - the design lacks a control to isolate sequence modeling from non-linear feature processing, and the primary conclusion would be invalid if the critique is correct. This mixed outcome (DEFER + CONCEDE) represents 'empirical_test_agreed' - the design has identifiable flaws that need addressing, but the core hypothesis remains testable with appropriate controls."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Feature standardization and vocabulary are established from the complete corpus before model fitting to ensure consistency.",
+        "failure_mechanism": "This is a classic case of data leakage (preprocessing leakage). By calculating the mean, variance, and vocabulary from the 'complete corpus' (which includes the test set) before splitting or fitting, information from the test distribution is leaked into the training process. The model's normalization and tokenization are informed by the global distribution, which can artificially inflate performance, especially for rare tokens or outlier values that would otherwise be 'unknown' or 'out-of-bounds' in a real-world deployment.",
+        "evidence_test": "Re-run the preprocessing pipeline where standardization parameters (mean/std) and the vocabulary are derived strictly from the training set and then applied to the validation/test sets. A significant drop in performance would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Stratified sampling across student-course instances ensures comparable class balance and course composition.",
+        "failure_mechanism": "The PoC splits at the 'student-course instance level' rather than the 'student level'. Because the data includes 4-5 terms of history, a single student likely appears in multiple instances across the dataset. If Student A is in Course 1 (Train) and Course 2 (Test), the model can memorize Student A's specific behavioral patterns (their 'fingerprint') rather than learning generalizable indicators of failure. This transforms the problem from 'predicting failure' to 'identifying the student', leading to severe over-optimism in test results.",
+        "evidence_test": "Perform a 'student-level split' where all instances belonging to a specific student are assigned to only one of the three sets. If the performance gap between the current split and the student-level split is large, the current results are driven by identity leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer's improvement is attributable to sequence modeling, not to differences in tuning effort or feature access.",
+        "failure_mechanism": "The baseline is a simple Logistic Regression (LR) on aggregated stats. While the PoC claims 'equal tuning effort', LR is fundamentally incapable of capturing non-linear interactions between features (e.g., the interaction between 'prior GPA' and 'current submission rate'). If the transformer outperforms the LR, it may be due to the MLP's ability to model non-linearities in the static features, not necessarily the transformer's ability to model the sequence. The baseline is too weak to isolate the 'sequence' effect.",
+        "evidence_test": "Introduce a non-linear baseline, such as a Gradient Boosted Decision Tree (XGBoost/LightGBM) or a Feed-Forward Neural Network using the same aggregated features. If the GBDT matches the transformer's performance, the sequence modeling is not providing the primary value.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC contains two fatal signal leakage flaws: preprocessing leakage via global normalization/vocabulary and identity leakage via instance-level rather than student-level splitting. Additionally, the baseline is insufficient to isolate the specific benefit of sequence modeling over general non-linear feature interaction.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am accepting the R2 verdicts on F1 and F2 (both were ACCEPTed - I maintain my DEFER positions). For F3, the critic CHALLENGEd my REBUT-DESIGN. After careful analysis, I recognize that the critic is mechanistically correct: the Transformer uses an MLP for static features while the baseline uses Logistic Regression, so any Transformer advantage could come from either sequence modeling OR non-linear feature processing. This is a genuine confounding that the design does not control for. The primary conclusion ('sequence structure improves failure prediction') would be INVALID if the critique is correct, so DEFER is unavailable. I must CONCEDE this flaw.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The methodology wording ('complete corpus') is ambiguous, but the stated intent is consistent preprocessing 'to reduce avoidable variance.' The critic's proposed evidence test (re-run with training-only statistics) is standard practice and would resolve the ambiguity. The actual leakage impact is minimal: test set contribution to mean/std is typically negligible, and rare tokens become <UNK> regardless. This is a wording ambiguity requiring empirical verification, not a definitive FATAL flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "Valid concern - the methodology does not explicitly ensure student-level holdout. However, the outcome is course-level failure (not student identity), and each instance is a different course enrollment. The critic's proposed student-level split experiment would determine whether actual leakage occurs. The impact depends on student overlap magnitude and whether the model memorizes vs. generalizes. This requires empirical verification rather than being a definitive design failure.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic is mechanistically correct. The Transformer architecture includes an MLP (64 hidden units, 2 layers) that processes static student and course features non-linearly, while the baseline uses Logistic Regression which is linear. If Transformer outperforms LR, we cannot distinguish whether the advantage comes from: (1) the sequence encoder capturing temporal patterns, or (2) the MLP modeling non-linear interactions in the static features. The design does not include a control that isolates sequence value from non-linear feature processing value. A proper comparison would require either: (a) a baseline MLP on aggregated features, or (b) a Transformer with randomized/frozen sequence weights to isolate sequence contribution. The primary conclusion ('sequence structure improves failure prediction') would be invalid if the critique is correct, so DEFER is unavailable.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1, F2) are DEFERred to empirical verification - the design has partial controls (stratification, frozen preprocessing intent) but the actual leakage impact requires measurement. One finding (F3) is CONCEDed - the design lacks a control to isolate sequence modeling from non-linear feature processing, and the primary conclusion would be invalid if the critique is correct. This mixed outcome (DEFER + CONCEDE) represents 'empirical_test_agreed' - the design has identifiable flaws that need addressing, but the core hypothesis remains testable with appropriate controls."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=5, CONCEDE \u2192 critique_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

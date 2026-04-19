@@ -1,0 +1,352 @@
+{
+  "case_id": "hyp_016_case_1",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The evaluation metric (max predicted risk over 6-48 hour window) measures the model's ability to identify patients who will develop sepsis at any point in the 48-hour window.",
+        "failure_mechanism": "Using 'max' aggregation over 43 hourly predictions (hours 6-48) inflates performance by giving credit if the model predicts correctly at ANY single timestep. This is significantly easier than predicting at a specific clinically relevant time point (e.g., 6 hours or 12 hours ahead). A model that predicts sepsis correctly only at hour 47 gets the same credit as one that predicts correctly at hour 6, despite the latter being clinically far more valuable.",
+        "evidence_test": "Report AUC-ROC at fixed horizons (e.g., predicting at exactly 6h, 12h, 24h post-admission) and compare to the max-aggregated AUC. A large gap (e.g., >0.1 AUC) indicates the metric is easier than the clinical task requires.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The LSTM and logistic regression models are compared fairly because they use the same preprocessing pipeline.",
+        "failure_mechanism": "The LSTM explicitly uses binary missingness indicators as features (forward-fill up to 24 hours with a binary missingness indicator appended). The logistic regression uses 36 hand-engineered features (LOCF vitals, lab statistics, medications, rate of change, interactions) with no explicit missingness indicator. The LSTM therefore has access to additional signal (missingness patterns that proxy for patient severity/clinical instability) that the logistic regression does not. This creates an unfair advantage for the LSTM independent of temporal pattern learning.",
+        "evidence_test": "Run LSTM ablation removing the missingness indicator feature while keeping all other architecture identical. If AUC drops substantially (>0.05), the LSTM's advantage stems from missingness encoding rather than temporal sequence modeling. The fair comparison requires either adding missingness indicators to logistic regression or reporting LSTM-without-missingness as the primary result.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 6-month gap between temporal splits allows seasonal variation and concept drift to be captured.",
+        "failure_mechanism": "The date ranges show contiguous splits (training: Jan 2021-Jun 2022, validation: Jul 2022-Dec 2022, test: Jan 2023-Dec 2023) with no actual temporal gap. The statement claims '6-month gaps between splits' but the implementation has none. This is either a documentation error or a misconfigured split. If gaps were intended but not implemented, the model may not generalize across seasons as claimed. If gaps were not intended, the statement is misleading.",
+        "evidence_test": "Clarify whether temporal gaps exist. If gaps are desired, re-run experiment with explicit temporal gaps (e.g., train: Jan 2021-Dec 2021, gap: Jan 2022-Jun 2022, validate: Jul 2022-Dec 2022, gap: Jan 2023-Jun 2023, test: Jul 2023-Dec 2023). Report performance with and without gaps to quantify seasonal/generalization effects.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The label definition (blood culture + antibiotic within \u00b112h, ICD-10 R65.1x with organ dysfunction, or qSOFA\u22652 with organ dysfunction) accurately identifies hospital-acquired sepsis.",
+        "failure_mechanism": "The multi-criteria label combines heterogeneous signals: (1) procedural (culture order + antibiotic), (2) coding-based (ICD diagnosis), and (3) clinical scoring (qSOFA). These have different specificities, latencies, and documentation practices. A patient with qSOFA\u22652 and organ dysfunction on the same day may be clinically different from one with culture+antibiotic concordance. Pooling these introduces label noise. The \u00b112 hour window for culture+antibiotic is also wide\u2014antibiotics may be started empirically before culture results, creating false positives.",
+        "evidence_test": "Stratify model performance by label criterion (how did each positive case meet the definition?). If performance varies substantially across criteria (e.g., AUC 0.85 for culture+antibiotic cases vs. 0.65 for qSOFA cases), the label is heterogeneous and the aggregate metric masks this. Consider training separate models or using a single stricter criterion.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The exclusion criteria (neonatal ICU, <18 years, <6 hours data, transfers from other hospitals) select for a clinically relevant population.",
+        "failure_mechanism": "Excluding patients with <6 hours of data removes the sickest patients who die or are transferred early\u2014precisely the population where early sepsis prediction matters most. Excluding transfers from other hospitals removes a clinically complex population. This creates selection bias toward longer-stay, more stable patients where prediction is easier. The model may fail on the excluded populations in deployment.",
+        "evidence_test": "Report the number and characteristics of excluded patients. Simulate performance on a held-out set that includes short-stay patients (e.g., 3-6 hours) to assess whether the model generalizes to the excluded population.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "Two FATAL-level flaws undermine the experiment's validity: (1) the evaluation metric uses max-aggregation over a 48-hour window, significantly inflating AUC by giving credit for any single correct prediction rather than measuring clinically meaningful early detection; (2) the LSTM has access to explicit missingness indicators that the logistic regression baseline lacks, creating an unfair comparison where the LSTM's advantage may stem from encoding missingness patterns (a severity proxy) rather than learning temporal sequences. A third material issue is the claim of temporal gaps between splits that appear not to exist in the implementation.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims that using the 'max' predicted risk over a 6-48 hour window inflates performance. However, the design intent (Section 5) explicitly states this formulation is used to reduce sensitivity to timestamp noise in retrospective charting. In EHR data, the exact moment of 'onset' is often a proxy (e.g., when a doctor finally entered the order), not a biological ground truth. By treating the admission as a single positive/negative case based on whether the model flagged risk at any point in the early window, we are testing the hypothesis of 'patient identification' rather than 'precise timestamp prediction'. This is a deliberate design choice for a PoC to avoid overfitting to noisy labels.\n\nF2 claims an unfair advantage for the LSTM due to missingness indicators. Section 7 (Confound Control) explicitly addresses this: 'this is controlled by... ablating the missingness indicator feature'. The design already includes the required ablation to ensure the performance gain is due to temporal structure, not just missingness patterns. Therefore, the critic's concern is already mitigated by the design.\n\nF3 identifies a contradiction between the text ('6-month gaps') and the dates provided (which are contiguous). This is a genuine documentation error. However, the dates themselves (Jan 21 - Dec 23) cover the full 36-month period described. The lack of a gap doesn't invalidate the temporal split's purpose (preventing leakage), though it makes the claim about 'capturing seasonal variation' via gaps technically incorrect. This is a material documentation flaw but not a fatal methodology flaw.\n\nF4 argues that the label definition is too heterogeneous. Section 1 describes a multi-pronged clinical approach to capture sepsis, which is standard in retrospective EHR research to avoid missing cases (sensitivity) while maintaining specificity. Section 7 further mitigates this by 'running a sensitivity analysis with a stricter label definition'. The design already anticipates and controls for label heterogeneity.\n\nF5 argues that excluding patients with <6 hours of data creates selection bias. This is a standard data quality constraint; without a minimum window of observations, a sequence model has no sequence to operate on. The PoC's goal is to test the hypothesis of 'Temporally Aware Sequence Models', which requires a minimum temporal sequence. This is a scope limitation, not a flaw in the hypothesis test.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The max-aggregation is a deliberate design choice (Section 5) to account for retrospective charting noise. The goal is patient-level identification of sepsis risk, not precise timestamp regression, which is often impossible due to the latency between clinical onset and documentation."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly includes a control for this in Section 7 ('ablating the missingness indicator feature'), ensuring that the LSTM's advantage is not solely attributed to missingness patterns."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The text claims 6-month gaps exist, but the provided date ranges are contiguous. This is a documentation error that contradicts the stated strategy for capturing seasonal drift."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "Label heterogeneity is addressed in Section 7 through a sensitivity analysis using a stricter label definition, ensuring the primary conclusions are not driven by a single noisy criterion."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The experiment specifically tests 'Sequence Models'. Patients with <6 hours of data do not provide a sufficient sequence for the hypothesis being tested; their exclusion is a necessary scope constraint for the model architecture."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While most findings were rebutted by existing design controls, F3 identifies a genuine contradiction between the split strategy description and the actual dates used. Because this affects the claim regarding seasonal drift and generalization, it requires a correction/re-run to resolve."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal explains *why* max-aggregation was chosen (retrospective charting noise), but does not address the core failure mechanism: the metric is easier than the clinical task requires. A model that predicts correctly at hour 47 gets identical credit to one that predicts at hour 6, despite vastly different clinical utility. The defender cites this as a 'deliberate design choice' but provides no evidence that the aggregation doesn't inflate performance. The evidence_test (comparing fixed-horizon AUC to max-aggregated AUC) would directly test this, but the rebuttal doesn't engage with it. The severity adjustment from 7 to 3 is disproportionate - the design rationale doesn't resolve the inflation concern."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal claims Section 7 'ablating the missingness indicator feature' controls for this, but this is a verification step, not a mitigation. The finding is that the LSTM has an unfair advantage because it has missingness indicators that logistic regression lacks. The control in Section 7 is an ablation to *check* if missingness matters - it doesn't make the comparison fair. The fair comparison requires either (1) adding missingness indicators to logistic regression, or (2) reporting LSTM-without-missingness as the primary result. The rebuttal conflates 'checking if missingness drives performance' with 'ensuring fair comparison.' The severity adjustment from 7 to 2 is disproportionate - the fundamental unfairness remains."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "This is a CONCEDE - the defender acknowledges the documentation error. No counter needed."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal correctly notes that Section 7 includes a sensitivity analysis with stricter label definition. This partially addresses the concern by verifying conclusions hold under stricter criteria. However, the core issue remains: the label definition combines heterogeneous criteria (procedural, coding-based, clinical scoring) with different specificities. The sensitivity analysis is a verification, not a resolution - it doesn't show performance is equivalent across criteria, only that conclusions hold under one stricter definition. The severity adjustment from 4 to 1 is too severe; the partial mitigation warrants a modest reduction but not to near-zero."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal makes a valid scope argument: patients with <6 hours of data don't provide sufficient sequence for the LSTM architecture being tested. This is a legitimate methodological constraint, not a flaw. The finding conflates 'excluded population' with 'flaw' - but excluding populations that don't fit the model architecture is appropriate experimental design. The severity adjustment to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my position on F1 and F2, but strengthening the arguments to address the critic's mechanistic concerns. For F1, I am shifting to DEFER because the critic's point about clinical utility vs. metric inflation is a valid empirical question that cannot be resolved by design rationale alone. For F2, I am strengthening the REBUT-DESIGN argument by clarifying that the ablation study is the standard method for isolating the source of a model's advantage in ML research. For F4, I am adjusting the severity to reflect a PARTIAL rebuttal, as the sensitivity analysis mitigates but does not eliminate label heterogeneity. F3 and F5 remain as previously agreed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that max-aggregation is 'easier' than fixed-horizon prediction. However, the design choice was made to avoid the noise of retrospective timestamps. Whether the resulting AUC inflation outweighs the benefit of noise reduction is an empirical question. Since the design provides the rationale but the critic provides a valid mechanism for inflation, this is a genuine ambiguity that requires the proposed evidence test (comparing fixed vs. max AUC) to resolve.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic argues that ablation is a 'verification' rather than a 'mitigation.' In ML hypothesis testing, isolating the contribution of a specific feature (missingness) via ablation is the primary method for determining if a model's advantage is derived from that feature or from the architecture (temporal sequence modeling). By ablating the missingness indicator, the design directly tests whether the LSTM's superiority persists without the 'unfair' signal. This is a robust design control for the hypothesis being tested.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The text claims 6-month gaps exist, but the provided date ranges are contiguous. This is a documentation error that contradicts the stated strategy for capturing seasonal drift.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The sensitivity analysis in Section 7 using a stricter label definition (blood culture + antibiotic concordance within 6h) directly addresses the concern that the primary conclusions are driven by the noisier qSOFA or ICD-10 criteria. While it does not eliminate the heterogeneity of the primary label, it provides a high-confidence anchor to verify that the model's signal is clinically grounded.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The experiment specifically tests 'Sequence Models'. Patients with <6 hours of data do not provide a sufficient sequence for the hypothesis being tested; their exclusion is a necessary scope constraint for the model architecture.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted the missingness and scope concerns, but F1 (metric inflation) remains a point of genuine disagreement between the design rationale and the critic's mechanistic concern, necessitating an empirical test (DEFER)."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The evaluation metric (max predicted risk over 6-48 hour window) measures the model's ability to identify patients who will develop sepsis at any point in the 48-hour window.",
+        "failure_mechanism": "Using 'max' aggregation over 43 hourly predictions (hours 6-48) inflates performance by giving credit if the model predicts correctly at ANY single timestep. This is significantly easier than predicting at a specific clinically relevant time point (e.g., 6 hours or 12 hours ahead). A model that predicts sepsis correctly only at hour 47 gets the same credit as one that predicts correctly at hour 6, despite the latter being clinically far more valuable.",
+        "evidence_test": "Report AUC-ROC at fixed horizons (e.g., predicting at exactly 6h, 12h, 24h post-admission) and compare to the max-aggregated AUC. A large gap (e.g., >0.1 AUC) indicates the metric is easier than the clinical task requires.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The LSTM and logistic regression models are compared fairly because they use the same preprocessing pipeline.",
+        "failure_mechanism": "The LSTM explicitly uses binary missingness indicators as features (forward-fill up to 24 hours with a binary missingness indicator appended). The logistic regression uses 36 hand-engineered features (LOCF vitals, lab statistics, medications, rate of change, interactions) with no explicit missingness indicator. The LSTM therefore has access to additional signal (missingness patterns that proxy for patient severity/clinical instability) that the logistic regression does not. This creates an unfair advantage for the LSTM independent of temporal pattern learning.",
+        "evidence_test": "Run LSTM ablation removing the missingness indicator feature while keeping all other architecture identical. If AUC drops substantially (>0.05), the LSTM's advantage stems from missingness encoding rather than temporal sequence modeling. The fair comparison requires either adding missingness indicators to logistic regression or reporting LSTM-without-missingness as the primary result.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 6-month gap between temporal splits allows seasonal variation and concept drift to be captured.",
+        "failure_mechanism": "The date ranges show contiguous splits (training: Jan 2021-Jun 2022, validation: Jul 2022-Dec 2022, test: Jan 2023-Dec 2023) with no actual temporal gap. The statement claims '6-month gaps between splits' but the implementation has none. This is either a documentation error or a misconfigured split. If gaps were intended but not implemented, the model may not generalize across seasons as claimed. If gaps were not intended, the statement is misleading.",
+        "evidence_test": "Clarify whether temporal gaps exist. If gaps are desired, re-run experiment with explicit temporal gaps (e.g., train: Jan 2021-Dec 2021, gap: Jan 2022-Jun 2022, validate: Jul 2022-Dec 2022, gap: Jan 2023-Jun 2023, test: Jul 2023-Dec 2023). Report performance with and without gaps to quantify seasonal/generalization effects.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The label definition (blood culture + antibiotic within \u00b112h, ICD-10 R65.1x with organ dysfunction, or qSOFA\u22652 with organ dysfunction) accurately identifies hospital-acquired sepsis.",
+        "failure_mechanism": "The multi-criteria label combines heterogeneous signals: (1) procedural (culture order + antibiotic), (2) coding-based (ICD diagnosis), and (3) clinical scoring (qSOFA). These have different specificities, latencies, and documentation practices. A patient with qSOFA\u22652 and organ dysfunction on the same day may be clinically different from one with culture+antibiotic concordance. Pooling these introduces label noise. The \u00b112 hour window for culture+antibiotic is also wide\u2014antibiotics may be started empirically before culture results, creating false positives.",
+        "evidence_test": "Stratify model performance by label criterion (how did each positive case meet the definition?). If performance varies substantially across criteria (e.g., AUC 0.85 for culture+antibiotic cases vs. 0.65 for qSOFA cases), the label is heterogeneous and the aggregate metric masks this. Consider training separate models or using a single stricter criterion.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The exclusion criteria (neonatal ICU, <18 years, <6 hours data, transfers from other hospitals) select for a clinically relevant population.",
+        "failure_mechanism": "Excluding patients with <6 hours of data removes the sickest patients who die or are transferred early\u2014precisely the population where early sepsis prediction matters most. Excluding transfers from other hospitals removes a clinically complex population. This creates selection bias toward longer-stay, more stable patients where prediction is easier. The model may fail on the excluded populations in deployment.",
+        "evidence_test": "Report the number and characteristics of excluded patients. Simulate performance on a held-out set that includes short-stay patients (e.g., 3-6 hours) to assess whether the model generalizes to the excluded population.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "Two FATAL-level flaws undermine the experiment's validity: (1) the evaluation metric uses max-aggregation over a 48-hour window, significantly inflating AUC by giving credit for any single correct prediction rather than measuring clinically meaningful early detection; (2) the LSTM has access to explicit missingness indicators that the logistic regression baseline lacks, creating an unfair comparison where the LSTM's advantage may stem from encoding missingness patterns (a severity proxy) rather than learning temporal sequences. A third material issue is the claim of temporal gaps between splits that appear not to exist in the implementation.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my position on F1 and F2, but strengthening the arguments to address the critic's mechanistic concerns. For F1, I am shifting to DEFER because the critic's point about clinical utility vs. metric inflation is a valid empirical question that cannot be resolved by design rationale alone. For F2, I am strengthening the REBUT-DESIGN argument by clarifying that the ablation study is the standard method for isolating the source of a model's advantage in ML research. For F4, I am adjusting the severity to reflect a PARTIAL rebuttal, as the sensitivity analysis mitigates but does not eliminate label heterogeneity. F3 and F5 remain as previously agreed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that max-aggregation is 'easier' than fixed-horizon prediction. However, the design choice was made to avoid the noise of retrospective timestamps. Whether the resulting AUC inflation outweighs the benefit of noise reduction is an empirical question. Since the design provides the rationale but the critic provides a valid mechanism for inflation, this is a genuine ambiguity that requires the proposed evidence test (comparing fixed vs. max AUC) to resolve.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic argues that ablation is a 'verification' rather than a 'mitigation.' In ML hypothesis testing, isolating the contribution of a specific feature (missingness) via ablation is the primary method for determining if a model's advantage is derived from that feature or from the architecture (temporal sequence modeling). By ablating the missingness indicator, the design directly tests whether the LSTM's superiority persists without the 'unfair' signal. This is a robust design control for the hypothesis being tested.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The text claims 6-month gaps exist, but the provided date ranges are contiguous. This is a documentation error that contradicts the stated strategy for capturing seasonal drift.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The sensitivity analysis in Section 7 using a stricter label definition (blood culture + antibiotic concordance within 6h) directly addresses the concern that the primary conclusions are driven by the noisier qSOFA or ICD-10 criteria. While it does not eliminate the heterogeneity of the primary label, it provides a high-confidence anchor to verify that the model's signal is clinically grounded.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The experiment specifically tests 'Sequence Models'. Patients with <6 hours of data do not provide a sufficient sequence for the hypothesis being tested; their exclusion is a necessary scope constraint for the model architecture.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted the missingness and scope concerns, but F1 (metric inflation) remains a point of genuine disagreement between the design rationale and the critic's mechanistic concern, necessitating an empirical test (DEFER)."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=5, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

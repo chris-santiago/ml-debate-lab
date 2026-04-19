@@ -1,0 +1,175 @@
+{
+  "case_id": "eval_scenario_hyp_017",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "x-ai/grok-4.1-fast",
+    "defender": "nvidia/nemotron-3-super-120b-a12b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Aggregate features like prior fraud rate are computed using only fraud labels known at the authorization time of the current transaction, with no leakage from future chargeback resolutions.",
+        "failure_mechanism": "Retrospective feature engineering might use final resolved labels for recent prior transactions (e.g., those <120 days old), where chargebacks filed after the current auth time provide leakage of future fraud evidence; the feature timing audit document lists sources but does not computationally verify availability simulation, allowing models to implicitly predict using post-auth signals and inflating performance symmetrically for both models.",
+        "evidence_test": "Computational audit on test set samples: for prior transactions in aggregates, confirm chargeback filing + sustainment timestamps precede current auth time; re-engineer features simulating label delay (exclude priors <120 days or use provisional flags) and compare model performance drop.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer correctly leverages chronological sequence order by properly masking padded tokens in multi-head attention layers.",
+        "failure_mechanism": "Uniform padding without attention masks (common framework default omission) causes self-attention to include padded (zero/artifact) tokens, corrupting positional representations and forcing the model to treat inputs as unordered bags; this produces plausible aggregate performance from raw features alone, masking failure of the core sequential modeling hypothesis while still potentially beating the baseline.",
+        "evidence_test": "Implementation inspection for mask usage; ablation experiment: train on per-account randomly shuffled sequences (preserving feature marginals) vs original order\u2014if shuffled performance is similar (within 1-2% recall @ FPR), confirms masking/sequential failure.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The design is rigorous in temporal splitting, metrics, and controls but overlooks critical unverified prerequisites in feature engineering (label delay leakage) and transformer implementation (padding masks), either of which could produce misleading outperformance not reflective of true capabilities.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Finding F1 raises a concern about potential label leakage in the prior fraud rate feature: if the feature uses final resolved chargeback outcomes for recent prior transactions, it could incorporate information not available at the time of the current transaction, inflating performance symmetrically for both models. The methodology states a feature timing audit ensures features use only authorization\u2011time information, but the critic notes the audit lacks computational verification of label\u2011delay simulation, leaving the claim unverified. Finding F2 questions whether the transformer properly masks padded tokens; without explicit mention of attention masking in the methodology, uniform padding could cause the model to treat padded tokens as real inputs, undermining the sequential modeling hypothesis. The critic suggests an implementation inspection or shuffled\u2011sequence ablation to test this. Neither finding provides concrete evidence of a flaw; both hinge on unverified implementation details that could be resolved by empirical checks.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critique hypothesizes label leakage in the prior fraud rate feature but offers no empirical evidence that such leakage actually occurred in the PoC. The methodology includes a feature timing audit intended to prevent post\u2011transaction signals, yet the audit\u2019s verification depth is unclear. To settle the concern, a computational audit confirming that chargeback timestamps of prior transactions precede each current transaction\u2019s authorization time (or a label\u2011delay simulation) is needed."
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critique asserts that missing attention masks cause the transformer to treat padded tokens as real inputs, potentially destroying sequential modeling. The methodology does not specify mask usage, and no implementation inspection or ablation evidence is provided. An empirical test\u2014inspecting the code for mask application or comparing performance on original vs. shuffled sequences\u2014would determine whether sequential modeling is truly intact."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Both findings received DEFER rebuttals, indicating unresolved empirical questions; no FATAL or MATERIAL finding was conceded, so the appropriate outcome is to agree on the need for further testing."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "DEFER rebuttal acknowledges the potential for label leakage in prior fraud rate features and agrees that a computational audit (matching the proposed evidence_test) is needed to verify, but provides no resolution or evidence that the mechanism is addressed, leaving the concern open and unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "DEFER rebuttal recognizes the risk of missing attention masks corrupting sequential modeling and calls for code inspection or shuffled-sequence ablation (matching the proposed evidence_test), but offers no confirmation or mitigation, leaving the failure mechanism unaddressed and the concern open."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Both findings remain challenged. The critic's CHALLENGE verdicts indicate that my initial DEFER responses did not provide evidence that the design eliminates the failure mechanisms. Upon review, the methodology includes controls (feature timing audit for F1, implicit use of padded sequences for F2) but does not demonstrably eliminate the concerns. Therefore I maintain a DEFER posture for each, specifying the settling experiment that would resolve the uncertainty and arguing that the primary conclusion (which model yields higher recall at fixed FPR) would survive even if the critiques are correct, because any impact would be symmetric across models.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly notes that the feature timing audit document alone does not computationally verify that prior fraud rate uses only labels known at authorization time, leaving open the possibility of label leakage from recent (<120\u2011day) prior transactions. To settle this, I will conduct the proposed computational audit: for each transaction in the test set, verify that the chargeback filing and sustainment timestamps of all prior transactions used in the rolling\u2011window fraud\u2011rate feature precede the current transaction's authorization time; if any violate this, re\u2011engineer the feature using either a label\u2011delay simulation (exclude priors <120\u202fdays or use provisional fraud flags) and compare model performance. If leakage exists, it will affect both the transformer and the baseline equally because they ingest the identical prior\u2011fraud\u2011rate feature; any symmetric inflation of performance preserves the relative ranking, so the primary conclusion about which model achieves higher recall at fixed FPR remains valid.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic points out that the methodology does not specify whether attention masks are applied to padded tokens, raising the risk that the transformer attends to padding and loses sequential information. To resolve this, I will first inspect the training code to confirm the presence (or absence) of padding masks in the multi\u2011head attention layers. If masks are missing, I will run an ablation that trains the transformer on per\u2011account randomly shuffled sequences (preserving feature marginals) and compares recall@FPR to the original\u2011order model. Should the masked\u2011deficient model show no significant drop relative to the shuffled version, sequential modeling is impaired. However, even without proper masking the transformer can still learn from the raw transaction features (amounts, merchant categories, etc.) and may retain a performance edge over the gradient\u2011boosted baseline that relies on hand\u2011engineered aggregates. Thus, any potential performance change due to missing masks would likely affect both models' ability to extract sequential information similarly, leaving the comparative conclusion (which model yields higher recall at fixed FPR) intact.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Both findings are deferred to empirical verification; the primary conclusion remains pending experimental outcome, which is the appropriate verdict when genuine uncertainty persists about mechanistic validity."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Aggregate features like prior fraud rate are computed using only fraud labels known at the authorization time of the current transaction, with no leakage from future chargeback resolutions.",
+        "failure_mechanism": "Retrospective feature engineering might use final resolved labels for recent prior transactions (e.g., those <120 days old), where chargebacks filed after the current auth time provide leakage of future fraud evidence; the feature timing audit document lists sources but does not computationally verify availability simulation, allowing models to implicitly predict using post-auth signals and inflating performance symmetrically for both models.",
+        "evidence_test": "Computational audit on test set samples: for prior transactions in aggregates, confirm chargeback filing + sustainment timestamps precede current auth time; re-engineer features simulating label delay (exclude priors <120 days or use provisional flags) and compare model performance drop.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer correctly leverages chronological sequence order by properly masking padded tokens in multi-head attention layers.",
+        "failure_mechanism": "Uniform padding without attention masks (common framework default omission) causes self-attention to include padded (zero/artifact) tokens, corrupting positional representations and forcing the model to treat inputs as unordered bags; this produces plausible aggregate performance from raw features alone, masking failure of the core sequential modeling hypothesis while still potentially beating the baseline.",
+        "evidence_test": "Implementation inspection for mask usage; ablation experiment: train on per-account randomly shuffled sequences (preserving feature marginals) vs original order\u2014if shuffled performance is similar (within 1-2% recall @ FPR), confirms masking/sequential failure.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The design is rigorous in temporal splitting, metrics, and controls but overlooks critical unverified prerequisites in feature engineering (label delay leakage) and transformer implementation (padding masks), either of which could produce misleading outperformance not reflective of true capabilities.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Both findings remain challenged. The critic's CHALLENGE verdicts indicate that my initial DEFER responses did not provide evidence that the design eliminates the failure mechanisms. Upon review, the methodology includes controls (feature timing audit for F1, implicit use of padded sequences for F2) but does not demonstrably eliminate the concerns. Therefore I maintain a DEFER posture for each, specifying the settling experiment that would resolve the uncertainty and arguing that the primary conclusion (which model yields higher recall at fixed FPR) would survive even if the critiques are correct, because any impact would be symmetric across models.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly notes that the feature timing audit document alone does not computationally verify that prior fraud rate uses only labels known at authorization time, leaving open the possibility of label leakage from recent (<120\u2011day) prior transactions. To settle this, I will conduct the proposed computational audit: for each transaction in the test set, verify that the chargeback filing and sustainment timestamps of all prior transactions used in the rolling\u2011window fraud\u2011rate feature precede the current transaction's authorization time; if any violate this, re\u2011engineer the feature using either a label\u2011delay simulation (exclude priors <120\u202fdays or use provisional fraud flags) and compare model performance. If leakage exists, it will affect both the transformer and the baseline equally because they ingest the identical prior\u2011fraud\u2011rate feature; any symmetric inflation of performance preserves the relative ranking, so the primary conclusion about which model achieves higher recall at fixed FPR remains valid.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic points out that the methodology does not specify whether attention masks are applied to padded tokens, raising the risk that the transformer attends to padding and loses sequential information. To resolve this, I will first inspect the training code to confirm the presence (or absence) of padding masks in the multi\u2011head attention layers. If masks are missing, I will run an ablation that trains the transformer on per\u2011account randomly shuffled sequences (preserving feature marginals) and compares recall@FPR to the original\u2011order model. Should the masked\u2011deficient model show no significant drop relative to the shuffled version, sequential modeling is impaired. However, even without proper masking the transformer can still learn from the raw transaction features (amounts, merchant categories, etc.) and may retain a performance edge over the gradient\u2011boosted baseline that relies on hand\u2011engineered aggregates. Thus, any potential performance change due to missing masks would likely affect both models' ability to extract sequential information similarly, leaving the comparative conclusion (which model yields higher recall at fixed FPR) intact.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Both findings are deferred to empirical verification; the primary conclusion remains pending experimental outcome, which is the appropriate verdict when genuine uncertainty persists about mechanistic validity."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=9, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

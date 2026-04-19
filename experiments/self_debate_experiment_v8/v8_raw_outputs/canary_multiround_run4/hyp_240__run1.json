@@ -1,0 +1,293 @@
+{
+  "case_id": "hyp_240",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The graph model's performance gain is attributable to relational structure/message passing rather than the inclusion of high-cardinality entity identifiers.",
+        "failure_mechanism": "The PoC specifies that the graph model uses 'user, device, IP, and sender nodes'. In many ATO datasets, the identity of the entity (e.g., a specific known-bad IP or a compromised device ID) is a stronger signal than the topology of the graph. If the GNN simply learns to associate specific node IDs with ATO (effectively acting as a lookup table for 'bad' entities), it will outperform a feature-only baseline that aggregates these into 'first-seen' or 'novelty' flags, without actually utilizing the 'relational reasoning' the hypothesis targets.",
+        "evidence_test": "Compare the GNN's performance on 'previously seen' vs 'newly observed' entities. If the performance delta between GNN and GBT vanishes or reverses for new entities, the model is relying on entity memorization rather than relational patterns.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chronological split and removal of analyst workflow features prevent signal leakage.",
+        "failure_mechanism": "The PoC excludes 'unresolved cases' and cases where labels are not available by the supervision cutoff. However, in security operations, the *fact* that a case was resolved quickly or at all is often highly correlated with the signal strength of the attack. By filtering the dataset to only include resolved cases, the model may be training on a distribution of 'obvious' or 'high-confidence' attacks, failing to account for the 'silent' failures or the long-tail of stealthy ATOs that remain unresolved, leading to an overestimation of precision in production.",
+        "evidence_test": "Analyze the distribution of 'time-to-resolution' for the training set versus the total population of alerts. If the training set is heavily biased toward fast-resolved cases, evaluate the model on a sample of 'unresolved' cases to check for false negative rates.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GBT baseline is a fair comparison for the GNN's relational capabilities.",
+        "failure_mechanism": "The GBT uses 'historical user risk aggregates'. If these aggregates are simple means or counts, they miss the 'multi-hop' relational signals (e.g., User A used Device B, which was also used by User C who is known-bad). However, a GBT can approximate relational signals if the feature engineering includes 'neighborhood' aggregates (e.g., 'number of distinct users on this device in last 24h'). Without these specific relational features in the baseline, the GNN's win may be due to basic feature engineering gaps rather than the GNN architecture itself.",
+        "evidence_test": "Add 'neighborhood-level' aggregate features (e.g., device-level and IP-level risk scores) to the GBT baseline and observe if the performance gap with the GNN closes.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 2-month test window is sufficient to validate performance under drift.",
+        "failure_mechanism": "Security drift is often cyclical or campaign-based. A 2-month window may capture a single campaign's behavior but fail to capture the transition between different attack vectors (e.g., moving from session hijacking to MFA fatigue).",
+        "evidence_test": "Perform a sliding-window evaluation across the entire 12-month period to check the variance of the performance delta between GNN and GBT.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC is well-structured regarding temporal splitting and leakage, but it suffers from a critical risk of 'entity memorization' where the GNN may simply memorize bad IDs rather than learning relational patterns, and a potential selection bias by excluding unresolved cases.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL, 8): The critic claims the GNN's gain may be due to entity memorization rather than relational structure. The methodology explicitly addresses this in the 'Confounds' section: 'run ablations removing raw high-cardinality identifiers while preserving behavioral summaries, and report results separately for previously seen versus newly observed users and devices.' This design control directly tests the failure mechanism (memorization vs. generalization). The finding assumes the methodology lacks this check, which is factually incorrect. The design resolves the concern by validating performance on new entities.\n\nF2 (MATERIAL, 6): The critic claims excluding unresolved cases biases the distribution toward 'obvious' attacks. The methodology justifies this exclusion in the 'Methodology' section: 'Exclude unresolved cases... since delayed security investigations otherwise inject label noise.' This is a deliberate design choice to ensure label quality, which is critical for supervised learning. The critic's evidence test (evaluate on unresolved cases) is impossible within the scope because unresolved cases lack labels by definition of the supervision cutoff. The scope is defined on 'investigation outcomes' (resolved). This is a scope limitation, not a methodological flaw.\n\nF3 (MATERIAL, 4): The critic claims the GBT baseline is unfair because it lacks neighborhood aggregates. The methodology states the goal is to test 'whether relational structure adds predictive value beyond strong hand-engineered aggregates.' The baseline is defined as 'strong hand-engineered aggregates.' Adding neighborhood aggregates would change the hypothesis to 'Graph vs. Feature-Enhanced GBT'. The design choice is deliberate to isolate the 'structure' variable. This is a justified design trade-off.\n\nF4 (MINOR, 2): The critic claims the 2-month test window is insufficient for drift. The methodology uses a chronological split (M11-12) to match deployment drift. While sliding windows offer robustness, the 2-month window is sufficient to validate the primary hypothesis under drift. This is a minor robustness point, not a validity threat.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly includes the ablation and reporting strategy (seen vs. new entities) to distinguish entity memorization from relational reasoning. The finding incorrectly assumes this control is absent. The design resolves the concern by validating generalization on new entities."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The experiment scope is explicitly defined on 'investigation outcomes' (resolved cases) to ensure label quality. Evaluating on unresolved cases is outside the scope as labels are unavailable. The exclusion is a justified control for label noise, not a flaw."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The baseline is deliberately limited to 'strong hand-engineered aggregates' to isolate the marginal value of 'relational structure'. Adding neighborhood features would change the hypothesis. The design choice is justified for the stated goal."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The 2-month chronological split is sufficient to validate performance under drift for the primary hypothesis. Sliding-window evaluation is a robustness enhancement, not a requirement for validity."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted with adjusted severity \u2264 3. The methodology explicitly includes controls for entity memorization (F1), defines scope to manage label bias (F2), isolates relational structure via baseline design (F3), and uses a sufficient test window for drift (F4)."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly pointed out that the methodology already includes the specific evidence test I proposed: reporting results separately for previously seen versus newly observed users and devices. This directly addresses the failure mechanism of entity memorization."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender uses a REBUT-SCOPE argument, claiming that evaluating unresolved cases is impossible due to missing labels. However, the finding is not about the *feasibility* of labeling, but about *selection bias*. By training only on resolved cases, the model learns a distribution of 'detectable' attacks. This creates a gap between experimental precision and production precision. The scope of the experiment is to evaluate 'realistic drift and label delay'; ignoring the bias introduced by the resolution process contradicts this goal."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender argues that adding neighborhood features would 'change the hypothesis'. This is a misunderstanding of the baseline's purpose. The hypothesis is whether 'relational structure' (the GNN's capability) adds value. Since neighborhood aggregates are a tabular representation of relational structure, they are the most critical baseline. Without them, the GNN might simply be winning because it has access to 1-hop connectivity that the GBT lacks, not because of 'graph reasoning' or 'message passing'. The concern remains partially unresolved."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal is reasonable. While sliding windows are better, a 2-month holdout is a standard industry practice for a PoC to establish a baseline of drift resilience. The severity was already low."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted F1 and F4, confirming the design controls and scope decisions. F2 was challenged regarding selection bias from excluding unresolved cases; I switch to DEFER as the bias is real but the relative comparison may hold, requiring empirical validation. F3 was partially challenged regarding baseline fairness; I switch to CONCEDE as the missing neighborhood features structurally inflate the GNN delta, invalidating the primary metric without a specific design control.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic accepted the R1 argument that the methodology explicitly includes the ablation strategy (seen vs. new entities) to distinguish entity memorization from relational reasoning. The design control directly addresses the failure mechanism. Severity remains at 3.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly identified that excluding unresolved cases introduces selection bias, contradicting the 'realistic drift' claim. The design has no control to eliminate this bias, but the relative comparison (GNN vs. GBT) may remain valid if both models suffer the same bias. An empirical test on unresolved cases is needed to settle the magnitude of the bias.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critic correctly argued that 'neighborhood aggregates' are a tabular representation of relational structure. Without them, the GBT baseline is structurally weak, inflating the GNN's delta. The methodology does not explicitly mandate these features, and the flaw invalidates the primary metric (the performance delta). No design control exists to mitigate this.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the R1 argument that the 2-month window is sufficient for a PoC to establish baseline drift resilience. Sliding windows are robustness enhancements, not validity requirements. Severity remains at 0.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense wins on F1 and F4, but F2 requires empirical validation (DEFER) and F3 is conceded (CONCEDE) due to structural baseline flaws. The presence of a DEFER on a MATERIAL finding triggers the 'empirical_test_agreed' verdict, acknowledging that reasonable disagreement exists on the magnitude of bias and baseline fairness."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The graph model's performance gain is attributable to relational structure/message passing rather than the inclusion of high-cardinality entity identifiers.",
+        "failure_mechanism": "The PoC specifies that the graph model uses 'user, device, IP, and sender nodes'. In many ATO datasets, the identity of the entity (e.g., a specific known-bad IP or a compromised device ID) is a stronger signal than the topology of the graph. If the GNN simply learns to associate specific node IDs with ATO (effectively acting as a lookup table for 'bad' entities), it will outperform a feature-only baseline that aggregates these into 'first-seen' or 'novelty' flags, without actually utilizing the 'relational reasoning' the hypothesis targets.",
+        "evidence_test": "Compare the GNN's performance on 'previously seen' vs 'newly observed' entities. If the performance delta between GNN and GBT vanishes or reverses for new entities, the model is relying on entity memorization rather than relational patterns.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chronological split and removal of analyst workflow features prevent signal leakage.",
+        "failure_mechanism": "The PoC excludes 'unresolved cases' and cases where labels are not available by the supervision cutoff. However, in security operations, the *fact* that a case was resolved quickly or at all is often highly correlated with the signal strength of the attack. By filtering the dataset to only include resolved cases, the model may be training on a distribution of 'obvious' or 'high-confidence' attacks, failing to account for the 'silent' failures or the long-tail of stealthy ATOs that remain unresolved, leading to an overestimation of precision in production.",
+        "evidence_test": "Analyze the distribution of 'time-to-resolution' for the training set versus the total population of alerts. If the training set is heavily biased toward fast-resolved cases, evaluate the model on a sample of 'unresolved' cases to check for false negative rates.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GBT baseline is a fair comparison for the GNN's relational capabilities.",
+        "failure_mechanism": "The GBT uses 'historical user risk aggregates'. If these aggregates are simple means or counts, they miss the 'multi-hop' relational signals (e.g., User A used Device B, which was also used by User C who is known-bad). However, a GBT can approximate relational signals if the feature engineering includes 'neighborhood' aggregates (e.g., 'number of distinct users on this device in last 24h'). Without these specific relational features in the baseline, the GNN's win may be due to basic feature engineering gaps rather than the GNN architecture itself.",
+        "evidence_test": "Add 'neighborhood-level' aggregate features (e.g., device-level and IP-level risk scores) to the GBT baseline and observe if the performance gap with the GNN closes.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 2-month test window is sufficient to validate performance under drift.",
+        "failure_mechanism": "Security drift is often cyclical or campaign-based. A 2-month window may capture a single campaign's behavior but fail to capture the transition between different attack vectors (e.g., moving from session hijacking to MFA fatigue).",
+        "evidence_test": "Perform a sliding-window evaluation across the entire 12-month period to check the variance of the performance delta between GNN and GBT.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC is well-structured regarding temporal splitting and leakage, but it suffers from a critical risk of 'entity memorization' where the GNN may simply memorize bad IDs rather than learning relational patterns, and a potential selection bias by excluding unresolved cases.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted F1 and F4, confirming the design controls and scope decisions. F2 was challenged regarding selection bias from excluding unresolved cases; I switch to DEFER as the bias is real but the relative comparison may hold, requiring empirical validation. F3 was partially challenged regarding baseline fairness; I switch to CONCEDE as the missing neighborhood features structurally inflate the GNN delta, invalidating the primary metric without a specific design control.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic accepted the R1 argument that the methodology explicitly includes the ablation strategy (seen vs. new entities) to distinguish entity memorization from relational reasoning. The design control directly addresses the failure mechanism. Severity remains at 3.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly identified that excluding unresolved cases introduces selection bias, contradicting the 'realistic drift' claim. The design has no control to eliminate this bias, but the relative comparison (GNN vs. GBT) may remain valid if both models suffer the same bias. An empirical test on unresolved cases is needed to settle the magnitude of the bias.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critic correctly argued that 'neighborhood aggregates' are a tabular representation of relational structure. Without them, the GBT baseline is structurally weak, inflating the GNN's delta. The methodology does not explicitly mandate these features, and the flaw invalidates the primary metric (the performance delta). No design control exists to mitigate this.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the R1 argument that the 2-month window is sufficient for a PoC to establish baseline drift resilience. Sliding windows are robustness enhancements, not validity requirements. Severity remains at 0.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense wins on F1 and F4, but F2 requires empirical validation (DEFER) and F3 is conceded (CONCEDE) due to structural baseline flaws. The presence of a DEFER on a MATERIAL finding triggers the 'empirical_test_agreed' verdict, acknowledging that reasonable disagreement exists on the magnitude of bias and baseline fairness."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

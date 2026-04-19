@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_766",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "nvidia/nemotron-3-super-120b-a12b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The group-based temporal split (keeping all user data within one split) is sufficient to prevent all temporal leakage and accurately simulate deployment.",
+        "failure_mechanism": "The claim assumes that user behavior is independent across time, ignoring that the model's features (e.g., entropy of session timing, temporal patterns) are derived from a 7-day window. If there are systematic, platform-wide temporal patterns (e.g., weekly seasonality, holiday viewing habits, feature rollouts) that evolve over the 18-month period, the model can learn these patterns from the training period and they may not hold in the test period. This is a form of covariate shift. The validation and test sets are chronologically later, so the model's performance may be inflated by learning stable, time-invariant patterns that are not the true 'event-level' signal of churn, but rather general platform usage trends that correlate with churn in the training period but may decouple later.",
+        "evidence_test": "Compute the model's performance (AUPRC) on the test set after shuffling the temporal order of user-weeks within the test set (while preserving the user-group constraint). If performance drops significantly, it indicates the model relied on time-specific patterns that do not generalize. Alternatively, train a model on Months 1-12 and evaluate on a temporally distant holdout (e.g., Months 19-21, if available) to test for degradation beyond the designated test period.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying churn rates across the temporal splits controls for large-scale shifts in platform churn and ensures a fair comparison.",
+        "failure_mechanism": "Artificially balancing the class distribution across splits violates the principle of evaluating on the true future distribution. In deployment, the model will encounter the natural, possibly shifting, churn rate. By stratifying, the evaluation is conducted on an artificially constructed distribution. This can inflate the apparent performance of the more complex model if it is better at exploiting the balanced setting, or mask degradation if the true churn rate in the test period is lower (making the positive class harder to find). The AUPRC metric is sensitive to the class ratio; altering this ratio changes the baseline and the metric's meaning.",
+        "evidence_test": "Report performance metrics on the test set with its natural, unstratified class distribution alongside the stratified results. A large discrepancy (>0.05 AUPRC) indicates the stratification meaningfully altered the evaluation. Also, compute the baseline 'no-skill' PR-AUC (churn rate) for both the natural and stratified test sets to show the shift in task difficulty.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The preprocessing pipeline (standardization, imputation) fitted on the training set and applied to validation/test prevents information leakage.",
+        "failure_mechanism": "While fitting on training only prevents direct leakage, the method of imputation (median/mode) assumes the distribution of missingness and feature values is stationary. If, in the test period, a new device type appears or the distribution of a feature (e.g., session length) shifts significantly, the training-set median may be a poor imputation value, and the one-hot encoding will fail for the new category. This can silently degrade model performance on the 'future' data it's meant to generalize to, because the pipeline cannot handle unseen categories or distributional shifts. The model's performance drop would be attributed to a failure of the hypothesis, when it is actually a failure of the preprocessing robustness.",
+        "evidence_test": "Audit the validation and test sets for the presence of categorical values not seen in training and for features where the proportion of missing values differs significantly from training. Report performance on the subset of test data that contains only categories/patterns seen in training versus the full test set. A large gap indicates preprocessing fragility.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 30-day churn labeling window (cancellation within exactly 30 days after observation) and 2-week finalization lag ensure label fidelity and a clear predictive target.",
+        "failure_mechanism": "This labeling strategy makes a strong assumption about the user's decision process: that churn is determined by behavior in the prior 7 days and manifests as a cancellation within the subsequent 30 days. This may not match the true churn dynamics. Users may exhibit 'warning' behavior more than 7 days before cancelling, or may cancel for reasons completely unrelated to the prior week's activity (e.g., annual subscription renewal, external promotion). The 30-day window is arbitrary. If the true signal exists on a different timescale (e.g., 14-day behavior leading to cancellation in 14 days), the model may be searching for a suboptimal pattern, and the reported performance may not reflect the best achievable predictive power of event-level data.",
+        "evidence_test": "Conduct an ablation on the labeling definition: train and evaluate models using different observation windows (e.g., 14, 30 days) and different post-observation cancellation windows (e.g., 14, 60 days). If performance (AUPRC) varies significantly (>0.05) with these definitions, the chosen labeling strategy is a confounder, not a ground truth.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The secondary confound controls (seasonal stratification, promotion exclusion, cohort analysis) are sufficient to detect and bound promotional and seasonal confounding.",
+        "failure_mechanism": "These checks are post-hoc analyses run on the test set. If a confound is detected (e.g., performance drops in a promotion-excluded window), the experiment's primary claim is already potentially invalidated, but the design offers no way to adjust for it. The checks identify problems but do not prevent them. Furthermore, they may not detect more subtle, continuous confounds like a gradual change in user interface that affects skip behavior over the entire 18-month period, correlating with both time and churn.",
+        "evidence_test": "The existence of a material confound is its own evidence. The flaw is the lack of a proactive design (e.g., modeling time as a fixed effect) to isolate the event-level signal from temporal trends. A stronger test would be to include time-period indicators as features in a combined model and see if the event-level features retain significant incremental predictive power when time is accounted for.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The baseline logistic regression model, with tuned regularization, provides a fair counterfactual to isolate the value of event-level features.",
+        "failure_mechanism": "Logistic regression on aggregate features may be too weak a baseline if the true relationship is non-linear but simple. A more challenging baseline would be a gradient-boosted model (or a simple neural net) trained on the same *aggregate* features. This would more cleanly isolate the value of feature *granularity* from the value of the modeling *framework* (non-linear vs. linear). As described, part of the observed lift could be due to the gradient-boosted model's ability to capture non-linear interactions even in aggregate data, not the event-level detail.",
+        "evidence_test": "Add a third model: XGBoost trained on the aggregate feature set. Compare the lift from (Logistic Regression Aggregate -> XGBoost Aggregate) to the lift from (XGBoost Aggregate -> XGBoost Event-Level). If the first lift is substantial, the chosen baseline is insufficient.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The experimental design is generally sound for a PoC but contains a potentially fatal flaw in its handling of temporal distribution shift and an inflationary practice in class stratification. Several material assumptions about labeling and preprocessing robustness are unverified.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic argues that the group-based temporal split alone does not prevent covariate shift from platform-wide temporal patterns. The methodology, however, explicitly states the split prevents leakage of future behavior and reflects deployment, while also implementing seasonal stratification, promotion-excluded windows, and per-period AUPRC checks to detect and report temporal confounding. The critic's claim overstates what the split is asserted to do.\nF2: The critic contends that stratifying churn rates across splits evaluates on an artificial distribution, potentially inflating performance. The methodology deliberately stratifies to control large\u2011scale shifts in platform churn, aiming to isolate the effect of features from churn\u2011rate changes; this is a design choice, not an oversight.\nF3: The critic warns that preprocessing fitted on training assumes stationarity and may fail on unseen categories or shifted distributions. The methodology fits preprocessing on training only to avoid leakage, and the confound controls (seasonal, promotion, cohort analysis) serve as post\u2011hoc checks for distribution shifts; the concern about robustness is separate from leakage prevention.\nF4: The critic questions whether the 30\u2011day cancellation window captures true churn dynamics. The methodology defines churn as cancellation within 30 days post\u2011observation to create a clear, actionable target aligned with the intervention budget (precision \u226580% \u2192 ~20% contacted). The label is intentionally constructed for the prediction task, not claimed to be a ground\u2011truth of all churn.\nF5: The critic says the secondary confound controls are merely post\u2011hoc and do not bound confounding. The methodology states these checks detect confounds and report caveats, explicitly noting that establishing universal robustness is a separate, longer\u2011term question; the goal is detection, not correction.\nF6: The critic argues logistic regression is too weak a baseline and that a gradient\u2011boosted model on aggregate features would better isolate feature granularity. The methodology selects logistic regression as the current state\u2011of\u2011practice counterfactual and tunes it to provide a fair comparison; the aim is to demonstrate improvement over existing practice, not to isolate feature granularity exclusively.\nAll criticisms either misrepresent the design intent, describe trade\u2011offs that are deliberate controls, or raise concerns that are addressed by existing robustness checks or are outside the experiment\u2019s stated scope.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The group\u2011based temporal split is designed to prevent leakage of future behavior and simulate forward\u2011time deployment, not to guarantee immunity to all covariate shift. The methodology complements the split with seasonal stratification, promotion\u2011excluded windows, and per\u2011period AUPRC checks to detect and report temporal confounding, directly addressing the critic\u2019s concern about platform\u2011wide temporal patterns."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Stratifying churn rates across splits is a deliberate design choice to control large\u2011scale shifts in platform churn, ensuring that performance differences reflect feature utility rather than churn\u2011rate variation. The methodology explicitly states this goal, and the critic\u2019s concern about evaluating on a natural distribution pertains to a different evaluation context."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Fitting preprocessing on the training set prevents leakage, which is the claim under review. While the critic raises a stationarity issue, the methodology\u2019s confound controls (seasonal, promotion\u2011excluded, cohort analysis) serve as post\u2011hoc checks for distribution shifts, and the preprocessing step\u2019s purpose\u2014leakage prevention\u2014is correctly implemented."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The 30\u2011day cancellation window with a two\u2011week lag is chosen to create a clear, actionable prediction target aligned with the intervention budget (precision \u226580% \u2192 ~20% users contacted). This design decision is intentional and justified for the stated prediction task, not a claim that the window captures all possible churn dynamics."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The secondary confound controls are intended to detect, not bound, confounding; the methodology explicitly frames them as robustness checks that trigger caveats when issues are found. The critic\u2019s claim that they should bound confounding misstates the experiment\u2019s scope, which is to establish predictive improvement, not universal robustness."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Logistic regression on aggregate features is selected as the current state\u2011of\u2011practice counterfactual, tuned to provide a fair comparison. The methodology\u2019s goal is to show improvement over existing practice, not to isolate feature granularity exclusively; the critic\u2019s suggestion for a stronger baseline is a useful extension but does not invalidate the presented comparison."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted with adjustments that reduce each to adjusted severity \u22643, meaning no material flaw remains; the methodology stands under scrutiny."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": -1,
+        "reasoning": "The rebuttal fails to address the core failure mechanism: that the temporal split alone cannot prevent the model from learning time-specific patterns that may not generalize. The defender merely states that confound controls 'detect and report' temporal confounding, but this is reactive rather than preventive. The finding's mechanism describes how the model can learn platform-wide temporal patterns (weekly seasonality, holiday habits) that correlate with churn in training but decouple later\u2014a form of covariate shift that the seasonal stratification check may not fully capture. The severity adjustment from FATAL (7) to 2 is disproportionate for a rebuttal that acknowledges the issue exists but offers only post-hoc detection rather than design-level prevention."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal is generic and does not address the failure mechanism. The defender states stratification is 'a deliberate design choice to control large-scale shifts' but this directly contradicts the principle of evaluating on the true future distribution. The mechanism explains that artificially balancing class distribution changes the baseline AUPRC and can inflate or mask performance differences. The defender's justification that this 'pertains to a different evaluation context' is a scope dismissal, not a mechanistic rebuttal. The experiment claims to simulate deployment, but deployment will encounter natural, possibly shifting churn rates. The severity adjustment from MATERIAL (6) to 2 is disproportionate for a rebuttal that doesn't engage with the metric sensitivity issue."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal partially addresses the concern. The defender correctly notes that the claim under review is about leakage prevention, which the design implements. However, the failure mechanism specifically addresses stationarity assumptions and silent degradation due to unseen categories/shifts\u2014issues that confound controls may detect but not prevent. The rebuttal acknowledges the stationarity issue exists but claims post-hoc checks suffice. This leaves unresolved: if preprocessing fails on unseen categories (e.g., new device type), the model will produce errors on that subset, potentially attributing performance drops to the hypothesis rather than preprocessing fragility. The severity adjustment from 5 to 1 is too aggressive; a residual MATERIAL concern remains."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal is valid and addresses the mechanism. The defender correctly notes that the 30-day window is an intentional design choice aligned with business constraints (precision \u226580%, intervention budget). The failure mechanism questioned whether this matches 'true churn dynamics,' but the experiment's scope is to predict cancellations within this specific window, not to capture all possible churn dynamics. The rebuttal establishes that the labeling strategy is part of the defined prediction task, not a claim about universal ground truth. The severity adjustment is proportionate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly addresses the finding. The defender clarifies that the confound controls are intended to detect, not bound, confounding, and that the experiment's scope is predictive improvement, not universal robustness. This directly responds to the failure mechanism's criticism that checks are post-hoc and don't prevent problems. The defender acknowledges the design's limitations, which aligns with the finding's concern. The severity adjustment is reasonable."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal is valid. The defender correctly states that logistic regression represents the current state-of-practice, and the goal is improvement over existing practice, not pure isolation of feature granularity. The failure mechanism suggested a stronger baseline would better isolate granularity, but the defender acknowledges this as a useful extension rather than a flaw in the presented comparison. Given the original MINOR severity (1), the adjustment to 0 is proportionate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "We accept the critic's acceptance of findings F4\u2013F6, maintaining our original rebuttals. For F1 we strengthen our REBUT-DESIGN argument, pointing to the forward chronological holdout and quarterly AUPRC checks as design controls that test and detect temporal covariate shift. For F2 and F3 we switch to DEFER, proposing specific holdout and subset experiments to empirically resolve the remaining concerns about evaluation distribution and preprocessing robustness.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The group-based temporal split is not merely a leakage\u9632\u62a4; it is a forward-looking holdout that forces the model to generalize to future months (training 1\u201112, validation 13\u201115, test 16\u201118). If the model learns time\u2011specific patterns that do not generalize, its performance on the held\u2011out test set will drop, which the design explicitly measures via per\u2011quarter AUPRC checks (seasonal stratification) and promotion\u2011excluded windows. These checks detect covariate shift and would reveal any reliance on unstable temporal patterns, allowing the experiment to report caveats while still testing the core claim of superiority on the specified future period. Thus the design contains a specific, methodology\u2011stated control (the chronological holdout plus quarterly performance monitoring) that directly addresses the critic\u2019s covariate\u2011shift mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly notes that stratifying churn rates across splits evaluates on an artificial distribution, which may affect AUPRC sensitivity. The design\u2019s goal is to isolate feature utility from churn\u2011rate shifts, but the claim of simulating deployment remains open to question. To resolve this, we will evaluate both models on the test set with its natural, unstratified class distribution and compare the lift in AUPRC. If the lift remains statistically significant and of similar magnitude, the primary conclusion holds under the true distribution; if the lift diverges substantially, the critique is validated. This experiment directly tests whether the stratification materially alters the comparison.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While fitting preprocessing on the training set prevents leakage, the critic raises a stationarity concern: unseen categories or shifting feature distributions (e.g., new device types) could cause silent degradation that attribution errors might mistake for model failure. The design\u2019s confound controls (seasonal, promotion\u2011excluded, cohort analysis) are post\u2011hoc detectors but do not prevent such preprocessing fragility. To settle this, we will audit the validation and test sets for categorical values absent from training and for shifts in missingness rates, then compute AUPRC for each model on the subset of data containing only known categories/patterns versus the full test set. If the performance gap (event\u2011level vs. aggregate) remains consistent across subsets, the primary conclusion is robust; a significant divergence would indicate preprocessing fragility affects the comparison.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The 30\u2011day cancellation window with a two\u2011week lag is an intentional design choice that creates a clear, actionable prediction target aligned with the intervention budget (precision \u226580% \u2192 ~20% users contacted). The experiment\u2019s scope is to predict cancellations within this specific window, not to capture all possible churn dynamics. The critic\u2019s concern about matching \u2018true churn dynamics\u2019 pertains to a different prediction task; the labeling strategy is therefore a valid component of the defined hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The secondary confound controls (seasonal stratification, promotion\u2011excluded windows, cohort analysis) are intended to detect, not bound, confounding. The methodology explicitly frames them as robustness checks that trigger caveats when issues are found. The experiment\u2019s claim is limited to demonstrating predictive improvement on the held\u2011out period; it does not assert universal robustness to all confounds, so the critic\u2019s assertion that the checks should bound confounding misstates the design\u2019s scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Logistic regression on aggregate features is selected as the current state\u2011of\u2011practice counterfactual, tuned to provide a fair comparison. The methodology\u2019s goal is to show improvement over existing practice, not to isolate feature granularity exclusively. The critic\u2019s suggestion for a stronger baseline (e.g., gradient\u2011boosted on aggregates) is a useful extension but does not invalidate the presented comparison, which remains a valid test of the value of event\u2011level features relative to the deployed baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Because we have DEFER findings for F2 and F3, indicating genuine ambiguity that requires empirical resolution, and all FATAL findings are reduced to \u22643, the appropriate verdict is empirical_test_agreed."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The group-based temporal split (keeping all user data within one split) is sufficient to prevent all temporal leakage and accurately simulate deployment.",
+        "failure_mechanism": "The claim assumes that user behavior is independent across time, ignoring that the model's features (e.g., entropy of session timing, temporal patterns) are derived from a 7-day window. If there are systematic, platform-wide temporal patterns (e.g., weekly seasonality, holiday viewing habits, feature rollouts) that evolve over the 18-month period, the model can learn these patterns from the training period and they may not hold in the test period. This is a form of covariate shift. The validation and test sets are chronologically later, so the model's performance may be inflated by learning stable, time-invariant patterns that are not the true 'event-level' signal of churn, but rather general platform usage trends that correlate with churn in the training period but may decouple later.",
+        "evidence_test": "Compute the model's performance (AUPRC) on the test set after shuffling the temporal order of user-weeks within the test set (while preserving the user-group constraint). If performance drops significantly, it indicates the model relied on time-specific patterns that do not generalize. Alternatively, train a model on Months 1-12 and evaluate on a temporally distant holdout (e.g., Months 19-21, if available) to test for degradation beyond the designated test period.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying churn rates across the temporal splits controls for large-scale shifts in platform churn and ensures a fair comparison.",
+        "failure_mechanism": "Artificially balancing the class distribution across splits violates the principle of evaluating on the true future distribution. In deployment, the model will encounter the natural, possibly shifting, churn rate. By stratifying, the evaluation is conducted on an artificially constructed distribution. This can inflate the apparent performance of the more complex model if it is better at exploiting the balanced setting, or mask degradation if the true churn rate in the test period is lower (making the positive class harder to find). The AUPRC metric is sensitive to the class ratio; altering this ratio changes the baseline and the metric's meaning.",
+        "evidence_test": "Report performance metrics on the test set with its natural, unstratified class distribution alongside the stratified results. A large discrepancy (>0.05 AUPRC) indicates the stratification meaningfully altered the evaluation. Also, compute the baseline 'no-skill' PR-AUC (churn rate) for both the natural and stratified test sets to show the shift in task difficulty.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The preprocessing pipeline (standardization, imputation) fitted on the training set and applied to validation/test prevents information leakage.",
+        "failure_mechanism": "While fitting on training only prevents direct leakage, the method of imputation (median/mode) assumes the distribution of missingness and feature values is stationary. If, in the test period, a new device type appears or the distribution of a feature (e.g., session length) shifts significantly, the training-set median may be a poor imputation value, and the one-hot encoding will fail for the new category. This can silently degrade model performance on the 'future' data it's meant to generalize to, because the pipeline cannot handle unseen categories or distributional shifts. The model's performance drop would be attributed to a failure of the hypothesis, when it is actually a failure of the preprocessing robustness.",
+        "evidence_test": "Audit the validation and test sets for the presence of categorical values not seen in training and for features where the proportion of missing values differs significantly from training. Report performance on the subset of test data that contains only categories/patterns seen in training versus the full test set. A large gap indicates preprocessing fragility.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 30-day churn labeling window (cancellation within exactly 30 days after observation) and 2-week finalization lag ensure label fidelity and a clear predictive target.",
+        "failure_mechanism": "This labeling strategy makes a strong assumption about the user's decision process: that churn is determined by behavior in the prior 7 days and manifests as a cancellation within the subsequent 30 days. This may not match the true churn dynamics. Users may exhibit 'warning' behavior more than 7 days before cancelling, or may cancel for reasons completely unrelated to the prior week's activity (e.g., annual subscription renewal, external promotion). The 30-day window is arbitrary. If the true signal exists on a different timescale (e.g., 14-day behavior leading to cancellation in 14 days), the model may be searching for a suboptimal pattern, and the reported performance may not reflect the best achievable predictive power of event-level data.",
+        "evidence_test": "Conduct an ablation on the labeling definition: train and evaluate models using different observation windows (e.g., 14, 30 days) and different post-observation cancellation windows (e.g., 14, 60 days). If performance (AUPRC) varies significantly (>0.05) with these definitions, the chosen labeling strategy is a confounder, not a ground truth.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The secondary confound controls (seasonal stratification, promotion exclusion, cohort analysis) are sufficient to detect and bound promotional and seasonal confounding.",
+        "failure_mechanism": "These checks are post-hoc analyses run on the test set. If a confound is detected (e.g., performance drops in a promotion-excluded window), the experiment's primary claim is already potentially invalidated, but the design offers no way to adjust for it. The checks identify problems but do not prevent them. Furthermore, they may not detect more subtle, continuous confounds like a gradual change in user interface that affects skip behavior over the entire 18-month period, correlating with both time and churn.",
+        "evidence_test": "The existence of a material confound is its own evidence. The flaw is the lack of a proactive design (e.g., modeling time as a fixed effect) to isolate the event-level signal from temporal trends. A stronger test would be to include time-period indicators as features in a combined model and see if the event-level features retain significant incremental predictive power when time is accounted for.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The baseline logistic regression model, with tuned regularization, provides a fair counterfactual to isolate the value of event-level features.",
+        "failure_mechanism": "Logistic regression on aggregate features may be too weak a baseline if the true relationship is non-linear but simple. A more challenging baseline would be a gradient-boosted model (or a simple neural net) trained on the same *aggregate* features. This would more cleanly isolate the value of feature *granularity* from the value of the modeling *framework* (non-linear vs. linear). As described, part of the observed lift could be due to the gradient-boosted model's ability to capture non-linear interactions even in aggregate data, not the event-level detail.",
+        "evidence_test": "Add a third model: XGBoost trained on the aggregate feature set. Compare the lift from (Logistic Regression Aggregate -> XGBoost Aggregate) to the lift from (XGBoost Aggregate -> XGBoost Event-Level). If the first lift is substantial, the chosen baseline is insufficient.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The experimental design is generally sound for a PoC but contains a potentially fatal flaw in its handling of temporal distribution shift and an inflationary practice in class stratification. Several material assumptions about labeling and preprocessing robustness are unverified.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "We accept the critic's acceptance of findings F4\u2013F6, maintaining our original rebuttals. For F1 we strengthen our REBUT-DESIGN argument, pointing to the forward chronological holdout and quarterly AUPRC checks as design controls that test and detect temporal covariate shift. For F2 and F3 we switch to DEFER, proposing specific holdout and subset experiments to empirically resolve the remaining concerns about evaluation distribution and preprocessing robustness.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The group-based temporal split is not merely a leakage\u9632\u62a4; it is a forward-looking holdout that forces the model to generalize to future months (training 1\u201112, validation 13\u201115, test 16\u201118). If the model learns time\u2011specific patterns that do not generalize, its performance on the held\u2011out test set will drop, which the design explicitly measures via per\u2011quarter AUPRC checks (seasonal stratification) and promotion\u2011excluded windows. These checks detect covariate shift and would reveal any reliance on unstable temporal patterns, allowing the experiment to report caveats while still testing the core claim of superiority on the specified future period. Thus the design contains a specific, methodology\u2011stated control (the chronological holdout plus quarterly performance monitoring) that directly addresses the critic\u2019s covariate\u2011shift mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly notes that stratifying churn rates across splits evaluates on an artificial distribution, which may affect AUPRC sensitivity. The design\u2019s goal is to isolate feature utility from churn\u2011rate shifts, but the claim of simulating deployment remains open to question. To resolve this, we will evaluate both models on the test set with its natural, unstratified class distribution and compare the lift in AUPRC. If the lift remains statistically significant and of similar magnitude, the primary conclusion holds under the true distribution; if the lift diverges substantially, the critique is validated. This experiment directly tests whether the stratification materially alters the comparison.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While fitting preprocessing on the training set prevents leakage, the critic raises a stationarity concern: unseen categories or shifting feature distributions (e.g., new device types) could cause silent degradation that attribution errors might mistake for model failure. The design\u2019s confound controls (seasonal, promotion\u2011excluded, cohort analysis) are post\u2011hoc detectors but do not prevent such preprocessing fragility. To settle this, we will audit the validation and test sets for categorical values absent from training and for shifts in missingness rates, then compute AUPRC for each model on the subset of data containing only known categories/patterns versus the full test set. If the performance gap (event\u2011level vs. aggregate) remains consistent across subsets, the primary conclusion is robust; a significant divergence would indicate preprocessing fragility affects the comparison.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The 30\u2011day cancellation window with a two\u2011week lag is an intentional design choice that creates a clear, actionable prediction target aligned with the intervention budget (precision \u226580% \u2192 ~20% users contacted). The experiment\u2019s scope is to predict cancellations within this specific window, not to capture all possible churn dynamics. The critic\u2019s concern about matching \u2018true churn dynamics\u2019 pertains to a different prediction task; the labeling strategy is therefore a valid component of the defined hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The secondary confound controls (seasonal stratification, promotion\u2011excluded windows, cohort analysis) are intended to detect, not bound, confounding. The methodology explicitly frames them as robustness checks that trigger caveats when issues are found. The experiment\u2019s claim is limited to demonstrating predictive improvement on the held\u2011out period; it does not assert universal robustness to all confounds, so the critic\u2019s assertion that the checks should bound confounding misstates the design\u2019s scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Logistic regression on aggregate features is selected as the current state\u2011of\u2011practice counterfactual, tuned to provide a fair comparison. The methodology\u2019s goal is to show improvement over existing practice, not to isolate feature granularity exclusively. The critic\u2019s suggestion for a stronger baseline (e.g., gradient\u2011boosted on aggregates) is a useful extension but does not invalidate the presented comparison, which remains a valid test of the value of event\u2011level features relative to the deployed baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Because we have DEFER findings for F2 and F3, indicating genuine ambiguity that requires empirical resolution, and all FATAL findings are reduced to \u22643, the appropriate verdict is empirical_test_agreed."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,529 @@
+{
+  "case_id": "eval_scenario_852",
+  "stratum": "regular",
+  "flaw_category": "eval_inflation",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Sender domain reputation (fraction of emails from this domain labeled malicious in the training set) is a valid metadata feature that does not cause train-test leakage.",
+        "failure_mechanism": "If the same sender domain appears in both training and test periods, the model can learn to classify based on the domain's historical malicious rate rather than email content. This is direct label leakage: the model memorizes 'domain X was 80% malicious in training' and applies this shortcut to test emails from domain X, even if those specific emails are benign. The control (metadata-only baseline achieving >80% of transformer's PR-AUC) actually confirms this concern rather than addressing it.",
+        "evidence_test": "Compute the overlap in sender domains between train and test. If >0% of test emails come from domains seen in training, run an ablation: train with sender reputation removed, compare performance. If performance drops significantly, the feature is driving results through leakage rather than genuine generalization.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The final test period can be randomly split into two halves: one for 'deployment-readiness confirmation' and one for final holdout reporting.",
+        "failure_mechanism": "Randomly splitting a temporal test set (months 16-18) violates the temporal ordering principle that motivated the entire experiment design. A random split could place later-month emails (with potentially novel attack patterns) in the 'confirmation' set and earlier-month emails in the holdout, allowing the hyperparameter selection process to indirectly see later data characteristics. This creates temporal leakage in the final evaluation.",
+        "evidence_test": "Remove the random split entirely. Report all metrics on the full test period (months 16-18) once, using the hyperparameters selected from validation. If the two-half design is retained, report performance on each half separately and show they are statistically consistent.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The validation set (months 13-15) can be used for both hyperparameter tuning AND as a clean validation benchmark before final testing.",
+        "failure_mechanism": "Using the same validation set for 50-trial hyperparameter grid search creates pressure to overfit to that specific temporal window. The experiment then adds a 'deployment-readiness confirmation' pass on half the test set before reporting final numbers. This multi-stage process (tune on validation \u2192 confirm on test-half-1 \u2192 report on test-half-2) creates an implicit form of leakage where the final reported configuration is indirectly influenced by seeing test-half-1 performance, even if the model isn't retrained.",
+        "evidence_test": "Use a nested temporal split: months 13-14 for hyperparameter tuning, month 15 for validation of the selected config, months 16-18 for final testing. Or use k-fold temporal cross-validation on months 13-15 for hyperparameter selection.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The control for sender reputation confound (metadata-only baseline) will reveal if sender reputation, not semantic understanding, drives performance.",
+        "failure_mechanism": "This control is circular: both the transformer and the BoW baseline include the same sender reputation feature. If the metadata-only baseline achieves >80% of the transformer's PR-AUC, this reveals that sender reputation is a dominant feature\u2014but this doesn't invalidate the comparison between transformer and BoW text representations, it just shows that metadata dominates both. The experiment cannot disentangle whether the transformer's text processing adds value over BoW text processing when metadata dominates.",
+        "evidence_test": "Run an ablation: train transformer and BoW WITHOUT sender reputation, compare their text-only performance. This reveals whether transformer text features add value over BoW text features, independent of the metadata confound.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The campaign leakage detection (identifying clusters of emails with identical subject lines from same sender) is sufficient to catch temporal leakage.",
+        "failure_mechanism": "The detection only flags clusters appearing in BOTH train and test. However, if a sender domain sends a benign campaign in training (months 1-12) and a malicious campaign in test (months 16-18), this would not be flagged as 'leakage' because the specific campaign patterns differ. The model could still exploit the domain-level reputation (see F1) or learn sender behavioral patterns that persist across campaigns.",
+        "evidence_test": "Report the percentage of test emails from domains that appeared in training, regardless of whether the specific campaign patterns overlap. Also report per-domain label distribution shift between train and test.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 7-day window for labeling an email as malicious (analyst confirmed phishing/BEC within 7 days of receipt) produces accurate labels.",
+        "failure_mechanism": "An email marked 'malicious' because an analyst confirmed a related incident within 7 days may not actually contain phishing indicators\u2014the analyst may be correlating based on downstream victim reports rather than email content. This introduces label noise where benign emails are labeled malicious based on temporal coincidence rather than intrinsic properties.",
+        "evidence_test": "Analyze the inter-rater kappa on the re-labeled sample. If kappa < 0.70, acknowledge this as a limitation. Consider a stricter label definition requiring explicit malicious content indicators in the email itself.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses 3 random seeds for aggregation, providing reliable confidence intervals.",
+        "failure_mechanism": "The temporal split is deterministic (months 1-12, 13-15, 16-18). The only source of randomness is model initialization and any stochastic elements in training. With only 3 seeds, the confidence intervals may be too wide to detect meaningful differences between transformer and BoW, especially if the test set is relatively small.",
+        "evidence_test": "Use 10+ random seeds, or report the variance components separately (variance due to seed vs. variance due to temporal split if the entire experiment were repeated with different temporal boundaries).",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "HTML tag stripping and non-ASCII character removal preserves semantic nuance for phishing detection.",
+        "failure_mechanism": "HTML tags themselves can be phishing indicators (e.g., hidden divs, deceptive formatting). Some phishing attacks use non-ASCII characters (IDN homograph attacks, lookalike Unicode characters) precisely to evade detection. Stripping these removes potentially diagnostic signals.",
+        "evidence_test": "Run an ablation with minimal preprocessing (preserve HTML structure as features, preserve Unicode). Compare performance to see if these features carry signal.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws: (1) sender domain reputation feature creates direct train-test leakage when domains overlap between periods, (2) random splitting of the temporal test set violates temporal ordering, and (3) the multi-stage evaluation design (tune \u2192 confirm \u2192 report) creates implicit leakage. These issues invalidate the comparison between transformer and BoW models because the dominant signal may come from leaked domain reputation rather than learned text representations.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding sequentially, assessing whether the critique identifies a genuine flaw or whether the methodology's design controls address it.\n\nF1: The critic claims sender domain reputation causes label leakage because the model can memorize historical rates. The methodology explicitly addresses this in Section 6: 'Sender reputation confound: A metadata-only baseline (no text, only sender reputation and structural features) is trained on the same splits. If this model achieves >80% of the transformer's test PR-AUC, the conclusion is that sender reputation, not semantic understanding, drives performance.' This is a deliberate control to test whether the feature dominates. The critic misunderstands the intent: this control is designed to detect and quantify the confound, not to claim it doesn't exist. If the metadata-only baseline performs nearly as well, the conclusion explicitly states sender reputation drives results, which would invalidate the text-model comparison. This is a correct interpretation, not a flaw. The critic's suggested ablation (remove sender reputation) is a different experiment\u2014the current design tests whether reputation dominates, not whether text adds incremental value when reputation is removed.\n\nF2: The critic claims randomly splitting the temporal test set violates temporal ordering. The methodology states in Section 7: 'Once hyperparameters are finalized using the validation set, the test period is partitioned into two random halves. The first half is used as a deployment-readiness confirmation pass... The second half is retained as the final holdout for reported metrics.' This is a post-hoc validation step after hyperparameters are locked. The split is random within the test period, but the test period itself is temporally isolated (months 16-18). The critic's concern is that later-month emails could appear in the confirmation set, allowing indirect leakage. However, the hyperparameters are already finalized using validation (months 13-15). The confirmation pass is a sanity check on stability, not a tuning step. If performance differs significantly between halves, it would indicate instability, but it doesn't allow model adjustment. The design could be improved, but the flaw is not fatal\u2014the final reported metrics are on the second half, which remains a holdout. The critic's evidence test (remove split or show consistency) is reasonable but the current design doesn't create fatal leakage.\n\nF3: The critic claims using validation for hyperparameter tuning and then a confirmation pass creates multi-stage leakage. The methodology uses validation (months 13-15) for tuning, then test-half-1 for confirmation, then test-half-2 for reporting. The critic argues this allows indirect influence from test-half-1. However, the confirmation pass is explicitly for 'deployment-readiness confirmation'\u2014if performance on test-half-1 is poor, the training recipe might be re-evaluated, but the methodology doesn't specify retuning. The concern is valid: seeing test-half-1 performance could lead to cherry-picking configurations. The design does not have a control against this. The critic's suggested nested split is a better design, but the current approach is a pragmatic compromise for a PoC. The magnitude of leakage is uncertain.\n\nF4: The critic claims the sender reputation control is circular because both models include the feature, so it cannot disentangle text value. The methodology's control is: metadata-only baseline vs. transformer. If metadata-only achieves >80% of transformer's PR-AUC, the conclusion is that reputation drives performance. This directly tests whether text features add value over metadata alone. The critic wants an ablation: transformer vs. BoW without reputation. That is a different experiment. The current control answers 'Does reputation dominate?' If yes, the text-model comparison is moot. If no, then text features matter, and the transformer vs. BoW comparison is valid. The control is not circular\u2014it's a dominance test. The critic's point is that even if reputation doesn't dominate, we still need to compare text models without reputation to isolate text contribution. That's a valid extension, but not a fatal flaw in the current design.\n\nF5: The critic claims campaign leakage detection is insufficient because it only flags identical clusters, not domain-level leakage. The methodology in Section 6 states: 'After training, the experiment identifies sender/recipient clusters and campaign-like patterns... Any clusters appearing in both training and test sets are flagged.' The critic correctly notes that domain-level leakage (same domain, different campaigns) isn't caught. However, the methodology also has a separate 'sender reputation confound' control (Section 6) that explicitly addresses domain-level reputation. The campaign leakage control is for identical campaigns, not domains. The critic's evidence test (report domain overlap) is already partially addressed by the reputation control. The design has overlapping controls; the campaign detection is supplemental.\n\nF6: The critic claims the 7-day labeling window introduces noise. The methodology in Section 1 explicitly addresses this: 'To quantify this noise, a random stratified sample of ~200 emails will be re-reviewed by a second analyst; inter-rater agreement will be computed (Cohen's kappa) and reported. Disagreement rates >30% will be flagged as a data quality concern.' This is a deliberate validation step. The critic's evidence test (analyze kappa) is exactly what the methodology plans. The design acknowledges and measures label noise. This is not a flaw\u2014it's a documented limitation with a quantification plan.\n\nF7: The critic claims 3 random seeds may yield wide confidence intervals. The methodology uses 3 seeds for aggregation. The critic suggests 10+ seeds. This is a minor optimization; 3 seeds is common for PoC. The temporal split is deterministic, so seed variance reflects model initialization stochasticity. With 3 seeds, confidence intervals may be wide, but this doesn't invalidate the comparison\u2014it just means differences may be harder to detect. The design could be improved, but it's not a material flaw.\n\nF8: The critic claims HTML/non-ASCII stripping removes phishing signals. The methodology states 'Minimal preprocessing\u2014only HTML tag stripping and non-ASCII removal\u2014is applied to preserve semantic nuance.' The critic correctly notes that these features could be diagnostic. However, this is a tradeoff: preserving HTML structure adds complexity; stripping simplifies text for transformer processing. The design choice is deliberate. The critic's ablation test is reasonable but not required for a PoC comparing transformer vs. BoW. This is a minor preprocessing choice.\n\nOverall, the methodology has explicit controls for the major concerns (F1, F4, F5, F6). F2 and F3 point to potential leakage in the evaluation pipeline, but the design mitigates them (temporal isolation, confirmation pass not used for tuning). The severity of F2 and F3 is uncertain\u2014they warrant empirical verification. F7 and F8 are minor optimizations.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The methodology explicitly addresses this concern in Section 6: 'Sender reputation confound: A metadata-only baseline (no text, only sender reputation and structural features) is trained on the same splits. If this model achieves >80% of the transformer's test PR-AUC, the conclusion is that sender reputation, not semantic understanding, drives performance.' This control is designed to detect and quantify domain reputation dominance. The critic misinterprets the control as claiming no leakage exists; instead, it is a test for whether leakage invalidates the text-model comparison. The design anticipates the concern and provides a mechanism to assess its impact."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The design uses a random split within the test period for a confirmation pass after hyperparameters are locked. The critic correctly identifies potential temporal leakage if later-month emails appear in the confirmation set. The methodology does not specify whether the confirmation pass influences final model selection (e.g., if performance is poor, the training recipe might be re-evaluated). The magnitude of this leakage is uncertain. A settling experiment: compare final metrics on test-half-2 when using (a) the original design vs. (b) a design where the confirmation pass is removed. If results differ materially, the leakage is significant; if they are consistent, the concern is minor."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic argues that multi-stage evaluation (tune on validation \u2192 confirm on test-half-1 \u2192 report on test-half-2) creates implicit leakage. The design does not explicitly prohibit cherry-picking configurations based on test-half-1 performance. The concern is valid but the impact is empirically uncertain. A settling experiment: run the full pipeline, then re-run with a nested temporal split (months 13-14 for tuning, month 15 for validation, months 16-18 for testing). Compare final metrics on months 16-18. If the nested split yields significantly lower performance, the original design overfits; if performance is similar, the leakage is negligible."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": -5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The methodology's control in Section 6 tests whether sender reputation dominates performance. If the metadata-only baseline achieves >80% of transformer's PR-AUC, the conclusion explicitly states that reputation drives results, rendering the text-model comparison moot. This is a valid dominance test. The critic's suggested ablation (text models without reputation) is a different experiment that would isolate text contribution, but the current design answers the primary question: 'Does reputation confound the comparison?' If dominance is not detected, the transformer vs. BoW comparison proceeds. The control is not circular\u2014it directly addresses the confound."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The methodology has two overlapping controls: campaign leakage detection (Section 6) and sender reputation confound control (Section 6). The campaign detection flags identical clusters; the reputation control addresses domain-level leakage. The critic's concern about domain-level leakage without identical campaigns is already covered by the reputation control. The design anticipates this and provides a mechanism to assess its impact. The campaign detection is supplemental for identical campaign leakage."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The methodology in Section 1 explicitly plans to quantify label noise: 'a random stratified sample of ~200 emails will be re-reviewed by a second analyst; inter-rater agreement will be computed (Cohen's kappa) and reported. Disagreement rates >30% will be flagged as a data quality concern.' This is a deliberate validation step to measure and acknowledge label noise. The critic's evidence test (analyze kappa) is exactly what the methodology intends. The design does not assume perfect labels; it includes a measurement to assess accuracy."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Using 3 random seeds is a common PoC practice. The critic suggests 10+ seeds for narrower confidence intervals. This is a minor optimization that does not affect the validity of the hypothesis test. The temporal split is deterministic, so seed variance reflects model initialization stochasticity. Wider confidence intervals may make differences harder to detect, but this does not invalidate the comparison\u2014it simply means the experiment may be underpowered. This is below significance for the experiment's conclusions."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "HTML/non-ASCII stripping is a deliberate preprocessing choice to simplify text for transformer processing. The critic notes these features could be diagnostic, but this is a tradeoff: preserving them adds complexity. For a PoC comparing transformer vs. BoW, this choice is minor. The ablation test suggested is reasonable but not required for the primary hypothesis. The impact on the comparison is likely negligible."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F2 and F3) are deferred because their impact on leakage is uncertain and requires empirical verification; no FATAL or MATERIAL findings were conceded, and all other findings were rebutted with adjusted severity \u2264 3."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender argues that the metadata-only baseline control addresses the sender reputation concern. However, this rebuttal fails to address the core failure mechanism: the sender reputation feature itself constitutes direct label leakage regardless of whether it 'dominates' performance. The control can only detect if reputation drives most of the performance\u2014it cannot prevent the leakage or demonstrate that the comparison is valid when leakage exists. Even if the control shows reputation doesn't dominate (e.g., achieves 70% of transformer's PR-AUC), the model could still be using domain reputation as a shortcut while also learning content features. The rebuttal conflates 'detecting dominance' with 'validating the comparison.' The design includes a control to measure the problem but does not mitigate the fundamental validity issue: using historical malicious rates from training to inform predictions on test emails from the same domain is inherently leaky."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 8,
+        "reasoning": "The defender correctly defers this concern. The methodology does not specify whether the confirmation pass influences final model selection, and the magnitude of the potential leakage is empirically uncertain. This is a valid open question that requires empirical validation rather than a design-based rebuttal."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 7,
+        "reasoning": "The defender correctly defers this concern. The design does not explicitly prohibit cherry-picking configurations based on test-half-1 performance, and the impact is empirically uncertain. This is a valid open question requiring empirical validation."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender argues the control is not circular because it answers whether reputation confounds the comparison. However, this misses the core failure mechanism: the experiment cannot disentangle whether transformer text processing adds value over BoW text processing when metadata dominates both. The control detects dominance but provides no mechanism to isolate text-model contribution. If the metadata-only baseline achieves 79% of transformer's PR-AUC (below the 80% threshold), the experiment proceeds\u2014but we still cannot determine whether the transformer's 21% advantage comes from better text processing or from some interaction between text and metadata. The defender's argument that 'the control answers the primary question' is incorrect: the primary question is whether transformer text features add value over BoW text features, but the control cannot answer this because both models include the same metadata. The suggested ablation (text-only models) is not a 'different experiment'\u2014it is the only way to answer the stated primary question."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender argues that the sender reputation control addresses domain-level leakage. However, this conflates two distinct concerns: (1) whether sender reputation dominates performance (the control's purpose), and (2) whether domain overlap between train and test creates leakage (the finding's concern). The reputation control can show that reputation doesn't dominate, but it cannot demonstrate that domain overlap is benign. Even if reputation contributes minimally to performance, the presence of the same domains in train and test still constitutes a form of leakage\u2014the model could learn domain-specific patterns beyond reputation scores. The defender claims the design 'provides a mechanism to assess its impact' but the control only assesses impact on performance dominance, not impact on the validity of the train-test comparison. The rebuttal does not address the specific failure mechanism: domain overlap enabling shortcut learning independent of campaign similarity."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly points out that the methodology explicitly includes a validation step to measure label noise via inter-rater agreement. This directly addresses the finding's concern by providing a mechanism to quantify and acknowledge the label quality limitation. The rebuttal is specific to the failure mechanism: the 7-day window may introduce noise, and the design includes a measurement to assess this. This is a valid design-based response."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly identifies this as a minor optimization issue. Using 3 seeds is common practice for proof-of-concept experiments. While this may affect statistical power, it does not invalidate the comparison\u2014it simply means the experiment may be underpowered. This is a valid rebuttal-immaterial response."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly identifies this as a deliberate preprocessing tradeoff. For a PoC comparing transformer vs. BoW, this choice is minor and does not affect the validity of the primary hypothesis test. The ablation suggested by the critic is reasonable but not required for the primary comparison. This is a valid rebuttal-immaterial response."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am contesting the CHALLENGE on F1, F4, and F5. For F1, the critic mischaracterizes the design's control as merely detecting a problem; the design's control is a dominance test that, if failed, invalidates the primary comparison, which is a direct mitigation of the leakage's impact on the hypothesis. For F4, the critic's demand for a text-only ablation misstates the primary question, which is a holistic comparison of two full pipelines; the dominance control is sufficient to validate that comparison. For F5, the design's reputation control directly assesses the impact of domain overlap on the primary metric, which is the correct scope. I am maintaining the DEFER positions on F2 and F3, as the critic ACCEPTed them. I am maintaining the ACCEPTed rebuttals for F6, F7, and F8.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge asserts the control only 'detects' leakage but does not 'mitigate' it. This misinterprets the control's purpose. The sender reputation feature is not 'leakage' in the invalidating sense if its impact is measured and found to be non-dominant. The control is a dominance test: if the metadata-only model achieves >80% of the transformer's PR-AUC, the primary conclusion is that the comparison between transformer and BoW is invalid because reputation drives results. This is not just detection\u2014it is a validity gate. If the gate is passed (reputation is not dominant), then any remaining shortcut learning from domain history is, by the experiment's own dominance threshold, a minor contributor to the primary metric. The design therefore has a direct control that mitigates the concern's impact on the hypothesis conclusion. The suggested ablation (remove reputation) answers a different, narrower question about text-only contribution, not the holistic pipeline comparison this experiment is designed for.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "MAINTAINED. The critic ACCEPTed the deferral. The settling experiment remains: compare final metrics on test-half-2 when using (a) the original two-half design vs. (b) a design where the entire test period (months 16-18) is used as a single holdout after hyperparameters are locked from validation. If results differ materially, the random split introduces significant temporal leakage; if they are consistent, the concern is minor.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "MAINTAINED. The critic ACCEPTed the deferral. The settling experiment remains: run the full pipeline, then re-run with a nested temporal split (months 13-14 for tuning, month 15 for validation, months 16-18 for testing). Compare final metrics on months 16-18. If the nested split yields significantly lower performance, the original design overfits; if performance is similar, the multi-stage leakage is negligible.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic's challenge redefines the primary question. The experiment's stated goal is to compare a transformer-based pipeline to a BoW-based pipeline for phishing detection, both using the same realistic feature set (text + metadata). The primary question is: 'Does the transformer's semantic representation and fine-tuning provide genuine benefit over simpler text representation?' This is a holistic comparison. The dominance control directly validates this comparison: if metadata (especially sender reputation) is the dominant signal, then the comparison of text representations is moot. If metadata is not dominant (fails the >80% threshold), then the comparison of the two full pipelines\u2014including any interactions between text and metadata\u2014is valid and answers the stated question. The critic's suggested text-only ablation answers a narrower, academic question about isolated text contribution, which is not the operational hypothesis under test. The design's control is therefore sufficient and correctly scoped.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critic argues the reputation control only assesses 'dominance,' not the 'validity of the train-test comparison' due to domain overlap. This is a false dichotomy. The validity of the comparison is precisely concerned with whether domain overlap creates a shortcut that materially biases the primary metric (PR-AUC). The reputation control measures the maximum possible contribution of domain-level history to that metric. If the metadata-only model's performance is low (e.g., <50% of the transformer's PR-AUC), it empirically demonstrates that domain-level signals, including any learned patterns from overlap, cannot explain the model's performance. Therefore, the concern that domain overlap invalidates the comparison is mitigated. The design's control directly assesses the impact of the failure mechanism on the experiment's conclusion.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "MAINTAINED. The critic ACCEPTed this rebuttal. The design includes an explicit measurement of label noise via inter-rater agreement, which directly addresses the concern that the 7-day window may produce inaccurate labels.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "MAINTAINED. The critic ACCEPTed this rebuttal. Using 3 seeds is a minor optimization issue that does not affect the validity of the hypothesis test.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "MAINTAINED. The critic ACCEPTed this rebuttal. The preprocessing choice is a deliberate tradeoff with negligible impact on the primary comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The final rebuttals successfully defend the core design against material flaws, but two FATAL findings (F2, F3) remain DEFERred to empirical tests, as the design does not fully resolve the potential for temporal and multi-stage evaluation leakage. This necessitates empirical validation, making 'empirical_test_agreed' the correct verdict."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Sender domain reputation (fraction of emails from this domain labeled malicious in the training set) is a valid metadata feature that does not cause train-test leakage.",
+        "failure_mechanism": "If the same sender domain appears in both training and test periods, the model can learn to classify based on the domain's historical malicious rate rather than email content. This is direct label leakage: the model memorizes 'domain X was 80% malicious in training' and applies this shortcut to test emails from domain X, even if those specific emails are benign. The control (metadata-only baseline achieving >80% of transformer's PR-AUC) actually confirms this concern rather than addressing it.",
+        "evidence_test": "Compute the overlap in sender domains between train and test. If >0% of test emails come from domains seen in training, run an ablation: train with sender reputation removed, compare performance. If performance drops significantly, the feature is driving results through leakage rather than genuine generalization.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The final test period can be randomly split into two halves: one for 'deployment-readiness confirmation' and one for final holdout reporting.",
+        "failure_mechanism": "Randomly splitting a temporal test set (months 16-18) violates the temporal ordering principle that motivated the entire experiment design. A random split could place later-month emails (with potentially novel attack patterns) in the 'confirmation' set and earlier-month emails in the holdout, allowing the hyperparameter selection process to indirectly see later data characteristics. This creates temporal leakage in the final evaluation.",
+        "evidence_test": "Remove the random split entirely. Report all metrics on the full test period (months 16-18) once, using the hyperparameters selected from validation. If the two-half design is retained, report performance on each half separately and show they are statistically consistent.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The validation set (months 13-15) can be used for both hyperparameter tuning AND as a clean validation benchmark before final testing.",
+        "failure_mechanism": "Using the same validation set for 50-trial hyperparameter grid search creates pressure to overfit to that specific temporal window. The experiment then adds a 'deployment-readiness confirmation' pass on half the test set before reporting final numbers. This multi-stage process (tune on validation \u2192 confirm on test-half-1 \u2192 report on test-half-2) creates an implicit form of leakage where the final reported configuration is indirectly influenced by seeing test-half-1 performance, even if the model isn't retrained.",
+        "evidence_test": "Use a nested temporal split: months 13-14 for hyperparameter tuning, month 15 for validation of the selected config, months 16-18 for final testing. Or use k-fold temporal cross-validation on months 13-15 for hyperparameter selection.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The control for sender reputation confound (metadata-only baseline) will reveal if sender reputation, not semantic understanding, drives performance.",
+        "failure_mechanism": "This control is circular: both the transformer and the BoW baseline include the same sender reputation feature. If the metadata-only baseline achieves >80% of the transformer's PR-AUC, this reveals that sender reputation is a dominant feature\u2014but this doesn't invalidate the comparison between transformer and BoW text representations, it just shows that metadata dominates both. The experiment cannot disentangle whether the transformer's text processing adds value over BoW text processing when metadata dominates.",
+        "evidence_test": "Run an ablation: train transformer and BoW WITHOUT sender reputation, compare their text-only performance. This reveals whether transformer text features add value over BoW text features, independent of the metadata confound.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The campaign leakage detection (identifying clusters of emails with identical subject lines from same sender) is sufficient to catch temporal leakage.",
+        "failure_mechanism": "The detection only flags clusters appearing in BOTH train and test. However, if a sender domain sends a benign campaign in training (months 1-12) and a malicious campaign in test (months 16-18), this would not be flagged as 'leakage' because the specific campaign patterns differ. The model could still exploit the domain-level reputation (see F1) or learn sender behavioral patterns that persist across campaigns.",
+        "evidence_test": "Report the percentage of test emails from domains that appeared in training, regardless of whether the specific campaign patterns overlap. Also report per-domain label distribution shift between train and test.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 7-day window for labeling an email as malicious (analyst confirmed phishing/BEC within 7 days of receipt) produces accurate labels.",
+        "failure_mechanism": "An email marked 'malicious' because an analyst confirmed a related incident within 7 days may not actually contain phishing indicators\u2014the analyst may be correlating based on downstream victim reports rather than email content. This introduces label noise where benign emails are labeled malicious based on temporal coincidence rather than intrinsic properties.",
+        "evidence_test": "Analyze the inter-rater kappa on the re-labeled sample. If kappa < 0.70, acknowledge this as a limitation. Consider a stricter label definition requiring explicit malicious content indicators in the email itself.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses 3 random seeds for aggregation, providing reliable confidence intervals.",
+        "failure_mechanism": "The temporal split is deterministic (months 1-12, 13-15, 16-18). The only source of randomness is model initialization and any stochastic elements in training. With only 3 seeds, the confidence intervals may be too wide to detect meaningful differences between transformer and BoW, especially if the test set is relatively small.",
+        "evidence_test": "Use 10+ random seeds, or report the variance components separately (variance due to seed vs. variance due to temporal split if the entire experiment were repeated with different temporal boundaries).",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "HTML tag stripping and non-ASCII character removal preserves semantic nuance for phishing detection.",
+        "failure_mechanism": "HTML tags themselves can be phishing indicators (e.g., hidden divs, deceptive formatting). Some phishing attacks use non-ASCII characters (IDN homograph attacks, lookalike Unicode characters) precisely to evade detection. Stripping these removes potentially diagnostic signals.",
+        "evidence_test": "Run an ablation with minimal preprocessing (preserve HTML structure as features, preserve Unicode). Compare performance to see if these features carry signal.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws: (1) sender domain reputation feature creates direct train-test leakage when domains overlap between periods, (2) random splitting of the temporal test set violates temporal ordering, and (3) the multi-stage evaluation design (tune \u2192 confirm \u2192 report) creates implicit leakage. These issues invalidate the comparison between transformer and BoW models because the dominant signal may come from leaked domain reputation rather than learned text representations.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am contesting the CHALLENGE on F1, F4, and F5. For F1, the critic mischaracterizes the design's control as merely detecting a problem; the design's control is a dominance test that, if failed, invalidates the primary comparison, which is a direct mitigation of the leakage's impact on the hypothesis. For F4, the critic's demand for a text-only ablation misstates the primary question, which is a holistic comparison of two full pipelines; the dominance control is sufficient to validate that comparison. For F5, the design's reputation control directly assesses the impact of domain overlap on the primary metric, which is the correct scope. I am maintaining the DEFER positions on F2 and F3, as the critic ACCEPTed them. I am maintaining the ACCEPTed rebuttals for F6, F7, and F8.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge asserts the control only 'detects' leakage but does not 'mitigate' it. This misinterprets the control's purpose. The sender reputation feature is not 'leakage' in the invalidating sense if its impact is measured and found to be non-dominant. The control is a dominance test: if the metadata-only model achieves >80% of the transformer's PR-AUC, the primary conclusion is that the comparison between transformer and BoW is invalid because reputation drives results. This is not just detection\u2014it is a validity gate. If the gate is passed (reputation is not dominant), then any remaining shortcut learning from domain history is, by the experiment's own dominance threshold, a minor contributor to the primary metric. The design therefore has a direct control that mitigates the concern's impact on the hypothesis conclusion. The suggested ablation (remove reputation) answers a different, narrower question about text-only contribution, not the holistic pipeline comparison this experiment is designed for.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "MAINTAINED. The critic ACCEPTed the deferral. The settling experiment remains: compare final metrics on test-half-2 when using (a) the original two-half design vs. (b) a design where the entire test period (months 16-18) is used as a single holdout after hyperparameters are locked from validation. If results differ materially, the random split introduces significant temporal leakage; if they are consistent, the concern is minor.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "MAINTAINED. The critic ACCEPTed the deferral. The settling experiment remains: run the full pipeline, then re-run with a nested temporal split (months 13-14 for tuning, month 15 for validation, months 16-18 for testing). Compare final metrics on months 16-18. If the nested split yields significantly lower performance, the original design overfits; if performance is similar, the multi-stage leakage is negligible.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic's challenge redefines the primary question. The experiment's stated goal is to compare a transformer-based pipeline to a BoW-based pipeline for phishing detection, both using the same realistic feature set (text + metadata). The primary question is: 'Does the transformer's semantic representation and fine-tuning provide genuine benefit over simpler text representation?' This is a holistic comparison. The dominance control directly validates this comparison: if metadata (especially sender reputation) is the dominant signal, then the comparison of text representations is moot. If metadata is not dominant (fails the >80% threshold), then the comparison of the two full pipelines\u2014including any interactions between text and metadata\u2014is valid and answers the stated question. The critic's suggested text-only ablation answers a narrower, academic question about isolated text contribution, which is not the operational hypothesis under test. The design's control is therefore sufficient and correctly scoped.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critic argues the reputation control only assesses 'dominance,' not the 'validity of the train-test comparison' due to domain overlap. This is a false dichotomy. The validity of the comparison is precisely concerned with whether domain overlap creates a shortcut that materially biases the primary metric (PR-AUC). The reputation control measures the maximum possible contribution of domain-level history to that metric. If the metadata-only model's performance is low (e.g., <50% of the transformer's PR-AUC), it empirically demonstrates that domain-level signals, including any learned patterns from overlap, cannot explain the model's performance. Therefore, the concern that domain overlap invalidates the comparison is mitigated. The design's control directly assesses the impact of the failure mechanism on the experiment's conclusion.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "MAINTAINED. The critic ACCEPTed this rebuttal. The design includes an explicit measurement of label noise via inter-rater agreement, which directly addresses the concern that the 7-day window may produce inaccurate labels.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "MAINTAINED. The critic ACCEPTed this rebuttal. Using 3 seeds is a minor optimization issue that does not affect the validity of the hypothesis test.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "MAINTAINED. The critic ACCEPTed this rebuttal. The preprocessing choice is a deliberate tradeoff with negligible impact on the primary comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The final rebuttals successfully defend the core design against material flaws, but two FATAL findings (F2, F3) remain DEFERred to empirical tests, as the design does not fully resolve the potential for temporal and multi-stage evaluation leakage. This necessitates empirical validation, making 'empirical_test_agreed' the correct verdict."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

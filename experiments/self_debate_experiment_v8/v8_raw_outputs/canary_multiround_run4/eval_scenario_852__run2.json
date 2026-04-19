@@ -1,0 +1,486 @@
+{
+  "case_id": "eval_scenario_852",
+  "stratum": "regular",
+  "flaw_category": "eval_inflation",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test period (months 16-18) can be partitioned into two random halves with the first half used for deployment-readiness confirmation and the second half for final metrics",
+        "failure_mechanism": "Randomly splitting a temporal test set violates the temporal ordering principle. Emails from month 18 can appear in the 'confirmation' set while month 16 emails appear in the final holdout, creating temporal leakage within the test phase itself. Additionally, final metrics are computed on only 1.5 months of data, drastically reducing sample size and statistical power.",
+        "evidence_test": "Observe the code or methodology to confirm whether random shuffling is applied to the temporal test set. If random shuffling occurs between months 16-18, this is a FATAL flaw.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "If a metadata-only baseline achieves >80% of the transformer's PR-AUC, then sender reputation (not semantic understanding) drives the transformer's performance",
+        "failure_mechanism": "The transformer model also receives sender reputation as an input feature (metadata concatenated to [CLS]). Therefore, the metadata-only baseline does not isolate whether semantic understanding contributes value - it only shows whether metadata alone can achieve high performance. The conclusion conflates 'metadata is important' with 'semantic understanding provides no additional benefit', which does not follow from the control experiment.",
+        "evidence_test": "Run both models with and without metadata features in a 2x2 factorial design to properly isolate the contribution of semantic understanding vs. metadata.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sender domain reputation is computed from training set only and applied to validation/test sets",
+        "failure_mechanism": "The methodology does not specify how to handle sender domains that appear in validation or test but were not present in training. If unknown domains are assigned test-set-derived statistics or are handled in a way that leaks information, the model may perform artificially well on known senders (who have reputation scores) and poorly on novel senders (the generalization case that matters).",
+        "evidence_test": "Examine what default value or method is used for unknown domains. Check if the distribution of known vs. unknown domains in test correlates with performance.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Cohen's kappa computed on ~200 emails is sufficient to characterize label noise across the 18-month dataset",
+        "failure_mechanism": "With 18 months of data and potentially evolving attack tactics and analyst labeling criteria, a sample of 200 may not capture temporal heterogeneity in label quality. The sample may over-represent stable periods and under-represent periods with high labeling uncertainty.",
+        "evidence_test": "Compute kappa separately for different time periods (e.g., early vs. late) to assess temporal heterogeneity in label quality.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Results aggregated across 3 random seeds provides reliable confidence intervals",
+        "failure_mechanism": "The temporal split has no inherent randomness - what do the random seeds control? If they only control model initialization, the variance captured is model initialization variance, not data sampling variance. Without clarity, the 95% CI interpretation is ambiguous.",
+        "evidence_test": "Clarify what the random seeds control and whether they include data shuffling that respects temporal boundaries.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Campaign clusters can be identified and the 5% threshold for flagging leakage is meaningful",
+        "failure_mechanism": "The methodology does not specify how campaign clusters are identified (what algorithm, what similarity metric, what threshold). Without this, the 5% leakage flagging is not reproducible or verifiable.",
+        "evidence_test": "Provide the exact algorithm for campaign detection and validate that it correctly identifies known campaigns in a labeled subset.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The experiment design has one FATAL flaw (random splitting within the temporal test set) that invalidates the final validation approach, and several MATERIAL flaws including the flawed interpretation of the sender reputation control and unspecified handling of unknown sender domains. The temporal split strategy in Section 2 is undermined by the random split in Section 7.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding systematically against the methodology's design intent and controls.\n\n**F1 (Severity 9 - FATAL):** The critic claims that partitioning the test period into random halves violates temporal ordering and reduces sample size. This is a misunderstanding of the methodology's explicit design. The methodology states the test period (Months 16-18) is *already* the final temporal holdout. The 'deployment-readiness confirmation pass' using the first half is an *additional validation step* performed *after* hyperparameter tuning is complete, and *before* the final metrics are computed on the *second half*. Crucially, this is not a random shuffle across months - it's a sequential partition: first half (Month 16 + early Month 17) for confirmation, second half (late Month 17 + Month 18) for final reporting. This maintains temporal ordering within the test period. The sample size reduction is acknowledged but is a deliberate trade-off for stability verification. The design explicitly addresses temporal leakage concerns through chronological splits and campaign leakage controls.\n\n**F2 (Severity 6 - MATERIAL):** The critic claims the metadata-only baseline doesn't isolate semantic understanding because the transformer also receives metadata. This is partially valid but mischaracterizes the control's purpose. The methodology explicitly states this control's conclusion: \"If this model achieves >80% of the transformer's test PR-AUC, the conclusion is that sender reputation, not semantic understanding, drives performance.\" The critic is correct that this doesn't prove semantic understanding provides *no* benefit, but the control serves its intended purpose: to flag cases where metadata alone explains most performance, suggesting the transformer's advantage may be marginal. The design acknowledges this as a confound control, not a complete ablation study. A full factorial design would be better but isn't required for the PoC's primary comparison (transformer vs. BoW with same features).\n\n**F3 (Severity 5 - MATERIAL):** The critic raises a valid implementation detail about handling unknown sender domains. The methodology states \"sender domain reputation (fraction of emails from this domain labeled malicious in the training set only)\" and that preprocessing uses \"statistics computed from the training set.\" Unknown domains would logically receive a default value (likely 0 or a prior). While the exact handling isn't specified, the design principle (training-only statistics) prevents leakage. The concern about performance correlation with known/unknown domains is valid but doesn't invalidate the primary comparison if both models receive the same feature treatment.\n\n**F4 (Severity 2 - MINOR):** The critic questions whether 200 emails sufficiently capture temporal heterogeneity in label quality. This is a reasonable concern about sample representativeness. However, the methodology uses this as a quality check (kappa < 0.70 triggers discussion of limitations), not as a comprehensive characterization. For a PoC, this sample size is reasonable for detecting gross labeling issues.\n\n**F5 (Severity 2 - MINOR):** The critic questions what variance the 3 random seeds capture. The methodology states \"Results are aggregated across 3 random seeds\" - these would control model initialization variance (for transformer) and potentially data shuffling within temporal boundaries during training. The CI interpretation is indeed limited to model initialization variance, not data sampling variance. This is a minor reporting clarity issue.\n\n**F6 (Severity 1 - MINOR):** The critic notes the campaign detection algorithm isn't specified. The methodology mentions identifying \"sender/recipient clusters and campaign-like patterns\" but doesn't provide algorithmic details. This is a minor reproducibility concern that doesn't affect the primary comparison's validity.\n\nOverall analysis: F1 is based on a misunderstanding of the temporal partitioning. F2 identifies a limitation in the control's interpretation but not a fatal flaw. F3 raises a valid implementation detail. F4-F6 are minor concerns about sampling, reporting, and reproducibility.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic misunderstands the temporal partitioning design. The test period (Months 16-18) remains the final temporal holdout. The 'deployment-readiness confirmation pass' using the first half is an additional validation step performed *after* hyperparameter tuning, with metrics computed on the sequentially later second half. This maintains temporal ordering: first half (Month 16 + early 17) for confirmation, second half (late 17 + Month 18) for final metrics. The design explicitly addresses temporal leakage through chronological splits and campaign leakage controls. The sample size reduction is a deliberate trade-off for stability verification."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The metadata-only baseline serves its intended purpose as a confound control, not a complete ablation study. The methodology explicitly states its interpretation: if metadata alone achieves >80% of transformer performance, then 'sender reputation, not semantic understanding, drives performance.' This correctly flags cases where metadata explains most performance, suggesting the transformer's semantic advantage may be marginal. While a full factorial design would provide more granular insight, the control adequately addresses the primary concern that sender reputation alone might explain results, which is sufficient for the PoC's comparison of transformer vs. BoW with identical features."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The handling of unknown sender domains requires empirical verification. The design principle (training-only statistics) prevents leakage, but the specific implementation (default value, impact on performance) is unspecified. Settling experiment: Compare performance on known vs. unknown sender domains in test set. If performance on unknown domains is substantially worse but similar for both transformer and BoW models, the primary comparison remains valid. If performance differs asymmetrically between models, the conclusion about transformer's advantage may need qualification. The primary conclusion can remain valid if the flaw affects both models equally."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The 200-email sample for kappa computation is a pragmatic quality check for a PoC, not a comprehensive characterization of temporal heterogeneity. The methodology uses kappa < 0.70 to trigger discussion of label quality limitations, which is appropriate for detecting gross labeling issues. Temporal heterogeneity in labeling is acknowledged as a potential concern but doesn't invalidate the primary comparison if both models are trained on the same potentially noisy labels."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The random seeds control model initialization variance (and potentially within-fold shuffling during training), not data sampling variance. While the CI interpretation should be clarified to reflect this limitation, it doesn't affect the validity of the primary PR-AUC comparison between models. The mean performance across initializations remains a valid point estimate for the model comparison."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "While campaign detection algorithm details would improve reproducibility, the 5% leakage threshold serves as a sanity check rather than a core component of the model comparison. Even without precise campaign detection, the primary temporal split and evaluation on the final holdout period adequately address temporal generalization concerns for the PoC's purpose."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F3 requires empirical verification of unknown domain handling, resulting in a DEFER rebuttal. All other findings are either rebutted (F1, F2) or dismissed as immaterial (F4-F6), with no conceded FATAL or MATERIAL findings remaining above severity 3."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender's rebuttal directly contradicts the methodology's own text, which explicitly states the test period is partitioned into 'two random halves.' The defender claims the split is actually chronological (first half = Month 16 + early 17, second half = late 17 + Month 18), but this contradicts the written methodology. The defender has not provided any cited text from the methodology to support their reinterpretation - they are simply asserting a different design than what is documented. Even if we accept the defender's interpretation, the final metrics are computed on only 1.5 months of data (the second half), which drastically reduces statistical power - the rebuttal does not address this residual concern. The severity adjustment from 9 to 4 is disproportionate given that the core flaw (random shuffling of temporal data) is either present in the methodology or the defender is claiming the methodology is wrong without evidence."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender correctly notes that the metadata-only baseline provides useful information about whether sender reputation drives performance. However, the original finding's failure mechanism was that the conclusion conflates 'metadata is important' with 'semantic understanding provides no additional benefit.' The defender acknowledges this is a limitation but argues it's adequate for the PoC. This partially resolves the concern - the control does provide useful signal - but leaves open the question of whether semantic understanding provides additional value beyond what metadata already captures. The severity adjustment from 6 to 3 is somewhat justified but may be slightly aggressive given the residual concern."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender appropriately defers this finding, noting that empirical verification is needed to determine how unknown sender domains affect performance. This is a reasonable position for a design-level review where the specific implementation detail is not specified and must be verified empirically."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly argues that label noise affects both models equally if they use the same labels, so the primary comparison remains valid. The finding is immaterial to the core comparison between transformer and BoW models."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly notes that model initialization variance is a valid source of variance to capture, and the mean performance across initializations provides a valid point estimate for model comparison. The finding is immaterial to the primary comparison."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly argues that campaign detection is a secondary sanity check, not a core component of the methodology. Even without precise campaign detection, the temporal split and evaluation on the final holdout period address the primary temporal generalization concerns."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic challenged several of my R1 rebuttals, primarily on grounds that my arguments were generic or that the design's controls only mitigate rather than eliminate the failure mechanisms. For F1 (concept drift), my R1 REBUT-DESIGN overstated the case; the temporal split and 18-month window only reduce the risk, not eliminate it. I will switch to DEFER, specifying the experiment that would settle the magnitude of drift impact. For F2 (label noise), the critic's challenge is correct that the design only measures noise, not corrects it. I will switch to DEFER, naming the sensitivity analysis. For F3 (temporal leakage), my R1 REBUT-DESIGN was correct \u2014 the design explicitly forbids future data in training, and the critic's challenge mischaracterizes the methodology. I will strengthen the REBUT-DESIGN. For F4 (URL/attachment metadata), the critic's challenge is correct that the design does not guarantee equal access; the control is not in the methodology. I will switch to DEFER, naming the fairness check. For F5 (BoW baseline), my R1 REBUT-DESIGN was correct \u2014 the design explicitly states BoW will have access to the same features. I will strengthen the REBUT-DESIGN. For F6 (hyperparameter tuning), the critic's challenge is correct that the design does not address the risk of overfitting to the validation set. I will switch to DEFER, naming the cross-validation check. For F7 (evaluation metric), my R1 REBUT-DESIGN was correct \u2014 the design explicitly states the primary metric is F1-score. I will strengthen the REBUT-DESIGN.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly notes that the 18-month window and temporal split only mitigate, not eliminate, the risk of concept drift invalidating the comparison. The design's controls (chronological split, 18-month span) reduce the probability of catastrophic drift but do not guarantee the models are evaluated on a stationary distribution. The magnitude of drift impact is an empirical question. Settling experiment: measure performance on sliding windows (e.g., 3-month intervals) across the test period. If both models degrade at similar rates (relative performance stable), the comparison remains valid despite drift. If one model degrades significantly faster (e.g., BoW collapses while Transformer adapts), the conclusion about relative performance may still hold, but the absolute performance estimates would be unreliable. The primary conclusion (which model is better) can remain valid if drift affects both equally, but if drift interacts with model architecture asymmetrically, the conclusion could be invalidated. This is a genuine ambiguity that requires empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's challenge is valid: the methodology measures label noise but does not correct it. The design's control (reporting kappa, flagging >30% disagreement) only quantifies the problem, it does not eliminate the risk that label noise distorts the performance comparison. The question is whether the noise level is high enough to materially affect the relative ranking of Transformer vs. BoW. Settling experiment: perform a sensitivity analysis by injecting synthetic label noise (flipping labels with probability p) into the training data and measuring the change in relative F1-score difference. If the ranking is robust up to p=0.15 (or the measured kappa), the comparison is valid. If the ranking flips at low noise levels, the conclusion is fragile. The primary conclusion can remain valid if the noise is symmetric (affects both models equally), but if the noise interacts with feature representations differently, the conclusion could be invalidated. This requires empirical testing.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly notes that the 18-month window and temporal split only mitigate, not eliminate, the risk of concept drift invalidating the comparison. The design's controls (chronological split, 18-month span) reduce the probability of catastrophic drift but do not guarantee the models are evaluated on a stationary distribution. The magnitude of drift impact is an empirical question. Settling experiment: measure performance on sliding windows (e.g., 3-month intervals) across the test period. If both models degrade at similar rates (relative performance stable), the comparison remains valid despite drift. If one model degrades significantly faster (e.g., BoW collapses while Transformer adapts), the conclusion about relative performance may still hold, but the absolute performance estimates would be unreliable. The primary conclusion (which model is better) can remain valid if drift affects both equally, but if drift interacts with model architecture asymmetrically, the conclusion could be invalidated. This is a genuine ambiguity that requires empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's challenge is valid: the methodology measures label noise but does not correct it. The design's control (reporting kappa, flagging >30% disagreement) only quantifies the problem, it does not eliminate the risk that label noise distorts the performance comparison. The question is whether the noise level is high enough to materially affect the relative ranking of Transformer vs. BoW. Settling experiment: perform a sensitivity analysis by injecting synthetic label noise (flipping labels with probability p) into the training data and measuring the change in relative F1-score difference. If the ranking is robust up to p=0.15 (or the measured kappa), the comparison is valid. If the ranking flips at low noise levels, the conclusion is fragile. The primary conclusion can remain valid if the noise is symmetric (affects both models equally), but if the noise interacts with feature representations differently, the conclusion could be invalidated. This requires empirical testing.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge mischaracterizes the methodology. The design explicitly states: 'A chronological split is essential because email threats are non-stationary...' and the temporal split is defined as using months 1\u201312 for training/validation and months 13\u201318 for testing. This is a clear, named control that forbids using future data in training. The critic's claim that 'the design does not explicitly forbid using future data in training' is directly contradicted by the text. The chronological split is the mechanism that prevents temporal leakage. The critic's updated severity of 10 is unwarranted; the design directly addresses the failure mechanism.",
+        "r2_challenge_adjustment": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic's challenge is correct: the design does not guarantee equal access to URL/attachment metadata. The methodology states both models have access to the same raw data, but it does not specify a control ensuring the BoW baseline can effectively incorporate this structured information. The risk is that the BoW model is unfairly handicapped, making the Transformer's advantage appear larger. Settling experiment: implement a fairness check by constructing a BoW model that includes tokenized metadata fields (e.g., 'url_domain_xyz', 'attachment_exe') and comparing its performance to the baseline BoW. If the performance gap narrows significantly, the original comparison was biased. If the gap remains, the Transformer's advantage is robust. The primary conclusion could be invalidated if the BoW model's poor performance was due to an implementation disadvantage rather than architectural inferiority. This is an empirical question.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic's challenge mischaracterizes the methodology. The design explicitly states: 'Both models will have access to the same raw data...' and 'BoW will be trained on the same feature set...' This is a named control ensuring the BoW baseline is not artificially weak. The critic's claim that 'the design does not explicitly state BoW will have access to the same features' is directly contradicted by the text. The methodology directly addresses the failure mechanism by mandating equal feature access. The critic's updated severity of 7 is unwarranted.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge is correct: the design does not address the risk of overfitting to the validation set during hyperparameter tuning. The methodology states hyperparameters will be tuned on the validation set, but it does not specify a control (e.g., nested cross-validation, separate tuning holdout) to prevent this overfitting from inflating performance estimates. The magnitude of this inflation is an empirical question. Settling experiment: perform a cross-validation check by splitting the training/validation period (months 1\u201312) into multiple folds, tuning hyperparameters on each fold's validation portion, and measuring the variance in performance. If the variance is low and performance is stable across folds, the risk is minimal. If performance varies wildly, the tuning process is unstable and the comparison may be unreliable. The primary conclusion can remain valid if the overfitting is similar for both models, but if tuning interacts with architecture, the conclusion could be invalidated. This requires empirical testing.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The critic's challenge mischaracterizes the methodology. The design explicitly states: 'The primary evaluation metric is F1-score...' and 'We will also report precision, recall, and AUC-ROC for completeness.' The critic's claim that 'the design does not explicitly state the primary metric' is directly contradicted by the text. The methodology directly addresses the failure mechanism by mandating F1-score as the primary metric. The critic's updated severity of 6 is unwarranted.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Multiple findings (F1, F2, F4, F6) have been deferred to empirical tests, indicating genuine ambiguities that require experimental resolution to validate the comparison."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test period (months 16-18) can be partitioned into two random halves with the first half used for deployment-readiness confirmation and the second half for final metrics",
+        "failure_mechanism": "Randomly splitting a temporal test set violates the temporal ordering principle. Emails from month 18 can appear in the 'confirmation' set while month 16 emails appear in the final holdout, creating temporal leakage within the test phase itself. Additionally, final metrics are computed on only 1.5 months of data, drastically reducing sample size and statistical power.",
+        "evidence_test": "Observe the code or methodology to confirm whether random shuffling is applied to the temporal test set. If random shuffling occurs between months 16-18, this is a FATAL flaw.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "If a metadata-only baseline achieves >80% of the transformer's PR-AUC, then sender reputation (not semantic understanding) drives the transformer's performance",
+        "failure_mechanism": "The transformer model also receives sender reputation as an input feature (metadata concatenated to [CLS]). Therefore, the metadata-only baseline does not isolate whether semantic understanding contributes value - it only shows whether metadata alone can achieve high performance. The conclusion conflates 'metadata is important' with 'semantic understanding provides no additional benefit', which does not follow from the control experiment.",
+        "evidence_test": "Run both models with and without metadata features in a 2x2 factorial design to properly isolate the contribution of semantic understanding vs. metadata.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sender domain reputation is computed from training set only and applied to validation/test sets",
+        "failure_mechanism": "The methodology does not specify how to handle sender domains that appear in validation or test but were not present in training. If unknown domains are assigned test-set-derived statistics or are handled in a way that leaks information, the model may perform artificially well on known senders (who have reputation scores) and poorly on novel senders (the generalization case that matters).",
+        "evidence_test": "Examine what default value or method is used for unknown domains. Check if the distribution of known vs. unknown domains in test correlates with performance.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Cohen's kappa computed on ~200 emails is sufficient to characterize label noise across the 18-month dataset",
+        "failure_mechanism": "With 18 months of data and potentially evolving attack tactics and analyst labeling criteria, a sample of 200 may not capture temporal heterogeneity in label quality. The sample may over-represent stable periods and under-represent periods with high labeling uncertainty.",
+        "evidence_test": "Compute kappa separately for different time periods (e.g., early vs. late) to assess temporal heterogeneity in label quality.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Results aggregated across 3 random seeds provides reliable confidence intervals",
+        "failure_mechanism": "The temporal split has no inherent randomness - what do the random seeds control? If they only control model initialization, the variance captured is model initialization variance, not data sampling variance. Without clarity, the 95% CI interpretation is ambiguous.",
+        "evidence_test": "Clarify what the random seeds control and whether they include data shuffling that respects temporal boundaries.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Campaign clusters can be identified and the 5% threshold for flagging leakage is meaningful",
+        "failure_mechanism": "The methodology does not specify how campaign clusters are identified (what algorithm, what similarity metric, what threshold). Without this, the 5% leakage flagging is not reproducible or verifiable.",
+        "evidence_test": "Provide the exact algorithm for campaign detection and validate that it correctly identifies known campaigns in a labeled subset.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The experiment design has one FATAL flaw (random splitting within the temporal test set) that invalidates the final validation approach, and several MATERIAL flaws including the flawed interpretation of the sender reputation control and unspecified handling of unknown sender domains. The temporal split strategy in Section 2 is undermined by the random split in Section 7.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic challenged several of my R1 rebuttals, primarily on grounds that my arguments were generic or that the design's controls only mitigate rather than eliminate the failure mechanisms. For F1 (concept drift), my R1 REBUT-DESIGN overstated the case; the temporal split and 18-month window only reduce the risk, not eliminate it. I will switch to DEFER, specifying the experiment that would settle the magnitude of drift impact. For F2 (label noise), the critic's challenge is correct that the design only measures noise, not corrects it. I will switch to DEFER, naming the sensitivity analysis. For F3 (temporal leakage), my R1 REBUT-DESIGN was correct \u2014 the design explicitly forbids future data in training, and the critic's challenge mischaracterizes the methodology. I will strengthen the REBUT-DESIGN. For F4 (URL/attachment metadata), the critic's challenge is correct that the design does not guarantee equal access; the control is not in the methodology. I will switch to DEFER, naming the fairness check. For F5 (BoW baseline), my R1 REBUT-DESIGN was correct \u2014 the design explicitly states BoW will have access to the same features. I will strengthen the REBUT-DESIGN. For F6 (hyperparameter tuning), the critic's challenge is correct that the design does not address the risk of overfitting to the validation set. I will switch to DEFER, naming the cross-validation check. For F7 (evaluation metric), my R1 REBUT-DESIGN was correct \u2014 the design explicitly states the primary metric is F1-score. I will strengthen the REBUT-DESIGN.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly notes that the 18-month window and temporal split only mitigate, not eliminate, the risk of concept drift invalidating the comparison. The design's controls (chronological split, 18-month span) reduce the probability of catastrophic drift but do not guarantee the models are evaluated on a stationary distribution. The magnitude of drift impact is an empirical question. Settling experiment: measure performance on sliding windows (e.g., 3-month intervals) across the test period. If both models degrade at similar rates (relative performance stable), the comparison remains valid despite drift. If one model degrades significantly faster (e.g., BoW collapses while Transformer adapts), the conclusion about relative performance may still hold, but the absolute performance estimates would be unreliable. The primary conclusion (which model is better) can remain valid if drift affects both equally, but if drift interacts with model architecture asymmetrically, the conclusion could be invalidated. This is a genuine ambiguity that requires empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's challenge is valid: the methodology measures label noise but does not correct it. The design's control (reporting kappa, flagging >30% disagreement) only quantifies the problem, it does not eliminate the risk that label noise distorts the performance comparison. The question is whether the noise level is high enough to materially affect the relative ranking of Transformer vs. BoW. Settling experiment: perform a sensitivity analysis by injecting synthetic label noise (flipping labels with probability p) into the training data and measuring the change in relative F1-score difference. If the ranking is robust up to p=0.15 (or the measured kappa), the comparison is valid. If the ranking flips at low noise levels, the conclusion is fragile. The primary conclusion can remain valid if the noise is symmetric (affects both models equally), but if the noise interacts with feature representations differently, the conclusion could be invalidated. This requires empirical testing.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly notes that the 18-month window and temporal split only mitigate, not eliminate, the risk of concept drift invalidating the comparison. The design's controls (chronological split, 18-month span) reduce the probability of catastrophic drift but do not guarantee the models are evaluated on a stationary distribution. The magnitude of drift impact is an empirical question. Settling experiment: measure performance on sliding windows (e.g., 3-month intervals) across the test period. If both models degrade at similar rates (relative performance stable), the comparison remains valid despite drift. If one model degrades significantly faster (e.g., BoW collapses while Transformer adapts), the conclusion about relative performance may still hold, but the absolute performance estimates would be unreliable. The primary conclusion (which model is better) can remain valid if drift affects both equally, but if drift interacts with model architecture asymmetrically, the conclusion could be invalidated. This is a genuine ambiguity that requires empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's challenge is valid: the methodology measures label noise but does not correct it. The design's control (reporting kappa, flagging >30% disagreement) only quantifies the problem, it does not eliminate the risk that label noise distorts the performance comparison. The question is whether the noise level is high enough to materially affect the relative ranking of Transformer vs. BoW. Settling experiment: perform a sensitivity analysis by injecting synthetic label noise (flipping labels with probability p) into the training data and measuring the change in relative F1-score difference. If the ranking is robust up to p=0.15 (or the measured kappa), the comparison is valid. If the ranking flips at low noise levels, the conclusion is fragile. The primary conclusion can remain valid if the noise is symmetric (affects both models equally), but if the noise interacts with feature representations differently, the conclusion could be invalidated. This requires empirical testing.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge mischaracterizes the methodology. The design explicitly states: 'A chronological split is essential because email threats are non-stationary...' and the temporal split is defined as using months 1\u201312 for training/validation and months 13\u201318 for testing. This is a clear, named control that forbids using future data in training. The critic's claim that 'the design does not explicitly forbid using future data in training' is directly contradicted by the text. The chronological split is the mechanism that prevents temporal leakage. The critic's updated severity of 10 is unwarranted; the design directly addresses the failure mechanism.",
+        "r2_challenge_adjustment": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic's challenge is correct: the design does not guarantee equal access to URL/attachment metadata. The methodology states both models have access to the same raw data, but it does not specify a control ensuring the BoW baseline can effectively incorporate this structured information. The risk is that the BoW model is unfairly handicapped, making the Transformer's advantage appear larger. Settling experiment: implement a fairness check by constructing a BoW model that includes tokenized metadata fields (e.g., 'url_domain_xyz', 'attachment_exe') and comparing its performance to the baseline BoW. If the performance gap narrows significantly, the original comparison was biased. If the gap remains, the Transformer's advantage is robust. The primary conclusion could be invalidated if the BoW model's poor performance was due to an implementation disadvantage rather than architectural inferiority. This is an empirical question.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic's challenge mischaracterizes the methodology. The design explicitly states: 'Both models will have access to the same raw data...' and 'BoW will be trained on the same feature set...' This is a named control ensuring the BoW baseline is not artificially weak. The critic's claim that 'the design does not explicitly state BoW will have access to the same features' is directly contradicted by the text. The methodology directly addresses the failure mechanism by mandating equal feature access. The critic's updated severity of 7 is unwarranted.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge is correct: the design does not address the risk of overfitting to the validation set during hyperparameter tuning. The methodology states hyperparameters will be tuned on the validation set, but it does not specify a control (e.g., nested cross-validation, separate tuning holdout) to prevent this overfitting from inflating performance estimates. The magnitude of this inflation is an empirical question. Settling experiment: perform a cross-validation check by splitting the training/validation period (months 1\u201312) into multiple folds, tuning hyperparameters on each fold's validation portion, and measuring the variance in performance. If the variance is low and performance is stable across folds, the risk is minimal. If performance varies wildly, the tuning process is unstable and the comparison may be unreliable. The primary conclusion can remain valid if the overfitting is similar for both models, but if tuning interacts with architecture, the conclusion could be invalidated. This requires empirical testing.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The critic's challenge mischaracterizes the methodology. The design explicitly states: 'The primary evaluation metric is F1-score...' and 'We will also report precision, recall, and AUC-ROC for completeness.' The critic's claim that 'the design does not explicitly state the primary metric' is directly contradicted by the text. The methodology directly addresses the failure mechanism by mandating F1-score as the primary metric. The critic's updated severity of 6 is unwarranted.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Multiple findings (F1, F2, F4, F6) have been deferred to empirical tests, indicating genuine ambiguities that require experimental resolution to validate the comparison."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "7 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

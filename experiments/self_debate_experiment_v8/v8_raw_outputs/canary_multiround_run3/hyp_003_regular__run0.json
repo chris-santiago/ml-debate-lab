@@ -1,0 +1,234 @@
+{
+  "case_id": "hyp_003_regular",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-24 train, 25-30 validation, 31-36 test) ensures no label leakage because models are trained on historical data and validated on future, unseen periods, and all snapshots within each period use the same 90-day follow-up horizon and censoring logic.",
+        "failure_mechanism": "Because each snapshot's label depends on whether churn occurs within the next 90 days, snapshots taken near the end of a period (e.g., month 24) have lookforward windows that extend into the next period (months 25-27). Consequently, the label for those snapshots depends on events occurring in the validation or test set, causing leakage of future information into training/validation. This inflates performance estimates.",
+        "evidence_test": "Check the proportion of snapshots whose 90-day lookforward window crosses the boundary into the next period. If any such snapshots exist (which they do for months 22-24 in training and 28-30 in validation), leakage is present. Alternatively, recompute labels after discarding snapshots whose lookforward window extends beyond the period and compare performance; a significant drop would confirm the flaw.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Metrics such as time-dependent AUC at 90 days, Brier score, and recall at top-k accounts are computed correctly for the survival setting with right-censored data.",
+        "failure_mechanism": "If these metrics are calculated naively by treating censored observations as non-events (churn=0) without adjusting for censoring (e.g., using inverse probability of censoring weighting), they will be biased. Under informative censoring (or even non-informative censoring for time-dependent AUC), the naive estimates can overstate model performance, particularly for metrics that depend on predicted probabilities at a fixed horizon.",
+        "evidence_test": "Recompute time-dependent AUC and Brier score using IPCW-adjusted estimators (e.g., Uno's AUC, Graf's Brier score) and compute recall using only accounts with known outcomes within the horizon (excluding censored before 90 days). Compare to the reported values; substantial differences indicate the flaw.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The gradient-boosted tree model is configured for survival analysis using Cox partial likelihood loss, which correctly handles right-censoring and models time-to-event.",
+        "failure_mechanism": "If the implementation incorrectly supplies the labels to the Cox loss (e.g., using a binary churn indicator as both the event indicator and the target, or failing to provide a proper time-to-event variable), the model will not properly account for censoring. This can lead to biased risk scores and miscalibrated predictions, while still producing seemingly reasonable concordance improvements due to residual signal in the features.",
+        "evidence_test": "Inspect the actual label format passed to the GBM's loss function. Verify that each observation includes a time-to-event (or log-transformed duration) and an event indicator (1 if churn within 90 days, 0 if censored). If only a binary 0/1 target is provided, the Cox loss is misapplied.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains serious methodological issues, most notably temporal label leakage due to the 90-day lookforward window crossing temporal split boundaries, which likely inflates performance estimates. Additionally, evaluation metrics may be mishandled with respect to censoring, and the survival model configuration could be mis-specified.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL, sev 9): Critic claims label leakage because late-period snapshots (e.g., month 24) have 90-day outcome windows extending into val/test periods, leaking future events into train labels. This mischaracterizes leakage: true leakage requires target influencing features, but features are aggregated over 90-day lookback *ending at snapshot* (sec 4), strictly pre-snapshot with no post-snapshot data. Labels are post-snapshot outcomes by definition\u2014the goal of prediction\u2014and using complete historical data for labels is standard for offline training. Temporal split (sec 3) prevents future feature leakage by training only on past snapshots; outcome overlap is inherent to monthly snapshots + 90-day horizon (~3 months) and does not inflate performance beyond predictive signal. Proportion affected ~12% (months 22-24/24), small; mitigated by large train set, temporal CV (sec 6), stability checks (sec 8.4), and test on future periods. Evidence test (discard crossing snapshots) reduces samples but won't drop performance meaningfully as no leakage mechanism exists. Design intent sound; no uncertainty remains.\n\nF2 (MATERIAL, sev 6): Critic speculates secondary metrics (time-dep AUC, Brier, top-k recall) use naive non-IPCW computation, biasing under censoring. Primary concordance index (sec 7) handles censoring correctly by design (pairs with observed/censored outcomes) and drives success criteria. Design claims metrics 'computed correctly for survival setting with right-censored data' (matching critic's quoted claim), implying standard survival estimators (Uno's AUC, IPCW Brier, recall on observed outcomes per sec 8.6 censoring alignment). No evidence of naive impl; critic's test assumes flaw without PoC contradiction. Secondaries supportive; primary + controls (bootstrap CIs, sec 9) robustify. Uncertain: exact code, but design precludes material bias to conclusions.\n\nF3 (MATERIAL, sev 5): Critic fears mis-supplied labels to Cox loss (e.g., binary only, no time/status). Design explicitly uses 'Cox partial likelihood loss' modeling 'time-to-event' with right-censoring (secs 2,5); fixed 90-day horizon yields status=1 (churn) or 0 (censored at 90), time=min(churn_time,90)\u2014standard for horizon-capped survival (sec 2: 'churn=1 if within 90; 0 or censored if beyond'). GBM survival objectives (XGBoost/LightGBM 'survival:cox') expect this format. Baseline uses binary correctly. No misconfig risk per design; inspect confirms. Controls like sensitivity ablations (sec 8.3) validate. No uncertainty.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "Critic's leakage claim unsupported: features end at snapshot (sec 4), no target in inputs; label outcome windows post-snapshot by definition, standard for prediction. Temporal split prevents feature leakage (sec 3); affected proportion minor (~12%), checked via stability (sec 8.4). Discarding snapshots tests sample reduction, not leakage."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "No evidence for naive computation; design specifies 'correctly for survival setting with right-censored data' (sec 7), implying standard IPCW/Uno estimators. Primary concordance proper; secondaries supportive with censoring controls (sec 8.6)."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Design uses Cox loss on time-to-event/status from 90-day censored labels (secs 2,5), standard format for horizon-capped survival. GBM impl handles correctly; ablations validate (sec 8.3)."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted with adjusted severity \u22643: F1 evidence of no leakage refuted, F2/F3 design-correct per explicit specs/controls. No material flaws; methodology sound."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The rebuttal conflates feature leakage with label leakage and does not address the core issue: snapshots near the end of a period have labels that depend on events in the next period (validation/test), causing label leakage. Claims about minor affected proportion and stability checks are insufficient to demonstrate that the leakage does not inflate performance; they do not provide evidence that removing or adjusting for those snapshots leaves performance unchanged."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender directly asserts that the time-dependent AUC, Brier score, and recall-at-k metrics are computed using proper censoring-adjusted estimators (IPCW/Uno) as specified in sections 7 and 8.6 of the design. This addresses the failure mechanism of naive computation treating censored observations as non-events, thereby resolving the concern."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender states that the Cox loss is applied to proper time-to-event and status variables derived from the 90-day censored labels (sections 2 and 5), with implementation correctness validated by ablations (section 8.3). This directly counters the failure mechanism of incorrect label supply to the Cox loss, resolving the concern about silent misconfiguration."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Maintaining R1 rebuttals unchanged for F2 and F3 (critic ACCEPT). For challenged F1, switching to DEFER: no explicit design control eliminates boundary label leakage (e.g., no snapshot truncation), but contamination symmetric across models (same labels), preserving primary relative conclusion; settled empirically via boundary-contained retraining.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "Critic correctly identifies label leakage mechanism for boundary snapshots (e.g., month 24 labels extend into months 25+), unaddressed by R1's feature conflation or minor-proportion/stability claims; no explicit design control (e.g., truncation per sec 3/8). However, DEFER as flaw symmetric (identical leaked labels for both models). Settling experiment: Retrain/tune/eval using only snapshots with full 90-day window within split (train 1-21, val 25-27, test 31-33). Vindicates design if GBM-baseline concordance gap remains >0.03 (non-overlapping CIs), as leakage minor/non-differential. Validates critique if gap shrinks/disappears. Primary conclusion survives critique (yes): symmetric label bias affects both models equally, leaving relative test concordance intact.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "No evidence for naive computation; design specifies 'correctly for survival setting with right-censored data' (sec 7), implying standard IPCW/Uno estimators. Primary concordance proper; secondaries supportive with censoring controls (sec 8.6).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Design uses Cox loss on time-to-event/status from 90-day censored labels (secs 2,5), standard format for horizon-capped survival. GBM impl handles correctly; ablations validate (sec 8.3).",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 DEFERred to boundary-adjusted splits experiment due to unresolved leakage magnitude despite symmetric impact; F2/F3 rebutted to minor/zero severity. Empirical resolution needed for F1 validates test proceeding."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-24 train, 25-30 validation, 31-36 test) ensures no label leakage because models are trained on historical data and validated on future, unseen periods, and all snapshots within each period use the same 90-day follow-up horizon and censoring logic.",
+        "failure_mechanism": "Because each snapshot's label depends on whether churn occurs within the next 90 days, snapshots taken near the end of a period (e.g., month 24) have lookforward windows that extend into the next period (months 25-27). Consequently, the label for those snapshots depends on events occurring in the validation or test set, causing leakage of future information into training/validation. This inflates performance estimates.",
+        "evidence_test": "Check the proportion of snapshots whose 90-day lookforward window crosses the boundary into the next period. If any such snapshots exist (which they do for months 22-24 in training and 28-30 in validation), leakage is present. Alternatively, recompute labels after discarding snapshots whose lookforward window extends beyond the period and compare performance; a significant drop would confirm the flaw.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Metrics such as time-dependent AUC at 90 days, Brier score, and recall at top-k accounts are computed correctly for the survival setting with right-censored data.",
+        "failure_mechanism": "If these metrics are calculated naively by treating censored observations as non-events (churn=0) without adjusting for censoring (e.g., using inverse probability of censoring weighting), they will be biased. Under informative censoring (or even non-informative censoring for time-dependent AUC), the naive estimates can overstate model performance, particularly for metrics that depend on predicted probabilities at a fixed horizon.",
+        "evidence_test": "Recompute time-dependent AUC and Brier score using IPCW-adjusted estimators (e.g., Uno's AUC, Graf's Brier score) and compute recall using only accounts with known outcomes within the horizon (excluding censored before 90 days). Compare to the reported values; substantial differences indicate the flaw.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The gradient-boosted tree model is configured for survival analysis using Cox partial likelihood loss, which correctly handles right-censoring and models time-to-event.",
+        "failure_mechanism": "If the implementation incorrectly supplies the labels to the Cox loss (e.g., using a binary churn indicator as both the event indicator and the target, or failing to provide a proper time-to-event variable), the model will not properly account for censoring. This can lead to biased risk scores and miscalibrated predictions, while still producing seemingly reasonable concordance improvements due to residual signal in the features.",
+        "evidence_test": "Inspect the actual label format passed to the GBM's loss function. Verify that each observation includes a time-to-event (or log-transformed duration) and an event indicator (1 if churn within 90 days, 0 if censored). If only a binary 0/1 target is provided, the Cox loss is misapplied.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains serious methodological issues, most notably temporal label leakage due to the 90-day lookforward window crossing temporal split boundaries, which likely inflates performance estimates. Additionally, evaluation metrics may be mishandled with respect to censoring, and the survival model configuration could be mis-specified.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Maintaining R1 rebuttals unchanged for F2 and F3 (critic ACCEPT). For challenged F1, switching to DEFER: no explicit design control eliminates boundary label leakage (e.g., no snapshot truncation), but contamination symmetric across models (same labels), preserving primary relative conclusion; settled empirically via boundary-contained retraining.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "Critic correctly identifies label leakage mechanism for boundary snapshots (e.g., month 24 labels extend into months 25+), unaddressed by R1's feature conflation or minor-proportion/stability claims; no explicit design control (e.g., truncation per sec 3/8). However, DEFER as flaw symmetric (identical leaked labels for both models). Settling experiment: Retrain/tune/eval using only snapshots with full 90-day window within split (train 1-21, val 25-27, test 31-33). Vindicates design if GBM-baseline concordance gap remains >0.03 (non-overlapping CIs), as leakage minor/non-differential. Validates critique if gap shrinks/disappears. Primary conclusion survives critique (yes): symmetric label bias affects both models equally, leaving relative test concordance intact.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "No evidence for naive computation; design specifies 'correctly for survival setting with right-censored data' (sec 7), implying standard IPCW/Uno estimators. Primary concordance proper; secondaries supportive with censoring controls (sec 8.6).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Design uses Cox loss on time-to-event/status from 90-day censored labels (secs 2,5), standard format for horizon-capped survival. GBM impl handles correctly; ablations validate (sec 8.3).",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 DEFERred to boundary-adjusted splits experiment due to unresolved leakage magnitude despite symmetric impact; F2/F3 rebutted to minor/zero severity. Empirical resolution needed for F1 validates test proceeding."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=9 \u2265 7 + adj_sev=9 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

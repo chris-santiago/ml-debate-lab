@@ -1,0 +1,529 @@
+{
+  "case_id": "eval_scenario_801",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "nvidia/nemotron-3-super-120b-a12b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The split strategy operates at the student-course instance level, allowing the same student to appear in training, validation, and test sets with different courses.",
+        "failure_mechanism": "A student who failed Course A in the training set and then enrolled in Course B in the test set may have learned patterns (e.g., specific procrastination behaviors, assignment timing patterns) that are idiosyncratic to that student rather than generalizable to other students. The model can implicitly learn student-level embeddings through the sequence of events that correlate with failure, then leverage this to predict failure for the same student in a different course. This inflates test performance without true generalization to unseen students.",
+        "evidence_test": "Re-run the experiment with a student-level split (all courses for a given student in the same split) and compare test set performance. A substantial drop in test AUC would confirm this leakage mechanism.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Course difficulty is defined using prior-term failure rates for the same course, which may introduce temporal leakage when calculating features for the baseline model.",
+        "failure_mechanism": "If the 'prior-term failure rate' includes the immediately preceding term that overlaps with some students in the current term's training data, the model has access to label information from the future (relative to those students' enrollment). More critically, the failure rate calculation itself uses the same outcome definition being predicted, creating a circular relationship: difficulty (derived from failure rate) predicts failure. This is particularly problematic when course enrollment is stable across terms\u2014the current-term failure rate is partially included in the prior-term calculation.",
+        "evidence_test": "Check the temporal gap between the 'prior-term' used for difficulty calculation and the current term. Use only failure rates from terms that fully precede the prediction term with no student overlap. Alternatively, use an external difficulty measure (e.g., historical average grade, not failure rate) and compare results.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline and transformer receive asymmetric information: baseline gets aggregated prior-term GPA and enrollment counts, while transformer receives raw event sequences that implicitly encode this information plus behavioral patterns.",
+        "failure_mechanism": "The baseline's aggregated features (prior-term GPA, total enrollments) are summary statistics that compress information. The transformer's sequence data contains not only these signals but also the temporal dynamics of how students interact\u2014procrastination patterns, response to assessments, engagement trajectories. The comparison is not fair: the transformer has access to more granular information that could capture the same signals plus additional ones. Any improvement could be due to information asymmetry rather than sequence modeling per se.",
+        "evidence_test": "Restrict the transformer's input to exclude events from the prior-term history (use only in-course Week 0-2 events) and add the same aggregated baseline features as side information. Re-evaluate to determine if sequence structure within the prediction window provides incremental value over the baseline's aggregated signals.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The population excludes first-term students (those without prior enrollment history), limiting the hypothesis's applicability to the full student population.",
+        "failure_mechanism": "First-term students often represent the highest-risk cohort (no prior GPA to assess, unknown academic preparation). By excluding them, the experiment cannot validate whether sequence modeling helps for the students who need early warning most. The model is trained and evaluated only on students with established track records, where prediction may be easier due to more stable behavioral signals.",
+        "evidence_test": "Include first-term students using only in-course features (no prior history) and evaluate whether the transformer outperforms the baseline specifically for this cohort. Compare performance between students with vs. without prior history.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The vocabulary for event tokenization is frozen after being established from the complete corpus before model fitting, which may not handle novel event types in the test set.",
+        "failure_mechanism": "If a course in the test set contains content types or event types not present in training (e.g., a new assignment type, forum topic, or content ID), the tokenization scheme must map these to an 'unknown' token. The transformer's ability to represent these novel events is degraded. Since stratification preserves course representation, rare courses with unique event types may be systematically misrepresented.",
+        "evidence_test": "Report the percentage of events in the test set that map to 'unknown' tokens. Compare test performance between courses with high vs. low unknown-token rates. If unknown tokens exceed 5% of test events, this represents a material distribution shift in the input space.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The prediction point (Week 2) is fixed, but the 'mean lead time' metric implies the model could issue warnings at different times within this window.",
+        "failure_mechanism": "If the model issues a high-risk flag on Day 5 vs. Day 14, the lead time differs substantially, but the evaluation treats these equivalently. The precision at 80% recall metric does not distinguish between early and late warnings. A model that only identifies failures after they're already manifesting (near Week 2) has less practical value than one that flags risk in Week 1, but this distinction is lost in the aggregate metric.",
+        "evidence_test": "Report precision at 80% recall separately for warnings issued in Week 1 vs. Week 2. If Week 1 precision is substantially lower, the practical utility of early warning is overstated.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The sensitivity analysis excludes students with prior interventions, but this creates a selected subset that may not represent the general at-risk population.",
+        "failure_mechanism": "Students who received interventions (tutoring, advising outreach) are systematically different from those who didn't\u2014they were identified by existing systems as needing support. The sensitivity analysis tests the model on a subset that deliberately excludes the population most likely to receive intervention, which is the population the model is meant to help. Performance on non-intervened students may not generalize to the full at-risk population.",
+        "evidence_test": "Report baseline characteristics (prior GPA, failure rates) for the intervened vs. non-intervened subsets. If these differ substantially, acknowledge that the sensitivity analysis tests a different population than the deployment scenario.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses a frozen vocabulary and preprocessing specification established from the complete corpus before fitting.",
+        "failure_mechanism": "While this ensures consistent preprocessing across splits, it means the preprocessing was tuned using information from the test set (the complete corpus includes test data). This is a minor form of leakage if any hyperparameter choices in preprocessing were influenced by test set characteristics (e.g., vocabulary size chosen to cover rare events that happen to be in test courses).",
+        "evidence_test": "Establish preprocessing parameters using only training data, then apply to validation and test. Compare performance to see if the current approach materially inflates results.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The PoC has two FATAL flaws: (1) student-level data leakage from splitting at the student-course instance level, allowing same-student transfer across splits, and (2) temporal leakage in the course difficulty feature derived from prior-term failure rates. A MATERIAL asymmetry issue exists where the transformer has access to more granular information than the baseline. These issues would substantially affect the validity of any claimed improvement from sequence modeling.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims student-level sequence leakage because the same student can appear in multiple splits across different courses, allowing the model to learn student\u2011specific patterns from training courses and apply them to the test course. However, the transformer only sees events from the current course (weeks\u202f0\u20112); it never observes the student\u2019s sequences from other courses, so any student\u2011specific signal must come from static features (prior GPA, enrollment counts) that are equally available to the logistic baseline. Thus the described leakage mechanism is eliminated by design.\n\nF2 alleges temporal leakage in the course\u2011difficulty feature derived from prior\u2011term failure rates. The methodology explicitly defines difficulty using the prior term (which precedes the prediction term), so no future label information is incorporated. The critic\u2019s scenario would require using the current term\u2019s data, which is not done.\n\nF3 argues an information asymmetry: the baseline receives only aggregated prior\u2011term GPA and enrollment counts, while the transformer receives raw event sequences that implicitly encode those same aggregates plus behavioral patterns. In fact, the transformer also receives the exact same static features (course and student metadata) concatenated to its output, so both models have access to the aggregated information; the transformer merely adds the sequence. Hence the asymmetry claim is unsupported.\n\nF4 notes that first\u2011term students are excluded, limiting applicability to the full student population. The experiment deliberately restricts to students with at least one prior term to ensure sufficient context for both baseline and sequence features; this is a scoped design choice, not a flaw.\n\nF5 warns that a frozen vocabulary built from the complete corpus may fail on novel event types in the test set, causing degradation via unknown\u2011token mapping. Because the vocabulary is constructed from the entire observed corpus (which includes the test set), all event types actually present in the splits are known; unknown tokens would only arise for truly novel event types absent from the corpus, which is unlikely in a retrospective study. The claimed distribution shift is therefore not supported by the evidence.\n\nF6 observes that the prediction point is fixed at Week\u202f2, yet the mean\u2011lead\u2011time metric suggests warnings could occur at different times within that window, and precision at 80\u202f% recall does not distinguish early from late warnings. This is a limitation of the primary metric, but the study treats lead time as a secondary metric and the primary metric remains appropriate for the stated stakeholder need (identifying 80\u202f% of at\u2011risk students with manageable false alarms). The concern is minor.\n\nF7 critiques the sensitivity analysis that excludes students with prior interventions, arguing the resulting subset does not represent the general at\u2011risk population. The sensitivity analysis is explicitly intended to rule out confounding by historical outreach, not to estimate performance on the full population. Thus the finding lies outside the scope of that analysis.\n\nF8 points out that establishing preprocessing parameters (standardization, imputation) from the complete corpus before fitting leaks test\u2011set information into the preprocessing stage. While this is a form of data snooping, the same preprocessing is applied to both the baseline and the transformer, so any inflation affects both models equally and does not bias the comparative assessment of sequence\u2011modeling advantage.\n\nOverall, each critique either misrepresents the design, concerns a scenario outside the stated scope, or raises an issue that is symmetric across models and thus immaterial to the hypothesis test.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The transformer\u2019s input consists solely of event sequences from the target course (weeks 0\u20112). It never sees the student\u2019s sequences from other courses, so student\u2011specific patterns cannot be learned from training courses and transferred to the test course. Any student\u2011specific signal must come from static features (prior GPA, enrollment counts) that are equally provided to the logistic baseline, eliminating the leakage mechanism described."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Course difficulty is defined using the prior\u2011term failure rate, which precedes the prediction term and therefore does not incorporate any future label information. The design explicitly excludes the current term from the difficulty calculation, precluding the temporal leakage scenario described."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Both models receive the identical static student and course features (including prior\u2011term GPA and enrollment counts). The transformer adds the event sequence on top of these features, so there is no information asymmetry; the baseline does not lack access to the aggregated signals that the transformer supposedly gains implicitly."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The experiment\u2019s scope is limited to students with at least one prior term of enrollment history to ensure sufficient context for both baseline and sequence features. The critique\u2019s concern about applicability to first\u2011term students lies outside this defined scope."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The event\u2011token vocabulary is constructed from the complete observed corpus, which includes the test set. Consequently, every event type actually present in the splits is known, and the unknown\u2011token rate is negligible. The claimed degradation due to novel event types in the test set is not supported by the data."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "While the model can issue warnings at different times within the Week\u202f2 window, the primary metric (precision at 80\u202f% recall) aligns with the stakeholder goal of capturing a fixed proportion of at\u2011risk students. Lead time is reported separately as a secondary metric, so this limitation does not affect the core conclusion about sequence\u2011modeling advantage."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The sensitivity analysis intentionally excludes intervened students to isolate the effect of historical outreach, not to estimate performance on the general at\u2011risk population. Therefore the critique\u2019s concern about representativeness applies to a different analytical goal."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Preprocessing parameters (e.g., feature means and variances) are computed from the full corpus and applied identically to baseline and transformer. Any potential leakage from using test\u2011set statistics affects both models equally, so the relative comparison of sequence modeling versus the baseline remains unbiased."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted or deemed immaterial, resulting in adjusted severities of 3 or lower. Hence the EXONERATE condition holds and the defense prevails."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender correctly notes that the transformer only sees events from the target course (weeks 0-2), not sequences from other courses. This addresses one leakage pathway: the model cannot directly transfer course-specific behavioral patterns. However, the core concern remains partially unresolved: if the same student appears in both training and test sets with different courses, the model could learn student-specific behavioral signatures (procrastination patterns, engagement trajectories) that generalize across courses. The static features (prior GPA, enrollment counts) are shared, but the transformer's capacity to extract nuanced behavioral patterns from event sequences within a single course still provides an advantage when the same student appears in different splits. The rebuttal reduces severity appropriately but does not fully eliminate the concern."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender claims 'prior-term failure rate precedes the prediction term and therefore does not incorporate any future label information.' This does not address the circularity mechanism I identified. The original concern was: when course enrollment is stable across terms, the current-term failure rate is partially included in the prior-term calculation (e.g., if Course X had 100 students in Fall and 95 of the same students in Spring, the 'prior-term' failure rate for Spring includes outcomes from students who are also in the current term). The defender's justification merely asserts no future information is included without explaining how the prior-term calculation handles overlapping student populations. The severity adjustment from 7 to 2 is disproportionate\u2014the circularity concern is not resolved."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender argues 'both models receive identical static student and course features' and therefore there is no information asymmetry. This misrepresents the original concern. The finding was not that the baseline lacks access to aggregated signals (prior GPA, enrollment counts)\u2014it was that the transformer's raw event sequences contain temporal dynamics (procrastination patterns, response to assessments, engagement trajectories) that cannot be captured by the baseline's summary statistics. The defender's rebuttal is topically related but does not address the specific failure mechanism: the baseline compresses temporal information into aggregates while the transformer preserves the full sequence. The severity adjustment from 6 to 2 is disproportionate."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly identifies this as a scope limitation. The experiment explicitly targets students with prior enrollment history to ensure sufficient context for sequence features. This is a valid experimental boundary, not a flaw. First-term student prediction would require a different experimental design (e.g., using only in-course features). The severity adjustment to 1 is appropriate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The defender claims the vocabulary includes the test set, so 'unknown-token rate is negligible.' This is circular reasoning\u2014it assumes the test set contains no novel event types without providing evidence. The methodology states vocabulary is established 'from the complete corpus of observed interactions before model fitting,' which includes test data. However, the defender provides no empirical evidence (e.g., percentage of unknown tokens in test set) to support the claim that novel event types are negligible. The evidence_test I proposed would require actually measuring unknown-token rates. Without this data, the rebuttal is an assertion rather than a demonstration. The severity adjustment from 4 to 1 is not fully justified."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly notes that lead time is reported as a secondary metric, separate from the primary precision-at-80%-recall metric. The primary metric aligns with the stakeholder goal of identifying a fixed proportion of at-risk students. While the timing of warnings within Week 2 matters for practical utility, the design acknowledges this by reporting lead time separately. The severity adjustment to 1 is appropriate."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender clarifies that the sensitivity analysis intentionally excludes intervened students to isolate the effect of historical outreach, not to estimate performance on the general at-risk population. This is a valid methodological choice with a clear analytical goal. The severity adjustment to 1 is appropriate."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly argues that any preprocessing leakage affects both models equally, preserving the validity of the relative comparison. The comparison between transformer and baseline remains unbiased even if both models see some test-set statistics in preprocessing. The severity adjustment to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted the rebuttals for findings F4, F6, F7, and F8, indicating those concerns are adequately addressed by the study's scope or design. For F1 and F2, the critic found the original rebuttals insufficient; the design lacks controls to prevent student\u2011level leakage and temporal leakage in course difficulty, so those findings are conceded. For F3 and F5, the critic\u2019s challenges were rebutted by clarifying that the methodology provides identical static features to both models and builds the vocabulary from the full corpus, thereby eliminating the alleged information asymmetry and unknown\u2011token risk; these rebuttals are strengthened.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The transformer processes only event sequences from the target course (weeks 0\u20112), but it can still learn student\u2011specific behavioral signatures (e.g., procrastination patterns, engagement trajectories) from a student\u2019s sequence in one course and apply them to another course when the same student appears in both training and test splits. The static features (prior GPA, enrollment counts) are shared with the baseline, yet the transformer\u2019s ability to extract nuanced temporal dynamics from sequences creates a potential leakage path that the current design does not block. Because this mechanism could inflate the transformer\u2019s performance relative to the baseline and directly affect the primary metric, the concern cannot be resolved by argument alone.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Course difficulty is derived from the prior\u2011term failure rate for the same course. When enrollment is stable across terms, the prior\u2011term calculation can include outcomes from students who are also present in the current term, creating a circular relationship where the difficulty feature indirectly incorporates label information from the prediction period. The methodology does not exclude overlapping students or use an external difficulty measure, so this temporal leakage remains unaddressed and could bias the baseline (and consequently the comparison) in a way that affects the primary evaluation metric.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Both the logistic baseline and the transformer receive the exact same static student and course features (prior\u2011term GPA, total enrollments, course metadata, etc.) as explicitly stated in the Feature Construction and Preprocessing section. The transformer\u2019s sole added input is the chronological event sequence from weeks 0\u20112. Therefore any performance advantage of the transformer over the baseline can be attributed to modeling sequence structure, not to an information asymmetry. This design directly counters the claim that the baseline lacks access to aggregated signals that the transformer supposedly gains implicitly.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The experiment deliberately limits its scope to students with at least one prior term of enrollment history to ensure sufficient context for both baseline aggregated features and the transformer\u2019s event sequences. This is a stated scope decision in the Data and Labeling section, not an oversight. Consequently, the critique about first\u2011term students lies outside the defined experimental boundaries.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The event\u2011token vocabulary is constructed once from the complete observed corpus before any model fitting, as described in the Feature Construction and Preprocessing section. Because the vocabulary includes every event type that appears in the training, validation, and test splits, the unknown\u2011token rate is effectively zero. This design choice eliminates the distribution\u2011shift risk posed by novel event types in the test set.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "While the model can issue risk warnings at any point within the Week\u202f0\u20112 window, the primary metric\u2014precision at 80\u202f% recall\u2014directly captures the stakeholder goal of identifying a fixed proportion of at\u2011risk students. Lead time is reported separately as a secondary metric, so variation in warning timing does not affect the core conclusion about the transformer\u2019s predictive advantage over the baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The sensitivity analysis intentionally excludes students who received prior interventions (e.g., tutoring, advising) to isolate the effect of historical outreach on model performance. This is a deliberate analytical choice, not a flaw concerning the model\u2019s applicability to the general at\u2011risk population. Hence the critique about representativeness does not apply to this specific analysis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Preprocessing parameters (feature means, variances, etc.) are computed from the full corpus and then applied identically to both the baseline and the transformer. Any potential leakage from using test\u2011set statistics therefore impacts both models equally, preserving the unbiased comparison of sequence modeling versus the aggregated\u2011feature baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "The design lacks controls for student\u2011level leakage (F1) and temporal leakage in course difficulty (F2), both FATAL concerns that remain unaddressed and would materially affect the primary metric, leading to a critique\u2011winning outcome."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The split strategy operates at the student-course instance level, allowing the same student to appear in training, validation, and test sets with different courses.",
+        "failure_mechanism": "A student who failed Course A in the training set and then enrolled in Course B in the test set may have learned patterns (e.g., specific procrastination behaviors, assignment timing patterns) that are idiosyncratic to that student rather than generalizable to other students. The model can implicitly learn student-level embeddings through the sequence of events that correlate with failure, then leverage this to predict failure for the same student in a different course. This inflates test performance without true generalization to unseen students.",
+        "evidence_test": "Re-run the experiment with a student-level split (all courses for a given student in the same split) and compare test set performance. A substantial drop in test AUC would confirm this leakage mechanism.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Course difficulty is defined using prior-term failure rates for the same course, which may introduce temporal leakage when calculating features for the baseline model.",
+        "failure_mechanism": "If the 'prior-term failure rate' includes the immediately preceding term that overlaps with some students in the current term's training data, the model has access to label information from the future (relative to those students' enrollment). More critically, the failure rate calculation itself uses the same outcome definition being predicted, creating a circular relationship: difficulty (derived from failure rate) predicts failure. This is particularly problematic when course enrollment is stable across terms\u2014the current-term failure rate is partially included in the prior-term calculation.",
+        "evidence_test": "Check the temporal gap between the 'prior-term' used for difficulty calculation and the current term. Use only failure rates from terms that fully precede the prediction term with no student overlap. Alternatively, use an external difficulty measure (e.g., historical average grade, not failure rate) and compare results.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline and transformer receive asymmetric information: baseline gets aggregated prior-term GPA and enrollment counts, while transformer receives raw event sequences that implicitly encode this information plus behavioral patterns.",
+        "failure_mechanism": "The baseline's aggregated features (prior-term GPA, total enrollments) are summary statistics that compress information. The transformer's sequence data contains not only these signals but also the temporal dynamics of how students interact\u2014procrastination patterns, response to assessments, engagement trajectories. The comparison is not fair: the transformer has access to more granular information that could capture the same signals plus additional ones. Any improvement could be due to information asymmetry rather than sequence modeling per se.",
+        "evidence_test": "Restrict the transformer's input to exclude events from the prior-term history (use only in-course Week 0-2 events) and add the same aggregated baseline features as side information. Re-evaluate to determine if sequence structure within the prediction window provides incremental value over the baseline's aggregated signals.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The population excludes first-term students (those without prior enrollment history), limiting the hypothesis's applicability to the full student population.",
+        "failure_mechanism": "First-term students often represent the highest-risk cohort (no prior GPA to assess, unknown academic preparation). By excluding them, the experiment cannot validate whether sequence modeling helps for the students who need early warning most. The model is trained and evaluated only on students with established track records, where prediction may be easier due to more stable behavioral signals.",
+        "evidence_test": "Include first-term students using only in-course features (no prior history) and evaluate whether the transformer outperforms the baseline specifically for this cohort. Compare performance between students with vs. without prior history.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The vocabulary for event tokenization is frozen after being established from the complete corpus before model fitting, which may not handle novel event types in the test set.",
+        "failure_mechanism": "If a course in the test set contains content types or event types not present in training (e.g., a new assignment type, forum topic, or content ID), the tokenization scheme must map these to an 'unknown' token. The transformer's ability to represent these novel events is degraded. Since stratification preserves course representation, rare courses with unique event types may be systematically misrepresented.",
+        "evidence_test": "Report the percentage of events in the test set that map to 'unknown' tokens. Compare test performance between courses with high vs. low unknown-token rates. If unknown tokens exceed 5% of test events, this represents a material distribution shift in the input space.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The prediction point (Week 2) is fixed, but the 'mean lead time' metric implies the model could issue warnings at different times within this window.",
+        "failure_mechanism": "If the model issues a high-risk flag on Day 5 vs. Day 14, the lead time differs substantially, but the evaluation treats these equivalently. The precision at 80% recall metric does not distinguish between early and late warnings. A model that only identifies failures after they're already manifesting (near Week 2) has less practical value than one that flags risk in Week 1, but this distinction is lost in the aggregate metric.",
+        "evidence_test": "Report precision at 80% recall separately for warnings issued in Week 1 vs. Week 2. If Week 1 precision is substantially lower, the practical utility of early warning is overstated.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The sensitivity analysis excludes students with prior interventions, but this creates a selected subset that may not represent the general at-risk population.",
+        "failure_mechanism": "Students who received interventions (tutoring, advising outreach) are systematically different from those who didn't\u2014they were identified by existing systems as needing support. The sensitivity analysis tests the model on a subset that deliberately excludes the population most likely to receive intervention, which is the population the model is meant to help. Performance on non-intervened students may not generalize to the full at-risk population.",
+        "evidence_test": "Report baseline characteristics (prior GPA, failure rates) for the intervened vs. non-intervened subsets. If these differ substantially, acknowledge that the sensitivity analysis tests a different population than the deployment scenario.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment uses a frozen vocabulary and preprocessing specification established from the complete corpus before fitting.",
+        "failure_mechanism": "While this ensures consistent preprocessing across splits, it means the preprocessing was tuned using information from the test set (the complete corpus includes test data). This is a minor form of leakage if any hyperparameter choices in preprocessing were influenced by test set characteristics (e.g., vocabulary size chosen to cover rare events that happen to be in test courses).",
+        "evidence_test": "Establish preprocessing parameters using only training data, then apply to validation and test. Compare performance to see if the current approach materially inflates results.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The PoC has two FATAL flaws: (1) student-level data leakage from splitting at the student-course instance level, allowing same-student transfer across splits, and (2) temporal leakage in the course difficulty feature derived from prior-term failure rates. A MATERIAL asymmetry issue exists where the transformer has access to more granular information than the baseline. These issues would substantially affect the validity of any claimed improvement from sequence modeling.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted the rebuttals for findings F4, F6, F7, and F8, indicating those concerns are adequately addressed by the study's scope or design. For F1 and F2, the critic found the original rebuttals insufficient; the design lacks controls to prevent student\u2011level leakage and temporal leakage in course difficulty, so those findings are conceded. For F3 and F5, the critic\u2019s challenges were rebutted by clarifying that the methodology provides identical static features to both models and builds the vocabulary from the full corpus, thereby eliminating the alleged information asymmetry and unknown\u2011token risk; these rebuttals are strengthened.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The transformer processes only event sequences from the target course (weeks 0\u20112), but it can still learn student\u2011specific behavioral signatures (e.g., procrastination patterns, engagement trajectories) from a student\u2019s sequence in one course and apply them to another course when the same student appears in both training and test splits. The static features (prior GPA, enrollment counts) are shared with the baseline, yet the transformer\u2019s ability to extract nuanced temporal dynamics from sequences creates a potential leakage path that the current design does not block. Because this mechanism could inflate the transformer\u2019s performance relative to the baseline and directly affect the primary metric, the concern cannot be resolved by argument alone.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Course difficulty is derived from the prior\u2011term failure rate for the same course. When enrollment is stable across terms, the prior\u2011term calculation can include outcomes from students who are also present in the current term, creating a circular relationship where the difficulty feature indirectly incorporates label information from the prediction period. The methodology does not exclude overlapping students or use an external difficulty measure, so this temporal leakage remains unaddressed and could bias the baseline (and consequently the comparison) in a way that affects the primary evaluation metric.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Both the logistic baseline and the transformer receive the exact same static student and course features (prior\u2011term GPA, total enrollments, course metadata, etc.) as explicitly stated in the Feature Construction and Preprocessing section. The transformer\u2019s sole added input is the chronological event sequence from weeks 0\u20112. Therefore any performance advantage of the transformer over the baseline can be attributed to modeling sequence structure, not to an information asymmetry. This design directly counters the claim that the baseline lacks access to aggregated signals that the transformer supposedly gains implicitly.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The experiment deliberately limits its scope to students with at least one prior term of enrollment history to ensure sufficient context for both baseline aggregated features and the transformer\u2019s event sequences. This is a stated scope decision in the Data and Labeling section, not an oversight. Consequently, the critique about first\u2011term students lies outside the defined experimental boundaries.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The event\u2011token vocabulary is constructed once from the complete observed corpus before any model fitting, as described in the Feature Construction and Preprocessing section. Because the vocabulary includes every event type that appears in the training, validation, and test splits, the unknown\u2011token rate is effectively zero. This design choice eliminates the distribution\u2011shift risk posed by novel event types in the test set.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "While the model can issue risk warnings at any point within the Week\u202f0\u20112 window, the primary metric\u2014precision at 80\u202f% recall\u2014directly captures the stakeholder goal of identifying a fixed proportion of at\u2011risk students. Lead time is reported separately as a secondary metric, so variation in warning timing does not affect the core conclusion about the transformer\u2019s predictive advantage over the baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The sensitivity analysis intentionally excludes students who received prior interventions (e.g., tutoring, advising) to isolate the effect of historical outreach on model performance. This is a deliberate analytical choice, not a flaw concerning the model\u2019s applicability to the general at\u2011risk population. Hence the critique about representativeness does not apply to this specific analysis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Preprocessing parameters (feature means, variances, etc.) are computed from the full corpus and then applied identically to both the baseline and the transformer. Any potential leakage from using test\u2011set statistics therefore impacts both models equally, preserving the unbiased comparison of sequence modeling versus the aggregated\u2011feature baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "The design lacks controls for student\u2011level leakage (F1) and temporal leakage in course difficulty (F2), both FATAL concerns that remain unaddressed and would materially affect the primary metric, leading to a critique\u2011winning outcome."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=8 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=8 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

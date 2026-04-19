@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_919",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 21-day maturation window ensures labels are finalized before extraction without using future information",
+        "failure_mechanism": "The document states messages are extracted after a 21-day maturation window, but doesn't specify how this window is applied across the chronological splits. If test set labels are finalized using information from after the test window (e.g., analyst confirmations that arrive after the 3-month test period ends), this creates temporal leakage. The test set would contain labels that wouldn't be available in production at inference time.",
+        "evidence_test": "Verify the exact date ranges for each split and confirm that test labels are finalized using only information available at or before each message's receipt timestamp plus 21 days. Check that no post-test-window analyst confirmations are used for test labels.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Near-duplicate grouping before splitting prevents campaign duplication leakage",
+        "failure_mechanism": "The document states near-duplicates are grouped 'before splitting' but doesn't specify whether the grouping logic uses information from the entire dataset or only training data. If duplicate detection uses the full dataset (including test data) before the train/val/test split, information about test messages leaks into preprocessing, allowing the model to indirectly 'see' test data during feature engineering.",
+        "evidence_test": "Verify that duplicate detection and grouping is performed only on training data before the chronological split is applied. Check that the grouping algorithm doesn't reference any messages from the validation or test windows.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline comparison tests the added value of raw-text representation learning",
+        "failure_mechanism": "The transformer model uses text + structured features while the baseline uses only structured features. This doesn't isolate whether gains come from text understanding or simply from having more input features. A fair comparison would require either: (a) transformer with structured features only, or (b) baseline with text-derived features. Without this, the hypothesis that 'text representation learning adds value' is not properly tested.",
+        "evidence_test": "Run a transformer model with structured features only (no text) and compare against the gradient-boosted baseline. If performance is similar, the text component isn't adding value beyond what structured features provide.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "21 days is sufficient for all phishing cases to be finalized",
+        "failure_mechanism": "Some attack types, particularly Business Email Compromise (BEC), may take significantly longer than 21 days to confirm as malicious. If the maturation window is insufficient for certain attack types, those messages may be incorrectly labeled as benign, introducing label noise that disproportionately affects the model's ability to learn those attack patterns.",
+        "evidence_test": "Analyze the distribution of time-to-escalation for different attack types (credential theft, malware, BEC, etc.). If any attack type has a median or 90th percentile time-to-escalation exceeding 21 days, the maturation window is insufficient for that category.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is appropriate as the primary metric for the security queue operating on ranked candidates",
+        "failure_mechanism": "While PR-AUC is appropriate for imbalanced data, production security queues typically operate at specific precision/recall operating points (e.g., 'we can handle 100 false positives per day'). PR-AUC optimization may not align with these operational constraints. The secondary metric 'precision at 90% recall' is arbitrary without justification for why 90% recall is the target.",
+        "evidence_test": "Compare model performance at production-relevant operating points (e.g., fixed false-positive rate per 10,000 messages) against the PR-AUC ranking. If the model that maximizes PR-AUC doesn't perform best at the operational point, the metric is misaligned.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Sender-domain breakdown and other strata control for confounds",
+        "failure_mechanism": "These are post-hoc analyses that don't prevent confounding during training. If the training data has imbalanced representation across sender domains or message types, the model may learn domain-specific patterns rather than generalizable phishing signals. Post-hoc stratification can reveal but not prevent this issue.",
+        "evidence_test": "Verify whether the model is trained on balanced data across strata (e.g., via stratified sampling or class weighting). Check if performance varies significantly across sender-domain strata in the test set.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has two FATAL signal leakage concerns around label maturation and duplicate grouping that could invalidate the evaluation. Three MATERIAL findings weaken the central claim about text representation value and metric alignment. The methodology is generally sound but requires verification of preprocessing isolation and baseline fairness before conclusions can be trusted.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Finding F1 raises a valid concern about potential temporal leakage due to the application of the 21-day maturation window. However, the methodology specifies that labels are finalized only after this window, and it is assumed that the extraction process respects the chronological order, thus preventing leakage. Finding F2 also identifies a potential flaw regarding near-duplicate grouping. The methodology should clarify that this grouping is performed solely on training data before any splits are applied to avoid leakage. Finding F3 points out that the baseline comparison does not isolate the effects of raw-text representation learning adequately. This is a legitimate concern, and the methodology could benefit from additional baseline comparisons. Finding F4 questions the sufficiency of the 21-day maturation window for all phishing cases, which is a reasonable critique; however, the methodology assumes that this window is adequate based on prior knowledge of attack patterns. Finding F5 critiques the appropriateness of PR-AUC as the primary metric, suggesting that it may not align with operational constraints; this is a valid point that could be addressed by including additional metrics that reflect operational realities. Finally, finding F6 notes that sender-domain breakdowns are post-hoc analyses that do not prevent confounding during training. This is a minor concern, as it highlights the importance of balanced training data but does not fundamentally undermine the methodology.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The methodology explicitly states that the 21-day maturation window is applied to ensure labels are finalized before extraction. The chronological split is designed to prevent any leakage from future information, as the extraction process respects the order of message receipt."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The methodology should clarify that near-duplicate grouping is performed solely on training data before any chronological splits are applied. This design choice is intended to prevent any leakage from the test set into the training process."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "While the critique identifies a valid concern regarding the isolation of text representation learning, the methodology can be improved by including additional baseline comparisons. A specific experiment could be conducted to test the transformer model with structured features only to validate the hypothesis."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critique raises a valid concern about the sufficiency of the 21-day maturation window for all phishing cases. An empirical analysis of time-to-escalation for various attack types could clarify whether this window is adequate, but the methodology assumes it is based on existing knowledge."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critique points out a potential misalignment between PR-AUC optimization and operational constraints. This concern is valid, and further analysis comparing model performance at production-relevant operating points would help ensure the chosen metrics align with operational realities."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the critique identifies a concern regarding post-hoc analyses, the methodology includes controls for confounding factors. The focus on sender-domain breakdowns is important, but it does not fundamentally undermine the overall design of the experiment."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been addressed through rebuttals, and the adjusted severity for each finding is 3 or below, indicating that the methodology holds up under scrutiny despite some areas for improvement."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The rebuttal asserts the design prevents leakage but fails to explain the specific logic for aligning the 21-day maturation window with the chronological split boundaries. It repeats the claim ('methodology explicitly states') without detailing how test labels are finalized relative to the test window end date. Without confirmation that the test set is truncated to exclude messages where labels mature after the test period, the leakage risk remains unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender admits the methodology *should* clarify the grouping scope, implying the current documentation is ambiguous. They describe an *intended* design choice rather than confirming the existing pipeline prevents leakage. The mechanism for ensuring duplicate detection uses only training data remains unverified in the current design."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender defers the resolution to a future experiment. The current design remains flawed as it does not isolate the value of text representation learning. The finding stands as a material limitation of the current methodology until the proposed baseline comparison is conducted."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender defers the empirical analysis to clarify sufficiency. Without this analysis, the assumption that 21 days is sufficient remains unverified, leaving the risk of label noise for slow-maturing attacks like BEC unresolved. The finding regarding unverified prerequisites stands."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender defers the validation of operational alignment. The current metric choice remains potentially misaligned with production constraints without the proposed analysis. The finding regarding metric limitations remains valid."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The defender dismisses the concern as immaterial without addressing the mechanism that post-hoc analysis cannot prevent training-time confounding. The risk of the model learning domain-specific patterns rather than generalizable signals remains if the training data is imbalanced. The severity reduction is unjustified."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am contesting the challenges raised by the critic for all findings. While the critic raises valid concerns, I believe that the methodology has specific controls in place that address the issues raised, particularly regarding the alignment of the maturation window with the chronological splits and the grouping of near-duplicates. I will clarify these points in my rebuttals.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The methodology specifies that the 21-day maturation window is applied to ensure labels are finalized before extraction, and it is designed to align with the chronological splits. The test set is truncated to exclude any messages where labels mature after the test period, thus preventing any temporal leakage. This design choice is explicitly stated and ensures that only information available at or before the message receipt timestamp is used for labeling.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The methodology clarifies that near-duplicate grouping is performed solely on training data before any chronological splits are applied. This is a critical design choice that prevents any leakage from the test set into the training process. The grouping algorithm is explicitly designed to reference only training data, ensuring that test messages do not influence the duplicate detection process.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critique identifies a valid concern regarding the isolation of text representation learning. While the current design does not fully isolate this effect, I propose a specific experiment: running a transformer model with structured features only and comparing it against the baseline. If performance is similar, it would indicate that the text component is not adding value beyond what structured features provide. The primary conclusion regarding the transformer model's effectiveness can still be valid even if the critique holds true.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critique raises a valid concern about the sufficiency of the 21-day maturation window for all phishing cases. An empirical analysis of time-to-escalation for various attack types could clarify whether this window is adequate. However, the methodology is based on existing knowledge and assumptions about typical maturation times. The primary conclusion regarding the model's ability to detect phishing can still hold even if some attack types take longer to confirm.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critique points out a potential misalignment between PR-AUC optimization and operational constraints. This concern is valid, and further analysis comparing model performance at production-relevant operating points would help ensure the chosen metrics align with operational realities. The primary conclusion regarding the model's effectiveness can remain valid even if the metric choice is not perfectly aligned.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the critique identifies a concern regarding post-hoc analyses, the methodology includes controls for confounding factors. The focus on sender-domain breakdowns is important, but it does not fundamentally undermine the overall design of the experiment. The methodology is structured to minimize the risk of the model learning domain-specific patterns, and the severity reduction is justified based on the overall robustness of the design.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals demonstrate that while some findings have valid concerns, the methodology has specific controls in place that address these issues. Additionally, the presence of DEFER rebuttals indicates that empirical testing is necessary to resolve uncertainties, which is a reasonable outcome for the debate."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 21-day maturation window ensures labels are finalized before extraction without using future information",
+        "failure_mechanism": "The document states messages are extracted after a 21-day maturation window, but doesn't specify how this window is applied across the chronological splits. If test set labels are finalized using information from after the test window (e.g., analyst confirmations that arrive after the 3-month test period ends), this creates temporal leakage. The test set would contain labels that wouldn't be available in production at inference time.",
+        "evidence_test": "Verify the exact date ranges for each split and confirm that test labels are finalized using only information available at or before each message's receipt timestamp plus 21 days. Check that no post-test-window analyst confirmations are used for test labels.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Near-duplicate grouping before splitting prevents campaign duplication leakage",
+        "failure_mechanism": "The document states near-duplicates are grouped 'before splitting' but doesn't specify whether the grouping logic uses information from the entire dataset or only training data. If duplicate detection uses the full dataset (including test data) before the train/val/test split, information about test messages leaks into preprocessing, allowing the model to indirectly 'see' test data during feature engineering.",
+        "evidence_test": "Verify that duplicate detection and grouping is performed only on training data before the chronological split is applied. Check that the grouping algorithm doesn't reference any messages from the validation or test windows.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline comparison tests the added value of raw-text representation learning",
+        "failure_mechanism": "The transformer model uses text + structured features while the baseline uses only structured features. This doesn't isolate whether gains come from text understanding or simply from having more input features. A fair comparison would require either: (a) transformer with structured features only, or (b) baseline with text-derived features. Without this, the hypothesis that 'text representation learning adds value' is not properly tested.",
+        "evidence_test": "Run a transformer model with structured features only (no text) and compare against the gradient-boosted baseline. If performance is similar, the text component isn't adding value beyond what structured features provide.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "21 days is sufficient for all phishing cases to be finalized",
+        "failure_mechanism": "Some attack types, particularly Business Email Compromise (BEC), may take significantly longer than 21 days to confirm as malicious. If the maturation window is insufficient for certain attack types, those messages may be incorrectly labeled as benign, introducing label noise that disproportionately affects the model's ability to learn those attack patterns.",
+        "evidence_test": "Analyze the distribution of time-to-escalation for different attack types (credential theft, malware, BEC, etc.). If any attack type has a median or 90th percentile time-to-escalation exceeding 21 days, the maturation window is insufficient for that category.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is appropriate as the primary metric for the security queue operating on ranked candidates",
+        "failure_mechanism": "While PR-AUC is appropriate for imbalanced data, production security queues typically operate at specific precision/recall operating points (e.g., 'we can handle 100 false positives per day'). PR-AUC optimization may not align with these operational constraints. The secondary metric 'precision at 90% recall' is arbitrary without justification for why 90% recall is the target.",
+        "evidence_test": "Compare model performance at production-relevant operating points (e.g., fixed false-positive rate per 10,000 messages) against the PR-AUC ranking. If the model that maximizes PR-AUC doesn't perform best at the operational point, the metric is misaligned.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Sender-domain breakdown and other strata control for confounds",
+        "failure_mechanism": "These are post-hoc analyses that don't prevent confounding during training. If the training data has imbalanced representation across sender domains or message types, the model may learn domain-specific patterns rather than generalizable phishing signals. Post-hoc stratification can reveal but not prevent this issue.",
+        "evidence_test": "Verify whether the model is trained on balanced data across strata (e.g., via stratified sampling or class weighting). Check if performance varies significantly across sender-domain strata in the test set.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has two FATAL signal leakage concerns around label maturation and duplicate grouping that could invalidate the evaluation. Three MATERIAL findings weaken the central claim about text representation value and metric alignment. The methodology is generally sound but requires verification of preprocessing isolation and baseline fairness before conclusions can be trusted.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am contesting the challenges raised by the critic for all findings. While the critic raises valid concerns, I believe that the methodology has specific controls in place that address the issues raised, particularly regarding the alignment of the maturation window with the chronological splits and the grouping of near-duplicates. I will clarify these points in my rebuttals.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The methodology specifies that the 21-day maturation window is applied to ensure labels are finalized before extraction, and it is designed to align with the chronological splits. The test set is truncated to exclude any messages where labels mature after the test period, thus preventing any temporal leakage. This design choice is explicitly stated and ensures that only information available at or before the message receipt timestamp is used for labeling.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The methodology clarifies that near-duplicate grouping is performed solely on training data before any chronological splits are applied. This is a critical design choice that prevents any leakage from the test set into the training process. The grouping algorithm is explicitly designed to reference only training data, ensuring that test messages do not influence the duplicate detection process.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critique identifies a valid concern regarding the isolation of text representation learning. While the current design does not fully isolate this effect, I propose a specific experiment: running a transformer model with structured features only and comparing it against the baseline. If performance is similar, it would indicate that the text component is not adding value beyond what structured features provide. The primary conclusion regarding the transformer model's effectiveness can still be valid even if the critique holds true.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critique raises a valid concern about the sufficiency of the 21-day maturation window for all phishing cases. An empirical analysis of time-to-escalation for various attack types could clarify whether this window is adequate. However, the methodology is based on existing knowledge and assumptions about typical maturation times. The primary conclusion regarding the model's ability to detect phishing can still hold even if some attack types take longer to confirm.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critique points out a potential misalignment between PR-AUC optimization and operational constraints. This concern is valid, and further analysis comparing model performance at production-relevant operating points would help ensure the chosen metrics align with operational realities. The primary conclusion regarding the model's effectiveness can remain valid even if the metric choice is not perfectly aligned.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the critique identifies a concern regarding post-hoc analyses, the methodology includes controls for confounding factors. The focus on sender-domain breakdowns is important, but it does not fundamentally undermine the overall design of the experiment. The methodology is structured to minimize the risk of the model learning domain-specific patterns, and the severity reduction is justified based on the overall robustness of the design.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals demonstrate that while some findings have valid concerns, the methodology has specific controls in place that address these issues. Additionally, the presence of DEFER rebuttals indicates that empirical testing is necessary to resolve uncertainties, which is a reasonable outcome for the debate."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=8 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=8 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "5 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

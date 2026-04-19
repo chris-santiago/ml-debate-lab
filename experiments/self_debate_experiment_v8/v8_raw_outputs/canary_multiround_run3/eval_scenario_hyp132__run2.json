@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_hyp132",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Any performance difference between the enhanced model and the baseline is attributable to the text feature set, not to differences in model capacity or tuning effort.",
+        "failure_mechanism": "The enhanced model uses a transformer encoder (DistilBERT) while the baseline uses logistic regression. Even with equivalent tuning effort, the transformer has substantially greater representational capacity, so observed gains could stem from this capacity advantage rather than from the ticket text itself.",
+        "evidence_test": "Introduce a capacity-controlled baseline that mirrors the enhanced model's architecture but receives only the structured metadata (e.g., a transformer trained on metadata-only features, or a transformer with text inputs replaced by random noise/shuffled text). Compare its performance to the enhanced model; if the enhanced model no longer outperforms this baseline, the original claim is unsupported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Derived features such as prior customer SLA compliance rate (last 90 days) and prior ticket count (last 30 days) are computed without leaking future information.",
+        "failure_mechanism": "If these rolling-window statistics are calculated using an expanding window that inadvertently includes tickets created after the target ticket (e.g., by computing statistics over the entire dataset before splitting), then the features encode future label information, creating signal leakage that artificially inflates performance.",
+        "evidence_test": "Audit the feature generation pipeline to confirm that, for each ticket, the maximum timestamp used in any rolling-window calculation is strictly less than the ticket's creation timestamp. This can be done by checking that the feature values change when the dataset is restricted to strictly preceding tickets.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding tickets that were auto-closed or never received a response does not bias the estimated performance or generalizability of the model.",
+        "failure_mechanism": "Excluded tickets may have systematically different SLA breach characteristics (e.g., auto-closed tickets are often resolved quickly, thus non\u2011breach). Removing them alters the breach rate and the underlying distribution of features, so performance measured on the remaining subset may not reflect performance on the full ticket stream.",
+        "evidence_test": "Compare breach rates, feature distributions, and model metrics (PR\u2011AUC, recall at fixed precision) between the included set and the excluded set. Assess whether the excluded set is missing at random or exhibits systematic differences.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The relationship between ticket text (and metadata) and first\u2011response SLA breach is stable over the 6\u2011month holdout period, so validation/test performance reflects future deployment performance.",
+        "failure_mechanism": "Concept drift in language, product updates, or changes in SLA policies could alter the predictive signal over time. If the model learns patterns that are specific to the training period, its performance may degrade when deployed on later tickets, making the held\u2011out test overly optimistic.",
+        "evidence_test": "Monitor performance over time: compute PR\u2011AUC (or recall at fixed precision) on rolling monthly windows after the training period and look for significant trends or drops. Additionally, examine drift in embedding spaces or feature importance across periods.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Precision\u2011Recall AUC is an appropriate primary metric for the operational goal of limited escalation capacity (10\u201120% of the queue).",
+        "failure_mechanism": "PR\u2011AUC summarizes ranking quality across all thresholds but does not directly measure utility at the specific escalation capacity constraint. A model could achieve high PR\u2011AUC yet deliver poor precision at the recall level that corresponds to the available escalation bandwidth, leading to misleading conclusions about operational usefulness.",
+        "evidence_test": "Perform a decision\u2011curve analysis or compute expected cost/utility at the escalation capacity threshold (e.g., precision at the recall that yields 10\u201120% of tickets flagged). Compare this utility metric between the enhanced model and baseline to see if the ranking advantage translates into better operational decisions.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The post\u2011hoc audit successfully detects any contamination of ticket text with agent responses or internal notes.",
+        "failure_mechanism": "The audit only searches for specific phrases (e.g., 'assigned to', 'resolved'). Subtle forms of leakage\u2014such as internal notes added before the first response that do not contain those phrases\u2014would go undetected, allowing future information to influence the model.",
+        "evidence_test": "Manually inspect a random sample of ticket bodies for signs of agent\u2011generated content (e.g., signatures, ticket system markup, agent\u2011specific phrasing) that is not captured by the audit phrase list. Quantify the proportion of contaminated samples missed by the audit.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC presents a reasonable temporal holdout design but suffers from several methodological gaps: the enhanced model's advantage may stem from its greater capacity rather than text, rolling\u2011window features risk future leakage, and excluded tickets could bias the sample. While these issues weaken the conclusions, they do not completely invalidate the investigation unless leakage is present.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims a capacity mismatch between DistilBERT and Logistic Regression. However, the design intent is to test if *text* adds value. The baseline is intentionally the 'structured metadata only' standard. While a transformer-on-metadata baseline would be a more rigorous capacity control, the current design tests the hypothesis: 'Does adding text (via a model capable of processing it) outperform the current metadata-only approach?' The gain is attributable to the text feature set because the metadata is available to both; the model capacity is a necessary vehicle for the text features. This is a design choice for a PoC comparing a new modality to a legacy baseline.\n\nF2 raises a concern about rolling-window leakage. The methodology explicitly states in Section 2 that the dataset is divided into 'three contiguous time windows to prevent future information leakage' and in Section 3 that 'all transformers... are fit on the training set only'. While it doesn't explicitly detail the row-level loop for rolling stats, the commitment to a contiguous temporal split and the 'Preprocessing fit point' section indicates a design intended to prevent leakage. However, the critic is correct that the *implementation* of rolling windows is a high-risk area. Since the methodology doesn't explicitly describe the 'point-in-time' join logic for these features, this is a valid concern that cannot be resolved by citing a specific control in the text.\n\nF3 discusses the exclusion of auto-closed tickets. The scope is to predict breaches on tickets that *can* breach (those awaiting a first response). Auto-closed tickets are, by definition, handled by the system and do not enter the human-response SLA queue. Including them would introduce a trivial 'easy' class (system-resolved) that doesn't reflect the operational challenge of predicting human agent breaches. This is a scope decision.\n\nF4 concerns concept drift. The design explicitly addresses this in Section 2 and Section 7 by using a 6-month chronologically separate test window ('Operational drift'). The purpose of the test set is precisely to measure if the model generalizes to future data. The critic is asking for rolling window analysis, but the 6-month holdout is the standard PoC method for validating stability.\n\nF5 argues PR-AUC doesn't map to a specific capacity (10-20%). The design addresses this in Section 5 by including 'Recall at fixed precision thresholds' and 'F1-score at the selected deployment threshold' as secondary metrics. PR-AUC is the primary metric for model selection (ranking), while the secondary metrics provide the operational utility check the critic is requesting.\n\nF6 suggests the audit for response phrases is too simple. The design specifies that text is extracted 'strictly at ticket creation time'. The audit is a secondary safety check, not the primary mechanism of prevention. The primary mechanism is the timestamp-based extraction of the initial customer description.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The objective is to test the utility of the text modality against a metadata-only baseline. A transformer is required to process the text; using a linear model for the enhanced version would be an unfair constraint that masks the signal the experiment seeks to find. The capacity is a means to an end (processing text), not the variable being tested."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology specifies temporal splits but does not explicitly detail the point-in-time join logic for rolling features. To settle this: 1. Perform a 'leakage audit' by comparing feature values for the same customer across different time-slices. 2. If values remain constant regardless of the 'current' ticket timestamp, leakage is present. 3. If values evolve chronologically, the design is vindicated. 4. The primary conclusion remains valid if the leakage is proven absent; otherwise, the results are inflated. This requires empirical verification of the pipeline code."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The experiment's scope is to predict breaches on tickets requiring human intervention. Auto-closed tickets are handled by automation and do not enter the SLA breach risk pool for agents; including them would create a trivial classification task that does not align with the operational objective."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The design explicitly controls for operational drift by using a 6-month chronologically separate test window (Section 2 and 7). The performance on this held-out future window is the direct measure of the model's stability against the drift the critic describes."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The design already includes 'Recall at fixed precision thresholds' and 'F1-score at the selected deployment threshold' (Section 5) to specifically address the operational capacity constraints mentioned by the critic."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The primary control is the extraction of text 'strictly at ticket creation time' (Section 3). The phrase-based audit is a secondary validation step, not the primary mechanism for preventing leakage."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were rebutted based on design intent or scope. However, F2 identifies a high-risk area (rolling window leakage) that is not explicitly detailed in the methodology's logic, requiring an empirical audit of the feature pipeline to ensure no future-lookahead occurred."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender argues that a transformer is required to process text and that using a linear model would be an unfair constraint. This does not address the specific failure mechanism: the enhanced model's higher representational capacity could drive performance gains independent of the ticket text. A capacity-controlled baseline (e.g., a transformer trained on metadata-only features) is needed to isolate the effect of the text modality, which the rebuttal does not provide."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 8,
+        "reasoning": "The defender defers the issue, proposing an empirical leakage audit to settle the concern. As a DEFER rebuttal, we accept that the question remains open and require no further counter; the severity remains unchanged."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender clarifies that the experiment's scope is tickets requiring human intervention, and auto-closed tickets are handled by automation and thus outside the target population. This directly addresses the failure mechanism by showing the exclusion is intentional and not a bias relative to the intended use case."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender points to the 6-month chronologically separate test window as a direct operational control for drift, measuring performance on future data to assess stability. This addresses the failure mechanism by linking the held\u2011out test to the specific concern about temporal concept drift."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 1,
+        "reasoning": "The defender notes that recall at fixed precision thresholds and F1 at a selected deployment threshold are already included. These metrics do address threshold\u2011specific performance, but the rebuttal does not demonstrate that they capture the utility at the exact escalation\u2011capacity constraint (e.g., recall when flagging 10\u201120% of tickets). Thus the concern about PR\u2011AUC\u2019s indirectness is only partially mitigated."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender states that the primary leakage control is extracting ticket text strictly at creation time, making the phrase\u2011based audit a secondary check. This directly counters the failure mechanism: if text is frozen before any agent notes are added, subtle leakage cannot occur regardless of the audit\u2019s completeness."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F3, F4, and F6 as they were accepted. For F1, the critic maintains that model capacity is a confounding variable; since the methodology does not include a capacity-matched baseline (e.g., a transformer on metadata), I cannot use REBUT-DESIGN for a FATAL/MATERIAL finding without specific text. I will switch to DEFER as the relative gain can be empirically isolated. For F5, the critic notes that while secondary metrics exist, they don't explicitly target the 10-20% capacity constraint; I will switch to DEFER to specify the exact measurement needed to settle the utility claim.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic is correct that the current design compares a high-capacity model (Transformer) to a low-capacity one (Logistic Regression). To settle this: 1. Implement a 'capacity-matched baseline' using the same Transformer architecture but with the text input replaced by a zero-tensor or random noise. 2. If the Enhanced model significantly outperforms this matched baseline, the gain is attributable to the text modality. 3. If the matched baseline performs similarly to the Enhanced model, the gain was due to architecture capacity. 4. The primary conclusion (text adds value) remains valid if the Enhanced model wins; if the matched baseline wins, the conclusion changes to 'model capacity, not text, drove the gain'.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Maintained from R1. The temporal split is designed to prevent leakage, but the specific point-in-time join logic for rolling features requires an empirical audit of the pipeline code to confirm no future timestamps are accessed.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The exclusion of auto-closed tickets is a scope decision based on the operational objective: predicting breaches for tickets requiring human intervention. These tickets are not part of the target population for the escalation model.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The 6-month chronologically separate test window (Section 2) is the specific design control that measures the model's robustness to the concept drift described by the critic.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "While secondary metrics (Recall at fixed precision) are included, to settle the specific operational utility concern: 1. Calculate 'Precision at Top-K' where K is 10-20% of the total ticket volume. 2. If the Enhanced model shows higher precision at this specific volume than the baseline, the operational utility is vindicated. 3. If they are equal, PR-AUC was a misleading proxy for utility. 4. The primary conclusion (predictive superiority) remains valid regardless, as the ranking quality (PR-AUC) is a prerequisite for any threshold-based utility.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The design prevents leakage by extracting text strictly at ticket creation time (Section 3), which eliminates the possibility of agent notes being present regardless of the audit's keyword list.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several findings (F1, F2, F5) have been moved to DEFER, as the design provides partial controls but requires specific empirical audits or matched baselines to fully resolve the critic's mechanistic concerns."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Any performance difference between the enhanced model and the baseline is attributable to the text feature set, not to differences in model capacity or tuning effort.",
+        "failure_mechanism": "The enhanced model uses a transformer encoder (DistilBERT) while the baseline uses logistic regression. Even with equivalent tuning effort, the transformer has substantially greater representational capacity, so observed gains could stem from this capacity advantage rather than from the ticket text itself.",
+        "evidence_test": "Introduce a capacity-controlled baseline that mirrors the enhanced model's architecture but receives only the structured metadata (e.g., a transformer trained on metadata-only features, or a transformer with text inputs replaced by random noise/shuffled text). Compare its performance to the enhanced model; if the enhanced model no longer outperforms this baseline, the original claim is unsupported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Derived features such as prior customer SLA compliance rate (last 90 days) and prior ticket count (last 30 days) are computed without leaking future information.",
+        "failure_mechanism": "If these rolling-window statistics are calculated using an expanding window that inadvertently includes tickets created after the target ticket (e.g., by computing statistics over the entire dataset before splitting), then the features encode future label information, creating signal leakage that artificially inflates performance.",
+        "evidence_test": "Audit the feature generation pipeline to confirm that, for each ticket, the maximum timestamp used in any rolling-window calculation is strictly less than the ticket's creation timestamp. This can be done by checking that the feature values change when the dataset is restricted to strictly preceding tickets.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding tickets that were auto-closed or never received a response does not bias the estimated performance or generalizability of the model.",
+        "failure_mechanism": "Excluded tickets may have systematically different SLA breach characteristics (e.g., auto-closed tickets are often resolved quickly, thus non\u2011breach). Removing them alters the breach rate and the underlying distribution of features, so performance measured on the remaining subset may not reflect performance on the full ticket stream.",
+        "evidence_test": "Compare breach rates, feature distributions, and model metrics (PR\u2011AUC, recall at fixed precision) between the included set and the excluded set. Assess whether the excluded set is missing at random or exhibits systematic differences.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The relationship between ticket text (and metadata) and first\u2011response SLA breach is stable over the 6\u2011month holdout period, so validation/test performance reflects future deployment performance.",
+        "failure_mechanism": "Concept drift in language, product updates, or changes in SLA policies could alter the predictive signal over time. If the model learns patterns that are specific to the training period, its performance may degrade when deployed on later tickets, making the held\u2011out test overly optimistic.",
+        "evidence_test": "Monitor performance over time: compute PR\u2011AUC (or recall at fixed precision) on rolling monthly windows after the training period and look for significant trends or drops. Additionally, examine drift in embedding spaces or feature importance across periods.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Precision\u2011Recall AUC is an appropriate primary metric for the operational goal of limited escalation capacity (10\u201120% of the queue).",
+        "failure_mechanism": "PR\u2011AUC summarizes ranking quality across all thresholds but does not directly measure utility at the specific escalation capacity constraint. A model could achieve high PR\u2011AUC yet deliver poor precision at the recall level that corresponds to the available escalation bandwidth, leading to misleading conclusions about operational usefulness.",
+        "evidence_test": "Perform a decision\u2011curve analysis or compute expected cost/utility at the escalation capacity threshold (e.g., precision at the recall that yields 10\u201120% of tickets flagged). Compare this utility metric between the enhanced model and baseline to see if the ranking advantage translates into better operational decisions.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The post\u2011hoc audit successfully detects any contamination of ticket text with agent responses or internal notes.",
+        "failure_mechanism": "The audit only searches for specific phrases (e.g., 'assigned to', 'resolved'). Subtle forms of leakage\u2014such as internal notes added before the first response that do not contain those phrases\u2014would go undetected, allowing future information to influence the model.",
+        "evidence_test": "Manually inspect a random sample of ticket bodies for signs of agent\u2011generated content (e.g., signatures, ticket system markup, agent\u2011specific phrasing) that is not captured by the audit phrase list. Quantify the proportion of contaminated samples missed by the audit.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC presents a reasonable temporal holdout design but suffers from several methodological gaps: the enhanced model's advantage may stem from its greater capacity rather than text, rolling\u2011window features risk future leakage, and excluded tickets could bias the sample. While these issues weaken the conclusions, they do not completely invalidate the investigation unless leakage is present.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F3, F4, and F6 as they were accepted. For F1, the critic maintains that model capacity is a confounding variable; since the methodology does not include a capacity-matched baseline (e.g., a transformer on metadata), I cannot use REBUT-DESIGN for a FATAL/MATERIAL finding without specific text. I will switch to DEFER as the relative gain can be empirically isolated. For F5, the critic notes that while secondary metrics exist, they don't explicitly target the 10-20% capacity constraint; I will switch to DEFER to specify the exact measurement needed to settle the utility claim.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic is correct that the current design compares a high-capacity model (Transformer) to a low-capacity one (Logistic Regression). To settle this: 1. Implement a 'capacity-matched baseline' using the same Transformer architecture but with the text input replaced by a zero-tensor or random noise. 2. If the Enhanced model significantly outperforms this matched baseline, the gain is attributable to the text modality. 3. If the matched baseline performs similarly to the Enhanced model, the gain was due to architecture capacity. 4. The primary conclusion (text adds value) remains valid if the Enhanced model wins; if the matched baseline wins, the conclusion changes to 'model capacity, not text, drove the gain'.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Maintained from R1. The temporal split is designed to prevent leakage, but the specific point-in-time join logic for rolling features requires an empirical audit of the pipeline code to confirm no future timestamps are accessed.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The exclusion of auto-closed tickets is a scope decision based on the operational objective: predicting breaches for tickets requiring human intervention. These tickets are not part of the target population for the escalation model.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The 6-month chronologically separate test window (Section 2) is the specific design control that measures the model's robustness to the concept drift described by the critic.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "While secondary metrics (Recall at fixed precision) are included, to settle the specific operational utility concern: 1. Calculate 'Precision at Top-K' where K is 10-20% of the total ticket volume. 2. If the Enhanced model shows higher precision at this specific volume than the baseline, the operational utility is vindicated. 3. If they are equal, PR-AUC was a misleading proxy for utility. 4. The primary conclusion (predictive superiority) remains valid regardless, as the ranking quality (PR-AUC) is a prerequisite for any threshold-based utility.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The design prevents leakage by extracting text strictly at ticket creation time (Section 3), which eliminates the possibility of agent notes being present regardless of the audit's keyword list.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several findings (F1, F2, F5) have been moved to DEFER, as the design provides partial controls but requires specific empirical audits or matched baselines to fully resolve the critic's mechanistic concerns."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=8 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

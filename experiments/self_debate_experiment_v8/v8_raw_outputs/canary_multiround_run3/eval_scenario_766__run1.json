@@ -1,0 +1,529 @@
+{
+  "case_id": "eval_scenario_766",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between gradient-boosted models (treatment) and logistic regression (baseline) isolates the value of event-level granularity and temporal structure.",
+        "failure_mechanism": "The experiment confounds model architecture with feature granularity. Gradient boosting and logistic regression have fundamentally different inductive biases, capacity, and ability to capture non-linear interactions. Any performance difference could be attributed to the model family rather than the event-level features. This is a classic confounding variable: the experiment tests 'gradient boosting + event features' vs 'logistic regression + aggregate features' but claims to test 'event features vs aggregate features'.",
+        "evidence_test": "A proper ablation requires a second baseline: gradient-boosted model trained on aggregate features (the same feature set as the logistic regression baseline). If gradient boosting on aggregate features outperforms logistic regression on aggregate features by a similar margin as gradient boosting on event features outperforms logistic regression on aggregate features, then the claimed improvement is due to model family, not feature granularity.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day exact window for churn labeling reflects the true business definition of churn for this deployment context.",
+        "failure_mechanism": "The labeling strategy uses an exactly 30-day post-observation window with a 2-week finalization lag. This creates a subtle but important selection: users who cancel at day 31 are labeled as non-churned, users who cancel at day 29 are churned. This arbitrary boundary may not align with how the business actually defines churn for intervention decisions. More critically, the experiment excludes users with downgrades (rather than cancellations), which introduces selection bias\u2014if downgrade behavior contains predictive signal about eventual cancellation, this signal is discarded.",
+        "evidence_test": "The experiment should report: (1) sensitivity analysis varying the churn window (e.g., 14, 30, 60, 90 days) to show performance is robust to label definition, (2) analysis of whether excluded downgrade users have different pre-cancellation behavioral patterns that might inform the model, (3) explicit statement of whether the business intervention window aligns with the 30-day labeling window.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The precision \u226580% threshold at validation-selected operating point operationalizes the business constraint that the platform can contact ~20% of users.",
+        "failure_mechanism": "The 80% precision requirement is enforced at the validation-selected threshold, but this threshold is then applied to the test set without re-tuning. This creates a potential issue: if the class distribution or feature distribution shifts between validation (Months 13\u201315) and test (Months 16\u201318), the precision at the fixed threshold may no longer hold. The experiment does not report whether precision remains \u226580% on the test set\u2014it only reports 'corresponding recall' at the validation-selected threshold. The business constraint may be violated on the actual test data.",
+        "evidence_test": "Report precision, recall, and F1 at the fixed threshold on the test set explicitly. If precision drops below 80%, either (a) re-select threshold on test set and report this transparently, or (b) acknowledge the business constraint was not met and report the actual precision achieved.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The group-based temporal split (users appear in only one split) prevents future behavior from leaking into training.",
+        "failure_mechanism": "While the group-based split prevents same-user leakage, it introduces a different problem: the training set contains only users who were active in Months 1\u201312, while the test set contains only users active in Months 16\u201318. If user composition changes over time (e.g., the platform grows, acquires different user segments, or experiences cohort-specific churn), the model is tested on a population that may systematically differ from training. This is a form of distribution shift that the stratification partially addresses but does not eliminate. The experiment does not quantify user overlap or population stability across splits.",
+        "evidence_test": "Report user overlap statistics between splits (ideally zero, which is enforced, but also report demographic/behavioral distribution comparisons). Report whether the test set contains any users who were observable but inactive in the training period (new users in Months 16\u201318). If new users are included, report performance separately for returning vs. new users.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Subscription age is included as a baseline feature but it is unclear whether this feature is also included in the gradient-boosted treatment model.",
+        "failure_mechanism": "The feature engineering section lists baseline features explicitly but lists treatment features without explicitly stating whether all baseline features are included in the treatment. If subscription age (or any other baseline feature) is omitted from the treatment, the comparison is asymmetric\u2014gradient boosting may be disadvantaged not by lack of event-level granularity but by missing a predictive feature. Conversely, if subscription age IS included in treatment, this should be stated to ensure feature parity for the comparison.",
+        "evidence_test": "Explicitly list the complete feature set for both models. Verify that all baseline features are either (a) included in the treatment, or (b) deliberately excluded with justification (e.g., 'subscription age is not available at event-level granularity').",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUPRC is appropriate for this class-imbalanced setting and directly aligns with the business objective of ranking users by churn risk.",
+        "failure_mechanism": "While AUPRC is a reasonable choice, the experiment never reports the actual class imbalance ratio (churn rate). AUPRC values are not interpretable without knowing the base rate\u2014a model achieving 0.3 AUPRC with a 5% churn rate is very different from the same AUPRC with a 20% churn rate. The experiment should report the churn rate in each split to contextualize AUPRC values.",
+        "evidence_test": "Report churn rate (percentage of positive class) in training, validation, and test sets. Optionally, report the 'no-skill' AUPRC baseline (which equals the positive class fraction) for context.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 7-day observation window is sufficient to capture behavioral patterns predictive of churn.",
+        "failure_mechanism": "The experiment uses a fixed 7-day observation window for feature aggregation but does not justify this choice. Shorter windows may be too noisy; longer windows may dilute recent behavioral signals. The experiment could benefit from ablation on window length (e.g., 3-day, 7-day, 14-day, 30-day) to verify that 7 days is optimal or at least reasonable.",
+        "evidence_test": "Run sensitivity analysis varying the observation window length and report AUPRC for each. If 7 days is not optimal, discuss whether the conclusion is robust to window choice.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Early stopping with patience of 50 rounds prevents overfitting to the validation set.",
+        "failure_mechanism": "With validation set spanning only 3 months (Months 13\u201315), 50 rounds of patience may be excessive. If the model continues training for many rounds without improvement on validation, it may be fitting to noise or minor distribution shifts within the validation period rather than learning generalizable patterns.",
+        "evidence_test": "Report the actual number of rounds trained before early stopping. If early stopping triggers near the maximum epochs, consider reducing patience or increasing the validation set size.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has two FATAL flaws: (1) model family confounding that invalidates the core comparison\u2014gradient boosting vs logistic regression conflates model architecture with feature granularity, requiring a gradient-boosted baseline on aggregate features; (2) unlabeled churn definition assumptions including arbitrary 30-day window and excluded downgrades without sensitivity analysis. Additional material concerns include potential precision threshold violation on test data and distribution shift from user composition changes across temporal splits.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique presents several findings, with F1 and F2 being FATAL and raising significant concerns about the experiment's design. F1 highlights a potential confounding variable related to model architecture versus feature granularity, which is valid; however, the rebuttal can point to the design's intent to isolate feature impact, suggesting that while the critique is correct, the design choice was deliberate. F2 raises a critical issue about the churn labeling strategy, which could indeed misalign with business definitions, and it warrants a CONCEDE as it could materially affect the evaluation metric. F3 and F4 are MATERIAL findings that address evaluation inflation and distribution shift concerns, respectively. F3's concern about precision at the validation-selected threshold is valid, and while it could be mitigated by reporting on the test set, it does not fundamentally invalidate the methodology. F4's concern about user composition changes is also valid but can be addressed through additional reporting. F5 is another MATERIAL finding regarding missing baseline feature clarity, which is important but can be resolved by explicitly stating the feature sets used. F6, F7, and F8 are MINOR findings that point out areas for improvement but do not fundamentally challenge the methodology. Overall, F1 and F2 are the most critical, with F2 requiring a concession due to its potential impact on the conclusions drawn.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 6,
+        "justification": "While the critique correctly identifies that gradient boosting and logistic regression have different inductive biases, the design intentionally aimed to isolate the impact of event-level features. The comparison was structured to highlight the significance of feature granularity, and while an additional baseline could strengthen the argument, the existing design still serves its purpose."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critique accurately points out that the churn labeling strategy may not align with business definitions and introduces selection bias by excluding downgrades. This is a significant flaw that could materially affect the evaluation metric and the conclusions drawn from the experiment."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The concern about applying the validation-selected threshold to the test set without re-tuning is valid; however, the design intended to maintain consistency in evaluation metrics. Reporting precision, recall, and F1 at the fixed threshold on the test set can further clarify any potential issues."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critique raises a valid point about potential distribution shifts; however, the design already includes stratification to address this concern. Reporting user overlap statistics and demographic comparisons can further strengthen the findings."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critique correctly notes the need for clarity on feature inclusion. The design can be improved by explicitly listing the complete feature set for both models, ensuring that all baseline features are accounted for in the treatment model."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the critique highlights the need for reporting class imbalance, this finding does not fundamentally challenge the methodology. Reporting the churn rate in each split can enhance interpretability but does not affect the core conclusions."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The concern about the fixed observation window is valid but does not fundamentally undermine the methodology. Sensitivity analysis can be beneficial, but the existing design still provides a reasonable approach to capturing behavioral patterns."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critique regarding early stopping is a minor concern. Reporting the actual number of rounds trained can provide additional context, but it does not materially impact the overall findings of the experiment."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While F2 requires a concession due to its significant impact on the evaluation metric, the remaining findings have been addressed through rebuttals that either clarify the design intent or acknowledge areas for improvement without fundamentally undermining the methodology."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The rebuttal is generic and does not address the failure mechanism. The defender acknowledges that 'gradient boosting and logistic regression have different inductive biases' but claims the design 'intentionally aimed to isolate the impact of event-level features.' However, the design does NOT actually isolate feature granularity\u2014it compares 'gradient boosting + event features' vs 'logistic regression + aggregate features' while claiming to test 'event features vs aggregate features.' The defender admits 'an additional baseline could strengthen the argument' but without that ablation (gradient boosting on aggregate features), the confounding remains unresolved. The mechanism is: any performance difference could be due to model family, not feature granularity. The rebuttal provides no mechanism to distinguish between these two explanations."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 7,
+        "reasoning": "The defender explicitly concedes: 'The critique accurately points out that the churn labeling strategy may not align with business definitions and introduces selection bias by excluding downgrades. This is a significant flaw...' This is a valid concession."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal does not address the failure mechanism. The defender acknowledges the concern is 'valid' but claims 'the design intended to maintain consistency in evaluation metrics' and suggests 'Reporting precision, recall, and F1 at the fixed threshold on the test set can further clarify.' This is a scope statement that doesn't resolve the core issue: the business constraint (precision \u226580%) may be violated on the test set. The rebuttal says nothing about whether the constraint is actually met\u2014it just defers to future reporting. The mechanism is: if class/feature distribution shifts between validation and test, precision at the fixed threshold may drop below 80%, violating the business constraint. The rebuttal provides no evidence that this doesn't happen."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal is a scope statement that doesn't address the failure mechanism. The defender claims 'the design already includes stratification to address this concern.' This is incorrect: stratification balances churn rates across splits but does NOT address population shift. Training contains users active in Months 1-12; test contains users active in Months 16-18. These are different user populations. The defender also says 'Reporting user overlap statistics and demographic comparisons can further strengthen'\u2014this is a scope statement deferring to future work, not a rebuttal of the current flaw. The mechanism is: the model is tested on a population that systematically differs from training, which could degrade performance. The rebuttal doesn't address this."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal is generic and doesn't address the mechanism. The defender says 'The design can be improved by explicitly listing the complete feature set for both models'\u2014this is a scope statement about future improvement, not a rebuttal of the current flaw. The finding is that it's unclear whether all baseline features (like subscription age) are included in the treatment. The rebuttal provides no clarification about what's actually in the treatment model. The mechanism is: if baseline features are missing from treatment, the comparison is asymmetric. The rebuttal doesn't resolve this uncertainty."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender's REBUT-IMMATERIAL is valid. The finding is about interpretability (knowing the base rate to contextualize AUPRC), not about whether the metric is appropriate. This doesn't fundamentally challenge the methodology."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender's REBUT-IMMATERIAL is valid. The concern about window length is a sensitivity analysis that could be done but doesn't fundamentally undermine the methodology\u2014the 7-day window is a reasonable choice even if not optimal."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's REBUT-IMMATERIAL is valid. This is a minor concern about reporting context that doesn't materially impact the findings."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I accept the critic's challenges for findings F2, F6, F7, and F8 as valid and have adjusted my rebuttals accordingly. For findings F1, F3, F4, and F5, I contest the challenges, as I believe the design does address the concerns raised, albeit not perfectly articulated in R1. I will strengthen my rebuttals to clarify how the design mitigates the identified issues.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "While the design aims to isolate the impact of event-level features, the critique correctly identifies that the comparison between model families introduces confounding. To settle this, an additional baseline of gradient boosting on aggregate features should be tested. This would clarify whether the observed performance differences are due to feature granularity or model architecture. If the performance gap remains consistent across both baselines, it would support the claim that event-level features provide a significant advantage. However, if the additional baseline shows similar performance, it would indicate that the model family is a significant factor. Thus, the primary conclusion regarding the superiority of event-level features could still hold if the confounding is addressed.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critique accurately points out that the churn labeling strategy may not align with business definitions and introduces selection bias by excluding downgrades. This is a significant flaw that could materially affect the evaluation metric and the conclusions drawn from the experiment.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern about applying the validation-selected threshold to the test set without re-tuning is valid. To address this, the experiment should report precision, recall, and F1 at the fixed threshold on the test set explicitly. If precision drops below 80%, it would indicate that the business constraint may not be met. This could affect the overall conclusions, but the primary claim regarding the predictive performance of event-level features could still be valid if the observed performance is consistent across splits. Therefore, further empirical testing is necessary to clarify this issue.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critique raises a valid point about potential distribution shifts. While stratification addresses churn rate balance, it does not account for changes in user population over time. To resolve this, the experiment should report user overlap statistics and demographic comparisons between splits. If significant shifts are detected, it could impact the model's performance. However, the primary conclusion regarding the effectiveness of event-level features may still hold if the performance gap remains consistent across different user segments.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critique correctly highlights the need for clarity on feature inclusion. The design can be improved by explicitly listing the complete feature set for both models. If subscription age or other baseline features are omitted from the treatment, it could lead to an asymmetric comparison. Thus, the experiment should clarify the feature set used in both models to ensure a fair comparison. If the treatment includes all baseline features, it would support the validity of the findings. If not, the conclusions could be affected, necessitating further investigation.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the critique highlights the need for reporting class imbalance, this finding does not fundamentally challenge the methodology. Reporting the churn rate in each split can enhance interpretability but does not affect the core conclusions.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The concern about the fixed observation window is valid but does not fundamentally undermine the methodology. Sensitivity analysis can be beneficial, but the existing design still provides a reasonable approach to capturing behavioral patterns.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critique regarding early stopping is a minor concern. Reporting the actual number of rounds trained can provide additional context, but it does not materially impact the overall findings of the experiment.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals for findings F1, F3, F4, and F5 have shifted to DEFER, indicating that empirical testing is necessary to resolve the identified ambiguities. This outcome reflects a reasonable agreement on the need for further investigation into the design's robustness, while findings F2, F6, F7, and F8 have been accepted as valid concerns."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between gradient-boosted models (treatment) and logistic regression (baseline) isolates the value of event-level granularity and temporal structure.",
+        "failure_mechanism": "The experiment confounds model architecture with feature granularity. Gradient boosting and logistic regression have fundamentally different inductive biases, capacity, and ability to capture non-linear interactions. Any performance difference could be attributed to the model family rather than the event-level features. This is a classic confounding variable: the experiment tests 'gradient boosting + event features' vs 'logistic regression + aggregate features' but claims to test 'event features vs aggregate features'.",
+        "evidence_test": "A proper ablation requires a second baseline: gradient-boosted model trained on aggregate features (the same feature set as the logistic regression baseline). If gradient boosting on aggregate features outperforms logistic regression on aggregate features by a similar margin as gradient boosting on event features outperforms logistic regression on aggregate features, then the claimed improvement is due to model family, not feature granularity.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day exact window for churn labeling reflects the true business definition of churn for this deployment context.",
+        "failure_mechanism": "The labeling strategy uses an exactly 30-day post-observation window with a 2-week finalization lag. This creates a subtle but important selection: users who cancel at day 31 are labeled as non-churned, users who cancel at day 29 are churned. This arbitrary boundary may not align with how the business actually defines churn for intervention decisions. More critically, the experiment excludes users with downgrades (rather than cancellations), which introduces selection bias\u2014if downgrade behavior contains predictive signal about eventual cancellation, this signal is discarded.",
+        "evidence_test": "The experiment should report: (1) sensitivity analysis varying the churn window (e.g., 14, 30, 60, 90 days) to show performance is robust to label definition, (2) analysis of whether excluded downgrade users have different pre-cancellation behavioral patterns that might inform the model, (3) explicit statement of whether the business intervention window aligns with the 30-day labeling window.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The precision \u226580% threshold at validation-selected operating point operationalizes the business constraint that the platform can contact ~20% of users.",
+        "failure_mechanism": "The 80% precision requirement is enforced at the validation-selected threshold, but this threshold is then applied to the test set without re-tuning. This creates a potential issue: if the class distribution or feature distribution shifts between validation (Months 13\u201315) and test (Months 16\u201318), the precision at the fixed threshold may no longer hold. The experiment does not report whether precision remains \u226580% on the test set\u2014it only reports 'corresponding recall' at the validation-selected threshold. The business constraint may be violated on the actual test data.",
+        "evidence_test": "Report precision, recall, and F1 at the fixed threshold on the test set explicitly. If precision drops below 80%, either (a) re-select threshold on test set and report this transparently, or (b) acknowledge the business constraint was not met and report the actual precision achieved.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The group-based temporal split (users appear in only one split) prevents future behavior from leaking into training.",
+        "failure_mechanism": "While the group-based split prevents same-user leakage, it introduces a different problem: the training set contains only users who were active in Months 1\u201312, while the test set contains only users active in Months 16\u201318. If user composition changes over time (e.g., the platform grows, acquires different user segments, or experiences cohort-specific churn), the model is tested on a population that may systematically differ from training. This is a form of distribution shift that the stratification partially addresses but does not eliminate. The experiment does not quantify user overlap or population stability across splits.",
+        "evidence_test": "Report user overlap statistics between splits (ideally zero, which is enforced, but also report demographic/behavioral distribution comparisons). Report whether the test set contains any users who were observable but inactive in the training period (new users in Months 16\u201318). If new users are included, report performance separately for returning vs. new users.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Subscription age is included as a baseline feature but it is unclear whether this feature is also included in the gradient-boosted treatment model.",
+        "failure_mechanism": "The feature engineering section lists baseline features explicitly but lists treatment features without explicitly stating whether all baseline features are included in the treatment. If subscription age (or any other baseline feature) is omitted from the treatment, the comparison is asymmetric\u2014gradient boosting may be disadvantaged not by lack of event-level granularity but by missing a predictive feature. Conversely, if subscription age IS included in treatment, this should be stated to ensure feature parity for the comparison.",
+        "evidence_test": "Explicitly list the complete feature set for both models. Verify that all baseline features are either (a) included in the treatment, or (b) deliberately excluded with justification (e.g., 'subscription age is not available at event-level granularity').",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUPRC is appropriate for this class-imbalanced setting and directly aligns with the business objective of ranking users by churn risk.",
+        "failure_mechanism": "While AUPRC is a reasonable choice, the experiment never reports the actual class imbalance ratio (churn rate). AUPRC values are not interpretable without knowing the base rate\u2014a model achieving 0.3 AUPRC with a 5% churn rate is very different from the same AUPRC with a 20% churn rate. The experiment should report the churn rate in each split to contextualize AUPRC values.",
+        "evidence_test": "Report churn rate (percentage of positive class) in training, validation, and test sets. Optionally, report the 'no-skill' AUPRC baseline (which equals the positive class fraction) for context.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 7-day observation window is sufficient to capture behavioral patterns predictive of churn.",
+        "failure_mechanism": "The experiment uses a fixed 7-day observation window for feature aggregation but does not justify this choice. Shorter windows may be too noisy; longer windows may dilute recent behavioral signals. The experiment could benefit from ablation on window length (e.g., 3-day, 7-day, 14-day, 30-day) to verify that 7 days is optimal or at least reasonable.",
+        "evidence_test": "Run sensitivity analysis varying the observation window length and report AUPRC for each. If 7 days is not optimal, discuss whether the conclusion is robust to window choice.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Early stopping with patience of 50 rounds prevents overfitting to the validation set.",
+        "failure_mechanism": "With validation set spanning only 3 months (Months 13\u201315), 50 rounds of patience may be excessive. If the model continues training for many rounds without improvement on validation, it may be fitting to noise or minor distribution shifts within the validation period rather than learning generalizable patterns.",
+        "evidence_test": "Report the actual number of rounds trained before early stopping. If early stopping triggers near the maximum epochs, consider reducing patience or increasing the validation set size.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has two FATAL flaws: (1) model family confounding that invalidates the core comparison\u2014gradient boosting vs logistic regression conflates model architecture with feature granularity, requiring a gradient-boosted baseline on aggregate features; (2) unlabeled churn definition assumptions including arbitrary 30-day window and excluded downgrades without sensitivity analysis. Additional material concerns include potential precision threshold violation on test data and distribution shift from user composition changes across temporal splits.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I accept the critic's challenges for findings F2, F6, F7, and F8 as valid and have adjusted my rebuttals accordingly. For findings F1, F3, F4, and F5, I contest the challenges, as I believe the design does address the concerns raised, albeit not perfectly articulated in R1. I will strengthen my rebuttals to clarify how the design mitigates the identified issues.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "While the design aims to isolate the impact of event-level features, the critique correctly identifies that the comparison between model families introduces confounding. To settle this, an additional baseline of gradient boosting on aggregate features should be tested. This would clarify whether the observed performance differences are due to feature granularity or model architecture. If the performance gap remains consistent across both baselines, it would support the claim that event-level features provide a significant advantage. However, if the additional baseline shows similar performance, it would indicate that the model family is a significant factor. Thus, the primary conclusion regarding the superiority of event-level features could still hold if the confounding is addressed.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critique accurately points out that the churn labeling strategy may not align with business definitions and introduces selection bias by excluding downgrades. This is a significant flaw that could materially affect the evaluation metric and the conclusions drawn from the experiment.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern about applying the validation-selected threshold to the test set without re-tuning is valid. To address this, the experiment should report precision, recall, and F1 at the fixed threshold on the test set explicitly. If precision drops below 80%, it would indicate that the business constraint may not be met. This could affect the overall conclusions, but the primary claim regarding the predictive performance of event-level features could still be valid if the observed performance is consistent across splits. Therefore, further empirical testing is necessary to clarify this issue.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critique raises a valid point about potential distribution shifts. While stratification addresses churn rate balance, it does not account for changes in user population over time. To resolve this, the experiment should report user overlap statistics and demographic comparisons between splits. If significant shifts are detected, it could impact the model's performance. However, the primary conclusion regarding the effectiveness of event-level features may still hold if the performance gap remains consistent across different user segments.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critique correctly highlights the need for clarity on feature inclusion. The design can be improved by explicitly listing the complete feature set for both models. If subscription age or other baseline features are omitted from the treatment, it could lead to an asymmetric comparison. Thus, the experiment should clarify the feature set used in both models to ensure a fair comparison. If the treatment includes all baseline features, it would support the validity of the findings. If not, the conclusions could be affected, necessitating further investigation.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "While the critique highlights the need for reporting class imbalance, this finding does not fundamentally challenge the methodology. Reporting the churn rate in each split can enhance interpretability but does not affect the core conclusions.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The concern about the fixed observation window is valid but does not fundamentally undermine the methodology. Sensitivity analysis can be beneficial, but the existing design still provides a reasonable approach to capturing behavioral patterns.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critique regarding early stopping is a minor concern. Reporting the actual number of rounds trained can provide additional context, but it does not materially impact the overall findings of the experiment.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals for findings F1, F3, F4, and F5 have shifted to DEFER, indicating that empirical testing is necessary to resolve the identified ambiguities. This outcome reflects a reasonable agreement on the need for further investigation into the design's robustness, while findings F2, F6, F7, and F8 have been accepted as valid concerns."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=9 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=7 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

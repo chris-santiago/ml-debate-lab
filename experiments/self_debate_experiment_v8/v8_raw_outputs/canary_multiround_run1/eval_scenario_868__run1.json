@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_868",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split strategy (training on months 1-12, validation on 13-15, test on 16-18) ensures the model generalizes to genuinely unseen, forward-looking attacks and prevents test-time leakage from campaign duplicates.",
+        "failure_mechanism": "While temporal splitting prevents exact duplicates, it does not prevent leakage of *conceptual* campaign elements. Phishing campaigns often evolve gradually: attackers reuse core social engineering narratives, payload delivery methods, and sender personas across months. A model trained on early campaign variants could memorize these conceptual patterns and appear to generalize when tested on later variants from the same evolving campaign, without learning generalizable phishing cues. The 7-day dwell time for labeling may also create a subtle temporal overlap: an email from late in month 12 might be labeled using threat intelligence that becomes available in month 13, creating a future-looking signal in the training data.",
+        "evidence_test": "Perform campaign clustering (e.g., by C2 infrastructure, payload hash families, or narrative templates) across the entire 18-month period. Calculate the proportion of test-set campaigns that have conceptual predecessors (shared core elements) in the training set. If this proportion is high (>30%), the temporal split's protective effect is limited. Also, audit label timestamps: ensure no training email has a label assigned after its timestamp using intelligence gathered after the training period cutoff.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The primary evaluation metric (PR-AUC) directly captures the stakeholder's objective and is sufficient to claim the transformer model 'outperforms' the baseline for operational deployment.",
+        "failure_mechanism": "PR-AUC is threshold-agnostic, but operational deployment requires choosing a specific threshold that balances precision and recall. A model with higher PR-AUC can have worse precision at the low false-positive rates required in production (e.g., 0.1% FPR). The stakeholder's true objective is minimizing false positives while catching novel attacks\u2014metrics like Precision at 1% FPR or Recall at 0.1% FPR are more operationally relevant. Optimizing for PR-AUC may select a model that performs well across many thresholds but poorly at the critical operating point where the system must actually run.",
+        "evidence_test": "Compare the models not just on PR-AUC, but on precision-recall curves at the extreme low-FPR region (0-1% FPR). If the transformer's curve crosses below the baseline's in this region, its operational superiority is not established. Also, compute the expected daily false positive count at a threshold set to achieve 90% recall on the validation set and project it to production volume.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The label aggregation process (using four signals with 7-day dwell time and requiring consistency) produces sufficiently clean labels for both training and evaluation.",
+        "failure_mechanism": "Label noise is non-uniform and likely biased. Analyst-reviewed reports (signal 1) are scarce and may focus on obvious attacks. User reports (signal 2) are biased toward attacks that users notice (e.g., poorly crafted). Sandbox detonation (signal 3) misses fileless and socially engineered attacks. Threat-intelligence matches (signal 4) lag novel campaigns. Requiring 'consistent' signals may systematically exclude sophisticated spear-phishing (which may only trigger one signal) while including only broad, noisy campaigns. This creates a training/evaluation distribution that is not representative of the hardest, most novel attacks the hypothesis aims to detect.",
+        "evidence_test": "Analyze label source overlap: what percentage of phishing emails have only one labeling signal? Manually review a sample of these single-signal emails to assess their sophistication. If single-signal emails are more likely to be novel spear-phishing, and they are excluded from the labeled set, the model is not evaluated on its core challenge. Also, measure the latency between email receipt and label assignment for each source; if novel attacks have longer latency, the 7-day dwell may still miss them.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The orthogonal feature design (text features for transformer, reputation/header features for baseline) cleanly isolates the contribution of text modeling.",
+        "failure_mechanism": "This design creates an unfair baseline. In production, a system would use *all available features*. The claimed 'improvement' of the transformer might simply be because it receives different input modalities, not because text modeling is superior. A more rigorous test would be a hybrid model (transformer + reputation features) versus the reputation-only baseline. The current setup cannot distinguish between 'text features are valuable' and 'the transformer architecture is better at modeling the combined feature set'.",
+        "evidence_test": "Train a third model: the transformer architecture but with reputation/header features concatenated to the [CLS] token (in addition to text). Compare its performance to the text-only transformer and the logistic regression baseline. If the hybrid model outperforms both, the isolation claim is weakened; the improvement may come from feature combination, not text alone.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Freezing threat-intelligence reputation scores at a snapshot from the end of the training period prevents future data leakage.",
+        "failure_mechanism": "This introduces a distribution shift between training and test evaluation that disadvantages the baseline unfairly. In training, the baseline sees 'fresh' reputation scores (relative to email timestamp). In test, it sees scores frozen 3-6 months earlier. Real-world reputation scores decay and change; novel phishing domains have no reputation. However, the frozen snapshot gives stale, potentially misleading scores for test-period emails, artificially lowering the baseline's performance. The transformer, which doesn't use these scores, is unaffected. This confounds the comparison.",
+        "evidence_test": "Re-run the baseline evaluation using a realistic reputation lookup: for each test email, use the reputation score as it would have been *at the time the email arrived* (simulating a production lookup). Compare this to the frozen-snapshot performance. A significant gap indicates the comparison is biased.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The model selection process (early stopping on validation PR-AUC) is robust and will select the best model for the test period.",
+        "failure_mechanism": "Early stopping on a single validation set (months 13-15) assumes the validation period is representative of the test period (months 16-18). Given non-stationarity, the optimal model checkpoint for one 3-month window may not be optimal for the next. The model might overfit to transient patterns in the validation period that disappear in the test period, leading to suboptimal selection.",
+        "evidence_test": "Implement a time-series cross-validation on the training+validation data (e.g., expanding window) to select hyperparameters and stopping criteria. Compare the stability of the selected model's checkpoint across different validation folds. If checkpoint selection varies widely, the single validation split is unreliable.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The ablation baseline (transformer without body text) quantifies the value of full email body analysis.",
+        "failure_mechanism": "The ablation is incomplete. The transformer without body text still receives the subject line. The performance delta between the full transformer and this ablation conflates the value of the body text with the interaction between subject and body. A cleaner ablation would be: (1) subject only, (2) body only, (3) subject+body.",
+        "evidence_test": "Run the additional ablations (subject-only, body-only). If subject-only performance is close to subject+body, then the body text may not be the primary driver of improvement.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC has a strong temporal evaluation design but contains several potentially fatal flaws: possible conceptual campaign leakage across time splits, an operational metric misalignment, and a biased baseline comparison due to frozen reputation scores. These must be addressed to validate the hypothesis.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims conceptual leakage and label timing leakage. Regarding conceptual leakage, the design explicitly uses 'Campaign-level stratification' (Section 7.1) to ensure no campaign is split across folds, which directly addresses the reuse of narratives/personas. Regarding label timing, Section 3 explicitly states that threat-intelligence scores are frozen at a snapshot taken at the end of the training period, and Section 1 notes a 7-day dwell time to allow for enrichment, but the temporal split (months 1-12 vs 13-15) provides a multi-month buffer that far exceeds the 7-day window, making timing leakage highly unlikely.\n\nF2 argues PR-AUC is insufficient for operational deployment. However, the design includes 'Recall at 1% FPR' and 'Precision at 90% recall' as secondary metrics (Section 5), which are exactly the operational metrics the critic suggests. PR-AUC is the primary metric for model selection to ensure general robustness, but the operational performance is explicitly tracked.\n\nF3 argues that requiring 'consistent' labels excludes sophisticated attacks. This is a trade-off between label precision and recall. In a PoC designed to establish whether a transformer *can* detect phishing, using high-confidence labels is a standard way to reduce noise. The 'label provenance' recording (Section 1) allows for the stratified analysis the critic suggests as a test.\n\nF4 claims the baseline is unfair because it doesn't use a hybrid model. The intent of this PoC is to 'isolate the contribution of text modeling' (Section 3). Comparing a text-heavy model against a reputation-heavy baseline is the correct way to test the hypothesis that text features add value over the status quo. A hybrid model is a production optimization, not a requirement for a hypothesis test on feature utility.\n\nF5 claims freezing reputation scores unfairly penalizes the baseline. This is a misunderstanding of leakage prevention. If the baseline used 'fresh' scores for test emails (scores available at the time of arrival), it would be simulating production. However, the critic suggests the frozen snapshot is 'stale'. The design's intent is to prevent the model from knowing the future. Using scores as they were at the time of arrival is actually the correct way to evaluate; the 'frozen snapshot' mentioned in Section 3 refers to the *lookup tables/logic* used to generate those scores, not necessarily forcing a 6-month-old score onto a new email. Even if it did, this is a minor calibration issue compared to the signal of the text.\n\nF6 suggests time-series CV for early stopping. While a valid improvement, a 3-month validation window is a standard and reasonable proxy for a 3-month test window in a PoC. This is a minor methodological preference, not a flaw.\n\nF7 suggests more granular ablations (subject vs body). The current ablation (transformer without body) is sufficient to prove the value of the body text relative to the subject line and metadata. Further granularity is a 'nice-to-have' for a research paper, not a requirement for a PoC.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly implements 'Campaign-level stratification' (Section 7.1) to prevent conceptual leakage by ensuring no campaign is split across folds. The 7-day dwell time is negligible compared to the 3-month gap between training and validation sets."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design already includes the specific operational metrics requested (Recall at 1% FPR and Precision at 90% recall) as secondary metrics in Section 5 to complement the threshold-agnostic PR-AUC."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "Using consistent signals is a deliberate choice to minimize label noise for the PoC. The design records 'label provenance' (Section 1), which allows for the exact stratified analysis the critic suggests to verify if sophisticated attacks are being missed."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The stated goal is to 'isolate the contribution of text modeling' (Section 3). Testing a hybrid model is outside the scope of this specific hypothesis, which seeks to compare the text-based approach against the current reputation-based status quo."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The frozen snapshot prevents future leakage. The baseline's use of these scores is intended to mirror the available intelligence at the time of the training cutoff, ensuring the transformer's advantage isn't just based on the baseline having 'stale' data, but on the inherent value of text."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "A 3-month validation window is a reasonable and standard proxy for a 3-month test window in a PoC context."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The existing ablation is sufficient to determine if the email body provides value over the subject line and metadata."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted using existing design controls (Campaign-level stratification, operational secondary metrics, label provenance) or by clarifying the experiment's scope. Every finding's adjusted severity is \u2264 3, qualifying the methodology for exoneration."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal partially addresses the concern but leaves key mechanisms unresolved. While campaign-level stratification prevents exact campaign splits, it doesn't address the core issue of *conceptual* leakage across different campaigns that share narrative templates, social engineering patterns, or payload delivery methods. The design doesn't specify how 'campaign' is defined - if defined narrowly (e.g., by specific C2 infrastructure), conceptual patterns can still leak across different campaigns. The 7-day dwell time justification is insufficient; even a small temporal overlap could create future-looking signals if labeling uses intelligence gathered after the training cutoff. The severity adjustment from FATAL (8) to 3 is disproportionate given these unresolved issues."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal is valid and directly addresses the failure mechanism. The design explicitly includes the requested operational metrics (Recall at 1% FPR and Precision at 90% recall) as secondary metrics in Section 5. This means stakeholders can evaluate performance at critical operating points while still benefiting from the threshold-agnostic PR-AUC for overall comparison. The defender correctly identifies that both perspectives are covered, resolving the concern that PR-AUC alone might mask poor performance at operationally relevant thresholds."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal acknowledges the design choice but doesn't fully address the failure mechanism. While label provenance recording enables analysis, the design still trains and evaluates on a potentially biased subset (consistent signals only). The core concern is that this creates a distribution mismatch between the evaluation set and the hardest spear-phishing attacks the system aims to detect. Recording provenance doesn't prevent the model from being optimized for an easier problem. The severity adjustment from 6 to 3 is somewhat disproportionate as the fundamental representativeness issue remains."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal fails to address the failure mechanism. The scope justification doesn't resolve the methodological flaw: the isolation claim is undermined by comparing models with different feature sets rather than architectures with the same features. The stated goal 'to isolate the contribution of text modeling' is precisely what the current design fails to do cleanly. A hybrid model comparison would actually better serve this goal by isolating the marginal value of text features when added to the baseline feature set. The severity adjustment to 1 is disproportionate for a MATERIAL flaw in experimental design."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal misunderstands the failure mechanism. The concern isn't about preventing future leakage (which freezing does), but about creating an unfair comparison by giving the baseline stale data while the transformer gets fresh text features. In production, both systems would have access to current reputation data. The frozen snapshot disadvantages the baseline relative to real-world deployment, potentially inflating the transformer's apparent advantage. The justification that this ensures the transformer's advantage isn't 'just based on the baseline having stale data' actually confirms the problem - the comparison is biased against the baseline. The severity adjustment to 1 is disproportionate."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal is reasonable given the PoC context. While non-stationarity is a concern, a 3-month validation window as proxy for a subsequent 3-month test window represents standard practice for initial proof-of-concept investigations. The finding correctly identifies a theoretical risk, but in the context of a PoC (not production deployment), this represents a reasonable trade-off between rigor and practicality. The severity adjustment to MINOR (1) is appropriate."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal is reasonable for a MINOR finding. While additional ablations could provide more granular insights, the existing ablation (transformer without body text) does quantify whether the body provides value beyond subject and metadata. The interaction effect between subject and body is a secondary concern for a PoC. Given the finding's original MINOR severity (1), reducing it to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my position on F1 and F3, as the design controls (stratification and provenance) are the correct mechanisms for these concerns, even if the critic disagrees on the degree of protection. I am switching F4 to DEFER because the debate over 'isolation' vs 'marginal value' is a fundamental disagreement on experimental philosophy that requires empirical results to resolve. I am CONCEDING F5, as the critic correctly identified that freezing reputation scores creates an asymmetric disadvantage for the baseline that doesn't mirror production reality. F2, F6, and F7 remain accepted.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern regarding 'conceptual' leakage is a known challenge in all non-stationary ML tasks. However, the design implements 'Campaign-level stratification' (Section 7.1), which is the strongest available control to prevent the most common forms of leakage. While no split can perfectly eliminate all conceptual overlap in a dynamic threat landscape, this design prevents the most egregious leakage (exact campaign reuse). The 7-day dwell time is a labeling latency, not a feature leakage; it ensures labels are stable before being used, and the 3-month gap between training and validation provides a massive buffer against any minor temporal overlap.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The critic has accepted that the inclusion of Recall at 1% FPR and Precision at 90% recall as secondary metrics directly addresses the operational requirements.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design's use of 'consistent signals' is a noise-reduction strategy for the PoC. The critic's concern that this excludes sophisticated attacks is exactly why 'label provenance' (Section 1) is recorded. This allows the researchers to quantify the gap between 'consistent' and 'single-signal' phishing emails post-hoc. The design does not claim the labels are perfect, but provides the necessary metadata to audit the representativeness of the resulting dataset.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "There is a genuine disagreement here: the defender views this as a comparison of two different detection paradigms (text-based vs. reputation-based), while the critic views it as an unfair architectural comparison. Whether the 'marginal value' of text (via a hybrid model) is the only valid way to 'isolate' the contribution is an empirical question. We defer to the results of the primary experiment and the ablation study to see if the delta is significant enough to justify the current design.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic is correct. Freezing reputation scores at the end of the training period prevents future leakage but introduces a 'stale data' penalty for the baseline that the transformer does not share. This creates an asymmetric bias that could artificially inflate the transformer's relative performance compared to a real-world scenario where the baseline would have current reputation data.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic has accepted that a 3-month validation window is a reasonable proxy for a PoC.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic has accepted that the existing ablation is sufficient for a MINOR finding.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted the most severe findings (F1, F2, F3), but a genuine methodological disagreement remains on the baseline isolation (F4), leading to a DEFER. Additionally, a MATERIAL flaw regarding baseline bias (F5) was conceded."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split strategy (training on months 1-12, validation on 13-15, test on 16-18) ensures the model generalizes to genuinely unseen, forward-looking attacks and prevents test-time leakage from campaign duplicates.",
+        "failure_mechanism": "While temporal splitting prevents exact duplicates, it does not prevent leakage of *conceptual* campaign elements. Phishing campaigns often evolve gradually: attackers reuse core social engineering narratives, payload delivery methods, and sender personas across months. A model trained on early campaign variants could memorize these conceptual patterns and appear to generalize when tested on later variants from the same evolving campaign, without learning generalizable phishing cues. The 7-day dwell time for labeling may also create a subtle temporal overlap: an email from late in month 12 might be labeled using threat intelligence that becomes available in month 13, creating a future-looking signal in the training data.",
+        "evidence_test": "Perform campaign clustering (e.g., by C2 infrastructure, payload hash families, or narrative templates) across the entire 18-month period. Calculate the proportion of test-set campaigns that have conceptual predecessors (shared core elements) in the training set. If this proportion is high (>30%), the temporal split's protective effect is limited. Also, audit label timestamps: ensure no training email has a label assigned after its timestamp using intelligence gathered after the training period cutoff.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The primary evaluation metric (PR-AUC) directly captures the stakeholder's objective and is sufficient to claim the transformer model 'outperforms' the baseline for operational deployment.",
+        "failure_mechanism": "PR-AUC is threshold-agnostic, but operational deployment requires choosing a specific threshold that balances precision and recall. A model with higher PR-AUC can have worse precision at the low false-positive rates required in production (e.g., 0.1% FPR). The stakeholder's true objective is minimizing false positives while catching novel attacks\u2014metrics like Precision at 1% FPR or Recall at 0.1% FPR are more operationally relevant. Optimizing for PR-AUC may select a model that performs well across many thresholds but poorly at the critical operating point where the system must actually run.",
+        "evidence_test": "Compare the models not just on PR-AUC, but on precision-recall curves at the extreme low-FPR region (0-1% FPR). If the transformer's curve crosses below the baseline's in this region, its operational superiority is not established. Also, compute the expected daily false positive count at a threshold set to achieve 90% recall on the validation set and project it to production volume.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The label aggregation process (using four signals with 7-day dwell time and requiring consistency) produces sufficiently clean labels for both training and evaluation.",
+        "failure_mechanism": "Label noise is non-uniform and likely biased. Analyst-reviewed reports (signal 1) are scarce and may focus on obvious attacks. User reports (signal 2) are biased toward attacks that users notice (e.g., poorly crafted). Sandbox detonation (signal 3) misses fileless and socially engineered attacks. Threat-intelligence matches (signal 4) lag novel campaigns. Requiring 'consistent' signals may systematically exclude sophisticated spear-phishing (which may only trigger one signal) while including only broad, noisy campaigns. This creates a training/evaluation distribution that is not representative of the hardest, most novel attacks the hypothesis aims to detect.",
+        "evidence_test": "Analyze label source overlap: what percentage of phishing emails have only one labeling signal? Manually review a sample of these single-signal emails to assess their sophistication. If single-signal emails are more likely to be novel spear-phishing, and they are excluded from the labeled set, the model is not evaluated on its core challenge. Also, measure the latency between email receipt and label assignment for each source; if novel attacks have longer latency, the 7-day dwell may still miss them.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The orthogonal feature design (text features for transformer, reputation/header features for baseline) cleanly isolates the contribution of text modeling.",
+        "failure_mechanism": "This design creates an unfair baseline. In production, a system would use *all available features*. The claimed 'improvement' of the transformer might simply be because it receives different input modalities, not because text modeling is superior. A more rigorous test would be a hybrid model (transformer + reputation features) versus the reputation-only baseline. The current setup cannot distinguish between 'text features are valuable' and 'the transformer architecture is better at modeling the combined feature set'.",
+        "evidence_test": "Train a third model: the transformer architecture but with reputation/header features concatenated to the [CLS] token (in addition to text). Compare its performance to the text-only transformer and the logistic regression baseline. If the hybrid model outperforms both, the isolation claim is weakened; the improvement may come from feature combination, not text alone.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Freezing threat-intelligence reputation scores at a snapshot from the end of the training period prevents future data leakage.",
+        "failure_mechanism": "This introduces a distribution shift between training and test evaluation that disadvantages the baseline unfairly. In training, the baseline sees 'fresh' reputation scores (relative to email timestamp). In test, it sees scores frozen 3-6 months earlier. Real-world reputation scores decay and change; novel phishing domains have no reputation. However, the frozen snapshot gives stale, potentially misleading scores for test-period emails, artificially lowering the baseline's performance. The transformer, which doesn't use these scores, is unaffected. This confounds the comparison.",
+        "evidence_test": "Re-run the baseline evaluation using a realistic reputation lookup: for each test email, use the reputation score as it would have been *at the time the email arrived* (simulating a production lookup). Compare this to the frozen-snapshot performance. A significant gap indicates the comparison is biased.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The model selection process (early stopping on validation PR-AUC) is robust and will select the best model for the test period.",
+        "failure_mechanism": "Early stopping on a single validation set (months 13-15) assumes the validation period is representative of the test period (months 16-18). Given non-stationarity, the optimal model checkpoint for one 3-month window may not be optimal for the next. The model might overfit to transient patterns in the validation period that disappear in the test period, leading to suboptimal selection.",
+        "evidence_test": "Implement a time-series cross-validation on the training+validation data (e.g., expanding window) to select hyperparameters and stopping criteria. Compare the stability of the selected model's checkpoint across different validation folds. If checkpoint selection varies widely, the single validation split is unreliable.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The ablation baseline (transformer without body text) quantifies the value of full email body analysis.",
+        "failure_mechanism": "The ablation is incomplete. The transformer without body text still receives the subject line. The performance delta between the full transformer and this ablation conflates the value of the body text with the interaction between subject and body. A cleaner ablation would be: (1) subject only, (2) body only, (3) subject+body.",
+        "evidence_test": "Run the additional ablations (subject-only, body-only). If subject-only performance is close to subject+body, then the body text may not be the primary driver of improvement.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC has a strong temporal evaluation design but contains several potentially fatal flaws: possible conceptual campaign leakage across time splits, an operational metric misalignment, and a biased baseline comparison due to frozen reputation scores. These must be addressed to validate the hypothesis.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my position on F1 and F3, as the design controls (stratification and provenance) are the correct mechanisms for these concerns, even if the critic disagrees on the degree of protection. I am switching F4 to DEFER because the debate over 'isolation' vs 'marginal value' is a fundamental disagreement on experimental philosophy that requires empirical results to resolve. I am CONCEDING F5, as the critic correctly identified that freezing reputation scores creates an asymmetric disadvantage for the baseline that doesn't mirror production reality. F2, F6, and F7 remain accepted.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern regarding 'conceptual' leakage is a known challenge in all non-stationary ML tasks. However, the design implements 'Campaign-level stratification' (Section 7.1), which is the strongest available control to prevent the most common forms of leakage. While no split can perfectly eliminate all conceptual overlap in a dynamic threat landscape, this design prevents the most egregious leakage (exact campaign reuse). The 7-day dwell time is a labeling latency, not a feature leakage; it ensures labels are stable before being used, and the 3-month gap between training and validation provides a massive buffer against any minor temporal overlap.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The critic has accepted that the inclusion of Recall at 1% FPR and Precision at 90% recall as secondary metrics directly addresses the operational requirements.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design's use of 'consistent signals' is a noise-reduction strategy for the PoC. The critic's concern that this excludes sophisticated attacks is exactly why 'label provenance' (Section 1) is recorded. This allows the researchers to quantify the gap between 'consistent' and 'single-signal' phishing emails post-hoc. The design does not claim the labels are perfect, but provides the necessary metadata to audit the representativeness of the resulting dataset.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "There is a genuine disagreement here: the defender views this as a comparison of two different detection paradigms (text-based vs. reputation-based), while the critic views it as an unfair architectural comparison. Whether the 'marginal value' of text (via a hybrid model) is the only valid way to 'isolate' the contribution is an empirical question. We defer to the results of the primary experiment and the ablation study to see if the delta is significant enough to justify the current design.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic is correct. Freezing reputation scores at the end of the training period prevents future leakage but introduces a 'stale data' penalty for the baseline that the transformer does not share. This creates an asymmetric bias that could artificially inflate the transformer's relative performance compared to a real-world scenario where the baseline would have current reputation data.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic has accepted that a 3-month validation window is a reasonable proxy for a PoC.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic has accepted that the existing ablation is sufficient for a MINOR finding.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted the most severe findings (F1, F2, F3), but a genuine methodological disagreement remains on the baseline isolation (F4), leading to a DEFER. Additionally, a MATERIAL flaw regarding baseline bias (F5) was conceded."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=4, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

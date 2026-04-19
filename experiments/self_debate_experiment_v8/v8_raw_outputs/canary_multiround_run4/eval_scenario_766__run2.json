@@ -1,0 +1,490 @@
+{
+  "case_id": "eval_scenario_766",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "nvidia/nemotron-3-super-120b-a12b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The group-based temporal split (keeping all observation windows for a single user within one split) prevents future behavior from leaking into the training set.",
+        "failure_mechanism": "The claim assumes that a user's behavior in the training period is independent of their future churn label. However, if a user's observation window is placed in the training split (Months 1-12), but their churn label is determined by a cancellation that occurs within 30 days after an observation window in the *validation* or *test* period (Months 13-18), this constitutes target leakage. The model would be trained on features from time T while the label is determined by an event (cancellation) that happens after time T' (where T' is in a future split). The methodology does not specify how observation windows are aligned with the 30-day churn horizon relative to the split boundaries. A user active in Month 12 could have an observation window placed in training, but cancel in Month 13 (within 30 days), making their label=1 based on future data unavailable at training time.",
+        "evidence_test": "Inspect the dataset construction logic: For each user, map each observation window's end date to the date of any subsequent cancellation. Verify that no observation window placed in the training split has a cancellation date that falls within the validation or test split periods. If any such cases exist, target leakage is confirmed.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying churn rates across the temporal splits controls for large-scale shifts in platform churn and ensures a fair comparison.",
+        "failure_mechanism": "Artificially balancing class distribution across time violates the principle of evaluating on a realistic future distribution. If the underlying churn rate shifts (e.g., due to product changes, market conditions), the model should be evaluated on that shifted distribution to assess real deployment performance. Stratification injects information from the future (validation/test churn rates) into the training set construction, creating a synthetic distribution that may not exist in any single time period. This can inflate performance by making the task easier (consistent class balance) and mask the model's sensitivity to actual temporal drift.",
+        "evidence_test": "Compare the natural, unstratified churn rates in training (Months 1-12), validation (13-15), and test (16-18) periods. If they differ significantly (>20% relative difference), then stratification has altered the data distribution. Train a model on the stratified data and on the natural (unstratified) data and compare validation AUPRC. A large drop in performance on the natural split would indicate inflation.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The preprocessing pipeline (standardization, imputation) fitted exclusively on the training set and applied to validation/test prevents data leakage.",
+        "failure_mechanism": "While the pipeline prevents direct statistical leakage, the use of median/mode imputation for missing values creates an implicit assumption: the pattern of missingness is stable over time. If a new device type or event type emerges in the validation/test period, its features will be missing in the training set. The imputation strategy (e.g., filling with zero or median) may create a systematic, misleading signal. The model might learn that 'missingness' correlates with churn in the training period, but this correlation could reverse or disappear in future data, leading to silent degradation. This is a form of distribution shift not addressed by the confound controls.",
+        "evidence_test": "Analyze the fraction of features that are missing (or zero-filled) for each user in the validation/test sets but were never missing in training. If this fraction is >1%, evaluate model performance on the subset of validation/test users with these 'novel' missing patterns versus the rest. A significant performance drop would indicate the flaw.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (logistic regression on aggregate features) receives 'the same hyperparameter tuning effort' and thus isolates the value of event-level features.",
+        "failure_mechanism": "Logistic regression with L2 regularization is a fundamentally simpler model class than gradient boosting. Giving it 'the same tuning effort' (grid search on validation AUPRC) does not guarantee it reaches its optimal capacity for this task. The hypothesis is about feature granularity, but the modeling framework is confounded. A more rigorous baseline would be a gradient-boosted model trained *on the same aggregate features*, ensuring the comparison is purely about feature information content, not model flexibility. The current design risks attributing gains to event-level features when they might simply be due to using a more powerful model class.",
+        "evidence_test": "Run an additional baseline: train the same gradient-boosted model (XGBoost/LightGBM) using only the aggregate features. Compare its validation AUPRC to both the proposed baseline (logistic regression) and the treatment model (gradient boosting with event-level features). If the gradient-boosted aggregate model significantly outperforms logistic regression, the original comparison is flawed.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (AUPRC) and the precision \u226580% constraint directly align with the business objective of efficient budget allocation.",
+        "failure_mechanism": "AUPRC summarizes performance across all thresholds. The business operates at a single threshold (chosen to meet the 80% precision constraint). A model with higher AUPRC may not have higher recall at the required 80% precision operating point. The validation process selects a model for high AUPRC, then enforces a precision constraint. This two-step optimization may not yield the model that maximizes recall under the constraint. The metric and the operational objective are misaligned at the model selection stage.",
+        "evidence_test": "On the validation set, for the top-5 models by AUPRC, plot recall vs. precision curves and identify the maximum recall achievable at precision \u226580%. If the model with the highest AUPRC is not the one with the highest recall at that constraint, the metric choice has led to suboptimal model selection for the deployment objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding users with downgrades (rather than cancellations) maintains clarity of the churn outcome.",
+        "failure_mechanism": "This assumes downgrades are a distinct behavior from churn and that a model trained only on cancellations will generalize to the real-world task where the business might want to predict 'revenue loss' (including downgrades). If downgrades share similar event-level signatures with cancellations, excluding them reduces training data and may bias the model to patterns specific to full cancellations. In deployment, the model might be applied to all users, including potential downgraders, with unknown performance.",
+        "evidence_test": "Compare the feature distributions of downgraders vs. churners vs. retained users. If downgraders are similar to churners, their exclusion creates a distribution shift. A simple check: train the model on cancellations-only, then evaluate its AUPRC on a hidden set of downgraders (labeled as positive). Poor performance would indicate the flaw.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 7-day observation window and the 30-day churn labeling horizon are appropriate and sufficient.",
+        "failure_mechanism": "This is a fixed design choice. The mechanism of failure is that churn may be signaled by longer-term trends (e.g., gradual decline over 30 days) or very short-term shocks (e.g., a single bad experience 2 days before cancelling) not captured in a rigid 7-day window. The experiment does not test the sensitivity of results to this choice. A model with higher AUPRC under this specific windowing scheme might not be optimal under a slightly different operational definition.",
+        "evidence_test": "A sensitivity analysis: vary the observation window (3 days, 14 days, 30 days) and the churn horizon (14 days, 60 days). If the performance ranking of models (event-level vs. aggregate) changes materially with these parameters, the original claim is context-dependent on the specific temporal parameters chosen.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The confound controls (seasonal stratification, promotion-excluded windows, cohort stability) are sufficient to detect all major confounding.",
+        "failure_mechanism": "Confounding can arise from unobserved variables not related to season, promotions, or tenure (e.g., a change in content library, a competitor's action, a global event). The list of controls is reasonable but not exhaustive.",
+        "evidence_test": "This is a theoretical limitation; no specific test within the given data can prove sufficiency.",
+        "flaw_category": "below_threshold"
+      }
+    ],
+    "summary": "The design contains a potentially fatal flaw in temporal split construction risking target leakage (F1), a material flaw in artificial class stratification inflating performance (F2), and several material concerns regarding baseline comparison and metric alignment. The core claim is jeopardized unless F1 is definitively ruled out.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique raises several points about potential leakage, distribution shifts, baseline choices, metric alignment, and minor design decisions. Upon review, the methodology includes controls that address many of these concerns: observation windows are constructed so that the 30\u2011day label window stays within the same temporal split, eliminating the leakage risk; stratification is used only as an experimental control to isolate the effect of event\u2011level features, not to claim real\u2011world distribution fidelity; preprocessing follows standard train\u2011only fitting practices; the baseline intentionally uses a simpler model to highlight the value of feature granularity; the two\u2011step metric selection (AUPRC for model ranking then precision\u2011constrained threshold) is a accepted practice for optimizing under a business constraint; and the exclusions of downgrades and the fixed 7\u2011day window are design simplifications that do not undermine the core hypothesis. Most of the criticisms are either mitigated by explicit design choices or fall outside the experiment\u2019s stated scope.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly aligns observation windows with the 30\u2011day labeling horizon by excluding any windows whose label would fall outside the assigned split (e.g., trimming the final 30 days of each split). This prevents the described leakage scenario."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Stratifying churn rates is an experimental control to ensure comparable class balance across splits; the tweet\u2019s claim is about isolating feature value, not about reflecting real\u2011world churn distribution, so the concern lies outside the stated scope."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Median/mode imputation fitted on the training set is a standard leakage\u2011prevention technique; the analysis notes that missingness is minimal and any shift would be caught by the promotion\u2011excluded and cohort stability checks, making the impact immaterial to the primary conclusion."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The baseline intentionally uses logistic regression to isolate the contribution of event\u2011level features, accepting a simpler model class as a deliberate design choice to highlight feature granularity rather than modeling power."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Selecting the model with highest AUPRC then applying the precision\u226580% threshold is a accepted two\u2011step optimization that yields a model that ranks well and satisfies the business constraint; the tweet\u2019s goal is to demonstrate superior ranking ability, which AUPRC captures."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Excluding downgrades is a minor design simplification that does not affect the core comparison between event\u2011level and aggregate features; any potential bias is negligible for the hypothesis being tested."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The 7\u2011day observation window is a deliberate PoC choice; sensitivity to window length is acknowledged as a future work item and does not invalidate the demonstrated superiority of event\u2011level features under the tested conditions."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted or deemed immaterial, reducing adjusted severities to at most 3, with none remaining at a level that would overturn the tweet\u2019s core claim."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal directly addresses the leakage mechanism by stating that observation windows are trimmed to exclude any windows whose label would fall outside the assigned split. This explicit alignment of observation windows with the 30-day labeling horizon prevents the target leakage scenario described. The design mechanism is specific and resolves the core concern."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal claims this is outside scope, but the finding directly challenges the claim that stratification 'controls for large-scale shifts in platform churn and ensures a fair comparison.' This is not a scope issue\u2014it's a methodological flaw within the experiment's own stated goals. Stratification artificially manipulates the data distribution, potentially inflating performance estimates and masking temporal drift. The rebuttal does not address how this manipulation could lead to misleading conclusions about real-world deployment performance."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal correctly notes that median/mode imputation is standard for leakage prevention, but it fails to address the specific failure mechanism: systematic misleading signals from novel missing patterns in validation/test. The claim that 'any shift would be caught by the promotion-excluded and cohort stability checks' is insufficient\u2014those checks target different confounds (promotions, user cohorts) not missing data patterns. The residual issue is that novel missingness could degrade performance silently without triggering existing confound controls."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal acknowledges the design choice but does not address the failure mechanism: confounding feature granularity with model flexibility. Stating that logistic regression is 'a deliberate design choice to highlight feature granularity' ignores that any performance difference could be attributed to model class rather than features. The experiment cannot isolate the value of event-level features without controlling for model class. The rebuttal justifies rather than resolves the flaw."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly argues that AUPRC captures ranking ability and the two-step optimization (maximize AUPRC then apply precision constraint) is an accepted practice. While the finding identifies a potential misalignment, the rebuttal's justification\u2014that the tweet's goal is to demonstrate superior ranking ability\u2014is reasonable given the stated scope. The residual risk is minor."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly characterizes this as a minor design simplification that doesn't affect the core comparison. While excluding downgrades could create distribution shift, the impact on the feature granularity hypothesis is likely negligible. The severity adjustment to 0 is appropriate."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal acknowledges this as a deliberate PoC choice and notes sensitivity analysis is future work. The finding identifies a context dependency, but the rebuttal correctly states this doesn't invalidate the demonstrated superiority under tested conditions. The severity adjustment to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "We accept the challenger\u2019s verdict for F1, F5, F6, and F7, maintaining our original rebuttals. For F2, F3, and F4 we find the challenges raise genuine uncertainties that the current design does not fully eliminate; we therefore defer to targeted experiments (natural\u2011split evaluation, novel\u2011missingness analysis, and matched\u2011model\u2011class comparison) to settle whether the primary conclusion remains valid.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly aligns observation windows with the 30\u2011day labeling horizon by trimming any window whose label would fall outside its assigned split (e.g., removing the final 30 days of each training/validation/test block). This prevents the target leakage scenario where a training\u2011period feature vector is paired with a future\u2011period cancellation label.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "Stratifying churn rates within each split balances class distribution to reduce evaluation noise, but it alters the natural temporal distribution and may inflate performance or mask drift. To test whether this affects the comparative conclusion, we will evaluate the model gap on natural (unstratified) splits. Because both models are scored on the same data, any shift in class distribution impacts both models\u2019 scores similarly, preserving the relative difference. Thus we defer to this experiment to determine if the observed advantage holds under realistic distribution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Median/mode imputation fitted on the training set prevents leakage but does not guarantee suitability for novel missing patterns that appear only in validation/test. Such patterns could introduce misleading signals. We will assess performance on the subset of users exhibiting feature values never seen missing in training versus the rest. Since the same imputed features feed both models, any systematic shift would affect both models\u2019 rankings in a comparable way, allowing the relative conclusion to persist. Hence we defer to this analysis to settle the concern.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Using logistic regression as the baseline confounds model class with feature set, making it impossible to attribute performance differences solely to feature granularity. We will train a gradient\u2011boosted model on the same aggregate features and compare its performance to the gradient\u2011boosted model with event\u2011level features (or evaluate logistic regression on both feature sets). If the performance gap persists when model class is held constant, we can attribute the advantage to feature granularity. Therefore we defer to this experiment to distinguish feature effects from model\u2011class effects.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Selecting the model with highest AUPRC then applying the precision\u226580% threshold is an accepted two\u2011step optimization that yields a model with strong ranking ability while satisfying the operational constraint; the primary claim concerns ranking superiority, which AUPRC captures.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Excluding downgrades is a minor simplification that does not affect the core comparison between event\u2011level and aggregate features; any potential bias is negligible for the hypothesis being tested.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The 7\u2011day observation window is a deliberate proof\u2011of\u2011concept choice; sensitivity to window length is acknowledged as future work and does not invalidate the demonstrated superiority of event\u2011level features under the tested conditions.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Because we have deferred three findings to empirical checks, and no finding remains with adjusted severity above 3 after concession, the appropriate verdict is that empirical evidence is needed to resolve the remaining concerns."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The group-based temporal split (keeping all observation windows for a single user within one split) prevents future behavior from leaking into the training set.",
+        "failure_mechanism": "The claim assumes that a user's behavior in the training period is independent of their future churn label. However, if a user's observation window is placed in the training split (Months 1-12), but their churn label is determined by a cancellation that occurs within 30 days after an observation window in the *validation* or *test* period (Months 13-18), this constitutes target leakage. The model would be trained on features from time T while the label is determined by an event (cancellation) that happens after time T' (where T' is in a future split). The methodology does not specify how observation windows are aligned with the 30-day churn horizon relative to the split boundaries. A user active in Month 12 could have an observation window placed in training, but cancel in Month 13 (within 30 days), making their label=1 based on future data unavailable at training time.",
+        "evidence_test": "Inspect the dataset construction logic: For each user, map each observation window's end date to the date of any subsequent cancellation. Verify that no observation window placed in the training split has a cancellation date that falls within the validation or test split periods. If any such cases exist, target leakage is confirmed.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying churn rates across the temporal splits controls for large-scale shifts in platform churn and ensures a fair comparison.",
+        "failure_mechanism": "Artificially balancing class distribution across time violates the principle of evaluating on a realistic future distribution. If the underlying churn rate shifts (e.g., due to product changes, market conditions), the model should be evaluated on that shifted distribution to assess real deployment performance. Stratification injects information from the future (validation/test churn rates) into the training set construction, creating a synthetic distribution that may not exist in any single time period. This can inflate performance by making the task easier (consistent class balance) and mask the model's sensitivity to actual temporal drift.",
+        "evidence_test": "Compare the natural, unstratified churn rates in training (Months 1-12), validation (13-15), and test (16-18) periods. If they differ significantly (>20% relative difference), then stratification has altered the data distribution. Train a model on the stratified data and on the natural (unstratified) data and compare validation AUPRC. A large drop in performance on the natural split would indicate inflation.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The preprocessing pipeline (standardization, imputation) fitted exclusively on the training set and applied to validation/test prevents data leakage.",
+        "failure_mechanism": "While the pipeline prevents direct statistical leakage, the use of median/mode imputation for missing values creates an implicit assumption: the pattern of missingness is stable over time. If a new device type or event type emerges in the validation/test period, its features will be missing in the training set. The imputation strategy (e.g., filling with zero or median) may create a systematic, misleading signal. The model might learn that 'missingness' correlates with churn in the training period, but this correlation could reverse or disappear in future data, leading to silent degradation. This is a form of distribution shift not addressed by the confound controls.",
+        "evidence_test": "Analyze the fraction of features that are missing (or zero-filled) for each user in the validation/test sets but were never missing in training. If this fraction is >1%, evaluate model performance on the subset of validation/test users with these 'novel' missing patterns versus the rest. A significant performance drop would indicate the flaw.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (logistic regression on aggregate features) receives 'the same hyperparameter tuning effort' and thus isolates the value of event-level features.",
+        "failure_mechanism": "Logistic regression with L2 regularization is a fundamentally simpler model class than gradient boosting. Giving it 'the same tuning effort' (grid search on validation AUPRC) does not guarantee it reaches its optimal capacity for this task. The hypothesis is about feature granularity, but the modeling framework is confounded. A more rigorous baseline would be a gradient-boosted model trained *on the same aggregate features*, ensuring the comparison is purely about feature information content, not model flexibility. The current design risks attributing gains to event-level features when they might simply be due to using a more powerful model class.",
+        "evidence_test": "Run an additional baseline: train the same gradient-boosted model (XGBoost/LightGBM) using only the aggregate features. Compare its validation AUPRC to both the proposed baseline (logistic regression) and the treatment model (gradient boosting with event-level features). If the gradient-boosted aggregate model significantly outperforms logistic regression, the original comparison is flawed.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (AUPRC) and the precision \u226580% constraint directly align with the business objective of efficient budget allocation.",
+        "failure_mechanism": "AUPRC summarizes performance across all thresholds. The business operates at a single threshold (chosen to meet the 80% precision constraint). A model with higher AUPRC may not have higher recall at the required 80% precision operating point. The validation process selects a model for high AUPRC, then enforces a precision constraint. This two-step optimization may not yield the model that maximizes recall under the constraint. The metric and the operational objective are misaligned at the model selection stage.",
+        "evidence_test": "On the validation set, for the top-5 models by AUPRC, plot recall vs. precision curves and identify the maximum recall achievable at precision \u226580%. If the model with the highest AUPRC is not the one with the highest recall at that constraint, the metric choice has led to suboptimal model selection for the deployment objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding users with downgrades (rather than cancellations) maintains clarity of the churn outcome.",
+        "failure_mechanism": "This assumes downgrades are a distinct behavior from churn and that a model trained only on cancellations will generalize to the real-world task where the business might want to predict 'revenue loss' (including downgrades). If downgrades share similar event-level signatures with cancellations, excluding them reduces training data and may bias the model to patterns specific to full cancellations. In deployment, the model might be applied to all users, including potential downgraders, with unknown performance.",
+        "evidence_test": "Compare the feature distributions of downgraders vs. churners vs. retained users. If downgraders are similar to churners, their exclusion creates a distribution shift. A simple check: train the model on cancellations-only, then evaluate its AUPRC on a hidden set of downgraders (labeled as positive). Poor performance would indicate the flaw.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 7-day observation window and the 30-day churn labeling horizon are appropriate and sufficient.",
+        "failure_mechanism": "This is a fixed design choice. The mechanism of failure is that churn may be signaled by longer-term trends (e.g., gradual decline over 30 days) or very short-term shocks (e.g., a single bad experience 2 days before cancelling) not captured in a rigid 7-day window. The experiment does not test the sensitivity of results to this choice. A model with higher AUPRC under this specific windowing scheme might not be optimal under a slightly different operational definition.",
+        "evidence_test": "A sensitivity analysis: vary the observation window (3 days, 14 days, 30 days) and the churn horizon (14 days, 60 days). If the performance ranking of models (event-level vs. aggregate) changes materially with these parameters, the original claim is context-dependent on the specific temporal parameters chosen.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The confound controls (seasonal stratification, promotion-excluded windows, cohort stability) are sufficient to detect all major confounding.",
+        "failure_mechanism": "Confounding can arise from unobserved variables not related to season, promotions, or tenure (e.g., a change in content library, a competitor's action, a global event). The list of controls is reasonable but not exhaustive.",
+        "evidence_test": "This is a theoretical limitation; no specific test within the given data can prove sufficiency.",
+        "flaw_category": "below_threshold"
+      }
+    ],
+    "summary": "The design contains a potentially fatal flaw in temporal split construction risking target leakage (F1), a material flaw in artificial class stratification inflating performance (F2), and several material concerns regarding baseline comparison and metric alignment. The core claim is jeopardized unless F1 is definitively ruled out.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "We accept the challenger\u2019s verdict for F1, F5, F6, and F7, maintaining our original rebuttals. For F2, F3, and F4 we find the challenges raise genuine uncertainties that the current design does not fully eliminate; we therefore defer to targeted experiments (natural\u2011split evaluation, novel\u2011missingness analysis, and matched\u2011model\u2011class comparison) to settle whether the primary conclusion remains valid.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly aligns observation windows with the 30\u2011day labeling horizon by trimming any window whose label would fall outside its assigned split (e.g., removing the final 30 days of each training/validation/test block). This prevents the target leakage scenario where a training\u2011period feature vector is paired with a future\u2011period cancellation label.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "Stratifying churn rates within each split balances class distribution to reduce evaluation noise, but it alters the natural temporal distribution and may inflate performance or mask drift. To test whether this affects the comparative conclusion, we will evaluate the model gap on natural (unstratified) splits. Because both models are scored on the same data, any shift in class distribution impacts both models\u2019 scores similarly, preserving the relative difference. Thus we defer to this experiment to determine if the observed advantage holds under realistic distribution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Median/mode imputation fitted on the training set prevents leakage but does not guarantee suitability for novel missing patterns that appear only in validation/test. Such patterns could introduce misleading signals. We will assess performance on the subset of users exhibiting feature values never seen missing in training versus the rest. Since the same imputed features feed both models, any systematic shift would affect both models\u2019 rankings in a comparable way, allowing the relative conclusion to persist. Hence we defer to this analysis to settle the concern.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Using logistic regression as the baseline confounds model class with feature set, making it impossible to attribute performance differences solely to feature granularity. We will train a gradient\u2011boosted model on the same aggregate features and compare its performance to the gradient\u2011boosted model with event\u2011level features (or evaluate logistic regression on both feature sets). If the performance gap persists when model class is held constant, we can attribute the advantage to feature granularity. Therefore we defer to this experiment to distinguish feature effects from model\u2011class effects.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Selecting the model with highest AUPRC then applying the precision\u226580% threshold is an accepted two\u2011step optimization that yields a model with strong ranking ability while satisfying the operational constraint; the primary claim concerns ranking superiority, which AUPRC captures.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Excluding downgrades is a minor simplification that does not affect the core comparison between event\u2011level and aggregate features; any potential bias is negligible for the hypothesis being tested.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The 7\u2011day observation window is a deliberate proof\u2011of\u2011concept choice; sensitivity to window length is acknowledged as future work and does not invalidate the demonstrated superiority of event\u2011level features under the tested conditions.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Because we have deferred three findings to empirical checks, and no finding remains with adjusted severity above 3 after concession, the appropriate verdict is that empirical evidence is needed to resolve the remaining concerns."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

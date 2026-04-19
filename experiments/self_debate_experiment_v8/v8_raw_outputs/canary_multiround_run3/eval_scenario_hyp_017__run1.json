@@ -1,0 +1,490 @@
+{
+  "case_id": "eval_scenario_hyp_017",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label (fraud = sustained chargeback within 120 days) is a perfect proxy for the operational fraud detection objective.",
+        "failure_mechanism": "Chargeback data is a noisy and delayed proxy for fraud. Many frauds are not reported (customer absorbs loss), reported but not sustained (merchant wins dispute), or sustained but misattributed (wrong transaction flagged). Furthermore, fraud detection systems aim to prevent fraud *before* it occurs, not just identify transactions that later resulted in a chargeback. The model is trained to predict chargeback outcomes, not necessarily fraudulent intent at authorization time. This creates a fundamental misalignment between the training target and the deployment objective.",
+        "evidence_test": "Correlate model predictions with actual fraud losses (including unreported fraud) or with fraud events identified by investigators independent of chargeback data. Measure the proportion of fraudulent transactions (as determined by a fraud analyst) that do not result in a sustained chargeback.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split strategy (train on months 1-12, validate on 13-16, test on 17-24) adequately prevents leakage and simulates deployment.",
+        "failure_mechanism": "While chronological splits prevent direct future leakage, they introduce a severe distribution shift risk. Fraud patterns evolve rapidly (new attack vectors, seasonal trends, macroeconomic changes). Training on the first 12 months and testing on the last 8 may lead to performance degradation if the fraud distribution changes significantly during the 24-month period. The validation set (months 13-16) is temporally adjacent to the test set, which may lead to overfitting hyperparameters to a short-term pattern that doesn't persist into the later test period. The model's performance on months 17-24 may not reflect its performance on future, unseen months.",
+        "evidence_test": "Compare performance on validation set (13-16) vs. test set (17-24) broken down by sub-periods (e.g., 17-20 vs. 21-24). If performance degrades significantly in the later test period, the split is inadequate. Also, train a model on months 1-16 and test on 17-24 to see if a more recent training window improves performance.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (Precision-Recall AUC at a fixed FPR of 2-5%) directly answers the business question of fraud capture at a fixed review budget.",
+        "failure_mechanism": "Precision-Recall AUC is a summary statistic over all thresholds, not a metric at a specific threshold. It does not directly measure recall at a fixed FPR. The operational constraint is a fixed review capacity (e.g., 5% of transactions), which corresponds to choosing a classification threshold that yields a specific FPR. The relevant metric is **Recall at that chosen threshold**. Using Precision-Recall AUC conflates performance across all thresholds and may not reflect the model's ability to perform well at the specific operational point. A model with high PR-AUC could still have poor recall at the required FPR.",
+        "evidence_test": "Report the actual recall achieved when the model's threshold is set to achieve exactly 2% and 5% FPR on the test set. Compare this directly between models. If PR-AUC rankings differ from recall-at-FPR rankings, the primary metric is misaligned.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer model's sequence input (last 10-30 transactions) captures meaningful sequential fraud patterns without introducing leakage from future fraud labels.",
+        "failure_mechanism": "Constructing sequences from raw transaction data chronologically may inadvertently include future fraudulent transactions in the sequence context for a current transaction. For example, if transaction T is legitimate, but transaction T+1 (in the future) is fraudulent, including T+1 in the sequence for T could leak information. The PoC states sequences are 'chronologically ordered' but does not specify the direction (past-to-future or future-to-past). If sequences include future transactions relative to the prediction point, this is direct signal leakage. Even if only past transactions are used, the sequence construction must be carefully time-aligned to ensure no information from after the authorization time of the target transaction is included.",
+        "evidence_test": "Audit the sequence construction code: for each target transaction, verify that all transactions in its input sequence occurred strictly before its authorization timestamp. Also, test a model trained on sequences that explicitly exclude any transaction occurring after the target's time.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The baseline (XGBoost on aggregates) is a fair comparison because it receives the same raw data and time window access.",
+        "failure_mechanism": "The transformer receives raw sequential data (Set A), while the baseline receives hand-engineered aggregates (Set B). This is not a fair architectural comparison; it conflates feature representation with model architecture. The hypothesis is about transformer vs. gradient-boosted trees, but the difference in input features is a major confounding variable. The transformer may outperform simply because it receives richer raw data, not because of its sequential modeling capability. A proper comparison requires either: (1) giving the baseline the same raw sequential data (e.g., via feature engineering that preserves sequence information), or (2) giving the transformer the same aggregate features.",
+        "evidence_test": "Run an ablation: train XGBoost on a flattened version of the raw sequence data (Set A) to see if feature representation alone explains the performance gap. Or train the transformer on the aggregate features (Set B).",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding transactions declined by pre-existing fraud rules adequately mitigates feedback loop confounds.",
+        "failure_mechanism": "Simply excluding declined transactions removes data points where fraud rules were triggered, but this may bias the dataset. Fraud rules often catch true fraud, so excluding these transactions removes positive examples, potentially making the fraud class even more rare and difficult to learn. Furthermore, rules may decline legitimate transactions (false positives), and excluding them removes negative examples. The optimal handling is complex (e.g., including them with a flag, or simulating what would have happened if the rule didn't exist). The PoC's approach ('excluded or flagged') is ambiguous and may not fully address the confound.",
+        "evidence_test": "Compare fraud rate and model performance on a dataset that includes declined transactions (with appropriate labeling adjustments) versus the excluded dataset. If performance differs significantly, the mitigation is insufficient.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 50-trial hyperparameter tuning for both models ensures a 'fair comparison'.",
+        "failure_mechanism": "Transformer models have a much larger hyperparameter space (layers, heads, sequence length, dropout, learning rate, etc.) compared to gradient-boosted trees (learning rate, depth, estimators, regularization). A fixed number of trials (50) may be insufficient to adequately explore the transformer's space, leading to suboptimal transformer configuration, while being ample for the baseline. This could bias the comparison against the transformer. Alternatively, if the transformer's space is too large, random search may stumble upon a good configuration by luck, making the comparison unstable.",
+        "evidence_test": "Perform a sensitivity analysis: increase the number of tuning trials for the transformer (e.g., 200) and see if performance improves significantly. If it does, the original tuning was inadequate.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The use of 'hashed device identifiers' and 'IP-inferred geolocation' as features is sufficient for capturing device and location signals.",
+        "failure_mechanism": "Hashing may obscure useful clustering (e.g., device families), and IP geolocation can be inaccurate or spoofed. These features may be noisy in production.",
+        "evidence_test": "Analyze the correlation between these features and fraud labels to assess their signal strength.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The PoC has a fatal flaw in its label definition (chargeback as fraud proxy) and material flaws in its evaluation metric and temporal split design. Several minor flaws concern comparison fairness and potential leakage.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims the label (sustained chargebacks) is a noisy proxy for fraud. While true in a general sense, the methodology explicitly states this label 'reflects true operational ground truth' and aligns with card network periods. In a banking context, a sustained chargeback is the definitive legal/financial signal of fraud. The objective is to catch fraud that results in loss; predicting 'intent' without a financial signal is not the operational goal. This is a design choice based on available ground truth.\n\nF2 argues that the temporal split introduces distribution shift and that the validation set is too close to the test set. However, the methodology includes 'out-of-time degradation' analysis (comparing months 17-20 vs 21-24) specifically to detect this. Furthermore, the temporal split is the gold standard for simulating deployment in fraud; random splits would be a fatal flaw. The risk of shift is an inherent property of the domain, not a flaw in the split strategy.\n\nF3 claims PR-AUC is a summary statistic and not a point-metric. The critic is technically correct that PR-AUC is an integral, but the methodology explicitly lists 'Recall and precision at fixed FPR' as secondary metrics and defines the primary success measure as 'higher fraud recall at the same review budget'. The PR-AUC is used as a general performance indicator, but the operational decision is based on the fixed FPR recall. This is a matter of reporting, not a failure of the experimental design.\n\nF4 suggests sequence construction might leak future data. The methodology states sequences are 'chronologically ordered' and 'all features use only information available at authorization time'. This is a strict design control. The critic's concern is a hypothetical 'if', but the design explicitly forbids post-transaction signals.\n\nF5 argues that using different feature sets (Raw vs Aggregates) conflates architecture with representation. This is actually the core of the hypothesis: whether a transformer ingesting raw sequences outperforms a GBDT ingesting aggregates. The 'Scope of Conclusions' section explicitly acknowledges this and states that ablation studies would be needed to isolate the mechanism. The experiment is designed to test the *pipeline* (Transformer+Raw vs GBDT+Agg), which is a valid operational comparison.\n\nF6 concerns the handling of declined transactions. The methodology states they are 'either excluded or flagged'. This is a standard industry practice to avoid 'training on the rules'. Since the goal is to see if the new model outperforms the baseline on the *available* traffic, this is a reasonable simplification for a PoC.\n\nF7 claims 50 trials is insufficient for a Transformer. This is a minor tuning concern. Given that both models are tuned with 'equal effort' to ensure fairness, any under-tuning of the transformer would actually make the result more conservative (favoring the baseline), which does not invalidate the conclusion if the transformer still wins.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The use of sustained chargebacks is a deliberate design choice because it represents the only verifiable financial ground truth in production. Predicting 'intent' without a sustained loss signal would introduce more noise, not less, as it would rely on unverified reports. The design aligns the target with the actual financial loss the bank seeks to mitigate."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly addresses distribution shift through 'out-of-time degradation' analysis (comparing months 17-20 vs 21-24) as a secondary metric. This allows the team to quantify the shift the critic is concerned about without compromising the temporal integrity of the test set."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic confuses the summary metric (PR-AUC) with the operational success measure. The methodology explicitly defines the success measure as 'higher fraud recall at the same review budget' and lists 'Recall and precision at fixed FPR' as metrics. The PR-AUC provides a global view, but the operational conclusion is derived from the fixed-FPR recall."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The methodology contains a strict 'Feature timing audit' control and explicitly states that 'all features use only information available at authorization time'. This eliminates the possibility of future-leakage by construction."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The hypothesis is specifically to test if the transformer-based approach (raw sequences) outperforms the GBDT approach (aggregates). The 'Scope of Conclusions' section explicitly acknowledges that this does not isolate the architectural mechanism from the feature representation, which is an intended limitation of this PoC."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The handling of declined transactions is a standard simplification for a PoC to avoid rule-leakage. Given the scale of the data (50M+ transactions), the impact of this exclusion on the relative performance of the two models is immaterial."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Equal tuning effort (50 trials) ensures a fair baseline. If the transformer is under-tuned, the result is a conservative estimate of its potential, which does not invalidate a positive finding."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted. Material concerns regarding leakage and distribution shift were addressed by explicit design controls (timing audits and out-of-time analysis), and the metric/scope concerns were clarified as deliberate design choices for the PoC. All adjusted severities are \u2264 3."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal does not address the core failure mechanism: label noise and misalignment with operational objective. The defender justifies using chargebacks as 'verifiable financial ground truth,' but the finding's concern is that this target is a noisy proxy for fraud detection at authorization time. Many fraudulent transactions never result in a sustained chargeback (customer absorbs loss, merchant wins dispute). The model learns to predict chargeback outcomes, not necessarily fraudulent intent at the moment of authorization. This creates a fundamental misalignment between the training objective and the deployment goal of preventing fraud before it occurs. The rebuttal merely restates the design choice without addressing the noise or misalignment."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal correctly notes that out-of-time degradation analysis is included as a secondary metric, which partially addresses the concern by allowing quantification of shift. However, it does not fully resolve the failure mechanism: the validation set (months 13-16) is temporally adjacent to the test set (17-24), creating a risk of overfitting hyperparameters to short-term patterns that may not persist into the later test period. The analysis only detects degradation after the fact; it does not prevent the model selection process from being biased by this adjacency. The residual issue is that the chosen model may be optimized for a transient pattern, compromising its true out-of-time performance."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal correctly identifies that the critic confused the summary metric (PR-AUC) with the operational success measure. The methodology explicitly lists 'Recall and precision at fixed FPR' as metrics and defines success as 'higher fraud recall at the same review budget.' The primary PR-AUC provides a global view, but the operational conclusion will be drawn from the fixed-FPR recall comparison. This directly addresses the failure mechanism by clarifying that the critical business metric is indeed measured and reported."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly cites the 'Feature timing audit' control and the explicit statement that 'all features use only information available at authorization time.' This directly addresses the failure mechanism of potential future-leakage in sequence construction. The methodology's strict temporal alignment ensures that for each target transaction, only information available at its authorization time is used. This eliminates the possibility of including future fraudulent transactions in the sequence context."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal incorrectly classifies this as a scope limitation. The finding identifies a confounding variable in the experimental design: the comparison conflates feature representation with model architecture. The 'Scope of Conclusions' section acknowledges this limitation but does not make it acceptable for a hypothesis test about architectural superiority. A proper comparison requires controlling for input features to isolate the architectural effect. The rebuttal's appeal to scope does not resolve the fundamental confounding; it merely notes it exists. This remains a material flaw in the experimental design."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly argues that for a PoC at this scale (50M+ transactions), the impact of excluding declined transactions on the relative performance comparison is likely immaterial. The finding's concern about potential bias is valid in principle, but the defender's point about scale and the standard simplification for a PoC is reasonable. The primary comparison between transformer and baseline is unlikely to be meaningfully distorted by this exclusion given the data volume and the fact that both models are trained on the same excluded dataset."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly notes that if the transformer is under-tuned due to the fixed 50 trials, the result is a conservative estimate of its potential. This means a positive finding (transformer outperforms baseline) would be robust, as the transformer could potentially perform even better with more tuning. The failure mechanism identified\u2014that fixed trials may bias the comparison\u2014is mitigated by this conservative property. Equal tuning effort provides a fair baseline for a PoC comparison."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my positions on F3, F4, F6, and F7 as they were accepted. For F2, I am switching to DEFER because while the design detects shift, it does not prevent hyperparameter overfitting to the adjacent validation set. For F5, I am maintaining REBUT-SCOPE because the hypothesis is explicitly about the 'transformer-based approach' (which includes its input format) vs the 'GBDT approach' (which includes its input format), not a pure architectural ablation. For F1, I am switching to DEFER because the design uses the only available ground truth, but the critic's point about label noise is a known property of fraud data that can only be empirically quantified.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design uses sustained chargebacks because they are the only verifiable financial ground truth available at scale. The critic is correct that this is a noisy proxy for 'intent'. To settle this: (1) We will perform a manual audit of a stratified sample of 'False Negatives' (predicted legitimate but actually fraud) and 'False Positives' (predicted fraud but not sustained chargeback) using expert fraud investigators. (2) If the model's errors align with investigator-identified fraud, the design is vindicated. (3) If the model is merely predicting 'chargeback-prone' behavior rather than 'fraudulent' behavior, the critique is validated. (4) The primary conclusion (Transformer vs GBDT) remains valid because both models are trained and evaluated on the same noisy labels; the relative performance gain is the primary metric, and label noise typically affects both architectures symmetrically.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly notes that while out-of-time analysis detects degradation, it doesn't prevent the validation set's adjacency from biasing model selection. To settle this: (1) We will implement a 'sliding window' validation strategy where hyperparameters are tuned across multiple non-adjacent folds. (2) If the selected hyperparameters remain stable across folds, the design is vindicated. (3) If hyperparameters vary wildly, the critique is validated. (4) The primary conclusion remains valid because the same validation-to-test adjacency applies to both the Transformer and the GBDT; any overfitting to short-term patterns would likely benefit both models similarly, preserving the relative comparison.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly defines the success measure as 'higher fraud recall at the same review budget' and lists 'Recall and precision at fixed FPR' as metrics. The PR-AUC is a secondary summary statistic; the operational conclusion is derived from the fixed-FPR recall.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The methodology contains a strict 'Feature timing audit' control and explicitly states that 'all features use only information available at authorization time', eliminating future-leakage by construction.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The critic mischaracterizes the hypothesis. The goal is not to isolate the 'transformer architecture' in a vacuum, but to test if a 'transformer-based model ingesting raw transaction sequences' outperforms a 'gradient-boosted baseline trained on hand-engineered aggregate features'. The input format is a core part of the 'approach' being tested. The 'Scope of Conclusions' explicitly states that this does not isolate the architectural mechanism from the feature representation, which is the intended boundary of this PoC.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Given the scale of 50M+ transactions, the exclusion of declined transactions is a standard PoC simplification that does not materially distort the relative performance comparison between two models trained on the same dataset.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Equal tuning effort ensures a fair baseline. Any under-tuning of the transformer results in a conservative estimate of its potential, making a positive result more robust.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted most material concerns, but two significant points (label noise and temporal overfitting) were moved to DEFER as they require empirical validation to resolve the disagreement between the design's pragmatic choices and the critic's theoretical concerns."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label (fraud = sustained chargeback within 120 days) is a perfect proxy for the operational fraud detection objective.",
+        "failure_mechanism": "Chargeback data is a noisy and delayed proxy for fraud. Many frauds are not reported (customer absorbs loss), reported but not sustained (merchant wins dispute), or sustained but misattributed (wrong transaction flagged). Furthermore, fraud detection systems aim to prevent fraud *before* it occurs, not just identify transactions that later resulted in a chargeback. The model is trained to predict chargeback outcomes, not necessarily fraudulent intent at authorization time. This creates a fundamental misalignment between the training target and the deployment objective.",
+        "evidence_test": "Correlate model predictions with actual fraud losses (including unreported fraud) or with fraud events identified by investigators independent of chargeback data. Measure the proportion of fraudulent transactions (as determined by a fraud analyst) that do not result in a sustained chargeback.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split strategy (train on months 1-12, validate on 13-16, test on 17-24) adequately prevents leakage and simulates deployment.",
+        "failure_mechanism": "While chronological splits prevent direct future leakage, they introduce a severe distribution shift risk. Fraud patterns evolve rapidly (new attack vectors, seasonal trends, macroeconomic changes). Training on the first 12 months and testing on the last 8 may lead to performance degradation if the fraud distribution changes significantly during the 24-month period. The validation set (months 13-16) is temporally adjacent to the test set, which may lead to overfitting hyperparameters to a short-term pattern that doesn't persist into the later test period. The model's performance on months 17-24 may not reflect its performance on future, unseen months.",
+        "evidence_test": "Compare performance on validation set (13-16) vs. test set (17-24) broken down by sub-periods (e.g., 17-20 vs. 21-24). If performance degrades significantly in the later test period, the split is inadequate. Also, train a model on months 1-16 and test on 17-24 to see if a more recent training window improves performance.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (Precision-Recall AUC at a fixed FPR of 2-5%) directly answers the business question of fraud capture at a fixed review budget.",
+        "failure_mechanism": "Precision-Recall AUC is a summary statistic over all thresholds, not a metric at a specific threshold. It does not directly measure recall at a fixed FPR. The operational constraint is a fixed review capacity (e.g., 5% of transactions), which corresponds to choosing a classification threshold that yields a specific FPR. The relevant metric is **Recall at that chosen threshold**. Using Precision-Recall AUC conflates performance across all thresholds and may not reflect the model's ability to perform well at the specific operational point. A model with high PR-AUC could still have poor recall at the required FPR.",
+        "evidence_test": "Report the actual recall achieved when the model's threshold is set to achieve exactly 2% and 5% FPR on the test set. Compare this directly between models. If PR-AUC rankings differ from recall-at-FPR rankings, the primary metric is misaligned.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer model's sequence input (last 10-30 transactions) captures meaningful sequential fraud patterns without introducing leakage from future fraud labels.",
+        "failure_mechanism": "Constructing sequences from raw transaction data chronologically may inadvertently include future fraudulent transactions in the sequence context for a current transaction. For example, if transaction T is legitimate, but transaction T+1 (in the future) is fraudulent, including T+1 in the sequence for T could leak information. The PoC states sequences are 'chronologically ordered' but does not specify the direction (past-to-future or future-to-past). If sequences include future transactions relative to the prediction point, this is direct signal leakage. Even if only past transactions are used, the sequence construction must be carefully time-aligned to ensure no information from after the authorization time of the target transaction is included.",
+        "evidence_test": "Audit the sequence construction code: for each target transaction, verify that all transactions in its input sequence occurred strictly before its authorization timestamp. Also, test a model trained on sequences that explicitly exclude any transaction occurring after the target's time.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The baseline (XGBoost on aggregates) is a fair comparison because it receives the same raw data and time window access.",
+        "failure_mechanism": "The transformer receives raw sequential data (Set A), while the baseline receives hand-engineered aggregates (Set B). This is not a fair architectural comparison; it conflates feature representation with model architecture. The hypothesis is about transformer vs. gradient-boosted trees, but the difference in input features is a major confounding variable. The transformer may outperform simply because it receives richer raw data, not because of its sequential modeling capability. A proper comparison requires either: (1) giving the baseline the same raw sequential data (e.g., via feature engineering that preserves sequence information), or (2) giving the transformer the same aggregate features.",
+        "evidence_test": "Run an ablation: train XGBoost on a flattened version of the raw sequence data (Set A) to see if feature representation alone explains the performance gap. Or train the transformer on the aggregate features (Set B).",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding transactions declined by pre-existing fraud rules adequately mitigates feedback loop confounds.",
+        "failure_mechanism": "Simply excluding declined transactions removes data points where fraud rules were triggered, but this may bias the dataset. Fraud rules often catch true fraud, so excluding these transactions removes positive examples, potentially making the fraud class even more rare and difficult to learn. Furthermore, rules may decline legitimate transactions (false positives), and excluding them removes negative examples. The optimal handling is complex (e.g., including them with a flag, or simulating what would have happened if the rule didn't exist). The PoC's approach ('excluded or flagged') is ambiguous and may not fully address the confound.",
+        "evidence_test": "Compare fraud rate and model performance on a dataset that includes declined transactions (with appropriate labeling adjustments) versus the excluded dataset. If performance differs significantly, the mitigation is insufficient.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 50-trial hyperparameter tuning for both models ensures a 'fair comparison'.",
+        "failure_mechanism": "Transformer models have a much larger hyperparameter space (layers, heads, sequence length, dropout, learning rate, etc.) compared to gradient-boosted trees (learning rate, depth, estimators, regularization). A fixed number of trials (50) may be insufficient to adequately explore the transformer's space, leading to suboptimal transformer configuration, while being ample for the baseline. This could bias the comparison against the transformer. Alternatively, if the transformer's space is too large, random search may stumble upon a good configuration by luck, making the comparison unstable.",
+        "evidence_test": "Perform a sensitivity analysis: increase the number of tuning trials for the transformer (e.g., 200) and see if performance improves significantly. If it does, the original tuning was inadequate.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The use of 'hashed device identifiers' and 'IP-inferred geolocation' as features is sufficient for capturing device and location signals.",
+        "failure_mechanism": "Hashing may obscure useful clustering (e.g., device families), and IP geolocation can be inaccurate or spoofed. These features may be noisy in production.",
+        "evidence_test": "Analyze the correlation between these features and fraud labels to assess their signal strength.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The PoC has a fatal flaw in its label definition (chargeback as fraud proxy) and material flaws in its evaluation metric and temporal split design. Several minor flaws concern comparison fairness and potential leakage.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my positions on F3, F4, F6, and F7 as they were accepted. For F2, I am switching to DEFER because while the design detects shift, it does not prevent hyperparameter overfitting to the adjacent validation set. For F5, I am maintaining REBUT-SCOPE because the hypothesis is explicitly about the 'transformer-based approach' (which includes its input format) vs the 'GBDT approach' (which includes its input format), not a pure architectural ablation. For F1, I am switching to DEFER because the design uses the only available ground truth, but the critic's point about label noise is a known property of fraud data that can only be empirically quantified.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design uses sustained chargebacks because they are the only verifiable financial ground truth available at scale. The critic is correct that this is a noisy proxy for 'intent'. To settle this: (1) We will perform a manual audit of a stratified sample of 'False Negatives' (predicted legitimate but actually fraud) and 'False Positives' (predicted fraud but not sustained chargeback) using expert fraud investigators. (2) If the model's errors align with investigator-identified fraud, the design is vindicated. (3) If the model is merely predicting 'chargeback-prone' behavior rather than 'fraudulent' behavior, the critique is validated. (4) The primary conclusion (Transformer vs GBDT) remains valid because both models are trained and evaluated on the same noisy labels; the relative performance gain is the primary metric, and label noise typically affects both architectures symmetrically.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly notes that while out-of-time analysis detects degradation, it doesn't prevent the validation set's adjacency from biasing model selection. To settle this: (1) We will implement a 'sliding window' validation strategy where hyperparameters are tuned across multiple non-adjacent folds. (2) If the selected hyperparameters remain stable across folds, the design is vindicated. (3) If hyperparameters vary wildly, the critique is validated. (4) The primary conclusion remains valid because the same validation-to-test adjacency applies to both the Transformer and the GBDT; any overfitting to short-term patterns would likely benefit both models similarly, preserving the relative comparison.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly defines the success measure as 'higher fraud recall at the same review budget' and lists 'Recall and precision at fixed FPR' as metrics. The PR-AUC is a secondary summary statistic; the operational conclusion is derived from the fixed-FPR recall.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The methodology contains a strict 'Feature timing audit' control and explicitly states that 'all features use only information available at authorization time', eliminating future-leakage by construction.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The critic mischaracterizes the hypothesis. The goal is not to isolate the 'transformer architecture' in a vacuum, but to test if a 'transformer-based model ingesting raw transaction sequences' outperforms a 'gradient-boosted baseline trained on hand-engineered aggregate features'. The input format is a core part of the 'approach' being tested. The 'Scope of Conclusions' explicitly states that this does not isolate the architectural mechanism from the feature representation, which is the intended boundary of this PoC.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Given the scale of 50M+ transactions, the exclusion of declined transactions is a standard PoC simplification that does not materially distort the relative performance comparison between two models trained on the same dataset.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Equal tuning effort ensures a fair baseline. Any under-tuning of the transformer results in a conservative estimate of its potential, making a positive result more robust.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted most material concerns, but two significant points (label noise and temporal overfitting) were moved to DEFER as they require empirical validation to resolve the disagreement between the design's pragmatic choices and the critic's theoretical concerns."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

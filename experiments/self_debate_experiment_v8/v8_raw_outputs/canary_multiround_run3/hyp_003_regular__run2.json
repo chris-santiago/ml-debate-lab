@@ -1,0 +1,293 @@
+{
+  "case_id": "hyp_003_regular",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between the GBM and Logistic Regression isolates the effect of the survival formulation and richer features.",
+        "failure_mechanism": "The experiment introduces a massive confounding variable: the feature sets are not held constant. The GBM receives longitudinal trends, sentiment trajectories, and 12-month billing history, while the baseline receives only a single month of aggregate usage. Any performance gain could be entirely attributed to the superior information content of the features rather than the model architecture or the survival analysis formulation. This makes it impossible to determine if the 'survival model' is better or if 'more data' is better.",
+        "evidence_test": "Run the Logistic Regression baseline using the exact same feature set as the GBM (longitudinal trends, sentiment, etc.). If the gap closes significantly, the original claim was a result of feature disparity, not model superiority.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression) is tuned using the concordance index to ensure a fair comparison.",
+        "failure_mechanism": "Logistic Regression is a classification model that outputs a probability of an event occurring within a fixed window (90 days). It does not model the 'time-to-event' or handle censoring in its loss function. Using the Concordance Index (a survival metric) to tune a classifier's hyperparameters (like L2 regularization) is a mismatch. The classifier is optimizing for binary cross-entropy (or similar) during training, but being tuned on a ranking metric that assumes a survival distribution. This creates a 'silent misconfiguration' where the baseline is not being optimized for the objective it is being measured by.",
+        "evidence_test": "Compare the baseline's performance when tuned on its native objective (AUC-ROC or Log-Loss) versus the Concordance Index. If the results differ significantly, the baseline was improperly tuned.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (Months 1-24 train, 25-30 val, 31-36 test) prevents label leakage.",
+        "failure_mechanism": "The PoC uses monthly snapshots with a 90-day follow-up window. If a snapshot is taken on Month 24, the label (churn within 90 days) depends on events occurring in Months 25, 26, and 27. Since the validation set begins at Month 25, there is a 3-month overlap where the 'future' labels of the training set are determined by the 'present' data of the validation set. While not direct feature leakage, this temporal overlap can lead to over-optimistic validation results if there are strong seasonal trends or systemic shifts occurring at the boundary.",
+        "evidence_test": "Introduce a 'gap' period (buffer) between the training and validation sets equal to the prediction horizon (90 days). If performance drops significantly, the original split suffered from temporal overlap leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The model handles right-censoring correctly using Cox partial likelihood.",
+        "failure_mechanism": "Cox models assume 'non-informative censoring' (the reason a customer is censored is independent of their risk of churning). In B2B SaaS, censoring often happens because a company is acquired or goes out of business (non-churn events), which may be highly correlated with the usage patterns the model is tracking. If censoring is informative, the Concordance Index will be biased.",
+        "evidence_test": "Analyze the distribution of features for censored vs. non-censored accounts at the end of the window to check for systematic differences.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains a fatal flaw in its experimental design: it compares a high-capacity model with a rich feature set against a low-capacity model with a starved feature set, making the results uninterpretable. Additionally, there is a significant mismatch in how the baseline is tuned versus how it is evaluated.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I need to analyze each of the four critique findings against the methodology document to determine if they identify genuine flaws or if the methodology is sound.\n\nF1 (FATAL, severity 8): The critic claims the feature set disparity between GBM and baseline creates an unresolvable confound. However, Section 4 explicitly states this is a 'deliberate feature-set constraint for the baseline' to isolate effects. More importantly, Section 8 Control #3 documents a 'Sensitivity analysis: a GBM variant trained on only baseline features isolates the contribution of event-level features.' The methodology acknowledges this confound and has a planned analysis to address it. The primary business question is whether the full proposed solution (richer features + survival model) outperforms the current approach (simple baseline), which is valid. The sensitivity analysis addresses the isolation question.\n\nF2 (FATAL, severity 7): The critic claims tuning Logistic Regression on Concordance Index while training on binary cross-entropy is a misconfiguration. This is technically valid - LR is a classification model, not a survival model. However, Section 5 explicitly documents this choice: 'hyperparameters... are optimized on the validation set, using the same primary metric (concordance index)'. The methodology acknowledges this is a deliberate design choice to ensure fair comparison on the primary metric. While technically imperfect, it's documented and the evaluation metric (CI) is what matters for the hypothesis test. The critic's evidence test would reveal if this matters empirically.\n\nF3 (MATERIAL, severity 5): The critic claims temporal overlap between training and validation sets due to the 90-day follow-up window. If a Month 24 snapshot has a label depending on Months 25-27, and validation begins at Month 25, there IS overlap. Section 3 does NOT mention a buffer period between train and validation. Section 8 mentions 'Temporal stability' but not a gap period. This is a genuine concern that the methodology does not fully address. The critic's evidence test (introduce gap period) would settle this. This requires empirical verification.\n\nF4 (MINOR, severity 2): The critic claims Cox models assume non-informative censoring which may not hold in B2B SaaS. Section 8 Control #6 mentions 'Censoring alignment: we verify balanced censoring rates across train/val/test' and Section 9 mentions sensitivity analysis for robustness. The methodology acknowledges censoring concerns and has controls in place, though they may not fully address informative censoring. This is a legitimate concern but the methodology has some mitigating controls. Given the MINOR severity and existing controls, this can be addressed with REBUT-DESIGN.\n\nSummary: F1 and F2 are documented design choices with mitigation plans (REBUT-DESIGN). F3 is a genuine gap requiring empirical verification (DEFER). F4 is a minor concern with existing controls (REBUT-DESIGN). Since F3 remains at MATERIAL severity with DEFER, the overall verdict should be empirical_test_agreed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "Section 4 explicitly states the feature-set constraint is 'deliberate' to test the full proposed solution vs. current approach. Section 8 Control #3 documents a sensitivity analysis (GBM with baseline features) to isolate feature contribution. The methodology acknowledges this confound and has a planned analysis to address it. The business question (does the full solution work better?) is valid, and the sensitivity analysis addresses the isolation question."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Section 5 explicitly documents that hyperparameters are optimized using the Concordance Index for fair comparison on the primary metric. While technically LR is a classification model, the evaluation metric (CI) is what matters for the hypothesis test. The methodology acknowledges this design choice to ensure the baseline is evaluated on the same metric as the primary model. The critic's evidence test would reveal empirical impact."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The temporal overlap concern is genuine: Month 24 snapshots have labels depending on Months 25-27, while validation begins at Month 25. Section 3 does not mention a buffer period between train and validation. Section 8 mentions 'Temporal stability' but not a gap period. This requires empirical verification: introduce a 90-day gap period and compare performance. The primary conclusion can remain valid if the gap affects all conditions equally, but this needs data to confirm."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Section 8 Control #6 explicitly addresses censoring: 'Censoring alignment: we verify balanced censoring rates across train/val/test'. Section 9 mentions sensitivity analysis to establish robustness. The methodology acknowledges censoring concerns and has controls in place. While informative censoring cannot be fully ruled out, the existing controls mitigate this concern to below significance for the experiment's conclusions."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F3 remains at MATERIAL severity (5) with DEFER, requiring empirical verification of the temporal overlap concern. Since no FATAL/MATERIAL findings were CONCEDEd above adjusted severity 3, but one finding requires empirical testing, empirical_test_agreed is the appropriate verdict."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender correctly points out that a sensitivity analysis (GBM with baseline features) is planned. This addresses the 'is the model better' part of the failure mechanism. However, it does NOT address the 'is the feature set better' part. To fully isolate the effect of the survival formulation, the defender would need to run the Logistic Regression with the rich feature set. The current plan only tests the GBM's sensitivity to features, not the baseline's potential with those same features. The confound remains partially unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal is generic and fails to address the mechanistic failure. The defender argues that tuning on the evaluation metric (CI) ensures fairness, but ignores the fact that the model's internal objective (Binary Cross Entropy) is fundamentally different from the ranking objective of the CI. Tuning a classifier's hyperparameters using a survival metric does not change the fact that the model is not learning a survival distribution. The 'silent misconfiguration' is that the baseline is being forced into a ranking task it wasn't designed for, without a corresponding survival-aware loss function. The severity adjustment is disproportionate."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender conceded the point and deferred to empirical verification. No further challenge is needed."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal is a scope/generic defense. The defender cites 'balanced censoring rates across train/val/test' (Control #6). This is a check for covariate shift/distributional stability, but it does NOT address 'informative censoring' (where the reason for censoring is correlated with the risk of the event). Balanced rates across sets do not prove that the censoring process is non-informative. The failure mechanism remains unaddressed."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1: DEFER - The design has a partial control (GBM sensitivity analysis) but cannot fully isolate the survival formulation effect without LR with rich features. F2: CONCEDE - The design has no control for the tuning mismatch; LR trained with BCE but tuned on CI is a genuine flaw that asymmetrically affects the baseline. F3: DEFER (maintained) - Already deferred in R1, accepted by critic. F4: DEFER - The design has partial controls (sensitivity analysis mentioned), and the censoring issue affects both models equally, so the relative conclusion can survive.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that the sensitivity analysis (GBM with baseline features) only addresses whether GBM benefits from richer features, not whether LR would benefit from the same features. To fully isolate the survival formulation effect, LR with the rich feature set would need to be run. The methodology does not include this control. The primary conclusion (GBM solution works better than current approach) can remain valid if the flaw affects all conditions equally, but the specific attribution to survival formulation vs. feature richness is genuinely uncertain.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's mechanistic challenge is correct. Logistic Regression trained with Binary Cross-Entropy loss but tuned on Concordance Index creates a fundamental mismatch between the model's learning objective and its evaluation metric. The methodology has no control addressing whether LR should be tuned on its native objective. This flaw asymmetrically affects the baseline (LR is under-optimized for CI) while the GBM is correctly configured for survival. The primary conclusion about model superiority could be invalidated if the baseline was simply under-tuned.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The temporal overlap concern remains valid: Month 24 snapshots have labels depending on Months 25-27, while validation begins at Month 25. The methodology does not include a buffer period between train and validation. The settling experiment is to introduce a 90-day gap period and compare performance. The primary conclusion can remain valid if the gap affects all conditions equally, but this needs empirical verification.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The critic is correct that balanced censoring rates across sets does not prove non-informative censoring. The methodology does not have a specific control for informative censoring. However, the censoring issue affects both models equally (they use the same data and censoring logic), so the relative conclusion (GBM is better) can survive even if the CI is biased. The settling experiment is to analyze feature distributions for censored vs. non-censored accounts.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F2 is CONCEDEd with adjusted_severity 7 (FATAL), which meets the criteria for critique_wins. The tuning mismatch between LR's native objective and the evaluation metric is a genuine design flaw that could invalidate the primary conclusion about model superiority."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between the GBM and Logistic Regression isolates the effect of the survival formulation and richer features.",
+        "failure_mechanism": "The experiment introduces a massive confounding variable: the feature sets are not held constant. The GBM receives longitudinal trends, sentiment trajectories, and 12-month billing history, while the baseline receives only a single month of aggregate usage. Any performance gain could be entirely attributed to the superior information content of the features rather than the model architecture or the survival analysis formulation. This makes it impossible to determine if the 'survival model' is better or if 'more data' is better.",
+        "evidence_test": "Run the Logistic Regression baseline using the exact same feature set as the GBM (longitudinal trends, sentiment, etc.). If the gap closes significantly, the original claim was a result of feature disparity, not model superiority.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression) is tuned using the concordance index to ensure a fair comparison.",
+        "failure_mechanism": "Logistic Regression is a classification model that outputs a probability of an event occurring within a fixed window (90 days). It does not model the 'time-to-event' or handle censoring in its loss function. Using the Concordance Index (a survival metric) to tune a classifier's hyperparameters (like L2 regularization) is a mismatch. The classifier is optimizing for binary cross-entropy (or similar) during training, but being tuned on a ranking metric that assumes a survival distribution. This creates a 'silent misconfiguration' where the baseline is not being optimized for the objective it is being measured by.",
+        "evidence_test": "Compare the baseline's performance when tuned on its native objective (AUC-ROC or Log-Loss) versus the Concordance Index. If the results differ significantly, the baseline was improperly tuned.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (Months 1-24 train, 25-30 val, 31-36 test) prevents label leakage.",
+        "failure_mechanism": "The PoC uses monthly snapshots with a 90-day follow-up window. If a snapshot is taken on Month 24, the label (churn within 90 days) depends on events occurring in Months 25, 26, and 27. Since the validation set begins at Month 25, there is a 3-month overlap where the 'future' labels of the training set are determined by the 'present' data of the validation set. While not direct feature leakage, this temporal overlap can lead to over-optimistic validation results if there are strong seasonal trends or systemic shifts occurring at the boundary.",
+        "evidence_test": "Introduce a 'gap' period (buffer) between the training and validation sets equal to the prediction horizon (90 days). If performance drops significantly, the original split suffered from temporal overlap leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The model handles right-censoring correctly using Cox partial likelihood.",
+        "failure_mechanism": "Cox models assume 'non-informative censoring' (the reason a customer is censored is independent of their risk of churning). In B2B SaaS, censoring often happens because a company is acquired or goes out of business (non-churn events), which may be highly correlated with the usage patterns the model is tracking. If censoring is informative, the Concordance Index will be biased.",
+        "evidence_test": "Analyze the distribution of features for censored vs. non-censored accounts at the end of the window to check for systematic differences.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains a fatal flaw in its experimental design: it compares a high-capacity model with a rich feature set against a low-capacity model with a starved feature set, making the results uninterpretable. Additionally, there is a significant mismatch in how the baseline is tuned versus how it is evaluated.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1: DEFER - The design has a partial control (GBM sensitivity analysis) but cannot fully isolate the survival formulation effect without LR with rich features. F2: CONCEDE - The design has no control for the tuning mismatch; LR trained with BCE but tuned on CI is a genuine flaw that asymmetrically affects the baseline. F3: DEFER (maintained) - Already deferred in R1, accepted by critic. F4: DEFER - The design has partial controls (sensitivity analysis mentioned), and the censoring issue affects both models equally, so the relative conclusion can survive.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that the sensitivity analysis (GBM with baseline features) only addresses whether GBM benefits from richer features, not whether LR would benefit from the same features. To fully isolate the survival formulation effect, LR with the rich feature set would need to be run. The methodology does not include this control. The primary conclusion (GBM solution works better than current approach) can remain valid if the flaw affects all conditions equally, but the specific attribution to survival formulation vs. feature richness is genuinely uncertain.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's mechanistic challenge is correct. Logistic Regression trained with Binary Cross-Entropy loss but tuned on Concordance Index creates a fundamental mismatch between the model's learning objective and its evaluation metric. The methodology has no control addressing whether LR should be tuned on its native objective. This flaw asymmetrically affects the baseline (LR is under-optimized for CI) while the GBM is correctly configured for survival. The primary conclusion about model superiority could be invalidated if the baseline was simply under-tuned.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The temporal overlap concern remains valid: Month 24 snapshots have labels depending on Months 25-27, while validation begins at Month 25. The methodology does not include a buffer period between train and validation. The settling experiment is to introduce a 90-day gap period and compare performance. The primary conclusion can remain valid if the gap affects all conditions equally, but this needs empirical verification.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The critic is correct that balanced censoring rates across sets does not prove non-informative censoring. The methodology does not have a specific control for informative censoring. However, the censoring issue affects both models equally (they use the same data and censoring logic), so the relative conclusion (GBM is better) can survive even if the CI is biased. The settling experiment is to analyze feature distributions for censored vs. non-censored accounts.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F2 is CONCEDEd with adjusted_severity 7 (FATAL), which meets the criteria for critique_wins. The tuning mismatch between LR's native objective and the evaluation metric is a genuine design flaw that could invalidate the primary conclusion about model superiority."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=8 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=7 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

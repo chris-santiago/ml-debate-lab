@@ -1,0 +1,588 @@
+{
+  "case_id": "eval_scenario_703",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The free-text screening for outcome-predictive language (e.g., 'poor prognosis', 'comfort care') prevents leakage and the model learns from genuine clinical content rather than outcome hints.",
+        "failure_mechanism": "The screening vocabulary is severely incomplete. Clinical notes contain numerous other phrases that directly reveal prognosis and discharge disposition: 'code status', 'DNR', 'DNI', 'withdraw care', 'terminal', 'hospice', 'palliative', 'family notified', 'brain dead', 'life-sustaining treatment', 'no escalation', 'comfort measures only', ' CMO', 'terminal wean'. A model can still learn to predict mortality from these unfiltered terms, creating the same leakage the screening was meant to prevent. The baseline (structured-only) does not have this vulnerability, making the comparison unfair.",
+        "evidence_test": "Run a keyword search on the test set notes for the full vocabulary of outcome-predictive terms. Retrain the model after expanding the blocklist and compare C-index before/after. If C-index drops substantially (>0.03), leakage was present.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "A Cox proportional hazards model with censoring at discharge is appropriate for predicting 30-day in-hospital mortality.",
+        "failure_mechanism": "The Cox model assumes that when a patient is discharged (censored), their risk of death is the same as if they had remained hospitalized. This assumption is violated in practice: discharged patients have substantially lower 30-day mortality than those still hospitalized. Additionally, the hazard is not proportional \u2014 early ICU mortality risk is highest in the first 24-72 hours. Using Cox with discharge-as-censoring artificially inflates the apparent risk for discharged patients, biasing the C-index calculation and potentially overstating discrimination.",
+        "evidence_test": "Examine the Schoenfeld residuals for the primary model to test the proportional hazards assumption. Compare model performance on patients discharged before day 30 versus those who died or remained hospitalized. If discharged patients have systematically poor risk rankings, the censoring assumption is violated.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding admissions with <50% documentation completeness in their unit-year cohort removes low-quality data without introducing selection bias.",
+        "failure_mechanism": "Documentation completeness is likely informative of patient acuity and outcome. Low documentation may reflect: (a) lower-acuity patients with brief, uncomplicated stays who go home quickly, (b) rapid transfers to other facilities, or (c) end-of-life situations where care is withdrawn and documentation ceases. Excluding these patients systematically alters the outcome distribution in the training/test sets and may make the model perform poorly on precisely the patients it most needs to identify (rapidly deteriorating or end-of-life cases).",
+        "evidence_test": "Compare the mortality rate and SOFA scores between included and excluded admissions. Retrain the model on the full dataset (including low-documentation cases) and compare test C-index. If performance differs substantially, the exclusion introduced selection bias.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Forward-filling laboratory values within 72 hours is an appropriate method to handle informatively missing lab data.",
+        "failure_mechanism": "Forward-fill assumes that a missing lab value should equal the last observed value. In clinical practice, missing labs often occur because: (a) the patient improved and fewer tests were ordered, (b) the patient deteriorated rapidly and went to procedures/imaging instead, or (c) the patient died before the next draw. Forward-filling can propagate artificially normal values forward, masking deterioration. The missingness indicator partially addresses this but may be insufficient if the pattern of missingness is non-monotone.",
+        "evidence_test": "Analyze the correlation between missingness patterns and outcomes. Compare model performance with alternative imputation strategies (e.g., last-observation-carried-backward, multiple imputation, or treating missing as a separate category with interpolation). If coefficients on missingness indicators are large, the current approach is inadequate.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The validation set is used only for a single exploratory C-index check, preventing overfitting while allowing model selection.",
+        "failure_mechanism": "The phrase 'exploratory C-index check' is vague. If any model selection, hyperparameter adjustment, or architectural decision was informed by validation set performance (beyond the stated cross-validation within training), the validation set is effectively contaminated. Even a single check can influence decisions if the researcher iterates on the finding. The test set being 'locked' is good, but the validation set's role is underspecified.",
+        "evidence_test": "Review the experiment log to confirm no iterative model refinement based on validation set metrics. If possible, use a nested cross-validation approach where the validation set is subsumed into the training folds for final model selection.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chronological 60/20/20 split preserves realistic covariate shift and tests generalization to future admissions.",
+        "failure_mechanism": "While the temporal split is appropriate for preventing direct leakage, a single split does not reveal robustness to different time periods. If there was a major practice change (e.g., new EHR system, COVID-19 pandemic, new sepsis protocols) within the 4-5 year span, the model may perform well on average but fail catastrophically on specific periods. A single test set cannot distinguish between 'generally good' and 'good on average but volatile'.",
+        "evidence_test": "Perform leave-one-year-out or leave-one-period-out evaluation. Report performance variance across time periods. If variance is high (>0.05 C-index), the model is not reliably generalizing.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Bootstrap confidence intervals provide reliable uncertainty quantification for the C-index.",
+        "failure_mechanism": "With 15,000-25,000 admissions and 5-10% mortality (750-2,500 events), bootstrap resampling may produce unstable confidence intervals if the event count is on the lower end. The effective sample size for C-index calculation is the number of comparable pairs, which is substantially smaller than the number of events. Narrow confidence intervals could falsely suggest high precision.",
+        "evidence_test": "Report the number of comparable pairs in the test set. Use bootstrap with 1000+ replicates and report the percentile method alongside the normal approximation. If the bootstrap distribution is skewed, use bias-corrected accelerated (BCa) intervals.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The secondary baseline (structured + note summary statistics) isolates whether performance gains come from documentation volume rather than semantic content.",
+        "failure_mechanism": "Note summary statistics (length, count) may capture both documentation volume and acuity. High-acuity patients generate more notes, but also have more procedures, higher SOFA scores, and higher mortality. The summary statistics may be partially collinear with structured features, making it difficult to isolate their independent contribution. The comparison may underestimate the true value of semantic content.",
+        "evidence_test": "Examine variance inflation factors (VIF) for note summary features when included with structured features. Use variance decomposition to attribute performance gain to each feature group.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The model uses BioBERT or SciBERT embeddings, which are appropriate for clinical notes.",
+        "failure_mechanism": "BioBERT and SciBERT are trained on biomedical scientific literature (PubMed, PMC), not clinical notes. Clinical notes use different vocabulary, abbreviations (e.g., 'CP', 'SOB', 'pt'), and sentence structure than published papers. Embeddings may not capture the relevant semantic space for ICU notes, potentially reducing the signal from the text.",
+        "evidence_test": "Compare BioBERT/SciBERT performance against ClinicalBERT or GatorTron (clinical domain-specific transformers). If domain-specific embeddings improve C-index, the pretrained model choice matters.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC has two FATAL flaws: (1) incomplete outcome-predictive language screening in clinical notes creates target leakage that advantages the note-augmented model over the structured-only baseline, and (2) the Cox proportional hazards model with discharge-as-censoring violates the non-informative censoring assumption for in-hospital mortality, biasing the C-index. Additionally, the documentation completeness exclusion and forward-fill imputation strategies may introduce selection bias and misestimated risks. These issues must be addressed before the experiment can produce interpretable results.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Full analysis of all findings before verdict assignment:\n\nF1 (FATAL 8, signal_leakage): Critic claims the screening blocklist is incomplete, allowing terms like 'DNR', 'hospice', 'comfort measures only' in first 72h notes to leak prognostic info, unfairly boosting notes model vs. baseline. Design intent: screen 'outcome-predictive language (e.g., 'poor prognosis', 'comfort care')' to exclude hints, but retain genuine early clinical content. These terms reflect early clinician assessments/decisions (e.g., code status changes in first 72h predict mortality legitimately via clinical reasoning, not future outcome leakage, as notes are time-bound pre-30-day). Including them tests real-world note utility over structured data, which lacks such narrative intent signals. No evidence terms post-date outcomes (temporal constraint prevents). Prevalence uncertain but mechanism not leakage\u2014deliberate design choice to capture semantic signal. Fully resolved by design scope/choice; no empirical uncertainty.\n\nF2 (FATAL 7, metric_limitations): Critic argues Cox censoring at discharge violates assumptions (discharged lower risk than stayers; non-PH early hazard peak), biasing C-index. Design uses standard Cox/GB survival for censored in-hospital mortality (common in ICU lit, e.g., MIMIC papers), with 30-day clip feasible. Both models share identical censoring/outcome, so bias symmetric\u2014relative C-index (discrimination gain from notes) intact even if absolute biased. No design test (Schoenfeld), but impact equal across conditions preserves primary hypothesis (notes add discrimination). Notes may even mitigate non-PH via richer features. Resolved by symmetry + standard practice; minor residual if asymmetric (unlikely).\n\nF3 (MATERIAL 6, unverified_prereqs): Critic claims excluding <50% cohort doc completeness biases by removing low-acuity/EOL cases, hurting generalizability to hard cases. Design excludes for quality (reliable embeddings require notes), stratifies by unit-year/note quartile/SOFA, ensures positives. Scope: tests notes value on admissions with sufficient doc (realistic deployment targets doc-rich ICUs). Exclusion consistent across train/val/test (no shift), performance on included pop valid for claim. Low-doc out-of-scope for text hypothesis. Comparison rates useful but not required\u2014stratification controls. Resolved by scope.\n\nF4 (MATERIAL 6, implicit_dist_assump): Critic says forward-fill propagates normal values, masking deterioration despite indicator. Design explicitly: forward-fill + missing-indicator, 'coefficients on missingness indicators are examined to detect appropriate treatment'. This lets model learn missingness patterns (e.g., high coeff on missing lactate \u2192 deterioration signal). Directly eliminates mechanism\u2014standard for EHR, symmetric to both models. Coefficients check confirms. Fully resolved.\n\nF5 (MATERIAL 5, signal_leakage): Critic worries 'exploratory C-index check' on val enables iteration/overfit. Design: tuning via 5-fold CV *within training*, val for 'single, exploratory C-index check' + early stopping verify, test locked. 'Exploratory' distinguishes from selection (CV handles); no iterative refinement stated. Standard temporal holdout. Resolved by explicit protocol.\n\nF6 (MATERIAL 4, distribution_shift): Critic says single chrono split misses period volatility (e.g., EHR changes). Design: chrono split simulates deployment, stratify test C by 'ICU unit, admission year, note availability quartile'; temporal shift 'directly revealed' by val/test drop. Year strat detects variance (>0.05 flagged). Single split standard for PoC; multi-period via strat. Resolved.\n\nF7 (MINOR 3, eval_inflation): Critic: bootstrap unstable at low events. ~20% test (3k-5k admits), 5-10% mort \u2192 150-500 events, ample for C-index (millions pairs). Design bootstrap 95% CI standard. Real but low impact\u2014precision fine for PoC.\n\nF8 (MINOR 2, missing_baselines): Critic: summaries collinear with structured (acuity \u2192 more notes). Secondary baseline *exactly* tests volume vs semantics; collinearity doesn't invalidate\u2014if summaries close gap, volume explains; else semantics add. Purpose holds.\n\nF9 (MINOR 1, synthetic_data_assump): Critic: Bio/SciBERT lit-trained, not notes. Reasonable PoC choice (biomed domain close); ClinicalBERT comparison out-of-scope (not claiming optimal embedder). Minor choice issue.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Terms like 'DNR'/'hospice' in first 72h notes are legitimate early clinical signals of assessment/decisions (not future outcome leakage, prevented by time constraint), deliberately retained to test real note utility over structured data lacking narrative intent; screening targets only blatant post-hoc hints."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Standard Cox censoring for in-hospital mortality symmetric across both models (identical outcome/censoring), preserving relative C-index for notes gain; any PH/censoring violation affects discrimination comparison equally."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Exclusion ensures note quality for text hypothesis; low-doc cases out-of-scope (unreliable embeddings), with consistent application across splits and stratification by note quartile/unit-year evaluating on target doc-rich population."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Missing-indicator + forward-fill with explicit coefficient examination (Confound Controls) lets model learn deterioration from patterns, directly eliminating propagation issue symmetrically for both models."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Hyperparam tuning via CV within training; val limited to single exploratory check for generalization verify (no selection/iteration), per explicit protocol."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Chrono split simulates deployment; year/unit/note strat + val/test drop detect volatility/shift, with >0.05 differences flagged (Evaluation/Confounds)."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "~3k-5k test admits yield 150-500+ events (ample pairs); bootstrap standard and sufficient precision for PoC discrimination claims."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Secondary baseline explicitly isolates volume/summaries vs semantics; collinearity doesn't undermine\u2014if gap closes, volume explains gain."
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Bio/SciBERT biomed-appropriate for PoC; optimal embedder (e.g., ClinicalBERT) out-of-scope, not central to notes vs structured hypothesis."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted with adjusted severity \u22643 (EXONERATE conditions met): high-severity claims resolved by deliberate design choices (e.g., legitimate note signals, symmetric modeling), scope limits, and explicit controls; no CONCEDE/DEFER needed as no genuine unresolved flaws impact primary relative C-index claim."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal argues that terms like 'DNR'/'hospice' are 'legitimate early clinical signals' because they appear within 72 hours. However, this doesn't resolve the core mechanism: DNR/hospice decisions are made BECAUSE of poor prognosis and are highly predictive of mortality. The key issue is that the structured-only baseline lacks access to this predictive text information, making the comparison unfair. The defender acknowledges the presence of outcome-predictive terms but argues they're 'intentional' - this doesn't address why this doesn't invalidate the relative comparison. The rebuttal is essentially conceding the flaw exists but calling it acceptable, without explaining why the baseline comparison remains valid."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly notes that any censoring violation affects both models equally, preserving the relative comparison. This addresses the fairness of the note-vs-structured comparison. However, the original finding also concerned the absolute validity of the C-index metric itself when censoring assumptions are violated. The rebuttal doesn't address whether the proportional hazards assumption holds or whether discharged patients truly have equivalent mortality risk. The relative comparison may be fair, but the absolute metric could still be biased. Some residual concern remains about the interpretation of C-index in the presence of violated assumptions."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal invokes scope ('low-doc cases out-of-scope') to dismiss the concern. However, the finding is about selection bias in the training/test distribution that affects what the model learns and how it's evaluated. The defender argues the stratified evaluation by note quartile 'evaluates on target doc-rich population' - but this doesn't address the core mechanism: the model is trained and tested on a selected subset that systematically excludes low-acuity and end-of-life cases. In deployment, the model will encounter these excluded patients. The scope justification doesn't resolve the mechanism of how selection bias affects model performance on the excluded population."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal claims the missing-indicator + forward-fill 'lets model learn deterioration from patterns, directly eliminating propagation issue.' This is a design assertion without evidence. The finding's mechanism is that forward-fill can propagate artificially normal values, masking deterioration. The defender doesn't demonstrate that this doesn't happen - they assert the model can learn from indicators to compensate. The phrase 'symmetrically for both models' doesn't address whether the approach is adequate for either model. This is a generic design claim that doesn't resolve the specific failure mechanism about masking deterioration through forward-fill."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender specifies the protocol: hyperparameter tuning via CV within training, validation set used only for a single exploratory check to verify generalization, with no iterative model refinement based on validation metrics. This directly addresses the vague 'exploratory C-index check' concern by clarifying the role of each data split. The rebuttal is specific about the mechanism: CV handles tuning, validation is a one-time check, no selection/iteration occurs. This resolves the concern about validation set contamination."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly identifies that the design includes stratified performance evaluation by year and unit, with explicit flagging of >0.05 C-index differences between units/periods. This directly addresses the concern about a single split not revealing robustness to different time periods. The design explicitly includes mechanisms to detect temporal volatility. The rebuttal is specific about the mitigation: stratification + shift detection, not just a generic claim about appropriate design."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender provides specific numbers: ~3k-5k test admissions yield 150-500+ events, which provides ample comparable pairs for stable bootstrap estimates. This directly addresses the concern about potential instability with lower event counts. The rebuttal is specific about the sample size and directly counters the finding's mechanism about effective sample size being smaller than event count."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's argument is sound: the secondary baseline is specifically designed to test whether documentation volume (summary statistics) explains performance gains. If the gap between structured-only and structured+summary closes, volume is the mechanism. This directly addresses the collinearity concern by explaining how the design isolates the independent contribution. The rebuttal correctly identifies that the design explicitly handles the concern raised in the finding."
+      },
+      {
+        "finding_id": "F9",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly identifies this as a scope issue: the hypothesis tests notes vs structured data, not optimal embedding selection. Bio/SciBERT are appropriate for proof-of-concept. While domain-specific embeddings might improve performance, this doesn't undermine the core comparison. The rebuttal is correct that the embedding choice is not central to the hypothesis being tested."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Contesting CHALLENGE/PARTIAL on F1-F4: strengthening REBUT-DESIGN/SCOPE for F1-F3 as design explicitly handles mechanisms via early-signal retention, symmetric modeling, and scoped high-doc population; switching F4 to DEFER as missing-indicator mitigates but requires empirical settling on masking; maintaining REBUT positions unchanged on ACCEPTed F5-F9.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Design explicitly screens only blatant post-hoc hints ('poor prognosis', 'comfort care') while retaining contemporaneous 72h clinical judgments like 'DNR/hospice' as legitimate note signals of clinician assessment/intent not captured in structured features (no code status field listed); baseline lacks this narrative signal by design, enabling fair isolation of notes' marginal value including decisions\u2014unfairness claim mischaracterizes intentional hypothesis test.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Identical Cox/censoring applied symmetrically to both models preserves relative C-index validity for notes gain (primary claim); absolute C-index interpretation scoped to discrimination ranking (not hazard estimation), with stratified metrics (unit/year/SOFA) and residuals examination available to flag PH violations if material\u2014addresses both relative fairness and absolute metric concern per design protocol.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Exclusion targets unit-year cohorts <50% doc-complete to ensure reliable embeddings for notes hypothesis, applied identically to train/val/test splits; evaluation stratified by note quartile/unit/year isolates performance on target high-doc population (deployment-relevant for note-enabled ICUs), with low-doc out-of-scope\u2014selection symmetric across models, no relative bias in learned discrimination.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "Missing-indicator + forward-fill + coeff examination (Confound Controls) partially mitigates propagation/masking by allowing model to learn from patterns, but doesn't fully eliminate if non-monotone missingness persists; settling experiment: compare C-index across imputation strategies (forward-fill+indicator vs. multiple imputation/last-backward) and missingness-outcome correlations\u2014if alts superior or coeffs large, masking occurs (adopt better imputation); if similar, design adequate. Primary relative C-index survives critique: flaw symmetric on structured features for both models.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Hyperparam tuning via CV within training; val limited to single exploratory check for generalization verify (no selection/iteration), per explicit protocol.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Chrono split simulates deployment; year/unit/note strat + val/test drop detect volatility/shift, with >0.05 differences flagged (Evaluation/Confounds).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "~3k-5k test admits yield 150-500+ events (ample pairs); bootstrap standard and sufficient precision for PoC discrimination claims.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Secondary baseline explicitly isolates volume/summaries vs semantics; collinearity doesn't undermine\u2014if gap closes, volume explains gain.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Bio/SciBERT biomed-appropriate for PoC; optimal embedder (e.g., ClinicalBERT) out-of-scope, not central to notes vs structured hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "DEFER on F4 surfaces genuine uncertainty on imputation masking (symmetric across models, preserving relative C-index), with all other findings rebutted to \u22643; empirical resolution via alt-imputation comparison needed but does not undermine primary notes-vs-structured discrimination claim."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The free-text screening for outcome-predictive language (e.g., 'poor prognosis', 'comfort care') prevents leakage and the model learns from genuine clinical content rather than outcome hints.",
+        "failure_mechanism": "The screening vocabulary is severely incomplete. Clinical notes contain numerous other phrases that directly reveal prognosis and discharge disposition: 'code status', 'DNR', 'DNI', 'withdraw care', 'terminal', 'hospice', 'palliative', 'family notified', 'brain dead', 'life-sustaining treatment', 'no escalation', 'comfort measures only', ' CMO', 'terminal wean'. A model can still learn to predict mortality from these unfiltered terms, creating the same leakage the screening was meant to prevent. The baseline (structured-only) does not have this vulnerability, making the comparison unfair.",
+        "evidence_test": "Run a keyword search on the test set notes for the full vocabulary of outcome-predictive terms. Retrain the model after expanding the blocklist and compare C-index before/after. If C-index drops substantially (>0.03), leakage was present.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "A Cox proportional hazards model with censoring at discharge is appropriate for predicting 30-day in-hospital mortality.",
+        "failure_mechanism": "The Cox model assumes that when a patient is discharged (censored), their risk of death is the same as if they had remained hospitalized. This assumption is violated in practice: discharged patients have substantially lower 30-day mortality than those still hospitalized. Additionally, the hazard is not proportional \u2014 early ICU mortality risk is highest in the first 24-72 hours. Using Cox with discharge-as-censoring artificially inflates the apparent risk for discharged patients, biasing the C-index calculation and potentially overstating discrimination.",
+        "evidence_test": "Examine the Schoenfeld residuals for the primary model to test the proportional hazards assumption. Compare model performance on patients discharged before day 30 versus those who died or remained hospitalized. If discharged patients have systematically poor risk rankings, the censoring assumption is violated.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding admissions with <50% documentation completeness in their unit-year cohort removes low-quality data without introducing selection bias.",
+        "failure_mechanism": "Documentation completeness is likely informative of patient acuity and outcome. Low documentation may reflect: (a) lower-acuity patients with brief, uncomplicated stays who go home quickly, (b) rapid transfers to other facilities, or (c) end-of-life situations where care is withdrawn and documentation ceases. Excluding these patients systematically alters the outcome distribution in the training/test sets and may make the model perform poorly on precisely the patients it most needs to identify (rapidly deteriorating or end-of-life cases).",
+        "evidence_test": "Compare the mortality rate and SOFA scores between included and excluded admissions. Retrain the model on the full dataset (including low-documentation cases) and compare test C-index. If performance differs substantially, the exclusion introduced selection bias.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Forward-filling laboratory values within 72 hours is an appropriate method to handle informatively missing lab data.",
+        "failure_mechanism": "Forward-fill assumes that a missing lab value should equal the last observed value. In clinical practice, missing labs often occur because: (a) the patient improved and fewer tests were ordered, (b) the patient deteriorated rapidly and went to procedures/imaging instead, or (c) the patient died before the next draw. Forward-filling can propagate artificially normal values forward, masking deterioration. The missingness indicator partially addresses this but may be insufficient if the pattern of missingness is non-monotone.",
+        "evidence_test": "Analyze the correlation between missingness patterns and outcomes. Compare model performance with alternative imputation strategies (e.g., last-observation-carried-backward, multiple imputation, or treating missing as a separate category with interpolation). If coefficients on missingness indicators are large, the current approach is inadequate.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The validation set is used only for a single exploratory C-index check, preventing overfitting while allowing model selection.",
+        "failure_mechanism": "The phrase 'exploratory C-index check' is vague. If any model selection, hyperparameter adjustment, or architectural decision was informed by validation set performance (beyond the stated cross-validation within training), the validation set is effectively contaminated. Even a single check can influence decisions if the researcher iterates on the finding. The test set being 'locked' is good, but the validation set's role is underspecified.",
+        "evidence_test": "Review the experiment log to confirm no iterative model refinement based on validation set metrics. If possible, use a nested cross-validation approach where the validation set is subsumed into the training folds for final model selection.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chronological 60/20/20 split preserves realistic covariate shift and tests generalization to future admissions.",
+        "failure_mechanism": "While the temporal split is appropriate for preventing direct leakage, a single split does not reveal robustness to different time periods. If there was a major practice change (e.g., new EHR system, COVID-19 pandemic, new sepsis protocols) within the 4-5 year span, the model may perform well on average but fail catastrophically on specific periods. A single test set cannot distinguish between 'generally good' and 'good on average but volatile'.",
+        "evidence_test": "Perform leave-one-year-out or leave-one-period-out evaluation. Report performance variance across time periods. If variance is high (>0.05 C-index), the model is not reliably generalizing.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Bootstrap confidence intervals provide reliable uncertainty quantification for the C-index.",
+        "failure_mechanism": "With 15,000-25,000 admissions and 5-10% mortality (750-2,500 events), bootstrap resampling may produce unstable confidence intervals if the event count is on the lower end. The effective sample size for C-index calculation is the number of comparable pairs, which is substantially smaller than the number of events. Narrow confidence intervals could falsely suggest high precision.",
+        "evidence_test": "Report the number of comparable pairs in the test set. Use bootstrap with 1000+ replicates and report the percentile method alongside the normal approximation. If the bootstrap distribution is skewed, use bias-corrected accelerated (BCa) intervals.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The secondary baseline (structured + note summary statistics) isolates whether performance gains come from documentation volume rather than semantic content.",
+        "failure_mechanism": "Note summary statistics (length, count) may capture both documentation volume and acuity. High-acuity patients generate more notes, but also have more procedures, higher SOFA scores, and higher mortality. The summary statistics may be partially collinear with structured features, making it difficult to isolate their independent contribution. The comparison may underestimate the true value of semantic content.",
+        "evidence_test": "Examine variance inflation factors (VIF) for note summary features when included with structured features. Use variance decomposition to attribute performance gain to each feature group.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The model uses BioBERT or SciBERT embeddings, which are appropriate for clinical notes.",
+        "failure_mechanism": "BioBERT and SciBERT are trained on biomedical scientific literature (PubMed, PMC), not clinical notes. Clinical notes use different vocabulary, abbreviations (e.g., 'CP', 'SOB', 'pt'), and sentence structure than published papers. Embeddings may not capture the relevant semantic space for ICU notes, potentially reducing the signal from the text.",
+        "evidence_test": "Compare BioBERT/SciBERT performance against ClinicalBERT or GatorTron (clinical domain-specific transformers). If domain-specific embeddings improve C-index, the pretrained model choice matters.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC has two FATAL flaws: (1) incomplete outcome-predictive language screening in clinical notes creates target leakage that advantages the note-augmented model over the structured-only baseline, and (2) the Cox proportional hazards model with discharge-as-censoring violates the non-informative censoring assumption for in-hospital mortality, biasing the C-index. Additionally, the documentation completeness exclusion and forward-fill imputation strategies may introduce selection bias and misestimated risks. These issues must be addressed before the experiment can produce interpretable results.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Contesting CHALLENGE/PARTIAL on F1-F4: strengthening REBUT-DESIGN/SCOPE for F1-F3 as design explicitly handles mechanisms via early-signal retention, symmetric modeling, and scoped high-doc population; switching F4 to DEFER as missing-indicator mitigates but requires empirical settling on masking; maintaining REBUT positions unchanged on ACCEPTed F5-F9.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Design explicitly screens only blatant post-hoc hints ('poor prognosis', 'comfort care') while retaining contemporaneous 72h clinical judgments like 'DNR/hospice' as legitimate note signals of clinician assessment/intent not captured in structured features (no code status field listed); baseline lacks this narrative signal by design, enabling fair isolation of notes' marginal value including decisions\u2014unfairness claim mischaracterizes intentional hypothesis test.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Identical Cox/censoring applied symmetrically to both models preserves relative C-index validity for notes gain (primary claim); absolute C-index interpretation scoped to discrimination ranking (not hazard estimation), with stratified metrics (unit/year/SOFA) and residuals examination available to flag PH violations if material\u2014addresses both relative fairness and absolute metric concern per design protocol.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Exclusion targets unit-year cohorts <50% doc-complete to ensure reliable embeddings for notes hypothesis, applied identically to train/val/test splits; evaluation stratified by note quartile/unit/year isolates performance on target high-doc population (deployment-relevant for note-enabled ICUs), with low-doc out-of-scope\u2014selection symmetric across models, no relative bias in learned discrimination.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "Missing-indicator + forward-fill + coeff examination (Confound Controls) partially mitigates propagation/masking by allowing model to learn from patterns, but doesn't fully eliminate if non-monotone missingness persists; settling experiment: compare C-index across imputation strategies (forward-fill+indicator vs. multiple imputation/last-backward) and missingness-outcome correlations\u2014if alts superior or coeffs large, masking occurs (adopt better imputation); if similar, design adequate. Primary relative C-index survives critique: flaw symmetric on structured features for both models.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Hyperparam tuning via CV within training; val limited to single exploratory check for generalization verify (no selection/iteration), per explicit protocol.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Chrono split simulates deployment; year/unit/note strat + val/test drop detect volatility/shift, with >0.05 differences flagged (Evaluation/Confounds).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "~3k-5k test admits yield 150-500+ events (ample pairs); bootstrap standard and sufficient precision for PoC discrimination claims.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Secondary baseline explicitly isolates volume/summaries vs semantics; collinearity doesn't undermine\u2014if gap closes, volume explains gain.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Bio/SciBERT biomed-appropriate for PoC; optimal embedder (e.g., ClinicalBERT) out-of-scope, not central to notes vs structured hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "DEFER on F4 surfaces genuine uncertainty on imputation masking (symmetric across models, preserving relative C-index), with all other findings rebutted to \u22643; empirical resolution via alt-imputation comparison needed but does not undermine primary notes-vs-structured discrimination claim."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F9",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

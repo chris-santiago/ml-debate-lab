@@ -1,0 +1,549 @@
+{
+  "case_id": "eval_scenario_777",
+  "stratum": "regular",
+  "flaw_category": "distribution_shift",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer model's performance gain, if observed, is attributable to its ability to learn from temporal sequences of clinical data.",
+        "failure_mechanism": "The transformer receives all baseline features used by logistic regression *plus* temporal sequences. This creates a fundamental confounding factor: any performance gain could be due to the transformer's superior capacity to model interactions within the baseline feature vector itself (a non-linear function of the same inputs), not from the temporal sequences. The experiment design does not isolate the signal from temporal structure. A transformer trained on the baseline features alone (without sequences) is a necessary but missing baseline.",
+        "evidence_test": "Train and evaluate a third model: a transformer (or other non-linear model like a feed-forward network) using only the baseline features (no sequences). Compare its performance to both the logistic regression and the full transformer. The temporal sequence hypothesis is only supported if the full transformer significantly outperforms this non-linear baseline.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal-stratified split by patient and unit ensures the model generalizes to future data and prevents leakage.",
+        "failure_mechanism": "The split is based on discharge date, but the feature engineering uses 'prior utilization' and sequences from 'at least 12 months of observable history.' For a patient whose index admission falls in the test set, their training data (the first 60% of the timeline) may contain prior admissions for that same patient. This violates the patient-level stratification claim and introduces a severe form of patient identity leakage: the model can learn individual patient trajectories from their early admissions and apply that knowledge to predict readmission for their later admissions in the test set. This artificially inflates performance by memorizing patient-specific risk, not learning generalizable clinical patterns.",
+        "evidence_test": "Audit the data split: for each patient in the test set, verify that none of their prior admissions (used to construct their 'prior utilization' and temporal sequence features) appear in the training set. If any do, the split is invalid. The correct procedure is to assign each patient entirely to one split based on their *first* discharge in the dataset, then use only data from within that split to construct features for their index admissions.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Precision-Recall AUC (PR-AUC) is the correct primary metric, aligned with the operational goal of maximizing high-precision alerts within a fixed capacity.",
+        "failure_mechanism": "PR-AUC summarizes performance across all possible thresholds. The operational constraint is a fixed alert budget (e.g., top 20% of risk scores). The metric that directly measures success under this constraint is **Recall at a fixed alert rate (or Precision at that recall)**. A model can achieve a high PR-AUC by having excellent precision at very low recall (which is operationally irrelevant if the budget is 20%) while performing poorly at the 20% recall point. The chosen metric does not guarantee alignment with the stated deployment objective.",
+        "evidence_test": "Report the primary result as Recall at the operationally defined alert rate (e.g., Recall@20%). Compare models on this metric. PR-AUC can remain a secondary metric for overall curve comparison.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The cohort restriction to patients with 'at least 12 months of observable history' does not introduce significant selection bias affecting model comparison.",
+        "failure_mechanism": "This restriction creates a non-representative cohort of 'established' patients with substantial prior contact with the hospital. This cohort likely has richer data (more sequences) and may have systematically different readmission risks compared to new patients. Both models are evaluated on this biased sample. The performance comparison may not hold for the full patient population at deployment, and the logistic regression (relying on aggregated features like 'prior admissions') may be disproportionately advantaged or disadvantaged in this selected group. The hypothesis about temporal sequences is tested on a best-case subpopulation.",
+        "evidence_test": "Report the proportion of all discharges excluded by this rule. Conduct a sensitivity analysis: train and evaluate both models on a cohort with a shorter required history (e.g., 1 month) and compare the performance delta between the two models to the delta observed in the main cohort.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning for both models receives 'equivalent tuning effort,' ensuring a fair comparison.",
+        "failure_mechanism": "The design specifies 50-100 trials for the transformer via random/Bayesian search on the validation set, but logistic regression tuning uses 'cross-validation on the training set.' This is not equivalent effort or resource allocation. Cross-validation on the training set consumes more data for tuning (leaving less for final training) and has a different optimization objective (average CV score vs. single validation set score). This asymmetry can bias the comparison if one method is more sensitive to the tuning protocol. The logistic regression may be under-tuned relative to the transformer.",
+        "evidence_test": "Use an identical tuning protocol for both models: e.g., a held-out validation set (same one used for the transformer) with a comparable number of hyperparameter trials for logistic regression (including regularization type, strength, and class weight).",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The manual label validation on a 5% sample and refinement if error >5% is sufficient to control label noise.",
+        "failure_mechanism": "The 5% error threshold is arbitrary. More critically, the protocol states that if the error rate exceeds 5%, 'labels are refined or ambiguous cases are excluded.' This is a form of label engineering on the test set if the validation sample is drawn from the full dataset (including test) before splitting. Refining label definitions based on a sample that includes test cases leaks information about test set label characteristics into the training process, potentially biasing the model towards the test set's noise pattern.",
+        "evidence_test": "Ensure label definition and refinement is performed using only a sample from the *training* temporal window. The finalized definition is then applied mechanically to the validation and test sets without further adjustment.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratifying the temporal split by discharge unit ensures representation of clinical diversity.",
+        "failure_mechanism": "Stratification by unit within temporal chunks may not be possible without violating the chronological order, as unit proportions may change over time. If enforced strictly, it could force the assignment of later discharges from a unit into the training set to meet quota, breaking the pure temporal sequence. The description is ambiguous on implementation; a misimplementation could leak future unit-specific patterns into the training set.",
+        "evidence_test": "Clarify the splitting algorithm. The safest approach is to perform temporal split first, then report unit distribution across splits to verify representativeness, rather than enforcing stratification that compromises chronology.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Bootstrap confidence intervals resampling 'by patient' correctly capture uncertainty.",
+        "failure_mechanism": "If the primary analysis suffers from the patient leakage identified in F2, then resampling by patient will produce confidence intervals that are incorrectly narrow, as the bootstrap samples will preserve the leakage structure, making the performance estimate appear more stable than it truly is.",
+        "evidence_test": "This is contingent on fixing F2. If F2 is fixed, the resampling method is appropriate.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The transformer architecture described (2-4 heads, 2-3 layers) is sufficient to capture relevant temporal dependencies.",
+        "failure_mechanism": "This is a model capacity assumption. It is reasonable for a PoC and can be tuned.",
+        "evidence_test": "Hyperparameter tuning includes architecture size; this is covered by the design.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The PoC contains several fatal methodological flaws: the comparison lacks a crucial non-linear baseline to isolate the temporal signal, and the temporal splitting method introduces severe patient identity leakage. The primary metric is misaligned with the stated operational goal.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding systematically against the methodology document.\n\nF1 (FATAL, 9): The critic correctly identifies that without a transformer-only-on-baseline-features control, we cannot isolate whether performance gains come from temporal sequences or the transformer's capacity to model non-linear interactions in baseline features. The methodology states the transformer receives baseline features PLUS sequences, but does not include a non-linear baseline control. This is a fundamental confounding factor for the specific hypothesis about temporal sequences.\n\nF2 (FATAL, 8): The critic identifies a genuine contradiction in the methodology. Section 2 claims patient-level stratification prevents leakage, but Section 1's 12-month history requirement means test patients' prior admissions (used for features) could appear in training. This is patient identity leakage that would inflate performance by memorizing patient-specific risk. The design does not actually implement the claimed protection.\n\nF3 (FATAL, 7): The methodology Section 5 explicitly addresses this: 'If the care team specifies a fixed alert budget (e.g., 20% of discharges), the primary metric is recall at that threshold.' The critic misunderstands the design - PR-AUC is mentioned first but the operational metric is clearly specified as an alternative when budget constraints exist. This is a rebuttable misunderstanding.\n\nF4 (MATERIAL, 6): Section 8 (Scope) explicitly acknowledges this limitation: 'This experiment will establish whether the transformer can outperform logistic regression on this specific hospital's data within the temporal window studied. It does not establish whether this performance gain will transfer to other hospitals.' The 12-month requirement is a stated scope boundary, not a hidden flaw. The hypothesis requires sufficient history for temporal sequences to be meaningful.\n\nF5 (MATERIAL, 5): Section 4 claims 'equivalent tuning effort' but describes different protocols (validation set for transformer vs. cross-validation on training for logistic regression). This is a genuine inconsistency that could bias comparison. The design does not actually implement equivalent tuning.\n\nF6 (MATERIAL, 3): Section 1 states label validation on 5% sample but doesn't specify whether this sample is from training only or full dataset. Section 6 says test set is 'held completely untouched' but doesn't explicitly confirm label validation sample source. This is genuinely uncertain - the design principle exists but implementation detail is unclear.\n\nF7 (MINOR, 2): Section 2 mentions stratifying by unit within temporal windows but doesn't specify the algorithm. This is an implementation detail that could be clarified without changing the core design. The concern is valid but below significance threshold.\n\nF8 (MINOR, 1): This finding is explicitly contingent on F2 being true. If F2 is fixed, bootstrap by patient is appropriate. This doesn't stand alone as an independent flaw.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The methodology genuinely lacks a transformer-only-on-baseline-features control. Without this, we cannot isolate whether gains come from temporal sequences or non-linear modeling capacity. This is a fundamental confounding factor for the stated hypothesis about temporal sequences, and no design control in the methodology addresses this gap."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology claims patient-level stratification prevents leakage (Section 2) but the 12-month history requirement (Section 1) means test patients' prior admissions used for features could appear in training. This is a genuine implementation flaw that contradicts the stated protection. The design does not actually prevent patient identity leakage as claimed."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Section 5 explicitly states: 'If the care team specifies a fixed alert budget (e.g., 20% of discharges), the primary metric is recall at that threshold (equivalently, precision at that recall level).' The methodology already addresses the operational constraint. The critic's claim that PR-AUC is the primary metric misunderstands the design - PR-AUC is mentioned first but the operational metric is specified as an alternative when budget constraints exist."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Section 8 (Scope) explicitly acknowledges this limitation: 'This experiment will establish whether the transformer can outperform logistic regression on this specific hospital's data within the temporal window studied. It does not establish whether this performance gain will transfer to other hospitals.' The 12-month requirement is a stated scope boundary for testing temporal sequences (which require sufficient history), not a hidden selection bias. The hypothesis is intentionally tested on this subpopulation."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Section 4 claims 'equivalent tuning effort' but describes different protocols (validation set for transformer vs. cross-validation on training for logistic regression). This is a genuine inconsistency that could bias comparison. The design does not actually implement equivalent tuning as claimed, and no design control addresses this asymmetry."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "Section 6 states test set is 'held completely untouched during development' but Section 1 doesn't explicitly confirm the 5% label validation sample is from training only. The design principle exists (test set untouched) but the implementation detail is unclear. An empirical test is needed: audit whether the label validation sample includes test cases. If training-only, the design is sound; if full-dataset, leakage occurs."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "This is an implementation detail that doesn't fundamentally invalidate the experiment. The temporal split can be performed first, then unit distribution verified. This concern is below the significance threshold for the experiment's conclusions and can be addressed through documentation clarification rather than design change."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "This finding is explicitly contingent on F2 being true ('This is contingent on fixing F2'). If F2 is addressed, bootstrap by patient is appropriate per Section 6. This doesn't stand alone as an independent flaw and is below the significance threshold."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL findings (F1 and F2) were CONCEDEd at adjusted severity 9 and 8 respectively, representing fundamental design flaws that materially affect the validity of the experiment's conclusions. F1 lacks a necessary non-linear baseline control to isolate temporal sequence effects, and F2 contains genuine patient identity leakage that contradicts the stated protection mechanism."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "The defender fully concedes the finding, acknowledging the fundamental confounding factor. No challenge is needed."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 8,
+        "reasoning": "The defender fully concedes the finding, acknowledging the patient identity leakage flaw. No challenge is needed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender correctly cites that the methodology mentions recall at a fixed threshold as an alternative. However, the design still lists PR-AUC as the primary metric and treats the threshold-based metric as conditional ('If the care team specifies...'). This creates ambiguity: if no specific budget is provided, PR-AUC remains the primary metric, which misaligns with the operational goal. The rebuttal partially addresses the concern but leaves unresolved the default scenario where no fixed budget is specified. The severity adjustment from 7 to 3 is too aggressive; a reduction to 5 is more proportionate."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender misapplies the scope rebuttal. The concern is not about external generalizability (Section 8's stated scope) but about internal validity: the 12-month history requirement creates a selected subpopulation where both models are evaluated. This selection bias could distort the performance comparison between the two models, making the hypothesis test about temporal sequences unrepresentative even for this specific hospital. The scope statement about external transfer does not address this internal validity threat. The severity should remain at 6."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender fully concedes the finding, acknowledging the tuning protocol inconsistency. No challenge is needed."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender defers to an empirical test, which is appropriate given the ambiguity in the methodology. The severity remains unchanged pending clarification."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly classifies this as an implementation detail that doesn't fundamentally invalidate the experiment. The concern is about potential misimplementation, not a guaranteed flaw in the design as written. The severity reduction to 0 is appropriate."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly notes this finding is contingent on F2. Since F2 is conceded and would need to be fixed, this concern becomes immaterial. The severity reduction to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted my concessions on F1, F2, F5, F6, F7, and F8. For F3 (PARTIAL), I am switching from REBUT-DESIGN to CONCEDE because the metric alignment concern could invalidate the primary conclusion if PR-AUC and operational metrics diverge. For F4 (CHALLENGE), I am switching from REBUT-SCOPE to CONCEDE because the scope rebuttal misapplies - this is an internal validity threat (selection bias) that the design has no control for. The final verdict is critique_wins due to multiple FATAL and MATERIAL findings that remain CONCEDEd above severity 3.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The methodology genuinely lacks a transformer-only-on-baseline-features control. Without this, we cannot isolate whether gains come from temporal sequences or non-linear modeling capacity. This is a fundamental confounding factor for the stated hypothesis about temporal sequences, and no design control in the methodology addresses this gap. The critic correctly accepted my R1 concession.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology claims patient-level stratification prevents leakage (Section 2) but the 12-month history requirement (Section 1) means test patients' prior admissions used for features could appear in training. This is a genuine implementation flaw that contradicts the stated protection. The design does not actually prevent patient identity leakage as claimed. The critic correctly accepted my R1 concession.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identified that my R1 rebuttal overstated the design's handling of this concern. Section 5 lists PR-AUC as the primary metric, with the threshold-based metric as conditional ('If the care team specifies...'). If no budget is specified, PR-AUC remains primary, which misaligns with the operational goal. More critically, if PR-AUC and Recall@20% show different relative performance between models, the primary conclusion about which model is better for deployment could change. This flaw could invalidate the primary metric, so CONCEDE is required rather than DEFER.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly challenged my R1 REBUT-SCOPE. Section 8's scope statement about external generalizability does not address the internal validity threat: the 12-month history requirement creates a selected subpopulation where both models are evaluated. This selection bias could distort the performance comparison between the two models, making the hypothesis test about temporal sequences unrepresentative even for this specific hospital. The design has no control for this internal selection bias, and the flaw could invalidate the primary conclusion.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Section 4 claims 'equivalent tuning effort' but describes different protocols (validation set for transformer vs. cross-validation on training for logistic regression). This is a genuine inconsistency that could bias comparison. The design does not actually implement equivalent tuning as claimed, and no design control addresses this asymmetry. The critic correctly accepted my R1 concession.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "Section 6 states test set is 'held completely untouched during development' but Section 1 doesn't explicitly confirm the 5% label validation sample is from training only. The design principle exists (test set untouched) but the implementation detail is unclear. Settling experiment: audit whether the label validation sample includes test cases. Vindication: if training-only, design is sound. Validation of critique: if test cases included, leakage occurs. Primary conclusion validity: yes - if label noise affects both models equally, the relative comparison could remain intact.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "This is an implementation detail that doesn't fundamentally invalidate the experiment. The temporal split can be performed first, then unit distribution verified. This concern is below the significance threshold for the experiment's conclusions and can be addressed through documentation clarification rather than design change. The critic correctly accepted my R1 position.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "This finding is explicitly contingent on F2 being true ('This is contingent on fixing F2'). If F2 is addressed, bootstrap by patient is appropriate per Section 6. This doesn't stand alone as an independent flaw and is below the significance threshold. The critic correctly accepted my R1 position.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Multiple FATAL (F1, F2, F3) and MATERIAL (F4, F5) findings are CONCEDEd and remain above adjusted_severity 3, indicating fundamental design flaws that materially affect the primary evaluation. The experiment cannot proceed without addressing these issues."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer model's performance gain, if observed, is attributable to its ability to learn from temporal sequences of clinical data.",
+        "failure_mechanism": "The transformer receives all baseline features used by logistic regression *plus* temporal sequences. This creates a fundamental confounding factor: any performance gain could be due to the transformer's superior capacity to model interactions within the baseline feature vector itself (a non-linear function of the same inputs), not from the temporal sequences. The experiment design does not isolate the signal from temporal structure. A transformer trained on the baseline features alone (without sequences) is a necessary but missing baseline.",
+        "evidence_test": "Train and evaluate a third model: a transformer (or other non-linear model like a feed-forward network) using only the baseline features (no sequences). Compare its performance to both the logistic regression and the full transformer. The temporal sequence hypothesis is only supported if the full transformer significantly outperforms this non-linear baseline.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal-stratified split by patient and unit ensures the model generalizes to future data and prevents leakage.",
+        "failure_mechanism": "The split is based on discharge date, but the feature engineering uses 'prior utilization' and sequences from 'at least 12 months of observable history.' For a patient whose index admission falls in the test set, their training data (the first 60% of the timeline) may contain prior admissions for that same patient. This violates the patient-level stratification claim and introduces a severe form of patient identity leakage: the model can learn individual patient trajectories from their early admissions and apply that knowledge to predict readmission for their later admissions in the test set. This artificially inflates performance by memorizing patient-specific risk, not learning generalizable clinical patterns.",
+        "evidence_test": "Audit the data split: for each patient in the test set, verify that none of their prior admissions (used to construct their 'prior utilization' and temporal sequence features) appear in the training set. If any do, the split is invalid. The correct procedure is to assign each patient entirely to one split based on their *first* discharge in the dataset, then use only data from within that split to construct features for their index admissions.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Precision-Recall AUC (PR-AUC) is the correct primary metric, aligned with the operational goal of maximizing high-precision alerts within a fixed capacity.",
+        "failure_mechanism": "PR-AUC summarizes performance across all possible thresholds. The operational constraint is a fixed alert budget (e.g., top 20% of risk scores). The metric that directly measures success under this constraint is **Recall at a fixed alert rate (or Precision at that recall)**. A model can achieve a high PR-AUC by having excellent precision at very low recall (which is operationally irrelevant if the budget is 20%) while performing poorly at the 20% recall point. The chosen metric does not guarantee alignment with the stated deployment objective.",
+        "evidence_test": "Report the primary result as Recall at the operationally defined alert rate (e.g., Recall@20%). Compare models on this metric. PR-AUC can remain a secondary metric for overall curve comparison.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The cohort restriction to patients with 'at least 12 months of observable history' does not introduce significant selection bias affecting model comparison.",
+        "failure_mechanism": "This restriction creates a non-representative cohort of 'established' patients with substantial prior contact with the hospital. This cohort likely has richer data (more sequences) and may have systematically different readmission risks compared to new patients. Both models are evaluated on this biased sample. The performance comparison may not hold for the full patient population at deployment, and the logistic regression (relying on aggregated features like 'prior admissions') may be disproportionately advantaged or disadvantaged in this selected group. The hypothesis about temporal sequences is tested on a best-case subpopulation.",
+        "evidence_test": "Report the proportion of all discharges excluded by this rule. Conduct a sensitivity analysis: train and evaluate both models on a cohort with a shorter required history (e.g., 1 month) and compare the performance delta between the two models to the delta observed in the main cohort.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning for both models receives 'equivalent tuning effort,' ensuring a fair comparison.",
+        "failure_mechanism": "The design specifies 50-100 trials for the transformer via random/Bayesian search on the validation set, but logistic regression tuning uses 'cross-validation on the training set.' This is not equivalent effort or resource allocation. Cross-validation on the training set consumes more data for tuning (leaving less for final training) and has a different optimization objective (average CV score vs. single validation set score). This asymmetry can bias the comparison if one method is more sensitive to the tuning protocol. The logistic regression may be under-tuned relative to the transformer.",
+        "evidence_test": "Use an identical tuning protocol for both models: e.g., a held-out validation set (same one used for the transformer) with a comparable number of hyperparameter trials for logistic regression (including regularization type, strength, and class weight).",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The manual label validation on a 5% sample and refinement if error >5% is sufficient to control label noise.",
+        "failure_mechanism": "The 5% error threshold is arbitrary. More critically, the protocol states that if the error rate exceeds 5%, 'labels are refined or ambiguous cases are excluded.' This is a form of label engineering on the test set if the validation sample is drawn from the full dataset (including test) before splitting. Refining label definitions based on a sample that includes test cases leaks information about test set label characteristics into the training process, potentially biasing the model towards the test set's noise pattern.",
+        "evidence_test": "Ensure label definition and refinement is performed using only a sample from the *training* temporal window. The finalized definition is then applied mechanically to the validation and test sets without further adjustment.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratifying the temporal split by discharge unit ensures representation of clinical diversity.",
+        "failure_mechanism": "Stratification by unit within temporal chunks may not be possible without violating the chronological order, as unit proportions may change over time. If enforced strictly, it could force the assignment of later discharges from a unit into the training set to meet quota, breaking the pure temporal sequence. The description is ambiguous on implementation; a misimplementation could leak future unit-specific patterns into the training set.",
+        "evidence_test": "Clarify the splitting algorithm. The safest approach is to perform temporal split first, then report unit distribution across splits to verify representativeness, rather than enforcing stratification that compromises chronology.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Bootstrap confidence intervals resampling 'by patient' correctly capture uncertainty.",
+        "failure_mechanism": "If the primary analysis suffers from the patient leakage identified in F2, then resampling by patient will produce confidence intervals that are incorrectly narrow, as the bootstrap samples will preserve the leakage structure, making the performance estimate appear more stable than it truly is.",
+        "evidence_test": "This is contingent on fixing F2. If F2 is fixed, the resampling method is appropriate.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The transformer architecture described (2-4 heads, 2-3 layers) is sufficient to capture relevant temporal dependencies.",
+        "failure_mechanism": "This is a model capacity assumption. It is reasonable for a PoC and can be tuned.",
+        "evidence_test": "Hyperparameter tuning includes architecture size; this is covered by the design.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The PoC contains several fatal methodological flaws: the comparison lacks a crucial non-linear baseline to isolate the temporal signal, and the temporal splitting method introduces severe patient identity leakage. The primary metric is misaligned with the stated operational goal.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted my concessions on F1, F2, F5, F6, F7, and F8. For F3 (PARTIAL), I am switching from REBUT-DESIGN to CONCEDE because the metric alignment concern could invalidate the primary conclusion if PR-AUC and operational metrics diverge. For F4 (CHALLENGE), I am switching from REBUT-SCOPE to CONCEDE because the scope rebuttal misapplies - this is an internal validity threat (selection bias) that the design has no control for. The final verdict is critique_wins due to multiple FATAL and MATERIAL findings that remain CONCEDEd above severity 3.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The methodology genuinely lacks a transformer-only-on-baseline-features control. Without this, we cannot isolate whether gains come from temporal sequences or non-linear modeling capacity. This is a fundamental confounding factor for the stated hypothesis about temporal sequences, and no design control in the methodology addresses this gap. The critic correctly accepted my R1 concession.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology claims patient-level stratification prevents leakage (Section 2) but the 12-month history requirement (Section 1) means test patients' prior admissions used for features could appear in training. This is a genuine implementation flaw that contradicts the stated protection. The design does not actually prevent patient identity leakage as claimed. The critic correctly accepted my R1 concession.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identified that my R1 rebuttal overstated the design's handling of this concern. Section 5 lists PR-AUC as the primary metric, with the threshold-based metric as conditional ('If the care team specifies...'). If no budget is specified, PR-AUC remains primary, which misaligns with the operational goal. More critically, if PR-AUC and Recall@20% show different relative performance between models, the primary conclusion about which model is better for deployment could change. This flaw could invalidate the primary metric, so CONCEDE is required rather than DEFER.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly challenged my R1 REBUT-SCOPE. Section 8's scope statement about external generalizability does not address the internal validity threat: the 12-month history requirement creates a selected subpopulation where both models are evaluated. This selection bias could distort the performance comparison between the two models, making the hypothesis test about temporal sequences unrepresentative even for this specific hospital. The design has no control for this internal selection bias, and the flaw could invalidate the primary conclusion.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Section 4 claims 'equivalent tuning effort' but describes different protocols (validation set for transformer vs. cross-validation on training for logistic regression). This is a genuine inconsistency that could bias comparison. The design does not actually implement equivalent tuning as claimed, and no design control addresses this asymmetry. The critic correctly accepted my R1 concession.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "Section 6 states test set is 'held completely untouched during development' but Section 1 doesn't explicitly confirm the 5% label validation sample is from training only. The design principle exists (test set untouched) but the implementation detail is unclear. Settling experiment: audit whether the label validation sample includes test cases. Vindication: if training-only, design is sound. Validation of critique: if test cases included, leakage occurs. Primary conclusion validity: yes - if label noise affects both models equally, the relative comparison could remain intact.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "This is an implementation detail that doesn't fundamentally invalidate the experiment. The temporal split can be performed first, then unit distribution verified. This concern is below the significance threshold for the experiment's conclusions and can be addressed through documentation clarification rather than design change. The critic correctly accepted my R1 position.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "This finding is explicitly contingent on F2 being true ('This is contingent on fixing F2'). If F2 is addressed, bootstrap by patient is appropriate per Section 6. This doesn't stand alone as an independent flaw and is below the significance threshold. The critic correctly accepted my R1 position.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Multiple FATAL (F1, F2, F3) and MATERIAL (F4, F5) findings are CONCEDEd and remain above adjusted_severity 3, indicating fundamental design flaws that materially affect the primary evaluation. The experiment cannot proceed without addressing these issues."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=8 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=7 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 6,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=6, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=5, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "5 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

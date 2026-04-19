@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_897",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-12 train, 13-15 val, 16-18 test) prevents information leakage and ensures the model generalizes to future alerts.",
+        "failure_mechanism": "The claim assumes stationarity: that the joint distribution of features and labels (P(X, Y)) does not change over time. In a SOC context, this is often false. Attack patterns, IT infrastructure, logging sources, and analyst labeling behavior evolve. A model trained on months 1-12 may learn patterns specific to that period (e.g., prevalence of a specific malware family, a particular noisy rule) that are irrelevant or misleading for months 16-18. The model could appear to perform well on validation (months 13-15) due to short-term continuity, but fail catastrophically in a real deployment facing novel threats or changed telemetry. The temporal split prevents direct label leakage but does not protect against covariate shift or concept drift, which are primary failure modes for security ML.",
+        "evidence_test": "Measure performance degradation across the test period. Slice test set into weekly or monthly buckets and plot Recall@10 over time. A significant downward trend or a sharp drop after a specific date (e.g., a major software update, new threat campaign) would indicate distribution shift invalidating the stationary assumption. Alternatively, train a simple model (like the logistic regression baseline) to distinguish between feature vectors from the training set and a later hold-out set; significant discriminative power indicates distribution shift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Upsampling confirmed incidents to ~5% of training alerts via duplication is a valid method to handle class imbalance and will not introduce bias or overfitting that invalidates the comparison to the baseline.",
+        "failure_mechanism": "Duplication creates exact copies of positive examples. This can lead to overfitting on those specific instances, as the model sees them multiple times. More critically, it artificially inflates the effective sample size of the positive class for training, which can distort the learning process for a ranking model that relies on relative comparisons within batches. If the baseline logistic regression is trained on the same upsampled data, the comparison may be fair in a narrow sense, but the absolute performance numbers (Recall@10) on the test set become uninterpretable for real deployment, where the positive rate is far lower than 5%. The model may learn to rely on spurious correlations that are only apparent when positives are artificially frequent.",
+        "evidence_test": "Run an ablation: train both models (ranking and baseline) on the original, non-upsampled training data (using class-weighted losses or other imbalance techniques). Compare the relative improvement of the ranking model over the baseline in this setting versus the upsampled setting. If the relative improvement disappears or reverses, the claimed benefit is an artifact of the upsampling method. Also, evaluate the model's precision on the test set; if precision is unrealistically high given the true base rate, it suggests the model is overfit to the upsampled distribution.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Grouping alerts by incident ID for evaluation (an incident is 'found' if any of its alerts rank in the top 10) fully controls for duplicate/correlated alerts and reflects the realistic operator experience.",
+        "failure_mechanism": "While incident-level evaluation is correct for the final metric, the training process for the learning-to-rank model likely operates on individual alerts. If multiple alerts from the same incident appear in the same training batch, the model receives a strong, repeated signal for that incident, which could lead it to overfit to the fact that alerts from the same incident tend to co-occur or share features, rather than learning generalizable signals of incident importance. This could artificially boost Recall@10 if the model simply learns to cluster alerts from known training incidents. The baseline logistic regression, trained for pointwise classification, may be less susceptible to this intra-incident correlation in the training data.",
+        "evidence_test": "Modify the training procedure to sample at most one alert per incident into any given training batch, or to down-weight loss contributions from multiple alerts of the same incident. Retrain the ranking model with this control and compare its test performance to the original model. If performance drops significantly, the original model's advantage was partly due to exploiting within-incident correlation in the training data, not generalizable ranking signals.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric, Recall@10 per time window, directly measures the operational goal of surfacing incidents in an analyst's review queue.",
+        "failure_mechanism": "Recall@10 assumes a fixed, static analyst capacity of reviewing exactly 10 alerts per time window. In reality, analyst capacity is variable and responsive: if the top 10 alerts are all high-confidence true positives, an analyst might review more; if the first few are obvious false positives, they might review fewer. More importantly, the metric does not account for the *order* within the top 10. A model that places the true incident at rank 1 is operationally superior to one that places it at rank 10, but Recall@10 treats them identically. This could mask a failure of the ranking model to actually prioritize the most critical alerts. The secondary MRR metric partially addresses this but is not the primary optimization target.",
+        "evidence_test": "Analyze the distribution of ranks for found incidents within the top 10. If the ranking model's improvement in Recall@10 comes primarily from placing incidents at ranks 8-10, while the baseline places them at ranks 1-3, the operational benefit is questionable. A more direct test would be to simulate a more realistic analyst review process (e.g., a threshold-based stopping rule) and measure the mean time-to-discovery.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The hyperparameter tuning process (grid search on validation set using Recall@10) will select a model configuration that generalizes well to the test set and future data.",
+        "failure_mechanism": "Optimizing a single metric (Recall@10) on the validation set can lead to overfitting to that specific metric and the validation period's data distribution. This is a form of 'leaderboard chasing.' The model may learn peculiarities of the validation set (months 13-15) that do not hold in the test set (months 16-18), especially under distribution shift. Furthermore, using the same metric for tuning and final evaluation inflates the expected performance on the test set, as the model has been implicitly tuned to perform well on a metric calculated on a held-out set from a similar time period.",
+        "evidence_test": "Implement a nested cross-validation or a forward-chaining temporal validation scheme where tuning is performed on multiple sequential validation folds. Compare the performance of a model tuned with this more robust method against the model tuned with the single static validation split. A large performance drop on the test set for the singly-tuned model would indicate overfitting to the validation period.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Handling new categories in validation/test via a pre-established 'unknown' token for categorical features is sufficient and does not harm model performance.",
+        "failure_mechanism": "In a rapidly evolving SOC environment, new alert rules, asset names, and user entities constantly appear. Mapping all of these to a single 'unknown' token throws away potentially useful information (e.g., the fact that a rule is new might be a signal of a novel attack). It also creates a heterogeneous bucket that the model cannot meaningfully interpret, potentially degrading performance on alerts involving new entities. The baseline logistic regression, which may use one-hot encoding, would be even more severely affected by this, so the comparison might still be fair, but the absolute performance of both systems is likely underestimated.",
+        "evidence_test": "Track the frequency of the 'unknown' token for key categorical features (like rule name) in the validation and test sets. If it exceeds a small percentage (e.g., >5%), performance should be reported separately for alerts with known vs. unknown categories. A significant performance gap would indicate the methodology is not robust to real-world vocabulary drift.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC has a sound core structure but contains several material and potentially fatal methodological flaws, primarily concerning unverified assumptions of temporal stationarity, the use of instance duplication for upsampling, and potential overfitting from within-incident correlation during ranking training.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic correctly identifies that temporal splitting doesn't guarantee stationarity. However, the methodology explicitly scopes this as a benchmark comparison (not production deployment) and includes stratified recall@10 by asset criticality and alert family to verify generalization. The temporal split is the standard approach for preventing label leakage in time-series ML. The critic's concern applies to production deployment but not to the stated experiment scope of comparing ranking vs. classification approaches.\n\nF2: The critic correctly notes that duplication upsampling can cause overfitting. However, both the ranking model and baseline are trained on identical upsampled data, making the relative comparison fair. The 5% target ensures adequate positive signal for training. The absolute performance numbers are less important than the relative comparison, which is the experiment's goal.\n\nF3: The critic raises a valid point about training-inference mismatch when evaluation is at incident level but training is on individual alerts. However, the design includes alert family and asset criticality as explicit features to prevent confounding, and both models face the same training dynamics. The comparison remains fair.\n\nF4: The critic correctly notes that Recall@10 treats all positions within top 10 equally. However, the methodology explicitly includes MRR as a secondary metric to capture rank position. The primary metric directly measures the operational goal (surfacing incidents in review queue). The critic's concern is addressed by the secondary metric.\n\nF5: The critic raises a valid concern about overfitting to the validation set. However, using a single validation set for tuning with a held-out test set for final evaluation is the standard approach in ML. The methodology includes multiple secondary metrics to provide additional robustness. The critic's suggestion of nested CV is more robust but adds significant complexity beyond this benchmark scope.\n\nF6: The critic correctly identifies that mapping new categories to 'unknown' throws away information. However, this is standard practice in ML, and both models use the same approach, so the comparison remains fair. The critic's evidence test suggestion is a reasonable diagnostic but not a design flaw.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly identifies that temporal splitting doesn't protect against distribution shift. However, the methodology explicitly scopes this as a benchmark comparison (Section 8: 'does not prove the ranking model will reduce dwell time or breach impact in production') and includes stratified recall@10 by asset criticality and alert family (Section 7) to verify generalization. The temporal split is the appropriate choice for this scope \u2014 it prevents label leakage (the design's goal) while the critic's concern applies to production deployment, not benchmark comparison."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "Duplication upsampling is a deliberate design choice. Both the ranking model and baseline are trained on identical upsampled data (Section 2), making the relative comparison fair. The 5% target ensures adequate positive signal for training (Section 2). The experiment's goal is a relative comparison (ranking vs. classification), not absolute performance interpretation. The critic's ablation suggestion is a reasonable diagnostic but not a flaw in the deliberate design choice."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The training-inference mismatch is a deliberate design choice. Section 7 explicitly states that alert family and asset criticality are included as features 'to prevent confounding.' Both the ranking model and baseline logistic regression are trained on individual alerts, ensuring fair comparison. The critic's batch-sampling suggestion is a reasonable production enhancement but adds complexity beyond the benchmark scope."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Recall@10 is a deliberate primary metric choice (Section 5) that directly measures the operational goal. The methodology explicitly includes MRR as a secondary metric 'to address this' (Section 5). The critic's concern is acknowledged and addressed by the secondary metric. The rank distribution analysis the critic suggests is a diagnostic for results interpretation, not a design flaw."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "Single validation set tuning with held-out test evaluation is the standard ML approach (Section 6). The methodology includes multiple secondary metrics (Section 5) to provide robustness. The critic's nested CV suggestion is more robust but adds significant complexity beyond this benchmark scope. The design choice is deliberate and justified."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Unknown token handling is standard practice in ML for categorical features. Both models use identical preprocessing (Section 3), ensuring fair comparison. The critic's suggestion to track unknown frequency is a reasonable diagnostic but does not invalidate the experiment's conclusions. This is a known limitation that affects both models equally."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have adjusted severity \u2264 3 after rebuttal. F1-F5 are material concerns that are valid in different contexts but do not invalidate the benchmark comparison design (REBUT-SCOPE or REBUT-DESIGN). F6 is minor and addressed via REBUT-IMMATERIAL. The methodology is sound for its stated scope of comparing ranking vs. classification approaches on historical SOC data."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The rebuttal misapplies scope. The failure mechanism is not about production deployment; it's about the validity of the benchmark comparison itself. If distribution shift exists between training and test periods, the benchmark's conclusions about model superiority are invalid because the test set no longer represents the same distribution the model was trained on. The methodology's stratified recall does not address temporal shift\u2014it only checks generalization across subgroups within the same (potentially shifted) test period. The temporal split prevents label leakage but does not ensure the benchmark is meaningful if P(X,Y) changes. A FATAL flaw in benchmark validity cannot be dismissed as 'outside scope.'"
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal correctly notes that both models are trained on identical upsampled data, preserving relative comparison fairness. However, it fails to address the core failure mechanism: upsampling via duplication can distort the learning process for a ranking model that relies on relative comparisons within batches, potentially creating spurious correlations that inflate absolute performance and make the relative improvement an artifact of the sampling method. The rebuttal's 'deliberate design choice' argument does not explain how the design prevents this distortion. The severity should be reduced because the comparison remains fair, but the absolute performance interpretation and potential overfitting remain unresolved."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal does not address the specific failure mechanism. The concern is that training on individual alerts while multiple alerts from the same incident appear in batches could allow the ranking model to overfit to intra-incident correlation, giving it an unfair advantage over the pointwise baseline. The rebuttal merely states this is a 'deliberate design choice' and that both models are trained on individual alerts, but this does not explain why the potential overfitting advantage for the ranking model is mitigated. The cited text about alert family and asset criticality features is irrelevant to this specific mechanism."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal correctly notes that MRR is included as a secondary metric to address rank order concerns. While Recall@10 alone has limitations, the methodology explicitly provides MRR to capture rank quality. The failure mechanism is partially mitigated by this design choice. The severity adjustment is proportionate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly identifies that single validation set tuning is the standard ML approach for a benchmark comparison. While nested CV is more robust, the failure mechanism (overfitting to validation set peculiarities) is a known risk in any single-split design. The methodology's use of a temporal validation split (months 13-15) adjacent to training reduces some temporal overfitting risk. The severity adjustment is appropriate for a MATERIAL finding in a benchmark context."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly notes that unknown token handling affects both models equally, preserving comparison fairness. The failure mechanism (performance degradation on new categories) is a known limitation but does not invalidate the relative comparison. The severity adjustment to 0 is proportionate for a MINOR finding."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "For F1, the critic correctly identifies that distribution shift is not explicitly controlled, but I argue the benchmark still produces valid relative comparisons on the test set even under distribution shift - both models face the same test distribution. For F2, the partial challenge is addressed by noting the design goal is explicitly relative comparison, which remains fair. For F3, the critic's mechanism about intra-incident correlation in training batches is valid and represents genuine ambiguity requiring empirical evidence - I defer to the proposed ablation test. F4-F6 were accepted by the critic. The presence of a DEFER finding (F3) triggers empirical_test_agreed verdict.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that temporal splitting doesn't protect against distribution shift. However, the benchmark still produces a valid relative comparison: both the ranking model and baseline are evaluated on the same test set (months 16-18). Even if P(X,Y) shifts between training and test, the comparison 'ranking vs. classification' on the test set remains meaningful - both models face the same distribution shift. The stratified recall analysis (Section 7) checks generalization within the test period across subgroups. The design explicitly scopes to benchmark comparison (Section 8), not production deployment. Distribution shift is a production concern, not a benchmark invalidation - the benchmark answers 'given this test set, which approach ranks incidents better?' which remains valid under shift.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The critic's PARTIAL acceptance acknowledges the relative comparison is fair - this is the design's explicit goal (Section 8: 'benchmarks the ranking approach against a simpler baseline'). Both models are trained on identical upsampled data (Section 2), ensuring fair comparison. The concern about absolute performance interpretation is outside the scope - the experiment never claims to produce interpretable absolute metrics for deployment; it only claims to compare ranking vs. classification. The 5% upsampling ensures adequate positive signal for ranking model training (pairwise/listwise loss needs sufficient positives per batch).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic's CHALLENGE identifies a valid mechanism: the ranking model could exploit intra-incident correlation when multiple alerts from the same incident appear in training batches, potentially giving it an advantage over the pointwise baseline. The design does not explicitly control for this in the training procedure - it only controls for it at evaluation (Section 7). This is a genuine ambiguity: both models train on the same data, but the ranking model's batch-wise learning could theoretically exploit this correlation differently than the baseline. The critic's proposed ablation (sample at most one alert per incident per batch) is the appropriate empirical test. Since this requires empirical evidence to resolve, I defer to the proposed experiment.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTed this rebuttal. Recall@10 is the primary metric (Section 5) directly measuring the operational goal. MRR is explicitly included as a secondary metric to address rank order concerns. The rank distribution analysis the critic suggests is a diagnostic for results interpretation, not a design flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. Single validation set tuning with held-out test evaluation is the standard ML approach for benchmark comparisons (Section 6). The temporal validation split (months 13-15) adjacent to training reduces temporal overfitting risk. The nested CV suggestion is more robust but beyond this benchmark scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTed this rebuttal. Unknown token handling is standard practice; both models use identical preprocessing (Section 3), preserving fair comparison. The concern affects both models equally and does not invalidate relative conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F3 (original severity 6, MATERIAL) was deferred to empirical testing - the critic's mechanism about intra-incident correlation in training batches is valid and requires the proposed ablation experiment to resolve. No FATAL findings remain (adjusted severities: F1=4, F2=4, F3=6, F4=2, F5=1, F6=0). The presence of a DEFER finding triggers empirical_test_agreed, which is the correct verdict when reasonable parties can disagree and empirical evidence is the appropriate arbiter."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-12 train, 13-15 val, 16-18 test) prevents information leakage and ensures the model generalizes to future alerts.",
+        "failure_mechanism": "The claim assumes stationarity: that the joint distribution of features and labels (P(X, Y)) does not change over time. In a SOC context, this is often false. Attack patterns, IT infrastructure, logging sources, and analyst labeling behavior evolve. A model trained on months 1-12 may learn patterns specific to that period (e.g., prevalence of a specific malware family, a particular noisy rule) that are irrelevant or misleading for months 16-18. The model could appear to perform well on validation (months 13-15) due to short-term continuity, but fail catastrophically in a real deployment facing novel threats or changed telemetry. The temporal split prevents direct label leakage but does not protect against covariate shift or concept drift, which are primary failure modes for security ML.",
+        "evidence_test": "Measure performance degradation across the test period. Slice test set into weekly or monthly buckets and plot Recall@10 over time. A significant downward trend or a sharp drop after a specific date (e.g., a major software update, new threat campaign) would indicate distribution shift invalidating the stationary assumption. Alternatively, train a simple model (like the logistic regression baseline) to distinguish between feature vectors from the training set and a later hold-out set; significant discriminative power indicates distribution shift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Upsampling confirmed incidents to ~5% of training alerts via duplication is a valid method to handle class imbalance and will not introduce bias or overfitting that invalidates the comparison to the baseline.",
+        "failure_mechanism": "Duplication creates exact copies of positive examples. This can lead to overfitting on those specific instances, as the model sees them multiple times. More critically, it artificially inflates the effective sample size of the positive class for training, which can distort the learning process for a ranking model that relies on relative comparisons within batches. If the baseline logistic regression is trained on the same upsampled data, the comparison may be fair in a narrow sense, but the absolute performance numbers (Recall@10) on the test set become uninterpretable for real deployment, where the positive rate is far lower than 5%. The model may learn to rely on spurious correlations that are only apparent when positives are artificially frequent.",
+        "evidence_test": "Run an ablation: train both models (ranking and baseline) on the original, non-upsampled training data (using class-weighted losses or other imbalance techniques). Compare the relative improvement of the ranking model over the baseline in this setting versus the upsampled setting. If the relative improvement disappears or reverses, the claimed benefit is an artifact of the upsampling method. Also, evaluate the model's precision on the test set; if precision is unrealistically high given the true base rate, it suggests the model is overfit to the upsampled distribution.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Grouping alerts by incident ID for evaluation (an incident is 'found' if any of its alerts rank in the top 10) fully controls for duplicate/correlated alerts and reflects the realistic operator experience.",
+        "failure_mechanism": "While incident-level evaluation is correct for the final metric, the training process for the learning-to-rank model likely operates on individual alerts. If multiple alerts from the same incident appear in the same training batch, the model receives a strong, repeated signal for that incident, which could lead it to overfit to the fact that alerts from the same incident tend to co-occur or share features, rather than learning generalizable signals of incident importance. This could artificially boost Recall@10 if the model simply learns to cluster alerts from known training incidents. The baseline logistic regression, trained for pointwise classification, may be less susceptible to this intra-incident correlation in the training data.",
+        "evidence_test": "Modify the training procedure to sample at most one alert per incident into any given training batch, or to down-weight loss contributions from multiple alerts of the same incident. Retrain the ranking model with this control and compare its test performance to the original model. If performance drops significantly, the original model's advantage was partly due to exploiting within-incident correlation in the training data, not generalizable ranking signals.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric, Recall@10 per time window, directly measures the operational goal of surfacing incidents in an analyst's review queue.",
+        "failure_mechanism": "Recall@10 assumes a fixed, static analyst capacity of reviewing exactly 10 alerts per time window. In reality, analyst capacity is variable and responsive: if the top 10 alerts are all high-confidence true positives, an analyst might review more; if the first few are obvious false positives, they might review fewer. More importantly, the metric does not account for the *order* within the top 10. A model that places the true incident at rank 1 is operationally superior to one that places it at rank 10, but Recall@10 treats them identically. This could mask a failure of the ranking model to actually prioritize the most critical alerts. The secondary MRR metric partially addresses this but is not the primary optimization target.",
+        "evidence_test": "Analyze the distribution of ranks for found incidents within the top 10. If the ranking model's improvement in Recall@10 comes primarily from placing incidents at ranks 8-10, while the baseline places them at ranks 1-3, the operational benefit is questionable. A more direct test would be to simulate a more realistic analyst review process (e.g., a threshold-based stopping rule) and measure the mean time-to-discovery.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The hyperparameter tuning process (grid search on validation set using Recall@10) will select a model configuration that generalizes well to the test set and future data.",
+        "failure_mechanism": "Optimizing a single metric (Recall@10) on the validation set can lead to overfitting to that specific metric and the validation period's data distribution. This is a form of 'leaderboard chasing.' The model may learn peculiarities of the validation set (months 13-15) that do not hold in the test set (months 16-18), especially under distribution shift. Furthermore, using the same metric for tuning and final evaluation inflates the expected performance on the test set, as the model has been implicitly tuned to perform well on a metric calculated on a held-out set from a similar time period.",
+        "evidence_test": "Implement a nested cross-validation or a forward-chaining temporal validation scheme where tuning is performed on multiple sequential validation folds. Compare the performance of a model tuned with this more robust method against the model tuned with the single static validation split. A large performance drop on the test set for the singly-tuned model would indicate overfitting to the validation period.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Handling new categories in validation/test via a pre-established 'unknown' token for categorical features is sufficient and does not harm model performance.",
+        "failure_mechanism": "In a rapidly evolving SOC environment, new alert rules, asset names, and user entities constantly appear. Mapping all of these to a single 'unknown' token throws away potentially useful information (e.g., the fact that a rule is new might be a signal of a novel attack). It also creates a heterogeneous bucket that the model cannot meaningfully interpret, potentially degrading performance on alerts involving new entities. The baseline logistic regression, which may use one-hot encoding, would be even more severely affected by this, so the comparison might still be fair, but the absolute performance of both systems is likely underestimated.",
+        "evidence_test": "Track the frequency of the 'unknown' token for key categorical features (like rule name) in the validation and test sets. If it exceeds a small percentage (e.g., >5%), performance should be reported separately for alerts with known vs. unknown categories. A significant performance gap would indicate the methodology is not robust to real-world vocabulary drift.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC has a sound core structure but contains several material and potentially fatal methodological flaws, primarily concerning unverified assumptions of temporal stationarity, the use of instance duplication for upsampling, and potential overfitting from within-incident correlation during ranking training.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "For F1, the critic correctly identifies that distribution shift is not explicitly controlled, but I argue the benchmark still produces valid relative comparisons on the test set even under distribution shift - both models face the same test distribution. For F2, the partial challenge is addressed by noting the design goal is explicitly relative comparison, which remains fair. For F3, the critic's mechanism about intra-incident correlation in training batches is valid and represents genuine ambiguity requiring empirical evidence - I defer to the proposed ablation test. F4-F6 were accepted by the critic. The presence of a DEFER finding (F3) triggers empirical_test_agreed verdict.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that temporal splitting doesn't protect against distribution shift. However, the benchmark still produces a valid relative comparison: both the ranking model and baseline are evaluated on the same test set (months 16-18). Even if P(X,Y) shifts between training and test, the comparison 'ranking vs. classification' on the test set remains meaningful - both models face the same distribution shift. The stratified recall analysis (Section 7) checks generalization within the test period across subgroups. The design explicitly scopes to benchmark comparison (Section 8), not production deployment. Distribution shift is a production concern, not a benchmark invalidation - the benchmark answers 'given this test set, which approach ranks incidents better?' which remains valid under shift.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The critic's PARTIAL acceptance acknowledges the relative comparison is fair - this is the design's explicit goal (Section 8: 'benchmarks the ranking approach against a simpler baseline'). Both models are trained on identical upsampled data (Section 2), ensuring fair comparison. The concern about absolute performance interpretation is outside the scope - the experiment never claims to produce interpretable absolute metrics for deployment; it only claims to compare ranking vs. classification. The 5% upsampling ensures adequate positive signal for ranking model training (pairwise/listwise loss needs sufficient positives per batch).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic's CHALLENGE identifies a valid mechanism: the ranking model could exploit intra-incident correlation when multiple alerts from the same incident appear in training batches, potentially giving it an advantage over the pointwise baseline. The design does not explicitly control for this in the training procedure - it only controls for it at evaluation (Section 7). This is a genuine ambiguity: both models train on the same data, but the ranking model's batch-wise learning could theoretically exploit this correlation differently than the baseline. The critic's proposed ablation (sample at most one alert per incident per batch) is the appropriate empirical test. Since this requires empirical evidence to resolve, I defer to the proposed experiment.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTed this rebuttal. Recall@10 is the primary metric (Section 5) directly measuring the operational goal. MRR is explicitly included as a secondary metric to address rank order concerns. The rank distribution analysis the critic suggests is a diagnostic for results interpretation, not a design flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. Single validation set tuning with held-out test evaluation is the standard ML approach for benchmark comparisons (Section 6). The temporal validation split (months 13-15) adjacent to training reduces temporal overfitting risk. The nested CV suggestion is more robust but beyond this benchmark scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTed this rebuttal. Unknown token handling is standard practice; both models use identical preprocessing (Section 3), preserving fair comparison. The concern affects both models equally and does not invalidate relative conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F3 (original severity 6, MATERIAL) was deferred to empirical testing - the critic's mechanism about intra-incident correlation in training batches is valid and requires the proposed ablation experiment to resolve. No FATAL findings remain (adjusted severities: F1=4, F2=4, F3=6, F4=2, F5=1, F6=0). The presence of a DEFER finding triggers empirical_test_agreed, which is the correct verdict when reasonable parties can disagree and empirical evidence is the appropriate arbiter."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=8 \u2265 7, REBUT-SCOPE \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=7 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

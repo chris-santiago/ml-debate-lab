@@ -1,0 +1,549 @@
+{
+  "case_id": "eval_scenario_868",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label aggregation process (analyst reports, user reports, sandbox detonation, threat-intel matches) produces a reliable ground truth for spear-phishing detection.",
+        "failure_mechanism": "Label noise is systematic, not random. Analyst reports are biased toward obvious campaigns; user reports are biased toward emails that annoy users (not necessarily sophisticated spear-phishing); sandbox detonation can miss context-dependent or human-interaction-required attacks; threat-intel matches are reactive and miss novel campaigns. The 'consistent label signals' criterion may filter out the hardest cases\u2014sophisticated spear-phishing that evades all automated signals and isn't reported. The resulting dataset may be enriched with easy-to-detect phishing, making the model appear effective against the wrong threat.",
+        "evidence_test": "Measure label-source distribution shift between training and test periods. Compute detection performance stratified by label source. Manually review a sample of emails labeled only by a single source (especially user reports) to assess false positive rate in ground truth. Test if model performance degrades on emails labeled exclusively by delayed intelligence (sandbox/threat-intel) versus immediate human judgment.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Temporal splitting with campaign-level stratification and deduplication is sufficient to prevent test-time leakage and ensure the model generalizes to novel attacks.",
+        "failure_mechanism": "Spear-phishing campaigns exhibit 'concept drift' within campaigns\u2014attackers test variants. If training contains early variants of a campaign and test contains later variants with similar social engineering lures but different keywords/attachments, the model may appear to generalize while actually memorizing campaign signatures. The 7-day dwell time for labeling means some test emails might have been seen in training with different labels if intelligence was delayed. Campaign clustering is imperfect; near-duplicate detection may miss semantically similar lures from different sender infrastructure.",
+        "evidence_test": "Perform a 'temporal contamination' check: for each test email, compute its maximum similarity (e.g., embedding cosine) to any training email. Plot performance against similarity. If high-similarity test emails have anomalously high recall, leakage is occurring. Also, track label changes post-dwell: how many test emails would have had different labels if labeled at arrival time vs. after 7 days?",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate primary metric and adequately captures the stakeholder's operational objective.",
+        "failure_mechanism": "PR-AUC is threshold-agnostic, but deployment requires choosing a threshold. The metric can be inflated by excellent performance on easy-to-detect phishing (high recall at high precision) while masking catastrophic failure on sophisticated spear-phishing (the actual target). A model could achieve high PR-AUC by perfectly detecting bulk phishing but missing all spear-phishing. The stakeholder's true objective is detecting high-value targeted attacks, not aggregate detection across all phishing types.",
+        "evidence_test": "Report PR-AUC stratified by phishing subtype (e.g., bulk vs. spear-phishing identified via manual review). Compare precision-recall curves for different attack sophistication tiers. If the curve for spear-phishing is substantially worse than the aggregate, the primary metric is misleading.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (logistic regression on sender reputation + header features) represents the status quo and provides a fair comparison.",
+        "failure_mechanism": "The baseline uses a snapshot of threat-intelligence reputation scores frozen at the end of the training period. In production, reputation systems are continuously updated. Freezing them disadvantages the baseline artificially, because in real deployment, the baseline would have access to updated reputation data for test-period emails. This inflates the transformer's relative improvement by handicapping the baseline.",
+        "evidence_test": "Re-run the baseline with reputation scores updated to the time of each email's arrival (or a realistic delay). Compare performance against the frozen version. If the updated baseline closes the gap with the transformer, the claimed improvement is partly an artifact of experimental setup.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer cannot trivially exploit known bad domains because sender domain reputation is masked from it (baseline only).",
+        "failure_mechanism": "The transformer receives raw email text, which often contains sender domains in the body (e.g., 'click here: evil.com' or 'reply to support@evil.com'). It can learn to associate those domain strings with phishing without needing reputation lookups. This is not trivial exploitation, but it means the model may be learning to detect known-bad domains mentioned in text\u2014a weaker form of memorization that doesn't generalize to novel domains. The ablation study (transformer without body text) might miss this if the body contains domain cues.",
+        "evidence_test": "Analyze feature importance: for transformer predictions on test set, check if emails containing domains that appeared in training (as strings in body) are disproportionately likely to be flagged. Compare performance on phishing emails with novel domains vs. domains seen in training.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 18-month time horizon captures multiple phishing campaign cycles and seasonal variation, making the evaluation representative of future deployment.",
+        "failure_mechanism": "Phishing tactics evolve at unpredictable rates. An 18-month window may not contain certain novel attack vectors (e.g., AI-generated spear-phishing, new compliance lure themes). The model's performance on months 16-18 may not predict performance on a future period with a qualitatively different threat landscape. The experiment assumes stationarity of attack 'types' within the observed window.",
+        "evidence_test": "Perform a rolling-window evaluation: train on months 1-12, test on 13-15; then train on 4-15, test on 16-18. Compare performance degradation across windows. If performance drops significantly in the second test window despite more training data, the model is failing to adapt to drift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The secondary metric 'Recall at 1% FPR' is a meaningful operational benchmark.",
+        "failure_mechanism": "In severe class imbalance (0.5-2% phishing), 1% FPR means flagging 1% of all benign mail. For an organization receiving 1M emails/day, that's 10,000 false positives daily\u2014operationally untenable. The metric doesn't reflect realistic deployment constraints where false positive rates must be orders of magnitude lower. It may make models appear useful when they are not deployable.",
+        "evidence_test": "Calculate the absolute number of false positives per day at 1% FPR given the organization's email volume. If this number exceeds what the SOC can manually review, the metric is not operationally relevant.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The held-out qualitative analysis set (500-1000 manually labeled emails) provides sufficient grounding for false-positive impact.",
+        "failure_mechanism": "500-1000 emails is a tiny sample relative to the test set (millions). False positives are rare events; a sample this small may miss important false-positive categories that would cause operational disruption. Manual labeling may introduce its own biases.",
+        "evidence_test": "Bootstrap confidence intervals around false-positive rates estimated from the qualitative set. If the confidence interval is wide (e.g., 0.1% to 1.0% FPR), the qualitative analysis is underpowered.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The transformer architecture (BERT-base with concatenated attachment embeddings) is optimal for this task.",
+        "failure_mechanism": "No evidence is provided that BERT-base is better than a lighter model (e.g., DistilBERT) or that the attachment embedding method is effective. This is an implementation choice, not a methodological flaw.",
+        "evidence_test": "Compare multiple architectures on validation set; but this is an optimization, not required for PoC.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The PoC has strong temporal splitting and thoughtful controls, but contains potentially fatal flaws in label reliability and baseline fairness, and material concerns about metric alignment and silent domain memorization.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims label noise is systematic and filters out hard cases. However, the design uses four orthogonal signals (analyst, user, sandbox, threat-intel) and requires 'consistent label signals' to minimize noise. While the critic is correct that some sophisticated attacks might be missed, this is a fundamental property of ground truth in security; the design's use of a 7-day dwell time specifically addresses the 'reactive' nature of intelligence. The methodology is sound for a PoC establishing relative performance.\n\nF2 suggests concept drift within campaigns causes leakage. The design explicitly uses a chronological split (Months 1-12 vs 16-18) and campaign-level stratification (no campaign split across folds). This eliminates the possibility of 'early variants' in training and 'late variants' in test for the same campaign. The 7-day dwell time is a labeling delay, not a temporal shift of the data itself. The design is robust against the described leakage.\n\nF3 argues PR-AUC masks failure on sophisticated spear-phishing. The design includes a qualitative analysis set (500-1000 emails) and post-test error analysis specifically to detect these patterns. While PR-AUC is aggregate, the secondary metrics (Recall at 1% FPR) and qualitative review provide the necessary granularity to ensure the model isn't just catching 'bulk' phishing.\n\nF4 claims freezing reputation scores handicaps the baseline. This is a misunderstanding of the goal: the experiment tests the value of *text modeling* vs *reputation/headers*. To ensure a fair, reproducible comparison, the features must be frozen at a specific snapshot. If the baseline used 'future' reputation data (updated at arrival), it would be using information the transformer is explicitly denied, creating an asymmetric advantage for the baseline. Freezing at the end of training is the standard way to prevent data leakage in temporal splits.\n\nF5 notes the transformer can see domains in the body. This is a valid observation, but the design's ablation study (transformer without body text) specifically isolates the value of the body. If the model is just memorizing domains, the ablation will show a specific drop, and the post-hoc error analysis (Confound Control 4) is designed to detect this. It's a known behavior of transformers, not a flaw in the experimental design.\n\nF6 concerns the 18-month window's representativeness. This is a general limitation of all ML experiments (distribution shift). The design uses a substantial window (18 months) and a temporal split to test generalization. The claim that it 'assumes stationarity' is incorrect; the temporal split is specifically chosen because the data is *non-stationary*.\n\nF7 argues 1% FPR is too high for production. This is a valid operational point, but for a PoC establishing a performance delta between two architectures, 1% is a standard benchmark. The primary metric is PR-AUC (threshold-agnostic), meaning the operational threshold can be shifted lower in production without invalidating the PoC's findings on model capability.\n\nF8 claims the qualitative set is too small. 500-1000 manually labeled emails is a significant investment for a PoC and provides a sufficient directional signal for error analysis, even if it doesn't provide a statistically precise FPR estimate for the entire population.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly mitigates label noise and reactivity by using four orthogonal signal sources and a mandatory 7-day dwell time for intelligence enrichment before labeling. This ensures that the 'ground truth' is not merely reactive but enriched."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The design employs campaign-level stratification, ensuring that no single campaign (including its variants) is split across training and test sets. This directly eliminates the 'concept drift within campaigns' leakage mechanism described."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design does not rely solely on PR-AUC; it includes a held-out qualitative analysis set and post-test error analysis (Confound Control 4) specifically to identify if the model fails on sophisticated spear-phishing vs bulk phishing."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Freezing reputation scores at the end of the training period is a necessary control to prevent data leakage. Allowing the baseline to use 'arrival-time' updates would introduce future-knowledge into the baseline that the transformer is denied, creating an unfair and non-reproducible comparison."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design includes an ablation study (transformer without body text) and a post-test error analysis to specifically detect and quantify the extent to which the model relies on domain-string memorization versus linguistic cues."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The scope of claims (Section 8) explicitly states that the results apply to this organization's environment during this specific time period and does not claim generalization to future, qualitatively different threat landscapes."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The primary metric is PR-AUC, which is threshold-agnostic. The 1% FPR is a secondary benchmark for relative comparison; the operational threshold can be tightened during deployment without affecting the PoC's conclusion on model superiority."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "For a PoC, a qualitative set of 500-1000 emails is sufficient to identify primary error modes and ground the quantitative metrics, even if it is not powered for precise FPR estimation."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted using explicit design controls (campaign stratification, dwell time, ablation studies) or scope limitations. Every finding's adjusted severity is \u2264 3, qualifying the methodology for exoneration."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal is generic and does not address the specific failure mechanism. The defender merely restates the design's label aggregation process without explaining how it mitigates systematic bias. The core issue remains: 'consistent label signals' may filter out sophisticated spear-phishing that evades all four detection sources. The 7-day dwell time doesn't resolve bias in signal sources\u2014analyst reports still favor obvious campaigns, user reports favor annoying emails, etc. The rebuttal fails to explain how the design ensures ground truth captures the hardest cases (sophisticated spear-phishing), which is central to the finding."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal addresses campaign-level stratification but incompletely addresses the failure mechanism. While stratification prevents splitting known campaigns, it doesn't address: (1) 'concept drift within campaigns' where attackers test variants with different keywords/attachments across time\u2014if a campaign spans both training and test periods (even if all its emails are in one split), the model may still memorize campaign signatures rather than generalize; (2) the 7-day dwell time issue: test emails might have been seen in training with different labels if intelligence was delayed; (3) imperfect campaign clustering. The rebuttal reduces but doesn't eliminate the leakage risk."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal is valid. The design includes a held-out qualitative analysis set and post-test error analysis specifically to identify if the model fails on sophisticated spear-phishing versus bulk phishing. This directly addresses the concern that PR-AUC could mask catastrophic failure on high-value targeted attacks. The defender's cited evidence (Confound Control 4) provides a mechanism to surface the very stratification analysis the finding requested. The severity adjustment is appropriate."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal mischaracterizes the fairness concern. The finding argues that freezing reputation scores disadvantages the baseline relative to its real-world deployment (where reputation systems update continuously). The defender incorrectly frames this as preventing 'future-knowledge leakage'\u2014but reputation updates are not future knowledge; they are contemporaneous signals available at email arrival time in production. The transformer is not 'denied' anything equivalent; it uses text features that don't have time-sensitive updates. The experimental setup artificially handicaps the baseline, inflating the transformer's relative improvement. The rebuttal does not address this core asymmetry."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal is valid. The design includes an ablation study (transformer without body text) and post-test error analysis to detect domain-string memorization. This provides a direct mechanism to quantify the extent to which the model relies on domain cues versus linguistic patterns. While the ablation study alone might miss subtle domain memorization, combined with error analysis (as cited), it addresses the concern. The severity adjustment is appropriate."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal misapplies scope. The finding questions whether the 18-month window is representative for future deployment\u2014a core validity concern for any predictive model. The defender cites the scope statement that results don't generalize to 'significantly different threat landscapes,' but this doesn't resolve the concern: the experiment still claims the model 'outperforms... in this organization's environment during this time period' and implies usefulness for future deployment (otherwise why conduct it?). The finding's mechanism\u2014that performance on months 16-18 may not predict future performance due to non-stationarity\u2014remains unaddressed. Scope disclaimers don't mitigate methodological limitations."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal is valid. The finding's concern is that 1% FPR may be operationally untenable. The defender correctly notes this is a secondary benchmark for relative comparison, not a deployment threshold. The primary metric is PR-AUC, and operational thresholds can be tightened later. The finding's severity was already low (MINOR), and the rebuttal appropriately reduces it further."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal is reasonable. For a proof-of-concept, a qualitative set of 500-1000 emails is sufficient to identify primary error modes and ground quantitative metrics, even if underpowered for precise FPR estimation. The finding's concern about missing rare false-positive categories is valid but minor for a PoC. The severity adjustment to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining positions on F3, F5, F7, and F8 as they were accepted. For F1, I am switching to DEFER because while the design uses multiple signals, it cannot logically guarantee the capture of 'invisible' sophisticated phishing; this requires empirical validation. For F2, I am strengthening the REBUT-DESIGN by clarifying that campaign-level stratification specifically prevents the 'variants' leakage the critic describes. For F4, I am switching to DEFER as the 'frozen' vs 'live' reputation debate is a valid trade-off between leakage prevention and baseline realism that can be settled with a specific experiment. For F6, I am switching to DEFER because while the scope is limited, the representativeness of the window is an empirical question of drift, not a scope disclaimer.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that no aggregation of existing signals can guarantee the capture of phishing that evades all those signals. The design mitigates this by using four orthogonal sources to maximize coverage, but cannot eliminate the bias. To settle this: (1) Perform a 'blind' manual audit of a random sample of 'benign' emails from the test set to identify the prevalence of missed sophisticated phishing. (2) If the miss rate is low, the ground truth is vindicated. (3) If high, the ground truth is biased toward 'easy' cases, and the reported PR-AUC is an upper bound. (4) The primary conclusion (Transformer > Baseline) remains valid because both models are evaluated against the same biased ground truth; the relative superiority of text modeling over reputation is independent of whether the total set of phishing is complete.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic's concern about 'concept drift within campaigns' is precisely what 'campaign-level stratification' (Section 7.1) addresses. By ensuring that no campaign\u2014including all its variants, lures, and iterations\u2014is split across folds, the model cannot 'memorize' a variant in training and 'generalize' to a variant in test. If a campaign exists in the test set, none of its variants were in the training set. Regarding the 7-day dwell time: the temporal split is chronological (Months 1-12 vs 16-18), creating a 3-month gap (Months 13-15) that far exceeds the 7-day window, making it impossible for a test email to have been seen in training regardless of label delay.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design uses a held-out qualitative analysis set and post-test error analysis to ensure that PR-AUC is not masking failures on sophisticated attacks.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies a tension between preventing leakage and baseline realism. To settle this: (1) Re-run the baseline using 'arrival-time' reputation snapshots. (2) If the gap between the Transformer and Baseline persists, the design's original conclusion is vindicated. (3) If the gap closes, the improvement was an artifact of the frozen baseline. (4) The primary conclusion survives if the Transformer's lead is significant enough that even a 'live' baseline cannot close it, or if the Transformer also benefits from the same temporal signal (which it does via the text of the email).",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design's ablation study and error analysis specifically target the detection of domain-string memorization.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic is correct that scope disclaimers do not solve the problem of non-stationarity. To settle this: (1) Implement the suggested rolling-window evaluation (Train 1-12/Test 13-15 vs Train 4-15/Test 16-18). (2) Stable performance across windows vindicates the design. (3) Significant degradation validates the critique. (4) The primary conclusion (Transformer > Baseline) remains valid if both models degrade at similar rates, as the relative advantage of text modeling over reputation is the core claim, not the absolute stability of the model over years.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "1% FPR is a secondary relative benchmark; the primary metric is the threshold-agnostic PR-AUC.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "A qualitative set of 500-1000 emails is sufficient for a PoC to identify primary error modes.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several findings (F1, F4, F6) were moved to DEFER because the design provides partial mitigation but requires empirical evidence to settle the magnitude of the risk. The defense successfully rebutted the leakage concern (F2) and the metric/baseline concerns (F3, F5, F7, F8)."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label aggregation process (analyst reports, user reports, sandbox detonation, threat-intel matches) produces a reliable ground truth for spear-phishing detection.",
+        "failure_mechanism": "Label noise is systematic, not random. Analyst reports are biased toward obvious campaigns; user reports are biased toward emails that annoy users (not necessarily sophisticated spear-phishing); sandbox detonation can miss context-dependent or human-interaction-required attacks; threat-intel matches are reactive and miss novel campaigns. The 'consistent label signals' criterion may filter out the hardest cases\u2014sophisticated spear-phishing that evades all automated signals and isn't reported. The resulting dataset may be enriched with easy-to-detect phishing, making the model appear effective against the wrong threat.",
+        "evidence_test": "Measure label-source distribution shift between training and test periods. Compute detection performance stratified by label source. Manually review a sample of emails labeled only by a single source (especially user reports) to assess false positive rate in ground truth. Test if model performance degrades on emails labeled exclusively by delayed intelligence (sandbox/threat-intel) versus immediate human judgment.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Temporal splitting with campaign-level stratification and deduplication is sufficient to prevent test-time leakage and ensure the model generalizes to novel attacks.",
+        "failure_mechanism": "Spear-phishing campaigns exhibit 'concept drift' within campaigns\u2014attackers test variants. If training contains early variants of a campaign and test contains later variants with similar social engineering lures but different keywords/attachments, the model may appear to generalize while actually memorizing campaign signatures. The 7-day dwell time for labeling means some test emails might have been seen in training with different labels if intelligence was delayed. Campaign clustering is imperfect; near-duplicate detection may miss semantically similar lures from different sender infrastructure.",
+        "evidence_test": "Perform a 'temporal contamination' check: for each test email, compute its maximum similarity (e.g., embedding cosine) to any training email. Plot performance against similarity. If high-similarity test emails have anomalously high recall, leakage is occurring. Also, track label changes post-dwell: how many test emails would have had different labels if labeled at arrival time vs. after 7 days?",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate primary metric and adequately captures the stakeholder's operational objective.",
+        "failure_mechanism": "PR-AUC is threshold-agnostic, but deployment requires choosing a threshold. The metric can be inflated by excellent performance on easy-to-detect phishing (high recall at high precision) while masking catastrophic failure on sophisticated spear-phishing (the actual target). A model could achieve high PR-AUC by perfectly detecting bulk phishing but missing all spear-phishing. The stakeholder's true objective is detecting high-value targeted attacks, not aggregate detection across all phishing types.",
+        "evidence_test": "Report PR-AUC stratified by phishing subtype (e.g., bulk vs. spear-phishing identified via manual review). Compare precision-recall curves for different attack sophistication tiers. If the curve for spear-phishing is substantially worse than the aggregate, the primary metric is misleading.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (logistic regression on sender reputation + header features) represents the status quo and provides a fair comparison.",
+        "failure_mechanism": "The baseline uses a snapshot of threat-intelligence reputation scores frozen at the end of the training period. In production, reputation systems are continuously updated. Freezing them disadvantages the baseline artificially, because in real deployment, the baseline would have access to updated reputation data for test-period emails. This inflates the transformer's relative improvement by handicapping the baseline.",
+        "evidence_test": "Re-run the baseline with reputation scores updated to the time of each email's arrival (or a realistic delay). Compare performance against the frozen version. If the updated baseline closes the gap with the transformer, the claimed improvement is partly an artifact of experimental setup.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer cannot trivially exploit known bad domains because sender domain reputation is masked from it (baseline only).",
+        "failure_mechanism": "The transformer receives raw email text, which often contains sender domains in the body (e.g., 'click here: evil.com' or 'reply to support@evil.com'). It can learn to associate those domain strings with phishing without needing reputation lookups. This is not trivial exploitation, but it means the model may be learning to detect known-bad domains mentioned in text\u2014a weaker form of memorization that doesn't generalize to novel domains. The ablation study (transformer without body text) might miss this if the body contains domain cues.",
+        "evidence_test": "Analyze feature importance: for transformer predictions on test set, check if emails containing domains that appeared in training (as strings in body) are disproportionately likely to be flagged. Compare performance on phishing emails with novel domains vs. domains seen in training.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 18-month time horizon captures multiple phishing campaign cycles and seasonal variation, making the evaluation representative of future deployment.",
+        "failure_mechanism": "Phishing tactics evolve at unpredictable rates. An 18-month window may not contain certain novel attack vectors (e.g., AI-generated spear-phishing, new compliance lure themes). The model's performance on months 16-18 may not predict performance on a future period with a qualitatively different threat landscape. The experiment assumes stationarity of attack 'types' within the observed window.",
+        "evidence_test": "Perform a rolling-window evaluation: train on months 1-12, test on 13-15; then train on 4-15, test on 16-18. Compare performance degradation across windows. If performance drops significantly in the second test window despite more training data, the model is failing to adapt to drift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The secondary metric 'Recall at 1% FPR' is a meaningful operational benchmark.",
+        "failure_mechanism": "In severe class imbalance (0.5-2% phishing), 1% FPR means flagging 1% of all benign mail. For an organization receiving 1M emails/day, that's 10,000 false positives daily\u2014operationally untenable. The metric doesn't reflect realistic deployment constraints where false positive rates must be orders of magnitude lower. It may make models appear useful when they are not deployable.",
+        "evidence_test": "Calculate the absolute number of false positives per day at 1% FPR given the organization's email volume. If this number exceeds what the SOC can manually review, the metric is not operationally relevant.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The held-out qualitative analysis set (500-1000 manually labeled emails) provides sufficient grounding for false-positive impact.",
+        "failure_mechanism": "500-1000 emails is a tiny sample relative to the test set (millions). False positives are rare events; a sample this small may miss important false-positive categories that would cause operational disruption. Manual labeling may introduce its own biases.",
+        "evidence_test": "Bootstrap confidence intervals around false-positive rates estimated from the qualitative set. If the confidence interval is wide (e.g., 0.1% to 1.0% FPR), the qualitative analysis is underpowered.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The transformer architecture (BERT-base with concatenated attachment embeddings) is optimal for this task.",
+        "failure_mechanism": "No evidence is provided that BERT-base is better than a lighter model (e.g., DistilBERT) or that the attachment embedding method is effective. This is an implementation choice, not a methodological flaw.",
+        "evidence_test": "Compare multiple architectures on validation set; but this is an optimization, not required for PoC.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The PoC has strong temporal splitting and thoughtful controls, but contains potentially fatal flaws in label reliability and baseline fairness, and material concerns about metric alignment and silent domain memorization.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining positions on F3, F5, F7, and F8 as they were accepted. For F1, I am switching to DEFER because while the design uses multiple signals, it cannot logically guarantee the capture of 'invisible' sophisticated phishing; this requires empirical validation. For F2, I am strengthening the REBUT-DESIGN by clarifying that campaign-level stratification specifically prevents the 'variants' leakage the critic describes. For F4, I am switching to DEFER as the 'frozen' vs 'live' reputation debate is a valid trade-off between leakage prevention and baseline realism that can be settled with a specific experiment. For F6, I am switching to DEFER because while the scope is limited, the representativeness of the window is an empirical question of drift, not a scope disclaimer.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that no aggregation of existing signals can guarantee the capture of phishing that evades all those signals. The design mitigates this by using four orthogonal sources to maximize coverage, but cannot eliminate the bias. To settle this: (1) Perform a 'blind' manual audit of a random sample of 'benign' emails from the test set to identify the prevalence of missed sophisticated phishing. (2) If the miss rate is low, the ground truth is vindicated. (3) If high, the ground truth is biased toward 'easy' cases, and the reported PR-AUC is an upper bound. (4) The primary conclusion (Transformer > Baseline) remains valid because both models are evaluated against the same biased ground truth; the relative superiority of text modeling over reputation is independent of whether the total set of phishing is complete.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic's concern about 'concept drift within campaigns' is precisely what 'campaign-level stratification' (Section 7.1) addresses. By ensuring that no campaign\u2014including all its variants, lures, and iterations\u2014is split across folds, the model cannot 'memorize' a variant in training and 'generalize' to a variant in test. If a campaign exists in the test set, none of its variants were in the training set. Regarding the 7-day dwell time: the temporal split is chronological (Months 1-12 vs 16-18), creating a 3-month gap (Months 13-15) that far exceeds the 7-day window, making it impossible for a test email to have been seen in training regardless of label delay.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design uses a held-out qualitative analysis set and post-test error analysis to ensure that PR-AUC is not masking failures on sophisticated attacks.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies a tension between preventing leakage and baseline realism. To settle this: (1) Re-run the baseline using 'arrival-time' reputation snapshots. (2) If the gap between the Transformer and Baseline persists, the design's original conclusion is vindicated. (3) If the gap closes, the improvement was an artifact of the frozen baseline. (4) The primary conclusion survives if the Transformer's lead is significant enough that even a 'live' baseline cannot close it, or if the Transformer also benefits from the same temporal signal (which it does via the text of the email).",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design's ablation study and error analysis specifically target the detection of domain-string memorization.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic is correct that scope disclaimers do not solve the problem of non-stationarity. To settle this: (1) Implement the suggested rolling-window evaluation (Train 1-12/Test 13-15 vs Train 4-15/Test 16-18). (2) Stable performance across windows vindicates the design. (3) Significant degradation validates the critique. (4) The primary conclusion (Transformer > Baseline) remains valid if both models degrade at similar rates, as the relative advantage of text modeling over reputation is the core claim, not the absolute stability of the model over years.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "1% FPR is a secondary relative benchmark; the primary metric is the threshold-agnostic PR-AUC.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "A qualitative set of 500-1000 emails is sufficient for a PoC to identify primary error modes.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several findings (F1, F4, F6) were moved to DEFER because the design provides partial mitigation but requires empirical evidence to settle the magnitude of the risk. The defense successfully rebutted the leakage concern (F2) and the metric/baseline concerns (F3, F5, F7, F8)."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

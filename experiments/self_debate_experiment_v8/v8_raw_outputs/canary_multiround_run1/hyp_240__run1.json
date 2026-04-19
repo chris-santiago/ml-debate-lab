@@ -1,0 +1,293 @@
+{
+  "case_id": "hyp_240",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The graph model's performance gain is attributable to relational structure/message passing rather than the inclusion of high-cardinality entity identifiers.",
+        "failure_mechanism": "The PoC states the graph model uses 'the same node attributes' as the baseline but adds edges. In GNNs, the node identity (index) is implicitly used to route messages. If the graph model is given raw IDs (e.g., UserID, DeviceID) as node identifiers, it can memorize specific 'bad' entities that appear in both training and test sets (e.g., a persistent attacker IP), whereas the GBT baseline only sees 'behavioral summaries'. The GNN may simply be performing a lookup of known-bad entities via the adjacency matrix rather than learning a generalizable relational pattern.",
+        "evidence_test": "Compare the GNN performance on 'previously seen' vs 'newly observed' entities. If the GNN's lead over the GBT vanishes or reverses on new entities, the model is memorizing identities, not learning relational signals.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological split prevents signal leakage from the future into the past.",
+        "failure_mechanism": "While the split is chronological, the PoC does not specify how 'historical user risk aggregates' (used in the baseline) and 'interaction-count weights' (used in the graph) are calculated for the test window. If these aggregates are calculated over the entire 12-month window and then sliced, or if the 'historical' window for a test sample includes data from the validation period without a strict sliding-window approach, the model is leaking future information into the feature set.",
+        "evidence_test": "Audit the feature engineering pipeline to ensure that for any sample at time T, the features are computed using a window [T-delta, T], and that no global statistics (like global mean/std or total interaction counts) are calculated across the full dataset before splitting.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GBT baseline is a 'strong feature-only' comparison that isolates the value of the graph structure.",
+        "failure_mechanism": "The GBT baseline uses 'hand-engineered aggregates'. However, many of the relational signals the GNN learns (e.g., 'this user is connected to an IP that is connected to 50 other users') can be explicitly engineered as tabular features (e.g., 'IP_degree_count'). By not including these 'graph-inspired' tabular features in the GBT, the PoC may be measuring the value of the *features* the GNN implicitly creates, rather than the value of the *GNN architecture* (message passing/non-linear aggregation).",
+        "evidence_test": "Add a 'Graph-Feature GBT' baseline that includes explicit degree counts, PageRank, or community IDs as tabular features. If this baseline matches the GNN, the GNN's architecture is not the source of the gain.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding unresolved cases prevents label noise.",
+        "failure_mechanism": "By excluding unresolved cases, the PoC introduces 'selection bias'. In real-world ATO detection, the hardest cases (the ones the model is most likely to fail on) are often the ones that remain unresolved or take the longest to investigate. The test set is therefore biased toward 'obvious' cases that analysts were able to close quickly, potentially inflating the performance metrics.",
+        "evidence_test": "Compare the distribution of 'time-to-close' for the included cases versus the excluded unresolved cases. If unresolved cases have significantly different telemetry patterns, the results are biased.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC has a high risk of 'identity leakage' where the GNN may memorize specific entities rather than learning relational patterns, and it lacks a baseline that uses graph-derived tabular features, making it impossible to distinguish between the value of the graph data and the value of the GNN architecture.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I have analyzed all four critique findings against the provided methodology document.\n\nF1 (FATAL, 8): The critic claims the GNN might memorize entity IDs rather than learning relational patterns. However, the methodology explicitly states under 'Confound Controls': 'run ablations removing raw high-cardinality identifiers while preserving behavioral summaries, and report results separately for previously seen versus newly observed users and devices.' This design control directly addresses the critic's concern. The finding assumes the control is missing, but it is explicitly planned. The flaw is not in the design, but in the critic's reading of the scope.\n\nF2 (FATAL, 7): The critic claims historical aggregates might leak future information. The methodology explicitly constrains the graph model: 'Construct graphs using only data available up to the relevant split boundary so future edges never enter training or inference.' For the baseline, it specifies 'signals available at scoring time.' This is a design control for temporal leakage. The critic requests an audit of implementation details, but the design specification is sufficient to prevent the flaw. The methodology intends to prevent leakage via 'scoring time' constraints.\n\nF3 (MATERIAL, 5): The critic argues the GBT baseline should include graph-derived features (degree counts, etc.) to isolate architecture value. The methodology explicitly defines the scope: 'Compare it against a gradient-boosted tree baseline... This keeps the experiment focused on whether relational structure adds predictive value beyond strong hand-engineered aggregates.' Adding graph features to the GBT changes the hypothesis to 'Is GNN better than GBT with graph features?', which is outside the stated PoC scope. The PoC scope is 'Graph vs. Tabular', not 'GNN vs. GBT+GraphFeatures'.\n\nF4 (MINOR, 2): The critic claims excluding unresolved cases introduces selection bias. The methodology justifies this: 'Exclude unresolved cases... since delayed security investigations otherwise inject label noise.' This is a standard trade-off in security ML to ensure ground truth reliability. While bias exists, it is immaterial to the primary conclusion about detecting *confirmed* ATOs. The design rationale prioritizes label accuracy over coverage, which is valid for the stated hypothesis.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly includes the control mechanism requested by the critic: 'run ablations removing raw high-cardinality identifiers... and report results separately for previously seen versus newly observed users and devices.' The design anticipates and addresses the risk of entity memorization directly."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly constrains feature construction to 'signals available at scoring time' and 'data available up to the relevant split boundary.' This design control prevents future leakage by definition, rendering the implementation audit request unnecessary for validating the design intent."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The experiment scope is explicitly defined as comparing 'relational structure' against 'strong hand-engineered aggregates.' Adding graph-derived features to the GBT changes the hypothesis to a different comparison (GNN vs. GBT+GraphFeatures), which falls outside the stated PoC scope."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "While excluding unresolved cases introduces selection bias, the methodology explicitly prioritizes label accuracy to avoid noise from delayed investigations. This trade-off is immaterial to the primary conclusion regarding detection performance on confirmed ATO cases."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been rebutted with adjusted severities \u2264 3 (F1: 3, F2: 3, F3: 1, F4: 0). The methodology explicitly addresses the concerns regarding entity memorization, signal leakage, and scope definition, making the critique's concerns invalid or immaterial within the stated experiment design."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly pointed out that the methodology already includes the specific evidence test I proposed: reporting results separately for previously seen vs. newly observed entities and running ablations on high-cardinality identifiers. This directly addresses the memorization mechanism."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender relies on a high-level design statement ('signals available at scoring time'). However, the failure mechanism specifically concerns the *implementation* of 'historical aggregates' and 'interaction-count weights'. Simply stating the intent to avoid leakage does not explain the mechanism (e.g., sliding window vs. global slice) used to ensure that aggregates for a test sample at time T do not incorporate data from T+1. The severity remains material because this is the most common source of leakage in time-series ML."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender uses a REBUT-SCOPE argument, but the finding is centrally relevant to the stated goal of determining if 'relational structure adds predictive value'. If a GBT with simple degree counts (relational structure) matches the GNN, then the 'value' is in the feature, not the GNN architecture. Excluding this baseline makes the comparison 'GNN vs. Non-Relational GBT', which conflates the value of relational data with the value of the GNN model. This is a fundamental flaw in the experimental control, not a scope issue."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender acknowledges the bias but justifies it as a necessary trade-off for label purity. Given the original severity was already low (MINOR), this is an acceptable design choice for a PoC."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 and F4 are ACCEPTED by the critic \u2014 I maintain my R1 positions. F2 is PARTIAL \u2014 the critic correctly notes that design intent alone doesn't explain the implementation mechanism, but the methodology does specify training-only preprocessing which constrains leakage. I will strengthen the REBUT-DESIGN argument. F3 is CHALLENGED \u2014 the critic makes a valid point that comparing GNN vs. GBT without graph-derived features conflates relational data with GNN architecture. This is genuinely ambiguous and requires empirical resolution, so I will switch to DEFER.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly includes the evidence test the critic proposed: 'run ablations removing raw high-cardinality identifiers while preserving behavioral summaries, and report results separately for previously seen versus newly observed users and devices.' This design control directly addresses the memorization mechanism \u2014 if the GNN's lead vanishes on new entities, the experiment will reveal it. The critic accepted this in R2, so I maintain the position.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The methodology specifies: 'All imputers, category thresholds, normalization parameters, and any learned preprocessing are fit on training only and then frozen.' This is a concrete design control that prevents leakage from the test window into training. Additionally, 'signals available at scoring time' and 'data available up to the relevant split boundary' constrain feature construction. While implementation details matter, the design intent is explicit and enforceable \u2014 the experiment can audit this during execution. The critic's PARTIAL verdict acknowledges the design intent but questions implementation; the methodology provides the control mechanism to ensure implementation matches intent.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic raises a valid concern: if GBT with explicit graph-derived features (degree counts, PageRank) matches the GNN, then the gain may be from features rather than architecture. The methodology states the goal is to determine whether 'relational structure adds predictive value beyond strong hand-engineered aggregates,' but this conflates relational data with GNN message passing. Both parties have valid points \u2014 the experiment can test whether relational structure adds value, but it cannot isolate whether that value comes from the GNN architecture versus the features themselves. This ambiguity requires empirical resolution through the planned ablations and additional baselines.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The methodology explicitly prioritizes label accuracy by excluding unresolved cases to avoid noise from delayed investigations. While this introduces selection bias, the trade-off is justified for a PoC focused on confirmed ATO detection performance. The critic accepted this reasoning in R2, so I maintain the position.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F3 requires empirical resolution through the planned experiment (DEFER), which is a valid outcome when reasonable people can disagree on whether relational features or GNN architecture drives gains. No FATAL or MATERIAL findings remain above severity 3 after adjustments."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The graph model's performance gain is attributable to relational structure/message passing rather than the inclusion of high-cardinality entity identifiers.",
+        "failure_mechanism": "The PoC states the graph model uses 'the same node attributes' as the baseline but adds edges. In GNNs, the node identity (index) is implicitly used to route messages. If the graph model is given raw IDs (e.g., UserID, DeviceID) as node identifiers, it can memorize specific 'bad' entities that appear in both training and test sets (e.g., a persistent attacker IP), whereas the GBT baseline only sees 'behavioral summaries'. The GNN may simply be performing a lookup of known-bad entities via the adjacency matrix rather than learning a generalizable relational pattern.",
+        "evidence_test": "Compare the GNN performance on 'previously seen' vs 'newly observed' entities. If the GNN's lead over the GBT vanishes or reverses on new entities, the model is memorizing identities, not learning relational signals.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological split prevents signal leakage from the future into the past.",
+        "failure_mechanism": "While the split is chronological, the PoC does not specify how 'historical user risk aggregates' (used in the baseline) and 'interaction-count weights' (used in the graph) are calculated for the test window. If these aggregates are calculated over the entire 12-month window and then sliced, or if the 'historical' window for a test sample includes data from the validation period without a strict sliding-window approach, the model is leaking future information into the feature set.",
+        "evidence_test": "Audit the feature engineering pipeline to ensure that for any sample at time T, the features are computed using a window [T-delta, T], and that no global statistics (like global mean/std or total interaction counts) are calculated across the full dataset before splitting.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GBT baseline is a 'strong feature-only' comparison that isolates the value of the graph structure.",
+        "failure_mechanism": "The GBT baseline uses 'hand-engineered aggregates'. However, many of the relational signals the GNN learns (e.g., 'this user is connected to an IP that is connected to 50 other users') can be explicitly engineered as tabular features (e.g., 'IP_degree_count'). By not including these 'graph-inspired' tabular features in the GBT, the PoC may be measuring the value of the *features* the GNN implicitly creates, rather than the value of the *GNN architecture* (message passing/non-linear aggregation).",
+        "evidence_test": "Add a 'Graph-Feature GBT' baseline that includes explicit degree counts, PageRank, or community IDs as tabular features. If this baseline matches the GNN, the GNN's architecture is not the source of the gain.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding unresolved cases prevents label noise.",
+        "failure_mechanism": "By excluding unresolved cases, the PoC introduces 'selection bias'. In real-world ATO detection, the hardest cases (the ones the model is most likely to fail on) are often the ones that remain unresolved or take the longest to investigate. The test set is therefore biased toward 'obvious' cases that analysts were able to close quickly, potentially inflating the performance metrics.",
+        "evidence_test": "Compare the distribution of 'time-to-close' for the included cases versus the excluded unresolved cases. If unresolved cases have significantly different telemetry patterns, the results are biased.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC has a high risk of 'identity leakage' where the GNN may memorize specific entities rather than learning relational patterns, and it lacks a baseline that uses graph-derived tabular features, making it impossible to distinguish between the value of the graph data and the value of the GNN architecture.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 and F4 are ACCEPTED by the critic \u2014 I maintain my R1 positions. F2 is PARTIAL \u2014 the critic correctly notes that design intent alone doesn't explain the implementation mechanism, but the methodology does specify training-only preprocessing which constrains leakage. I will strengthen the REBUT-DESIGN argument. F3 is CHALLENGED \u2014 the critic makes a valid point that comparing GNN vs. GBT without graph-derived features conflates relational data with GNN architecture. This is genuinely ambiguous and requires empirical resolution, so I will switch to DEFER.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly includes the evidence test the critic proposed: 'run ablations removing raw high-cardinality identifiers while preserving behavioral summaries, and report results separately for previously seen versus newly observed users and devices.' This design control directly addresses the memorization mechanism \u2014 if the GNN's lead vanishes on new entities, the experiment will reveal it. The critic accepted this in R2, so I maintain the position.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The methodology specifies: 'All imputers, category thresholds, normalization parameters, and any learned preprocessing are fit on training only and then frozen.' This is a concrete design control that prevents leakage from the test window into training. Additionally, 'signals available at scoring time' and 'data available up to the relevant split boundary' constrain feature construction. While implementation details matter, the design intent is explicit and enforceable \u2014 the experiment can audit this during execution. The critic's PARTIAL verdict acknowledges the design intent but questions implementation; the methodology provides the control mechanism to ensure implementation matches intent.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic raises a valid concern: if GBT with explicit graph-derived features (degree counts, PageRank) matches the GNN, then the gain may be from features rather than architecture. The methodology states the goal is to determine whether 'relational structure adds predictive value beyond strong hand-engineered aggregates,' but this conflates relational data with GNN message passing. Both parties have valid points \u2014 the experiment can test whether relational structure adds value, but it cannot isolate whether that value comes from the GNN architecture versus the features themselves. This ambiguity requires empirical resolution through the planned ablations and additional baselines.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The methodology explicitly prioritizes label accuracy by excluding unresolved cases to avoid noise from delayed investigations. While this introduces selection bias, the trade-off is justified for a PoC focused on confirmed ATO detection performance. The critic accepted this reasoning in R2, so I maintain the position.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F3 requires empirical resolution through the planned experiment (DEFER), which is a valid outcome when reasonable people can disagree on whether relational features or GNN architecture drives gains. No FATAL or MATERIAL findings remain above severity 3 after adjustments."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

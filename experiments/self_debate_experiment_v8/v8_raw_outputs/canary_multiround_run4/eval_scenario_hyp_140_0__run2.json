@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_hyp_140_0",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Labels derived from analyst disposition decisions within 7 days of each alert are accurate ground truth for true intrusions.",
+        "failure_mechanism": "Analyst dispositions may be noisy or biased. SOC analysts may misclassify alerts due to time pressure, incomplete information, or evolving threat landscape. A 7-day window may exclude delayed confirmations (e.g., delayed forensic analysis revealing an intrusion), leading to false negatives in labels. Conversely, analysts may over-disposition alerts as malicious due to alert fatigue or conservative triage, inflating false positives. The label noise is not quantified or corrected, which can mislead model training and evaluation.",
+        "evidence_test": "Compare model performance on alerts with confirmed ground truth (e.g., via forensic analysis or external threat intelligence) versus alerts with only analyst dispositions. If PR-AUC is significantly lower on confirmed ground truth, labels are noisy. Alternatively, measure inter-analyst agreement on a subset of alerts to estimate label noise.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day lookback window captures all relevant historical context for predicting alert disposition.",
+        "failure_mechanism": "Intrusions may involve long dwell times (e.g., months) or require historical context beyond 30 days to detect. For example, a compromised host may exhibit subtle anomalies over weeks before a final alert is triggered. By truncating history at 30 days, the model may miss critical signals, leading to underperformance on sophisticated or long-running attacks. The 30-day window is arbitrary and not validated against attack dwell time distributions.",
+        "evidence_test": "Measure the distribution of time between the first anomalous event and the final alert for confirmed intrusions in the dataset. If a significant fraction of intrusions have dwell times >30 days, the window is too short. Alternatively, ablate the window size (e.g., 60 or 90 days) and measure PR-AUC impact.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) prevents leakage of future information and reflects deployment conditions.",
+        "failure_mechanism": "The split does not account for concept drift or evolving attacker tactics. If attacker behavior changes significantly over time (e.g., due to new malware or evasion techniques), the model may perform well on recent data but fail in production if deployed later. The validation and test sets are only 3 and 6 months long, respectively, which may not capture long-term drift. Additionally, the split does not address potential leakage from entity-level correlations (e.g., a host involved in an incident in month 12 may reappear in month 16, but the model is not evaluated on its ability to generalize to unseen entities).",
+        "evidence_test": "Evaluate performance on alerts from entirely new entities (users/hosts) in the test set. If PR-AUC drops significantly, the model is overfitting to entity-specific patterns. Alternatively, measure performance over time within the test set (e.g., by month) to detect drift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The tGNN's advantage over baselines (XGBoost, Transformer) is attributable to exploiting graph structure rather than temporal modeling.",
+        "failure_mechanism": "The Transformer/LSTM baseline controls for temporal modeling but may not fully replicate the tGNN's ability to capture relational dependencies. For example, the Transformer could be under-parameterized or trained with suboptimal hyperparameters, failing to match the tGNN's performance even if temporal modeling is the primary driver of improvement. The comparison does not isolate the effect of graph structure from other factors like model capacity or attention mechanisms.",
+        "evidence_test": "Ablate the graph structure in the tGNN by replacing heterogeneous message passing with a simpler graph (e.g., homogeneous nodes/edges) or by randomizing edge weights. If performance drops significantly, the graph structure is contributing. Alternatively, augment the Transformer baseline with explicit relational features (e.g., entity co-occurrence counts) to better match the tGNN's input.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate metric for operational goals (ranking alerts to minimize analyst effort).",
+        "failure_mechanism": "PR-AUC emphasizes precision at high recall, but operational goals may prioritize other trade-offs. For example, analysts may prefer a model with higher precision at low recall (fewer false positives in the top-ranked alerts) even if PR-AUC is lower. PR-AUC also does not account for the cost of analyst time spent investigating false positives. The metric may not align with the true objective of reducing mean time to detect (MTTD) or mean time to respond (MTTR).",
+        "evidence_test": "Measure the correlation between PR-AUC and operational metrics (e.g., analyst time saved per true positive) on a held-out set of analyst workflows. If PR-AUC does not correlate with operational efficiency, it is a poor proxy. Alternatively, evaluate using a cost-sensitive metric (e.g., expected cost of misclassification) that incorporates analyst labor costs.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 7-day label window minimizes noise by excluding alerts without a final disposition.",
+        "failure_mechanism": "Excluding alerts without a disposition introduces selection bias. These alerts may represent edge cases (e.g., ambiguous or low-severity alerts) that the model must handle in production. The exclusion also ignores the operational reality that analysts may take longer than 7 days to disposition some alerts, especially for complex incidents. The bias may inflate performance metrics by removing hard cases.",
+        "evidence_test": "Measure the distribution of alert dispositions over time (e.g., % of alerts dispositioned within 7, 14, or 30 days). If a significant fraction of alerts are dispositioned after 7 days, the label set is biased. Alternatively, train and evaluate on all alerts with a disposition (including those >7 days) and compare performance.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC has multiple FATAL flaws: noisy labels from analyst dispositions (F1), an arbitrary 30-day lookback window that may miss long-running attacks (F2), and potential distribution shift due to temporal splits and evolving attacker tactics (F3). MATERIAL flaws include inadequate baselines to isolate the tGNN's graph structure advantage (F4), misaligned PR-AUC metric with operational goals (F5), and selection bias from the 7-day label window (F6). These issues collectively invalidate the interpretability of the experiment's results.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims analyst labels are noisy. However, the design intent is to automate the *triage* process (the analyst's first-pass decision), not to discover ground truth that analysts missed. The model's goal is to predict the analyst's disposition to reduce their workload. Therefore, the analyst's decision is the correct target variable for this specific hypothesis. \n\nF2 argues the 30-day window is arbitrary. While some attacks have long dwell times, the PoC's goal is to test if graph structure improves triage. Both the tGNN and the baselines (XGBoost, Transformer) use the exact same 30-day window. Any limitation in window size affects all compared models equally, meaning the relative advantage of the tGNN (the core hypothesis) remains valid regardless of whether 30 or 90 days is optimal.\n\nF3 raises concerns about concept drift and entity leakage. The temporal split (1-12, 13-15, 16-18) is the gold standard for preventing leakage. Regarding drift, the design includes a specific control: 'Stratified post-hoc analysis on test subsets (by month...)' to check stability. Regarding entity leakage, the tGNN's goal is to learn relational patterns (how entities interact), not to memorize specific entities. The temporal split ensures the model is tested on alerts that occurred after the training period, which is the correct deployment simulation.\n\nF4 suggests the Transformer baseline might be under-parameterized. The design explicitly states that all baselines receive 'matched hyperparameter tuning effort (grid search or Bayesian optimization),' which mitigates the risk of a 'strawman' baseline. The use of a Transformer specifically controls for temporal encoding, and XGBoost controls for tabular aggregation. The combination of these two isolates the graph structure.\n\nF5 argues PR-AUC is not the only operational metric. The design acknowledges this by including secondary metrics: 'Precision at fixed recall thresholds (P@R=0.8, P@R=0.9) to quantify analyst labor reduction.' These secondary metrics directly address the 'analyst effort' concern raised by the critic.\n\nF6 claims excluding alerts without a 7-day disposition introduces selection bias. This is a valid point regarding the *generalizability* of the model to all production alerts, but for a PoC testing a specific architectural hypothesis (tGNN vs Tabular), using a clean, labeled dataset is necessary. The 7-day window is a standard operational cutoff for triage. The bias would affect all models in the comparison equally, preserving the validity of the relative performance gain.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The goal of the PoC is to automate 'incident triage' (predicting analyst disposition), not to create a perfect forensic oracle. The analyst's decision is the intended target variable for the triage task; therefore, using these labels is a deliberate design choice to match the operational objective."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The 30-day window is applied identically to the tGNN, the XGBoost baseline, and the Transformer baseline. Because the window is a constant across all compared conditions, it does not confound the primary hypothesis (whether graph structure adds value over tabular/sequential data)."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly addresses drift via 'Stratified post-hoc analysis on test subsets (by month...)' in the Controls for Confounds section. The temporal split is the correct mechanism to simulate deployment and prevent future-leakage."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design ensures a fair comparison by applying 'matched hyperparameter tuning effort' to all baselines, preventing the 'under-parameterized baseline' failure mode."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design already includes 'Precision at fixed recall thresholds (P@R=0.8, P@R=0.9)' as secondary metrics specifically to quantify analyst labor reduction, addressing the critic's concern about PR-AUC's limitations."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "While excluding non-dispositioned alerts may introduce some selection bias, this bias affects all models in the experiment equally and does not invalidate the relative comparison between the tGNN and the baselines."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were rebutted as design choices or controlled for in the methodology. However, F1 remains at adjusted severity 4 because while the design intent is to predict analyst triage, the potential for significant label noise in SOC environments is a known risk that may require empirical verification (e.g., inter-analyst agreement) to ensure the model isn't just learning analyst bias."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal argues that the label choice is a deliberate design choice to match the operational objective (incident triage), which is a scope statement rather than a mechanistic rebuttal of the failure mode. The finding specifically highlights that analyst dispositions may be noisy or biased, and the label noise is not quantified or corrected. The defender does not address the mechanism of label noise (e.g., inter-analyst disagreement, delayed confirmations) or provide evidence that the 7-day window does not introduce systematic bias. The severity adjustment is disproportionate: a FATAL finding reduced by 5 to adj_sev=4 is not justified without addressing the core concern of label validity."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal correctly identifies that the 30-day window is applied identically across all models, so any performance differences cannot be attributed to the window length itself. This directly addresses the failure mechanism (arbitrary window size confounding results) by ensuring the comparison is fair. The severity adjustment is proportionate."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal cites the 'stratified post-hoc analysis' as addressing drift, but this is a reactive measure rather than a proactive control. The finding highlights that the validation/test sets are too short to capture long-term drift and that entity-level leakage is not addressed. The post-hoc analysis can detect drift but does not prevent it or ensure the model generalizes to new entities. The mechanism of distribution shift remains a residual risk."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal claims 'matched hyperparameter tuning' addresses the concern, but this does not isolate the effect of graph structure. The failure mechanism is that the Transformer baseline may be under-parameterized or suboptimal, and the rebuttal does not provide evidence that the Transformer was tuned to match the tGNN's capacity or that its performance is not limited by temporal modeling alone. The mechanism of isolating graph structure vs. temporal modeling is not addressed."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal correctly points out that secondary metrics (P@R=0.8, P@R=0.9) are included to address PR-AUC's limitations, specifically quantifying analyst labor reduction. This directly addresses the failure mechanism (metric misalignment with operational goals). The severity adjustment is proportionate."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal argues that the selection bias affects all models equally and does not invalidate relative comparisons. This is a valid rebuttal for the finding, which focuses on the bias's impact on the *relative* performance of the tGNN vs. baselines. The severity adjustment is proportionate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F5, and F6 as they were accepted. For F1, I am switching to DEFER because while the target variable is operationally correct, the critic is right that label noise is not quantified; this can be settled empirically without invalidating the relative model comparison. For F3, I am switching to DEFER regarding entity-level generalization, as the post-hoc analysis detects but does not prevent drift. For F4, I am switching to DEFER because hyperparameter tuning ensures effort parity but does not mechanistically isolate graph structure from model capacity, which requires an ablation study.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that the design does not quantify label noise. To settle this: (1) Experiment: Measure inter-analyst agreement on a 5% random sample of alerts and compare PR-AUC on a gold-standard forensic subset vs. analyst labels. (2) Vindication: If agreement is high (>80%) or PR-AUC remains stable across both label sets, the analyst labels are sufficient. (3) Validation: If PR-AUC drops significantly on forensic labels, the labels are noisy. (4) Conclusion survival: Yes. Because all models (tGNN and baselines) are trained and evaluated on the same noisy labels, the relative advantage of the tGNN in predicting analyst behavior remains valid, even if the absolute accuracy relative to 'truth' is lower.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The 30-day window is a constant across all compared conditions (tGNN, XGBoost, Transformer). Any limitation in capturing long-dwell attacks affects all models equally, thus it does not confound the primary hypothesis regarding the value of graph structure.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly notes that post-hoc analysis is reactive. To settle: (1) Experiment: Partition the test set into 'seen entities' (appeared in train/val) and 'unseen entities'. (2) Vindication: If PR-AUC is comparable across both groups, the model generalizes. (3) Validation: If PR-AUC drops on unseen entities, the model overfits to specific entity IDs. (4) Conclusion survival: Yes. If the tGNN outperforms baselines on both seen and unseen entities, the relative conclusion that graph structure is beneficial holds, regardless of the absolute drop in performance on new entities.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic is correct that tuning effort does not isolate the mechanism of graph structure. To settle: (1) Experiment: Perform a 'graph ablation' by replacing the tGNN's heterogeneous message passing with a MLP that receives the same aggregated features. (2) Vindication: If the full tGNN significantly outperforms the MLP, the graph structure is the driver. (3) Validation: If the MLP matches the tGNN, the advantage was due to model capacity/attention. (4) Conclusion survival: No. If the advantage is due to capacity rather than graph structure, the primary hypothesis is invalidated. However, this is the purpose of the experiment to determine.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly includes Precision at fixed recall thresholds (P@R=0.8, P@R=0.9) as secondary metrics to quantify the reduction in analyst labor, directly addressing the limitation of PR-AUC.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The exclusion of non-dispositioned alerts creates a selection bias that applies uniformly to all models. This does not affect the relative comparison between the tGNN and the baselines.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several FATAL and MATERIAL findings (F1, F3, F4) were moved to DEFER because the design provides partial controls (e.g., post-hoc analysis, matched tuning) but requires specific empirical tests (ablation, entity-splitting, label-correlation) to fully resolve the mechanistic concerns."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Labels derived from analyst disposition decisions within 7 days of each alert are accurate ground truth for true intrusions.",
+        "failure_mechanism": "Analyst dispositions may be noisy or biased. SOC analysts may misclassify alerts due to time pressure, incomplete information, or evolving threat landscape. A 7-day window may exclude delayed confirmations (e.g., delayed forensic analysis revealing an intrusion), leading to false negatives in labels. Conversely, analysts may over-disposition alerts as malicious due to alert fatigue or conservative triage, inflating false positives. The label noise is not quantified or corrected, which can mislead model training and evaluation.",
+        "evidence_test": "Compare model performance on alerts with confirmed ground truth (e.g., via forensic analysis or external threat intelligence) versus alerts with only analyst dispositions. If PR-AUC is significantly lower on confirmed ground truth, labels are noisy. Alternatively, measure inter-analyst agreement on a subset of alerts to estimate label noise.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day lookback window captures all relevant historical context for predicting alert disposition.",
+        "failure_mechanism": "Intrusions may involve long dwell times (e.g., months) or require historical context beyond 30 days to detect. For example, a compromised host may exhibit subtle anomalies over weeks before a final alert is triggered. By truncating history at 30 days, the model may miss critical signals, leading to underperformance on sophisticated or long-running attacks. The 30-day window is arbitrary and not validated against attack dwell time distributions.",
+        "evidence_test": "Measure the distribution of time between the first anomalous event and the final alert for confirmed intrusions in the dataset. If a significant fraction of intrusions have dwell times >30 days, the window is too short. Alternatively, ablate the window size (e.g., 60 or 90 days) and measure PR-AUC impact.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) prevents leakage of future information and reflects deployment conditions.",
+        "failure_mechanism": "The split does not account for concept drift or evolving attacker tactics. If attacker behavior changes significantly over time (e.g., due to new malware or evasion techniques), the model may perform well on recent data but fail in production if deployed later. The validation and test sets are only 3 and 6 months long, respectively, which may not capture long-term drift. Additionally, the split does not address potential leakage from entity-level correlations (e.g., a host involved in an incident in month 12 may reappear in month 16, but the model is not evaluated on its ability to generalize to unseen entities).",
+        "evidence_test": "Evaluate performance on alerts from entirely new entities (users/hosts) in the test set. If PR-AUC drops significantly, the model is overfitting to entity-specific patterns. Alternatively, measure performance over time within the test set (e.g., by month) to detect drift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The tGNN's advantage over baselines (XGBoost, Transformer) is attributable to exploiting graph structure rather than temporal modeling.",
+        "failure_mechanism": "The Transformer/LSTM baseline controls for temporal modeling but may not fully replicate the tGNN's ability to capture relational dependencies. For example, the Transformer could be under-parameterized or trained with suboptimal hyperparameters, failing to match the tGNN's performance even if temporal modeling is the primary driver of improvement. The comparison does not isolate the effect of graph structure from other factors like model capacity or attention mechanisms.",
+        "evidence_test": "Ablate the graph structure in the tGNN by replacing heterogeneous message passing with a simpler graph (e.g., homogeneous nodes/edges) or by randomizing edge weights. If performance drops significantly, the graph structure is contributing. Alternatively, augment the Transformer baseline with explicit relational features (e.g., entity co-occurrence counts) to better match the tGNN's input.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate metric for operational goals (ranking alerts to minimize analyst effort).",
+        "failure_mechanism": "PR-AUC emphasizes precision at high recall, but operational goals may prioritize other trade-offs. For example, analysts may prefer a model with higher precision at low recall (fewer false positives in the top-ranked alerts) even if PR-AUC is lower. PR-AUC also does not account for the cost of analyst time spent investigating false positives. The metric may not align with the true objective of reducing mean time to detect (MTTD) or mean time to respond (MTTR).",
+        "evidence_test": "Measure the correlation between PR-AUC and operational metrics (e.g., analyst time saved per true positive) on a held-out set of analyst workflows. If PR-AUC does not correlate with operational efficiency, it is a poor proxy. Alternatively, evaluate using a cost-sensitive metric (e.g., expected cost of misclassification) that incorporates analyst labor costs.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 7-day label window minimizes noise by excluding alerts without a final disposition.",
+        "failure_mechanism": "Excluding alerts without a disposition introduces selection bias. These alerts may represent edge cases (e.g., ambiguous or low-severity alerts) that the model must handle in production. The exclusion also ignores the operational reality that analysts may take longer than 7 days to disposition some alerts, especially for complex incidents. The bias may inflate performance metrics by removing hard cases.",
+        "evidence_test": "Measure the distribution of alert dispositions over time (e.g., % of alerts dispositioned within 7, 14, or 30 days). If a significant fraction of alerts are dispositioned after 7 days, the label set is biased. Alternatively, train and evaluate on all alerts with a disposition (including those >7 days) and compare performance.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC has multiple FATAL flaws: noisy labels from analyst dispositions (F1), an arbitrary 30-day lookback window that may miss long-running attacks (F2), and potential distribution shift due to temporal splits and evolving attacker tactics (F3). MATERIAL flaws include inadequate baselines to isolate the tGNN's graph structure advantage (F4), misaligned PR-AUC metric with operational goals (F5), and selection bias from the 7-day label window (F6). These issues collectively invalidate the interpretability of the experiment's results.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F5, and F6 as they were accepted. For F1, I am switching to DEFER because while the target variable is operationally correct, the critic is right that label noise is not quantified; this can be settled empirically without invalidating the relative model comparison. For F3, I am switching to DEFER regarding entity-level generalization, as the post-hoc analysis detects but does not prevent drift. For F4, I am switching to DEFER because hyperparameter tuning ensures effort parity but does not mechanistically isolate graph structure from model capacity, which requires an ablation study.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that the design does not quantify label noise. To settle this: (1) Experiment: Measure inter-analyst agreement on a 5% random sample of alerts and compare PR-AUC on a gold-standard forensic subset vs. analyst labels. (2) Vindication: If agreement is high (>80%) or PR-AUC remains stable across both label sets, the analyst labels are sufficient. (3) Validation: If PR-AUC drops significantly on forensic labels, the labels are noisy. (4) Conclusion survival: Yes. Because all models (tGNN and baselines) are trained and evaluated on the same noisy labels, the relative advantage of the tGNN in predicting analyst behavior remains valid, even if the absolute accuracy relative to 'truth' is lower.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The 30-day window is a constant across all compared conditions (tGNN, XGBoost, Transformer). Any limitation in capturing long-dwell attacks affects all models equally, thus it does not confound the primary hypothesis regarding the value of graph structure.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly notes that post-hoc analysis is reactive. To settle: (1) Experiment: Partition the test set into 'seen entities' (appeared in train/val) and 'unseen entities'. (2) Vindication: If PR-AUC is comparable across both groups, the model generalizes. (3) Validation: If PR-AUC drops on unseen entities, the model overfits to specific entity IDs. (4) Conclusion survival: Yes. If the tGNN outperforms baselines on both seen and unseen entities, the relative conclusion that graph structure is beneficial holds, regardless of the absolute drop in performance on new entities.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic is correct that tuning effort does not isolate the mechanism of graph structure. To settle: (1) Experiment: Perform a 'graph ablation' by replacing the tGNN's heterogeneous message passing with a MLP that receives the same aggregated features. (2) Vindication: If the full tGNN significantly outperforms the MLP, the graph structure is the driver. (3) Validation: If the MLP matches the tGNN, the advantage was due to model capacity/attention. (4) Conclusion survival: No. If the advantage is due to capacity rather than graph structure, the primary hypothesis is invalidated. However, this is the purpose of the experiment to determine.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly includes Precision at fixed recall thresholds (P@R=0.8, P@R=0.9) as secondary metrics to quantify the reduction in analyst labor, directly addressing the limitation of PR-AUC.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The exclusion of non-dispositioned alerts creates a selection bias that applies uniformly to all models. This does not affect the relative comparison between the tGNN and the baselines.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several FATAL and MATERIAL findings (F1, F3, F4) were moved to DEFER because the design provides partial controls (e.g., post-hoc analysis, matched tuning) but requires specific empirical tests (ablation, entity-splitting, label-correlation) to fully resolve the mechanistic concerns."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=9, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

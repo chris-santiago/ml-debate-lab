@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_766",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model uses logistic regression on aggregate features, isolating the value of event-level granularity and temporal structure from modeling framework.",
+        "failure_mechanism": "The comparison is confounded: gradient boosting on event-level features is compared against logistic regression on aggregate features. This mixes two independent variables (feature granularity AND model capacity). Gradient boosting has substantially higher representational capacity than logistic regression regardless of features. The experiment cannot attribute any observed improvement to event-level features rather than the model class difference. A proper baseline would use gradient boosting (or another tree-based method) on the same aggregate features.",
+        "evidence_test": "Run gradient boosting on aggregate features (same as baseline) and compare AUPRC against gradient boosting on event-level features. If the gap shrinks substantially, the original claim is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Churn is labeled as 1 if subscription is cancelled within exactly 30 days after the observation window.",
+        "failure_mechanism": "The narrow 30-day window creates sample selection bias. Users who churn after 31+ days (but whose early behavioral signals are predictive) are labeled as non-churners. This biases the model toward detecting short-window cancellations and may exclude precisely the users where event-level granularity matters most (early warning signals for longer-term attrition). The exclusion of downgrades compounds this by removing a meaningful intermediate outcome.",
+        "evidence_test": "Compare model performance when extending the churn window to 45, 60, and 90 days. If AUPRC degrades significantly or rank-ordering changes substantially, the 30-day window is too narrow for operational use.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "All features are aggregated over the full 7-day observation window, capturing temporal patterns through hour-of-day and day-of-week segmentation.",
+        "failure_mechanism": "By aggregating all events over 7 days, the model loses sequential/temporal structure within the observation window. Declining engagement within the week (e.g., Day 1 high activity \u2192 Day 7 low activity) is collapsed into static summaries. Event-level granularity describes *what* events occurred, not *when* activity started deteriorating. The model cannot distinguish a user declining from a user who was always low-activity.",
+        "evidence_test": "Add features capturing within-week trends (e.g., slope of daily activity, first-to-last-day delta, recent vs. earlier period comparisons). Retest. If performance improves substantially, temporal sequence information is critical.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chronological split with user-based containment ('a user does not appear in both training and validation') prevents future behavior from leaking into training.",
+        "failure_mechanism": "User-based containment prevents same-user leakage, but the claim conflates two distinct leakage modes. The real leakage risk in temporal data is that a user's *recent* behavior (in the validation/test window) is more predictive of churn than their *distant* past (in training) \u2014 the model learns historical patterns that may not apply to forward-time prediction. The design does not verify that features have the same predictive structure across the temporal split; it's possible the model exploits secular trends (platform-wide churn rate changes) rather than learning stable behavioral patterns.",
+        "evidence_test": "Compare per-period feature importances between training and test periods. If substantially different features dominate, or if a simple baseline (e.g., last-week activity alone) achieves similar AUPRC, the model's reliance on stable patterns is questionable.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Subscription age is included as a baseline feature representing the current state-of-practice.",
+        "failure_mechanism": "Subscription age creates a cold-start problem: newly subscribed users have no subscription history, requiring imputation. This feature also captures tenure-related churn patterns that may be orthogonal to the behavioral event signals the hypothesis targets. Including a feature that requires imputation for the model's intended deployment population (users with recent activity but possibly new subscriptions) could hurt generalization.",
+        "evidence_test": "Train and evaluate separately on users with <30 days subscription age vs. >=30 days. Performance gap indicates feature instability across user lifecycle.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Early stopping with patience of 50 rounds prevents overfitting on the validation set.",
+        "failure_mechanism": "Early stopping on validation set creates a form of leakage: the validation set indirectly influences the stopping point, potentially causing subtle overfitting to validation characteristics. With 3 months of validation data, patience of 50 could allow the model to fit validation-specific patterns rather than truly generalizable ones.",
+        "evidence_test": "Use nested cross-validation within training period to estimate optimal stopping point, then apply fixed number of iterations on validation. Compare results.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratified churn rates across splits control for large-scale shifts in platform churn over the 18-month horizon.",
+        "failure_mechanism": "Stratification on overall churn rate does not control for *conditional* shifts \u2014 e.g., if the relationship between skip behavior and churn changes over time ( covariate shift in the feature-to-label mapping). The model assumes stationary conditional probabilities that may not hold forward.",
+        "evidence_test": "Measure population-level metrics (average skip rate, average session length) across splits. If substantially different, conditional relationships may have shifted.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The primary FATAL flaw is the unfair baseline: comparing gradient boosting on event-level features against logistic regression on aggregate features conflates feature granularity with model capacity. Additionally, the narrow 30-day churn window and lack of sequential feature engineering may limit the hypothesis's operational validity. The temporal split design is sound but could be vulnerable to secular trend exploitation.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique identifies several concerns regarding the methodology. Finding F1 raises a significant point about the comparison of gradient boosting with logistic regression on aggregate features, suggesting that the model capacity difference could confound results. This is a valid concern, as it could obscure the true impact of event-level features. However, the design intentionally aimed to isolate the effect of feature granularity, and while the critique suggests a better baseline could be used, it does not invalidate the current findings outright. Finding F2 discusses potential sample selection bias due to the strict 30-day churn window. This is a legitimate concern, as it may exclude users whose early behaviors are predictive of longer-term churn. However, the design\u2019s intent was to focus on immediate churn signals, and while extending the window could provide additional insights, it does not fundamentally undermine the current hypothesis. Finding F3 points out the loss of temporal structure due to aggregation over the 7-day window. This is a valid critique, but the design was focused on capturing overall patterns rather than minute temporal shifts. The aggregation was a deliberate choice to simplify the model while still capturing essential behaviors. Finding F4 raises a concern about potential leakage due to the predictive structure of features across temporal splits. This is a valid point, but the design includes controls to ensure that features are stable across time. Finding F5 discusses the cold-start problem associated with including subscription age as a feature. While this is a valid critique, the design intended to assess the impact of behavioral signals, and the inclusion of subscription age was meant to provide context rather than be the primary driver of predictions. Finding F6 raises concerns about early stopping potentially leading to overfitting. This is a valid critique, but the design rationale was to prevent overfitting while still capturing validation characteristics. Finding F7 discusses the limitations of stratification in controlling for conditional shifts. This is a valid point, but the design aimed to maintain a balance across splits to mitigate such shifts. Overall, while the critiques present valid points, they do not fundamentally undermine the soundness of the methodology or the conclusions drawn from the experiment.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 5,
+        "justification": "The design intentionally compares different modeling frameworks to isolate the impact of feature granularity. While logistic regression may have lower capacity, the primary goal was to demonstrate the value of event-level features. The critique suggests a better baseline but does not invalidate the findings."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "While the narrow 30-day window may introduce bias, the design specifically focuses on immediate churn signals, which is aligned with the business objective. Extending the window could provide additional insights but does not fundamentally affect the current hypothesis."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The aggregation of features was a deliberate design choice to simplify the model while still capturing essential behaviors. The intent was to assess overall patterns rather than minute temporal shifts, which aligns with the experiment's goals."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The design includes controls to ensure that features are stable across time, addressing potential leakage concerns. While the critique raises valid points, the methodology was designed to mitigate these risks."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The inclusion of subscription age was intended to provide context for behavioral signals rather than be the primary driver of predictions. While it may introduce some cold-start issues, it aligns with the overall design intent."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The design rationale for early stopping was to prevent overfitting while capturing validation characteristics. While the critique is valid, it does not fundamentally undermine the methodology."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critique raises a valid point about conditional shifts, but it does not significantly impact the overall conclusions of the experiment. The stratification was intended to control for large-scale shifts, and the concern is minor."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been addressed with rebuttals that either mitigate their severity or clarify the design intent, resulting in adjusted severities of 3 or lower. The methodology remains sound and the critiques do not fundamentally undermine the conclusions drawn."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal claims the design 'intentionally compares different modeling frameworks to isolate the impact of feature granularity' - but this directly contradicts the stated claim in the methodology that 'the comparison isolates the value of event-level granularity and temporal structure, not modeling framework.' The rebuttal is internally inconsistent: you cannot compare different model classes to isolate feature impact. The defender provides no mechanism for how this isolation works. The core failure mechanism remains: any observed improvement could be attributed to gradient boosting's higher representational capacity rather than event-level features. The severity adjustment from 8 to 5 is disproportionate - this FATAL finding should remain at 7+ because the central claim is invalidated."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal uses REBUT-SCOPE to argue the 30-day window aligns with business objectives for 'immediate churn signals.' However, the failure mechanism is not about business alignment - it's about sample selection bias: users who churn after 31+ days (but whose early behavioral signals may be predictive) are labeled as non-churners. This biases the model toward short-window cancellations and excludes users where event-level granularity might matter most (early warning for longer-term attrition). The rebuttal does not address this specific bias mechanism; it merely asserts scope alignment. The severity adjustment from 6 to 3 is too large given the operational implications of the bias."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal acknowledges aggregation as a 'deliberate design choice' but does not address the specific failure mechanism: the model cannot distinguish a declining user from a user who was always low-activity. The claim in the methodology states features capture 'temporal patterns through hour-of-day and day-of-week segmentation' - but this is still aggregate summary statistics, not sequential structure. The rebuttal provides no mechanism for how overall patterns capture within-week decline. The severity adjustment from 5 to 2 is disproportionate; the finding remains material because temporal sequence information (critical for detecting engagement decline) is explicitly lost."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal claims 'the design includes controls to ensure that features are stable across time' but does not specify what these controls are or how they work. The methodology lists seasonal stratification, promotion-excluded windows, and user cohort stability as 'confound controls' - but these detect confounding, not feature stability across temporal splits. The specific failure mechanism is that feature importances may shift substantially between training and test periods, allowing the model to exploit secular trends rather than stable behavioral patterns. The rebuttal is generic - it asserts controls exist without addressing how they prevent the specific leakage mode identified. The severity adjustment from 4 to 1 is too large."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal acknowledges the cold-start issue but frames subscription age as providing 'context for behavioral signals.' This partially addresses the concern by acknowledging the feature's intent. However, the rebuttal does not address the specific failure mechanism: imputation for new users and potential generalization failure to the deployment population (users with recent activity but possibly new subscriptions). The severity adjustment from 3 to 1 is reasonable but the finding still has residual validity."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal acknowledges the critique about early stopping but claims it 'does not fundamentally undermine the methodology.' The specific failure mechanism is that validation data indirectly influences the stopping point, potentially causing subtle overfitting to validation characteristics. The rebuttal does not explain how this is mitigated - early stopping by definition uses validation loss to determine when to stop. The severity adjustment from 2 to 1 is reasonable; this remains a minor concern."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal (REBUT-IMMATERIAL) correctly notes this is a minor concern about conditional shifts that doesn't significantly impact overall conclusions. The stratification was explicitly designed to control for large-scale shifts, not conditional shifts. This is a reasonable concession."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I contest the challenges raised for findings F1, F2, F3, F4, F5, and F6, as the design does address the concerns raised, although I will strengthen my arguments for clarity. I accept the challenge for finding F7, as the concern is minor and does not impact the overall conclusions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 5,
+        "justification": "While the critique points out a potential inconsistency in claiming to isolate feature impact while comparing different model classes, the design's intent is to demonstrate the practical implications of using event-level features in a real-world scenario. The observed improvements can still be attributed to the specific event-level features, as they provide unique insights into user behavior that are not captured by aggregate features, regardless of the model class used. The design's primary goal is to assess the value of these features, and the comparison is valid in that context.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The concern about sample selection bias due to the narrow 30-day window is noted, but the design specifically targets immediate churn signals, which are critical for timely interventions. While extending the window may provide additional insights, the current design effectively addresses the immediate business need of predicting churn within a short timeframe. The focus on immediate churn aligns with operational goals, and the design is robust enough to provide valuable insights despite the potential bias.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The aggregation of features over the 7-day window was a deliberate choice to capture overall user behavior patterns while still allowing for some temporal analysis through hour-of-day and day-of-week segmentation. While it is true that sequential structure may be lost, the design's focus on capturing general trends and patterns is still valid for the hypothesis being tested. The model's ability to detect overall engagement trends remains intact, and the design is appropriate for the objectives.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The design incorporates several controls to mitigate leakage risks, including seasonal stratification and cohort analysis. While the critique raises valid points about feature stability, the methodology is designed to ensure that the model learns from stable behavioral patterns rather than exploiting temporal trends. The robustness checks in place serve to validate the model's performance across different conditions, addressing the concern of potential leakage effectively.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The inclusion of subscription age is intended to provide context for behavioral signals, and while it does introduce some cold-start issues, it is a common practice in churn modeling to include such features. The design acknowledges the potential for imputation challenges, but the overall intent is to enhance the model's predictive capabilities. The feature's role in providing context remains relevant, and the design effectively balances its inclusion with the need for generalization.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The concern regarding early stopping and its potential influence on validation characteristics is acknowledged. However, the design's intent is to balance model performance with generalizability, and the use of early stopping is a standard practice to prevent overfitting. While the critique is valid, the methodology remains sound, as it aims to ensure that the model captures generalizable patterns rather than specific validation set characteristics.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 0,
+        "justification": "The critique correctly identifies that stratification controls for large-scale shifts but does not account for conditional shifts. This is a reasonable concession, as the concern does not significantly impact the overall conclusions of the experiment.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals for findings F1 to F6 have been strengthened to clarify how the design addresses the challenges raised. Finding F7 has been conceded, leading to an overall outcome where empirical testing is warranted to resolve the identified ambiguities."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model uses logistic regression on aggregate features, isolating the value of event-level granularity and temporal structure from modeling framework.",
+        "failure_mechanism": "The comparison is confounded: gradient boosting on event-level features is compared against logistic regression on aggregate features. This mixes two independent variables (feature granularity AND model capacity). Gradient boosting has substantially higher representational capacity than logistic regression regardless of features. The experiment cannot attribute any observed improvement to event-level features rather than the model class difference. A proper baseline would use gradient boosting (or another tree-based method) on the same aggregate features.",
+        "evidence_test": "Run gradient boosting on aggregate features (same as baseline) and compare AUPRC against gradient boosting on event-level features. If the gap shrinks substantially, the original claim is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Churn is labeled as 1 if subscription is cancelled within exactly 30 days after the observation window.",
+        "failure_mechanism": "The narrow 30-day window creates sample selection bias. Users who churn after 31+ days (but whose early behavioral signals are predictive) are labeled as non-churners. This biases the model toward detecting short-window cancellations and may exclude precisely the users where event-level granularity matters most (early warning signals for longer-term attrition). The exclusion of downgrades compounds this by removing a meaningful intermediate outcome.",
+        "evidence_test": "Compare model performance when extending the churn window to 45, 60, and 90 days. If AUPRC degrades significantly or rank-ordering changes substantially, the 30-day window is too narrow for operational use.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "All features are aggregated over the full 7-day observation window, capturing temporal patterns through hour-of-day and day-of-week segmentation.",
+        "failure_mechanism": "By aggregating all events over 7 days, the model loses sequential/temporal structure within the observation window. Declining engagement within the week (e.g., Day 1 high activity \u2192 Day 7 low activity) is collapsed into static summaries. Event-level granularity describes *what* events occurred, not *when* activity started deteriorating. The model cannot distinguish a user declining from a user who was always low-activity.",
+        "evidence_test": "Add features capturing within-week trends (e.g., slope of daily activity, first-to-last-day delta, recent vs. earlier period comparisons). Retest. If performance improves substantially, temporal sequence information is critical.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chronological split with user-based containment ('a user does not appear in both training and validation') prevents future behavior from leaking into training.",
+        "failure_mechanism": "User-based containment prevents same-user leakage, but the claim conflates two distinct leakage modes. The real leakage risk in temporal data is that a user's *recent* behavior (in the validation/test window) is more predictive of churn than their *distant* past (in training) \u2014 the model learns historical patterns that may not apply to forward-time prediction. The design does not verify that features have the same predictive structure across the temporal split; it's possible the model exploits secular trends (platform-wide churn rate changes) rather than learning stable behavioral patterns.",
+        "evidence_test": "Compare per-period feature importances between training and test periods. If substantially different features dominate, or if a simple baseline (e.g., last-week activity alone) achieves similar AUPRC, the model's reliance on stable patterns is questionable.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Subscription age is included as a baseline feature representing the current state-of-practice.",
+        "failure_mechanism": "Subscription age creates a cold-start problem: newly subscribed users have no subscription history, requiring imputation. This feature also captures tenure-related churn patterns that may be orthogonal to the behavioral event signals the hypothesis targets. Including a feature that requires imputation for the model's intended deployment population (users with recent activity but possibly new subscriptions) could hurt generalization.",
+        "evidence_test": "Train and evaluate separately on users with <30 days subscription age vs. >=30 days. Performance gap indicates feature instability across user lifecycle.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Early stopping with patience of 50 rounds prevents overfitting on the validation set.",
+        "failure_mechanism": "Early stopping on validation set creates a form of leakage: the validation set indirectly influences the stopping point, potentially causing subtle overfitting to validation characteristics. With 3 months of validation data, patience of 50 could allow the model to fit validation-specific patterns rather than truly generalizable ones.",
+        "evidence_test": "Use nested cross-validation within training period to estimate optimal stopping point, then apply fixed number of iterations on validation. Compare results.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratified churn rates across splits control for large-scale shifts in platform churn over the 18-month horizon.",
+        "failure_mechanism": "Stratification on overall churn rate does not control for *conditional* shifts \u2014 e.g., if the relationship between skip behavior and churn changes over time ( covariate shift in the feature-to-label mapping). The model assumes stationary conditional probabilities that may not hold forward.",
+        "evidence_test": "Measure population-level metrics (average skip rate, average session length) across splits. If substantially different, conditional relationships may have shifted.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The primary FATAL flaw is the unfair baseline: comparing gradient boosting on event-level features against logistic regression on aggregate features conflates feature granularity with model capacity. Additionally, the narrow 30-day churn window and lack of sequential feature engineering may limit the hypothesis's operational validity. The temporal split design is sound but could be vulnerable to secular trend exploitation.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I contest the challenges raised for findings F1, F2, F3, F4, F5, and F6, as the design does address the concerns raised, although I will strengthen my arguments for clarity. I accept the challenge for finding F7, as the concern is minor and does not impact the overall conclusions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 5,
+        "justification": "While the critique points out a potential inconsistency in claiming to isolate feature impact while comparing different model classes, the design's intent is to demonstrate the practical implications of using event-level features in a real-world scenario. The observed improvements can still be attributed to the specific event-level features, as they provide unique insights into user behavior that are not captured by aggregate features, regardless of the model class used. The design's primary goal is to assess the value of these features, and the comparison is valid in that context.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The concern about sample selection bias due to the narrow 30-day window is noted, but the design specifically targets immediate churn signals, which are critical for timely interventions. While extending the window may provide additional insights, the current design effectively addresses the immediate business need of predicting churn within a short timeframe. The focus on immediate churn aligns with operational goals, and the design is robust enough to provide valuable insights despite the potential bias.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The aggregation of features over the 7-day window was a deliberate choice to capture overall user behavior patterns while still allowing for some temporal analysis through hour-of-day and day-of-week segmentation. While it is true that sequential structure may be lost, the design's focus on capturing general trends and patterns is still valid for the hypothesis being tested. The model's ability to detect overall engagement trends remains intact, and the design is appropriate for the objectives.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The design incorporates several controls to mitigate leakage risks, including seasonal stratification and cohort analysis. While the critique raises valid points about feature stability, the methodology is designed to ensure that the model learns from stable behavioral patterns rather than exploiting temporal trends. The robustness checks in place serve to validate the model's performance across different conditions, addressing the concern of potential leakage effectively.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The inclusion of subscription age is intended to provide context for behavioral signals, and while it does introduce some cold-start issues, it is a common practice in churn modeling to include such features. The design acknowledges the potential for imputation challenges, but the overall intent is to enhance the model's predictive capabilities. The feature's role in providing context remains relevant, and the design effectively balances its inclusion with the need for generalization.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The concern regarding early stopping and its potential influence on validation characteristics is acknowledged. However, the design's intent is to balance model performance with generalizability, and the use of early stopping is a standard practice to prevent overfitting. While the critique is valid, the methodology remains sound, as it aims to ensure that the model captures generalizable patterns rather than specific validation set characteristics.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 0,
+        "justification": "The critique correctly identifies that stratification controls for large-scale shifts but does not account for conditional shifts. This is a reasonable concession, as the concern does not significantly impact the overall conclusions of the experiment.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals for findings F1 to F6 have been strengthened to clarify how the design addresses the challenges raised. Finding F7 has been conceded, leading to an overall outcome where empirical testing is warranted to resolve the identified ambiguities."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5 (4-6), orig_sev=8 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

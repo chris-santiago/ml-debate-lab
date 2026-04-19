@@ -1,0 +1,588 @@
+{
+  "case_id": "eval_scenario_703",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Free-text notes are screened to exclude outcome-predictive language (e.g., 'poor prognosis', 'comfort care'), preventing leakage of outcome information into the note embeddings.",
+        "failure_mechanism": "The screening method is not specified\u2014keyword matching would miss implicit outcome signals (e.g., 'family meeting scheduled', 'goals of care discussed', 'patient not for resuscitation', 'terminal wean', 'palliative', 'hospice', 'DNR', 'withdrawal of care'). Clinical notes contain extensive implicit outcome information that skilled clinicians infer. If screening is incomplete, the model learns to detect dying patients from documentation patterns rather than clinical semantics, inflating discrimination artificially.",
+        "evidence_test": "Perform adversarial check: train on notes with outcome-predictive phrases artificially inserted at random, verify model detects them. Alternatively, use attention visualization to identify which tokens drive predictions\u2014if top-attended tokens are outcome-related (prognosis, code status, family discussions), leakage is present.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Forward-filling laboratory values within 72 hours, combined with binary missingness indicators, appropriately handles informative missingness.",
+        "failure_mechanism": "Forward-fill assumes missing values equal the last observed value, which is often false in ICU settings where patient status changes rapidly. More critically, missing labs are not random\u2014they correlate with patient acuity (low-acuity patients get fewer labs) and unit practices. The binary indicator captures 'any missing' but not the pattern or timing of missingness. A patient who deteriorates and gets increasingly frequent labs has different missingness patterns than one who stabilizes. The model may learn to use missingness indicators as a proxy for acuity rather than learning true clinical signals.",
+        "evidence_test": "Examine coefficients on missingness indicators\u2014if they are large and positive (indicating missingness predicts mortality), this confirms the model is using missingness as a shortcut. Compare model performance on admissions with complete vs. incomplete lab panels; significant performance drop on complete cases suggests reliance on missingness patterns.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "C-index is the appropriate primary metric because clinical triage requires ranking patients by risk.",
+        "failure_mechanism": "C-index only measures discrimination (ranking), not calibration. Two models with identical C-indexes can have vastly different predicted probabilities at a given threshold. For clinical deployment, the actual probability matters\u2014not just ranking. A model that assigns 60% probability to a patient who dies and 55% to one who survives has perfect discrimination but is poorly calibrated. The design mentions Brier score as secondary, but without a primary calibration metric, the model could be clinically useless even with high C-index.",
+        "evidence_test": "Report calibration curves (observed vs. predicted probabilities) across risk deciles. If predictions cluster at low probability (model is 'overconfident' in survival) or show systematic deviation from the diagonal, the C-index result is misleading for deployment.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Patients discharged before 30 days are censored at discharge time, which is standard survival analysis practice.",
+        "failure_mechanism": "Censoring at discharge assumes discharge is non-informative\u2014patients are discharged because they are healthy enough, independent of their 30-day mortality risk. This assumption is violated in ICU data: (1) hospitals have incentives to discharge patients alive to lower mortality metrics; (2) discharge to hospice or SNF is highly predictive of 30-day mortality but appears as 'discharge' in the data; (3) 'discharge against medical advice' is predictive. If discharge is informative censoring, the model learns from a biased survival distribution, overestimating survival for similar future patients.",
+        "evidence_test": "Check whether discharge destination is recorded. If available, stratify analysis by discharge destination (home, SNF, hospice, AMA). If outcomes differ significantly by destination, the censoring assumption is violated. Use inverse probability of censoring weighting (IPCW) to adjust and compare results.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 50% documentation completeness threshold excludes low-quality admissions while retaining sufficient sample size.",
+        "exclusion_criteria": "Excluding admissions below 50% documentation completeness in their unit-year cohort introduces selection bias. Units or time periods with lower documentation completeness may systematically differ (different patient populations, staffing levels, EHR systems, or care practices). The model is trained on a selected subset that may not represent the full clinical population, particularly missing the sickest patients in under-documented periods who may have poor outcomes but sparse notes.",
+        "evidence_test": "Compare outcome distributions (30-day mortality rates) between included and excluded admissions. If excluded admissions have higher mortality, the model is trained on a biased sample and will under-predict mortality for similar excluded patients in deployment.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Note length and count are retained as features to control for documentation volume confounding.",
+        "failure_mechanism": "While retaining these features is better than removing them, the model may still learn non-linear interactions between note volume and clinical content. A patient with many notes because they are deteriorating gets both more documentation AND higher mortality risk\u2014the model could learn to use note volume as a proxy for acuity even when clinical content is uninformative. The stratified analysis by note quartile helps but doesn't fully disentangle this.",
+        "evidence_test": "Train a model with note volume features removed entirely (using residuals from a regression of embeddings on note volume). Compare performance to the primary model\u2014if performance drops substantially, volume is carrying predictive signal that isn't clinical.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The secondary baseline (structured + note summary statistics) tests whether performance gains come from documentation volume rather than semantic content.",
+        "failure_mechanism": "The summary statistics (note length, count, clinical suspicion proxies like early intubation) are partially overlapping with structured features. Early intubation is a procedure already in structured data. This makes the comparison less clean\u2014it doesn't fully isolate 'semantic content of notes' from 'structured data augmented with volume proxies.'",
+        "evidence_test": "Clarify whether early intubation is included in both structured features and note summary statistics. If duplicated, the secondary baseline is not a clean comparison.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "ICD diagnosis codes as categorical features (z-score normalized) capture primary admission diagnosis.",
+        "failure_mechanism": "ICD codes are high-cardinality categorical variables (thousands of codes). Z-score normalization treats them as continuous, which is semantically incorrect. The model will learn arbitrary ordinal relationships between ICD codes that don't reflect clinical similarity. This could introduce noise or spurious patterns.",
+        "evidence_test": "Use embedding layers for ICD codes (like MedBERT or GRAM) or one-hot encoding with dimensionality reduction. Compare performance to the current approach.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Bootstrap confidence intervals provide uncertainty quantification for C-index.",
+        "failure_mechanism": "Bootstrap iteration count is not specified. Standard practice requires at least 1000 iterations for stable confidence intervals; fewer produces wide, unstable intervals that don't reliably quantify uncertainty.",
+        "evidence_test": "Run sensitivity analysis on bootstrap iteration count (100, 500, 1000, 2000) and report whether confidence interval width stabilizes.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The design has two FATAL flaws: incomplete outcome-predictive language screening in notes (F1) creates signal leakage risk, and forward-filling lab values with simple binary missingness indicators (F2) violates the informative missingness assumption. Additionally, the reliance on C-index without primary calibration reporting (F3) and failure to address informative censoring at discharge (F4) are MATERIAL concerns that could render high-performing models clinically useless. The documentation completeness exclusion threshold (F5) introduces potential selection bias.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Analyzed all findings against the methodology design intent, which is a PoC to test if note embeddings add discrimination (C-index) for 30-day in-hospital mortality beyond structured data, with explicit controls for common confounds like volume, missingness, temporal shift, and unit effects. Scope is internal validity within one hospital system, not causality or external gen; primary metric discrimination for triage ranking.\n\nF1 (FATAL 8, leakage in notes): Critic claims unspecified screening misses implicit outcome signals (e.g., DNR, hospice), allowing model to learn dying patterns. Design explicitly states 'Free-text is screened to exclude outcome-predictive language (e.g., 'poor prognosis', 'comfort care')' in section 3, deliberate to prevent leakage into embeddings; examples suggest keyword-based exclusion extensible to implicit terms common in clinical NLP PoCs (e.g., full lists like those in MIMIC studies). No PoC output shows leakage, and semantic BioBERT embeddings focus on clinical content, not shallow patterns. Confounds don't repeat but leakage prevention is named control. Uncertain: exact keyword list completeness without spec, but design intent justifies for PoC hypothesis isolation; adversarial test deferred implicitly by stratification/sensitivity.\n\nF2 (FATAL 7, forward-fill missing labs): Critic claims forward-fill invalid for dynamic ICU, missingness patterns proxy acuity. Design anticipates exactly: 'Informatively missing... forward-fill... missing-indicator'; Confounds 7 explicitly 'Model coefficients on missingness indicators are examined to detect...'. Direct named control matches evidence test. Valid handling for PoC; coefficients check resolves concern.\n\nF3 (MATERIAL 6, C-index ignores calibration): Critic says ranking insufficient, calibration primary for deployment. Design scopes primary to C-index for 'triage decisions require ranking patients by risk' (section 6); calibration explicitly secondary (Brier, slope, net benefit/decision curves). Deliberate choice matches clinical use case (ranking over absolute probs); full metric suite addresses.\n\nF4 (MATERIAL 6, informative censoring at discharge): Critic claims discharge predictive (hospice, AMA), biasing survival dist. Design uses 'standard survival analysis practice' (Cox/XGBoost survival) for '30-day in-hospital mortality... censoring at discharge' (sections 1,4); scoped to in-hospital outcome where censoring routine/non-informative assumption standard in ICU lit (e.g., MIMIC-III benchmarks). No explicit IPCW/sensitivity, but temporal split/stratifications (unit/year/SOFA) indirectly probe biases. Uncertain: destination data availability, but standard for PoC hypothesis; doesn't invalidate discrimination metric.\n\nF5 (MATERIAL 5, exclusion bias): Critic says excluding <50% cohort completeness biases toward lower-mortality. Design: 'flagging and stratifying... excluding below 50%... in their cohort' (section 1) to ensure quality/sample size; confounds stratify test by 'note availability quartile'. Cohort-level prevents unit/year bias; no outcome comparison stated but retained volume controls mitigate. Intent: sound data quality gate for reliable embeddings.\n\nF6 (MATERIAL 4, volume confound): Critic says nonlinear interactions persist despite features. Design multi-control: retain length/count as 'explicit features' (3), 'coefficients... stratify test... by note volume quartile' (7), sensitivity 'retrain excluding note features'. Comprehensive named controls directly counter; isolates semantic value.\n\nF7 (MINOR 3, baseline overlap): Critic notes summaries (e.g., intubation) overlap structured. Design secondary baseline tests 'documentation volume rather than semantic content' (4); proxies like intubation valid for volume/acuity confound, overlap doesn't confound comparison (both get structured). Minor impurity below significance for PoC.\n\nF8 (MINOR 2, ICD z-score): Critic says high-cardinality cat treated continuous. Design lists 'ICD code' under structured, 'z-score normalized' for 'numeric features' (3)\u2014likely misphrasing (primary ICD often binned/embedded in practice), but single primary code low-cardinality; noise immaterial to hypothesis/outcomes.\n\nF9 (MINOR 1, bootstrap unspecified): Critic wants iteration spec. Design: '95% CI via bootstrap' (6)\u2014standard implies 1000+; minor omission, doesn't affect PoC validity.\n\nOverall: All findings addressed by design intent/controls/scope; no genuine uncited flaws changing primary C-index hypothesis validity. Multiple confounds explicitly handled; standards justify rest. No concessions needed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Deliberate screening of outcome-predictive language (section 3, Leakage prevention) is a named control to isolate clinical semantics in embeddings; examples provided are extensible to implicit terms via standard clinical NLP keyword lists, justifying for PoC discrimination hypothesis."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Exact handling anticipated in design (section 1) and Confounds 7: forward-fill + indicators with explicit coefficient examination matches critic's evidence test, confirming appropriate use."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "C-index deliberate primary for ranking/triage use case (section 6); full calibration suite (Brier, slope, net benefit) secondary, directly addressing clinical utility without metric change."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Standard Cox survival censoring at discharge deliberate for 30-day in-hospital mortality (sections 1,4,8 scope); routine in ICU PoCs, probed indirectly by unit/year/SOFA stratifications."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Cohort-stratified exclusion/flagging (section 1) deliberate for data quality/sample size; test stratification by note quartile (Confounds 7) mitigates selection bias."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Multi-layered controls deliberate: features/coefficients, quartile stratification, note-exclusion sensitivity (sections 3,7)\u2014comprehensively isolates semantic contribution."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Minor proxy overlap (e.g., intubation) doesn't invalidate volume-vs-semantic test; secondary baseline still isolates documentation intensity as intended."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Primary ICD likely low-cardinality; z-score noise on one feature immaterial to overall structured baseline or note hypothesis."
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Bootstrap standard practice; unspecified iterations minor, doesn't impact PoC uncertainty quantification."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted with design controls, scope, or immateriality, yielding adjusted severities \u22643; methodology sound for PoC hypothesis with explicit anticipation of concerns."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The rebuttal claims 'extensible to implicit terms via standard clinical NLP keyword lists' but does not specify the mechanism. The failure mechanism is that implicit outcome language (family meetings, goals of care, DNR, hospice, terminal wean, withdrawal of care) is pervasive in ICU notes and requires sophisticated detection beyond keyword matching. The rebuttal provides no evidence that the design actually implements such detection\u2014it merely asserts extensibility. The severity adjustment from 8 to 3 is disproportionate; a complete mechanistic rebuttal is required to reduce severity this dramatically."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal states that 'explicit coefficient examination matches critic's evidence test'\u2014but the evidence test I proposed was precisely to examine coefficients to detect whether the model uses missingness as a shortcut. This is not a mitigation; it's a detection mechanism. The failure mechanism is that forward-fill assumes missing = last observed (false in rapidly changing ICU patients) and that binary 'any missing' indicators don't capture the timing/pattern of missingness, which correlates with acuity. The rebuttal does not explain how forward-fill + binary indicators addresses this mechanism. The -5 severity adjustment is disproportionate."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal validly argues that C-index is appropriate for the ranking/triage use case. However, the finding's concern is that C-index as primary metric without a primary calibration metric could mask clinically useless models. The rebuttal says calibration is addressed as secondary, but the finding specifically challenges this framing for clinical deployment. The use case justification partially addresses the concern but doesn't fully resolve it\u2014a model could have high C-index yet be poorly calibrated at clinically relevant thresholds. Some residual concern remains."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal states this is 'standard Cox survival censoring at discharge' and 'routine in ICU PoCs.' However, being standard does not address the failure mechanism: discharge to hospice, SNF, or AMA is highly predictive of 30-day mortality and violates the non-informative censoring assumption. The rebuttal claims unit/year/SOFA stratifications 'probe indirectly,' but stratification detects performance differences\u2014it doesn't address the causal inference bias from informative censoring. The mechanism is unaddressed; the -5 adjustment is disproportionate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal claims test stratification by note quartile 'mitigates' selection bias. However, the finding concerns selection bias in the TRAINING set\u2014excluded admissions may have different outcome distributions. Test-time stratification cannot fix training bias. The rebuttal does not address the core mechanism: that excluded admissions (below 50% documentation completeness) may systematically differ in patient acuity or outcomes. The -4 adjustment is disproportionate."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly identifies multiple layered controls: features/coefficients, quartile stratification, and note-exclusion sensitivity analysis. These collectively address the failure mechanism\u2014residual modeling from note volume\u2014by enabling detection and quantification of volume's contribution. The design is comprehensive enough to isolate semantic contribution. The severity adjustment to 0 is justified."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal acknowledges the minor proxy overlap (early intubation in both structured and note summary features) but correctly notes this doesn't invalidate the overall comparison. The secondary baseline still tests documentation intensity vs. semantic content. The severity adjustment to 1 is proportionate."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal reasonably argues that z-score noise on one feature (ICD codes) is immaterial to the overall hypothesis. While ICD treatment as continuous is semantically incorrect, it's unlikely to substantially affect discrimination performance. The severity adjustment to 0 is proportionate."
+      },
+      {
+        "finding_id": "F9",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly notes bootstrap is standard practice, which typically implies 1000+ iterations. However, the finding is about unspecified iteration count. The concern is minor\u2014standard practice would likely use sufficient iterations. Some residual uncertainty remains but is negligible."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Contesting all CHALLENGE and PARTIAL verdicts on F1-F5,F9: design mechanistically addresses via verbatim controls (e.g., screening process, identical preprocessing canceling proxies, in-hospital scope validating censoring, cohort-level filtering minimizing bias, standard bootstrap practice); ACCEPTs on F6-F8 maintained unchanged. No concessions or defers needed as concerns mischaracterize design controls or are immaterial.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Design specifies proactive leakage control verbatim: 'Free-text is screened to exclude outcome-predictive language (e.g., 'poor prognosis', 'comfort care')' (section 3, Leakage prevention)\u2014a named preprocessing step targeting explicit leakage, extensible to implicit terms (e.g., 'DNR', 'hospice', 'terminal wean') via expanded keyword lists standard in clinical NLP pipelines (e.g., MIMIC processing). This isolates clinical semantics mechanistically before embedding; critic's adversarial/attention tests verify completeness empirically, but control exists independent of perfection. R1 adjustment proportionate as mechanism directly rebuts failure mode.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Forward-fill within 72h + binary indicators is deliberate standard handling for time-series ICU labs (section 1), capturing timing via forward logic and patterns via indicators; coefficient examination (section 7, Informative missingness) detects reliance. Critically, identical preprocessing applies to structured baseline and note model, so any acuity proxy from missingness affects both equally\u2014not inflating notes' marginal C-index gain (core hypothesis). Matches/anticipates critic's test; addresses rapid changes via worst/mean summaries (section 3).",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "C-index primary deliberate for discrimination/ranking in triage use case (section 6 verbatim); secondary metrics (Brier score, calibration slope, net benefit/decision curves) fully address calibration/utility at thresholds (section 6), incorporating both discrimination and probability accuracy for deployment\u2014resolving concern beyond ranking alone. Net benefit explicitly weighs clinical tradeoffs across thresholds.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Standard Cox censoring at discharge deliberate and appropriate for scoped 'in-hospital mortality outcome within 30-day window' (sections 1,4,8 verbatim)\u2014discharged patients cannot incur in-hospital death post-censor, rendering censoring non-informative for this outcome (post-discharge risk like hospice/SNF out-of-scope, unobservable). Unit/year/SOFA stratifications (section 6) detect practice variations; routine in ICU survival PoCs without IPCW needed.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Exclusion cohort-level ('unit-year cohort's documentation completeness... excluding those below 50%') + flagging/stratifying (section 1 verbatim) ensures training on high-quality, representative subsets without individual selection bias; test strat by note quartile/unit/year (sections 6,7) detects shift. Temporal split applies same filter to test/deployment, preserving distribution for hypothesis; outcome diffs testable post-hoc but mitigated by design.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Multi-layered controls deliberate: features/coefficients, quartile stratification, note-exclusion sensitivity (sections 3,7)\u2014comprehensively isolates semantic contribution.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Minor proxy overlap (e.g., intubation) doesn't invalidate volume-vs-semantic test; secondary baseline still isolates documentation intensity as intended.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Primary ICD likely low-cardinality; z-score noise on one feature immaterial to overall structured baseline or note hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "'Bootstrap confidence intervals' invokes standard practice (1000+ iterations common in ML/survival lit for C-index); unspecified count minor/immaterial, sensitivity easy if needed\u2014no impact on PoC.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All original FATAL/MATERIAL findings rebutted to adjusted severity \u22643 (mostly \u22641) via strengthened mechanistic defenses directly countering R2 challenge reasoning with verbatim design citations. No DEFERs or high-severity CONCEDES remain, confirming sound methodology."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Free-text notes are screened to exclude outcome-predictive language (e.g., 'poor prognosis', 'comfort care'), preventing leakage of outcome information into the note embeddings.",
+        "failure_mechanism": "The screening method is not specified\u2014keyword matching would miss implicit outcome signals (e.g., 'family meeting scheduled', 'goals of care discussed', 'patient not for resuscitation', 'terminal wean', 'palliative', 'hospice', 'DNR', 'withdrawal of care'). Clinical notes contain extensive implicit outcome information that skilled clinicians infer. If screening is incomplete, the model learns to detect dying patients from documentation patterns rather than clinical semantics, inflating discrimination artificially.",
+        "evidence_test": "Perform adversarial check: train on notes with outcome-predictive phrases artificially inserted at random, verify model detects them. Alternatively, use attention visualization to identify which tokens drive predictions\u2014if top-attended tokens are outcome-related (prognosis, code status, family discussions), leakage is present.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Forward-filling laboratory values within 72 hours, combined with binary missingness indicators, appropriately handles informative missingness.",
+        "failure_mechanism": "Forward-fill assumes missing values equal the last observed value, which is often false in ICU settings where patient status changes rapidly. More critically, missing labs are not random\u2014they correlate with patient acuity (low-acuity patients get fewer labs) and unit practices. The binary indicator captures 'any missing' but not the pattern or timing of missingness. A patient who deteriorates and gets increasingly frequent labs has different missingness patterns than one who stabilizes. The model may learn to use missingness indicators as a proxy for acuity rather than learning true clinical signals.",
+        "evidence_test": "Examine coefficients on missingness indicators\u2014if they are large and positive (indicating missingness predicts mortality), this confirms the model is using missingness as a shortcut. Compare model performance on admissions with complete vs. incomplete lab panels; significant performance drop on complete cases suggests reliance on missingness patterns.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "C-index is the appropriate primary metric because clinical triage requires ranking patients by risk.",
+        "failure_mechanism": "C-index only measures discrimination (ranking), not calibration. Two models with identical C-indexes can have vastly different predicted probabilities at a given threshold. For clinical deployment, the actual probability matters\u2014not just ranking. A model that assigns 60% probability to a patient who dies and 55% to one who survives has perfect discrimination but is poorly calibrated. The design mentions Brier score as secondary, but without a primary calibration metric, the model could be clinically useless even with high C-index.",
+        "evidence_test": "Report calibration curves (observed vs. predicted probabilities) across risk deciles. If predictions cluster at low probability (model is 'overconfident' in survival) or show systematic deviation from the diagonal, the C-index result is misleading for deployment.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Patients discharged before 30 days are censored at discharge time, which is standard survival analysis practice.",
+        "failure_mechanism": "Censoring at discharge assumes discharge is non-informative\u2014patients are discharged because they are healthy enough, independent of their 30-day mortality risk. This assumption is violated in ICU data: (1) hospitals have incentives to discharge patients alive to lower mortality metrics; (2) discharge to hospice or SNF is highly predictive of 30-day mortality but appears as 'discharge' in the data; (3) 'discharge against medical advice' is predictive. If discharge is informative censoring, the model learns from a biased survival distribution, overestimating survival for similar future patients.",
+        "evidence_test": "Check whether discharge destination is recorded. If available, stratify analysis by discharge destination (home, SNF, hospice, AMA). If outcomes differ significantly by destination, the censoring assumption is violated. Use inverse probability of censoring weighting (IPCW) to adjust and compare results.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 50% documentation completeness threshold excludes low-quality admissions while retaining sufficient sample size.",
+        "exclusion_criteria": "Excluding admissions below 50% documentation completeness in their unit-year cohort introduces selection bias. Units or time periods with lower documentation completeness may systematically differ (different patient populations, staffing levels, EHR systems, or care practices). The model is trained on a selected subset that may not represent the full clinical population, particularly missing the sickest patients in under-documented periods who may have poor outcomes but sparse notes.",
+        "evidence_test": "Compare outcome distributions (30-day mortality rates) between included and excluded admissions. If excluded admissions have higher mortality, the model is trained on a biased sample and will under-predict mortality for similar excluded patients in deployment.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Note length and count are retained as features to control for documentation volume confounding.",
+        "failure_mechanism": "While retaining these features is better than removing them, the model may still learn non-linear interactions between note volume and clinical content. A patient with many notes because they are deteriorating gets both more documentation AND higher mortality risk\u2014the model could learn to use note volume as a proxy for acuity even when clinical content is uninformative. The stratified analysis by note quartile helps but doesn't fully disentangle this.",
+        "evidence_test": "Train a model with note volume features removed entirely (using residuals from a regression of embeddings on note volume). Compare performance to the primary model\u2014if performance drops substantially, volume is carrying predictive signal that isn't clinical.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The secondary baseline (structured + note summary statistics) tests whether performance gains come from documentation volume rather than semantic content.",
+        "failure_mechanism": "The summary statistics (note length, count, clinical suspicion proxies like early intubation) are partially overlapping with structured features. Early intubation is a procedure already in structured data. This makes the comparison less clean\u2014it doesn't fully isolate 'semantic content of notes' from 'structured data augmented with volume proxies.'",
+        "evidence_test": "Clarify whether early intubation is included in both structured features and note summary statistics. If duplicated, the secondary baseline is not a clean comparison.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "ICD diagnosis codes as categorical features (z-score normalized) capture primary admission diagnosis.",
+        "failure_mechanism": "ICD codes are high-cardinality categorical variables (thousands of codes). Z-score normalization treats them as continuous, which is semantically incorrect. The model will learn arbitrary ordinal relationships between ICD codes that don't reflect clinical similarity. This could introduce noise or spurious patterns.",
+        "evidence_test": "Use embedding layers for ICD codes (like MedBERT or GRAM) or one-hot encoding with dimensionality reduction. Compare performance to the current approach.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Bootstrap confidence intervals provide uncertainty quantification for C-index.",
+        "failure_mechanism": "Bootstrap iteration count is not specified. Standard practice requires at least 1000 iterations for stable confidence intervals; fewer produces wide, unstable intervals that don't reliably quantify uncertainty.",
+        "evidence_test": "Run sensitivity analysis on bootstrap iteration count (100, 500, 1000, 2000) and report whether confidence interval width stabilizes.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The design has two FATAL flaws: incomplete outcome-predictive language screening in notes (F1) creates signal leakage risk, and forward-filling lab values with simple binary missingness indicators (F2) violates the informative missingness assumption. Additionally, the reliance on C-index without primary calibration reporting (F3) and failure to address informative censoring at discharge (F4) are MATERIAL concerns that could render high-performing models clinically useless. The documentation completeness exclusion threshold (F5) introduces potential selection bias.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Contesting all CHALLENGE and PARTIAL verdicts on F1-F5,F9: design mechanistically addresses via verbatim controls (e.g., screening process, identical preprocessing canceling proxies, in-hospital scope validating censoring, cohort-level filtering minimizing bias, standard bootstrap practice); ACCEPTs on F6-F8 maintained unchanged. No concessions or defers needed as concerns mischaracterize design controls or are immaterial.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Design specifies proactive leakage control verbatim: 'Free-text is screened to exclude outcome-predictive language (e.g., 'poor prognosis', 'comfort care')' (section 3, Leakage prevention)\u2014a named preprocessing step targeting explicit leakage, extensible to implicit terms (e.g., 'DNR', 'hospice', 'terminal wean') via expanded keyword lists standard in clinical NLP pipelines (e.g., MIMIC processing). This isolates clinical semantics mechanistically before embedding; critic's adversarial/attention tests verify completeness empirically, but control exists independent of perfection. R1 adjustment proportionate as mechanism directly rebuts failure mode.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Forward-fill within 72h + binary indicators is deliberate standard handling for time-series ICU labs (section 1), capturing timing via forward logic and patterns via indicators; coefficient examination (section 7, Informative missingness) detects reliance. Critically, identical preprocessing applies to structured baseline and note model, so any acuity proxy from missingness affects both equally\u2014not inflating notes' marginal C-index gain (core hypothesis). Matches/anticipates critic's test; addresses rapid changes via worst/mean summaries (section 3).",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "C-index primary deliberate for discrimination/ranking in triage use case (section 6 verbatim); secondary metrics (Brier score, calibration slope, net benefit/decision curves) fully address calibration/utility at thresholds (section 6), incorporating both discrimination and probability accuracy for deployment\u2014resolving concern beyond ranking alone. Net benefit explicitly weighs clinical tradeoffs across thresholds.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Standard Cox censoring at discharge deliberate and appropriate for scoped 'in-hospital mortality outcome within 30-day window' (sections 1,4,8 verbatim)\u2014discharged patients cannot incur in-hospital death post-censor, rendering censoring non-informative for this outcome (post-discharge risk like hospice/SNF out-of-scope, unobservable). Unit/year/SOFA stratifications (section 6) detect practice variations; routine in ICU survival PoCs without IPCW needed.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Exclusion cohort-level ('unit-year cohort's documentation completeness... excluding those below 50%') + flagging/stratifying (section 1 verbatim) ensures training on high-quality, representative subsets without individual selection bias; test strat by note quartile/unit/year (sections 6,7) detects shift. Temporal split applies same filter to test/deployment, preserving distribution for hypothesis; outcome diffs testable post-hoc but mitigated by design.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Multi-layered controls deliberate: features/coefficients, quartile stratification, note-exclusion sensitivity (sections 3,7)\u2014comprehensively isolates semantic contribution.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Minor proxy overlap (e.g., intubation) doesn't invalidate volume-vs-semantic test; secondary baseline still isolates documentation intensity as intended.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Primary ICD likely low-cardinality; z-score noise on one feature immaterial to overall structured baseline or note hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "'Bootstrap confidence intervals' invokes standard practice (1000+ iterations common in ML/survival lit for C-index); unspecified count minor/immaterial, sensitivity easy if needed\u2014no impact on PoC.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All original FATAL/MATERIAL findings rebutted to adjusted severity \u22643 (mostly \u22641) via strengthened mechanistic defenses directly countering R2 challenge reasoning with verbatim design citations. No DEFERs or high-severity CONCEDES remain, confirming sound methodology."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F9",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "defense_wins",
+    "case_rationale": "all points resolved to defense_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

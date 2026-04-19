@@ -1,0 +1,234 @@
+{
+  "case_id": "hyp_003_regular",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Data is divided chronologically to prevent label leakage and ensure the evaluation reflects deployment conditions.",
+        "failure_mechanism": "The outcome is defined as churn within 90 days of a snapshot. Snapshots taken near the end of a period (e.g., month 24) have labels that depend on data from the subsequent period (months 25\u201127), which belongs to the validation set. Thus the training labels incorporate future information, leaking validation\u2011period signals into training and inflating apparent performance.",
+        "evidence_test": "Verify whether any snapshot\u2019s 90\u2011day follow\u2011up window extends beyond the period in which the snapshot resides. If any such snapshots exist, leakage is present. A corrective test is to reconstruct the dataset using only snapshots whose entire 90\u2011day window falls within the same period (or to shift the outcome definition to a fixed horizon that does not cross period boundaries) and re\u2011evaluate; a substantial drop in concordance would confirm the flaw.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Feature window parity: both models use the same 90\u2011day lookback window and censoring logic.",
+        "failure_mechanism": "The baseline logistic regression receives only last\u2011month aggregate usage metrics (total logins, active users, seat count) as of the snapshot date, not features aggregated over the preceding 90 days. Consequently the baseline has access to less historical information than the gradient\u2011boosted model, confounding the effect of richer features with a longer lookback window.",
+        "evidence_test": "Inspect the feature engineering specification: confirm that baseline features are point\u2011in\u2011time rather than window\u2011aggregated. Alternatively, retrain the baseline using the same 90\u2011day aggregated features as the GBM and compare performance; if the gap narrows substantially, the claim of parity is false.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary model is a gradient\u2011boosted tree regressor configured for survival analysis using Cox partial likelihood loss. This formulation explicitly models time-to-event and handles right\u2011censoring correctly, which is the theoretically sound approach for the problem.",
+        "failure_mechanism": "The outcome is a binary event observed within a fixed 90\u2011day window with right\u2011censoring at 90 days (i.e., interval\u2011censored data). The Cox partial likelihood assumes exact event times and a continuous\u2011time hazard; applying it to this discrete\u2011interval setup is misspecified and can produce biased risk estimates and incorrect handling of censoring.",
+        "evidence_test": "Fit an appropriate discrete\u2011time survival model (e.g., logistic regression on person\u2011period data) or a true Cox model using exact event times (if available) and compare concordance indices. If the GBM\u2019s performance deteriorates significantly when using the correct loss, the claim of theoretical soundness is unsupported.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC suffers from a critical temporal leakage issue that likely invalidates the reported performance gains, plus two material concerns regarding feature parity and model specification that weaken the central claims.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL, sev 9): The critic correctly identifies that late training snapshots (e.g., month 24) have 90-day outcome windows overlapping into the validation period (months 25-27), which could incorporate validation-period churn signals into training labels. This is a standard challenge in time-series prediction with fixed horizons and chronological splits; the methodology uses snapshot-time ordering (standard for prospective validation, per Section 3), ensuring no future features leak and prediction times are strictly historical for train/val/test. Both models share identical snapshots/labels, so any performance inflation is symmetric, preserving relative outperformance (primary hypothesis). Temporal overlap affects only ~3/24 (~12.5%) of training snapshots, and controls like temporal stability (Section 8), per-month reporting, and statistical significance with CIs mitigate concerns. However, no explicit named control addresses outcome-window overlap directly (e.g., no restricted snapshot subset or expanding-window adjustment), and whether it materially biases concordance delta is genuinely empirical (requires critic's proposed reconstruction test). Uncertain: magnitude of impact on relative metric without re-evaluation. F2 (MATERIAL, sev 5): Critic notes baseline uses point-in-time last-month metrics vs. GBM's 90-day aggregates, confounding lookback with feature richness. This is explicitly deliberate (Section 4: 'deliberate feature-set constraint... isolates the effect of richer features'), with controls isolating contributions: info timing documentation (Control 2), GBM on baseline features sensitivity (Control 3). Hypothesis tests richer features + survival vs. simple baseline; parity claim refers to lookback/censoring logic (Section 8.1), not identical features. No flaw. F3 (MATERIAL, sev 5): Critic claims Cox misspecification for 'binary' 90-day outcomes (interval-censored). Methodology uses survival Cox on time-to-event: exact churn timestamps enable T = min(time_to_churn, 90), delta=1{if churned within 90} (right-censored at 90 days if active), standard for short-horizon risk with censoring (Section 5). 'Binary' phrasing is simplification for outcome description (Section 2); Cox handles discrete times/ties appropriately, theoretically sound. Censoring controls (Section 8.6) verify balance. Evidence test unlikely to show deterioration (appropriate loss); no unverified prereq. All findings analyzed: F1 warrants deferral for empirical resolution; F2/F3 fully rebutted by explicit design.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "Overlap in outcome windows for late train snapshots is real but symmetric across models/splits (identical labels used), with minor scope (~12% train snapshots) and controls (temporal stability, CIs); however, no explicit design control (e.g., non-overlapping subset) exists, and material bias to relative concordance requires empirical reconstruction test as proposed."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Feature disparity is deliberate to isolate richer event-level features + survival effect (Section 4), with controls documenting novel vs. comparable features (Control 2) and GBM-baseline sensitivity (Control 3); baseline tuned equivalently, confounding controlled."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Cox setup models exact T=min(time_to_churn,90)/delta with right-censoring at 90 days using timestamps (Section 5), standard/sound for discrete short-horizon prediction; 'binary' is outcome shorthand (Section 2), censoring balanced (Control 6)."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 requires empirical verification via dataset reconstruction to quantify overlap impact, unresolved by design docs; F2/F3 rebutted completely by explicit controls. No CONCEDE on high-severity findings."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "The defender opts to DEFER, acknowledging the potential label leakage but noting it is symmetric across models and small in scope, and that no explicit design control exists. As a DEFER rebuttal, we note the open question and do not issue a counter; the severity remains unchanged."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender justifies the feature disparity as deliberate to isolate richer features, but does not address the core concern that the baseline receives less historical information (only last\u2011month aggregates) while the GBM uses 90\u2011day aggregated features, confounding the effect of feature richness with lookback window length. The cited controls (documenting novel vs. comparable features and a GBM\u2011only\u2011baseline\u2011features variant) do not eliminate this temporal disparity; they merely compare model types given the same feature set, not the same lookback window. Hence the rebuttal fails to resolve the signal leakage/eval inflation concern."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender clarifies that the Cox model uses exact event timestamps (time\u2011to\u2011churn) with right\u2011censoring at 90 days, not a mere binary outcome, which directly addresses the misspecification concern. This aligns with standard survival analysis for short\u2011horizon prediction and resolves the theoretical unsoundness claim."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 and F3 challenges ACCEPTed, maintaining DEFER (F1) and REBUT-DESIGN (F3) unchanged. F2 CHALLENGE contested via STRENGTHENED REBUT-DESIGN: design deliberately tests rich 90-day event-level features (incl. trends/trajectories requiring extended window) + survival vs. simple last-month baseline, with Controls 2-3 mechanistically disentangling architecture from feature richness effects, directly resolving temporal confound without needing identical lookbacks.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "Overlap in outcome windows for late train snapshots is real but symmetric across models/splits (identical labels used), with minor scope (~12% train snapshots) and controls (temporal stability, CIs); however, no explicit design control (e.g., non-overlapping subset) exists, and material bias to relative concordance requires empirical reconstruction test as proposed. [Unchanged per ACCEPT]",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Feature disparity (90-day event-level aggs + trends/volatility/trajectories vs. last-month usage totals) is deliberate per hypothesis/Section 4 to test richer features + survival effect; last-month totals proxy recent activity comparably to short-horizon baseline aggregates. Controls directly address challenge: #2 documents novel event-level (requiring 90-day for dynamics) vs. aggregate (baseline-comparable); #3 (GBM on baseline features at short lookback) isolates architecture/survival from richness, attributing improvement components without identical windows needed, as extended lookback is inherent to hypothesized event-level value. Equivalent tuning ensures fair primary comparison; no unresolved confounding or eval inflation.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Cox setup models exact T=min(time_to_churn,90)/delta with right-censoring at 90 days using timestamps (Section 5), standard/sound for discrete short-horizon prediction; 'binary' is outcome shorthand (Section 2), censoring balanced (Control 6). [Unchanged per ACCEPT]",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 remains DEFERred at sev 9 (FATAL), surfacing genuine design ambiguity resolvable only empirically via proposed reconstruction test. F2/F3 fully rebutted to 0 via design controls."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Data is divided chronologically to prevent label leakage and ensure the evaluation reflects deployment conditions.",
+        "failure_mechanism": "The outcome is defined as churn within 90 days of a snapshot. Snapshots taken near the end of a period (e.g., month 24) have labels that depend on data from the subsequent period (months 25\u201127), which belongs to the validation set. Thus the training labels incorporate future information, leaking validation\u2011period signals into training and inflating apparent performance.",
+        "evidence_test": "Verify whether any snapshot\u2019s 90\u2011day follow\u2011up window extends beyond the period in which the snapshot resides. If any such snapshots exist, leakage is present. A corrective test is to reconstruct the dataset using only snapshots whose entire 90\u2011day window falls within the same period (or to shift the outcome definition to a fixed horizon that does not cross period boundaries) and re\u2011evaluate; a substantial drop in concordance would confirm the flaw.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Feature window parity: both models use the same 90\u2011day lookback window and censoring logic.",
+        "failure_mechanism": "The baseline logistic regression receives only last\u2011month aggregate usage metrics (total logins, active users, seat count) as of the snapshot date, not features aggregated over the preceding 90 days. Consequently the baseline has access to less historical information than the gradient\u2011boosted model, confounding the effect of richer features with a longer lookback window.",
+        "evidence_test": "Inspect the feature engineering specification: confirm that baseline features are point\u2011in\u2011time rather than window\u2011aggregated. Alternatively, retrain the baseline using the same 90\u2011day aggregated features as the GBM and compare performance; if the gap narrows substantially, the claim of parity is false.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary model is a gradient\u2011boosted tree regressor configured for survival analysis using Cox partial likelihood loss. This formulation explicitly models time-to-event and handles right\u2011censoring correctly, which is the theoretically sound approach for the problem.",
+        "failure_mechanism": "The outcome is a binary event observed within a fixed 90\u2011day window with right\u2011censoring at 90 days (i.e., interval\u2011censored data). The Cox partial likelihood assumes exact event times and a continuous\u2011time hazard; applying it to this discrete\u2011interval setup is misspecified and can produce biased risk estimates and incorrect handling of censoring.",
+        "evidence_test": "Fit an appropriate discrete\u2011time survival model (e.g., logistic regression on person\u2011period data) or a true Cox model using exact event times (if available) and compare concordance indices. If the GBM\u2019s performance deteriorates significantly when using the correct loss, the claim of theoretical soundness is unsupported.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC suffers from a critical temporal leakage issue that likely invalidates the reported performance gains, plus two material concerns regarding feature parity and model specification that weaken the central claims.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 and F3 challenges ACCEPTed, maintaining DEFER (F1) and REBUT-DESIGN (F3) unchanged. F2 CHALLENGE contested via STRENGTHENED REBUT-DESIGN: design deliberately tests rich 90-day event-level features (incl. trends/trajectories requiring extended window) + survival vs. simple last-month baseline, with Controls 2-3 mechanistically disentangling architecture from feature richness effects, directly resolving temporal confound without needing identical lookbacks.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "Overlap in outcome windows for late train snapshots is real but symmetric across models/splits (identical labels used), with minor scope (~12% train snapshots) and controls (temporal stability, CIs); however, no explicit design control (e.g., non-overlapping subset) exists, and material bias to relative concordance requires empirical reconstruction test as proposed. [Unchanged per ACCEPT]",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Feature disparity (90-day event-level aggs + trends/volatility/trajectories vs. last-month usage totals) is deliberate per hypothesis/Section 4 to test richer features + survival effect; last-month totals proxy recent activity comparably to short-horizon baseline aggregates. Controls directly address challenge: #2 documents novel event-level (requiring 90-day for dynamics) vs. aggregate (baseline-comparable); #3 (GBM on baseline features at short lookback) isolates architecture/survival from richness, attributing improvement components without identical windows needed, as extended lookback is inherent to hypothesized event-level value. Equivalent tuning ensures fair primary comparison; no unresolved confounding or eval inflation.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Cox setup models exact T=min(time_to_churn,90)/delta with right-censoring at 90 days using timestamps (Section 5), standard/sound for discrete short-horizon prediction; 'binary' is outcome shorthand (Section 2), censoring balanced (Control 6). [Unchanged per ACCEPT]",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 remains DEFERred at sev 9 (FATAL), surfacing genuine design ambiguity resolvable only empirically via proposed reconstruction test. F2/F3 fully rebutted to 0 via design controls."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=9, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

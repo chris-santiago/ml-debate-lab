@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_705",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split prevents future information from contaminating the training or validation data.",
+        "failure_mechanism": "The preprocessing transformers (scaling, encoding, imputation) are parameterized using the 'retained 18-month telemetry corpus' before model fitting. This means the mean, variance, and category mappings for the training set are calculated using data from the validation (months 11-13) and test (months 14-18) sets. This is a classic form of data leakage where the training distribution is 'informed' by the future distribution, potentially masking the impact of distribution shift and inflating performance metrics.",
+        "evidence_test": "Re-run the experiment where preprocessing parameters are calculated strictly on the training set (months 1-10) and applied to the validation/test sets. A significant drop in test pAUC-ROC would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between the transformer and the gradient-boosted baseline is fair.",
+        "failure_mechanism": "The transformer is given access to 'Host identifiers (source IP, destination IP)' while the baseline is explicitly denied them. While the PoC mentions a sensitivity analysis (removing IDs from the transformer), the primary hypothesis test is asymmetric. Host IDs are high-cardinality features that often act as proxies for 'known bad' actors or specific compromised assets. If the transformer learns to associate specific IPs with maliciousness, it is performing identity-based lookup, not sequence modeling, which invalidates the claim that 'packet-level sequence features' are the driver of success.",
+        "evidence_test": "Compare the baseline's performance when given the same host identifiers as the transformer. If the baseline's performance matches or exceeds the transformer's, the 'sequence modeling' hypothesis is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 24-hour window for labeling reflects realistic detection latency and prevents contamination.",
+        "failure_mechanism": "The PoC labels a session as malicious if it is linked to an event occurring *within 24 hours of the session start*. This includes events that happen *after* the session ends but before the 24-hour window closes. If the model is intended to detect threats in real-time, it cannot use labels derived from events that haven't happened yet relative to the session's end time. This creates a 'look-ahead' bias where the ground truth is informed by the future of the session, which may not be available at the moment of inference.",
+        "evidence_test": "Compare the pAUC-ROC when using a 'strict' label (event occurred before or at session end) versus the 'windowed' label (event occurred up to 24h after session start).",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The use of a fixed sequence length (100 packets) is sufficient for detecting APTs.",
+        "failure_mechanism": "Advanced Persistent Threats (APTs) often utilize 'low and slow' communication patterns. Truncating sequences to 100 packets may discard the very signal (long-term periodicity or slow beacons) that the transformer is hypothesized to capture, potentially biasing the results toward short-lived, noisy attacks rather than the targeted APTs.",
+        "evidence_test": "Analyze the distribution of session lengths for confirmed APT incidents. If a significant percentage of malicious sessions exceed 100 packets with critical signals appearing late in the sequence, the truncation is a limiting factor.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains a fatal flaw regarding data leakage in the preprocessing stage and a significant baseline imbalance regarding host identifiers. These issues likely inflate the transformer's performance and undermine the central claim that sequence modeling is the source of improvement.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL, 9): The critic correctly identifies that Section 4 explicitly states preprocessing parameters are calculated using the entire 18-month corpus, including validation and test data. This violates the temporal split integrity described in Section 3. The methodology admits this is to 'stabilize heavy-tailed flow features,' but this rationale justifies the practice rather than resolving the leakage mechanism. In a temporal prediction task, using future data to normalize training data is a genuine leakage that inflates performance metrics and masks distribution shift. This is a design flaw that cannot be rebutted by design rationale alone.\n\nF2 (FATAL, 7): The critic argues the asymmetric feature set (IDs in Transformer, excluded from Baseline) invalidates the comparison. However, Section 8 explicitly addresses this via an 'Identity leakage' control: training a second transformer variant without IDs to compare against the baseline. The design anticipates the confound and isolates the sequence signal. This is a deliberate design control that resolves the failure mechanism for the *sequence modeling* hypothesis, even if the primary operational comparison is asymmetric. The critique conflates the operational comparison with the mechanistic hypothesis test.\n\nF3 (MATERIAL, 5): The critic claims the 24-hour labeling window creates look-ahead bias relative to session end. However, Section 1 explicitly defines the scope as 'next-day confirmed incidents,' and Section 2 aligns the label window (24h from session start) with this scope. The task is to predict if a session *leads* to an incident within 24h, not to detect an incident *during* the session. The critic assumes a 'real-time immediate detection' scope, but the experiment scope is 'next-day confirmation.' This is a scope mismatch, not a design flaw.\n\nF4 (MINOR, 2): The critic argues truncating to 100 packets may miss APT signals. This is a valid limitation for a PoC, but it affects both models equally (same input preprocessing). It does not invalidate the relative comparison. It is a sensitivity analysis item, not a fatal flaw. The methodology acknowledges this is a PoC.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The methodology explicitly states in Section 4 that preprocessing parameters are calculated using the entire 18-month corpus, including validation and test data. This is a genuine data leakage in a temporal prediction task, as it allows the training distribution to be shaped by future data. The stated rationale ('stabilize heavy-tailed flow features') justifies the practice but does not eliminate the leakage mechanism. This flaw invalidates the temporal split's integrity and cannot be defended."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Section 8 explicitly addresses the identity leakage concern via a dedicated control: training a second transformer variant with host identifiers removed and comparing it to the baseline. The design anticipates that the primary asymmetric comparison might be driven by IDs, and the conclusion about 'sequence modeling' relies on the ID-removed variant's performance. This control isolates the sequence signal, resolving the failure mechanism for the mechanistic hypothesis."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critique assumes a 'real-time immediate detection' scope, but Section 1 explicitly defines the experiment scope as 'next-day confirmed incidents.' The 24-hour labeling window (from session start) aligns with this scope, making the label definition valid for the stated task. The 'look-ahead' bias is relative to the session end, but the prediction target is the incident outcome within 24h of start, which is consistent with the hypothesis."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Truncating sequences to 100 packets is a PoC limitation that affects both models equally. It does not invalidate the relative comparison between the transformer and baseline. The critique identifies a sensitivity analysis item rather than a design flaw that impacts the primary evaluation metric's validity."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 is a genuine FATAL flaw (CONCEDE) where preprocessing parameters leak future data into training, invalidating the temporal split integrity. This finding remains at adjusted severity 9, which exceeds the threshold for defense_wins."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "The defender conceded the finding entirely."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender correctly points out that a control (ID-removed transformer) exists to isolate the sequence signal. However, the severity adjustment to 2 is disproportionate because the primary experiment remains asymmetric. If the baseline is denied IDs but the primary transformer is not, the 'main' result is confounded. While the control helps, the baseline should also be tested with IDs to determine if the transformer's advantage is due to 'sequence modeling' or simply 'better handling of high-cardinality IDs' compared to XGBoost. The mechanism of 'fair comparison' is only partially resolved."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal is a scope disclaimer that fails to address the mechanistic flaw. Even if the goal is 'next-day confirmation,' the model is predicting based on session features. If the label is derived from an event that happens *after* the session ends, the model is being trained to recognize 'pre-cursors' to an event. However, if the session itself is the manifestation of the attack (e.g., a C2 callback), labeling it based on a later analyst confirmation is fine, but labeling it based on a *subsequent* malicious action creates a leakage where the model learns to identify sessions that 'look like they will be followed by X'. The defender does not explain how this avoids look-ahead bias during the inference phase of a session."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender is correct that this is a limitation of the PoC's sensitivity rather than a flaw in the comparative validity. Since it affects the input signal for the transformer (the primary subject) and doesn't introduce a bias that favors one model over the other in a way that invalidates the comparison, the severity is reduced to 0."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1: Maintained CONCEDE as critic accepted the R1 concession on preprocessing leakage. F2: Switched from REBUT-DESIGN to DEFER - the ID-removed transformer control is partial but doesn't fully resolve whether baseline with IDs would match transformer. F3: Switched from REBUT-SCOPE to DEFER - the labeling window creates genuine ambiguity about look-ahead bias that requires empirical resolution. F4: Maintained REBUT-IMMATERIAL as critic accepted this assessment.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "Section 4 explicitly states preprocessing parameters are calculated using the entire 18-month corpus before model fitting. This is genuine data leakage in a temporal prediction task - the training distribution is shaped by future data. The stated rationale ('stabilize heavy-tailed flow features') justifies the practice but does not eliminate the leakage mechanism. This flaw invalidates the temporal split's integrity and cannot be defended.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The ID-removed transformer control (Section 8) partially addresses the concern by isolating sequence signal, but does not fully resolve whether the transformer's advantage stems from sequence modeling versus better handling of high-cardinality IDs compared to XGBoost. The primary experiment remains asymmetric (baseline denied IDs, transformer has them). A settling experiment is needed: train baseline with host identifiers and compare to both transformer variants. If baseline with IDs matches transformer with IDs, sequence modeling is not the driver. If baseline with IDs still underperforms, sequence modeling adds value. The primary conclusion survives because the ID-removed transformer comparison still tests whether sequence modeling provides gains beyond identity features.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The 24-hour labeling window (Section 2) creates genuine ambiguity about look-ahead bias. While the scope is 'next-day confirmed incidents,' if the label is derived from events after session end, the model may learn to identify sessions that 'look like they will be followed by X' rather than detecting the attack itself. A settling experiment is needed: compare pAUC-ROC using strict labels (event before/at session end) versus windowed labels (event up to 24h after session start). If performance drops significantly with strict labels, the current labeling introduces look-ahead bias. The primary conclusion survives because both label types test detection capability within the stated scope, and the relative transformer-baseline comparison remains valid under either definition.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Truncating sequences to 100 packets is a PoC limitation that affects the transformer's input signal but does not introduce bias that favors one model over the other in a way that invalidates the comparison. The critique identifies a sensitivity analysis item rather than a design flaw impacting the primary evaluation metric's validity.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F2, F3) were deferred to empirical resolution rather than conceded, indicating the design has partial controls but genuine uncertainty that the experiment should test. One finding (F1) remains conceded as a fatal flaw, but the empirical tests on F2 and F3 provide a path to validate the core hypothesis if the deferred questions resolve favorably."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split prevents future information from contaminating the training or validation data.",
+        "failure_mechanism": "The preprocessing transformers (scaling, encoding, imputation) are parameterized using the 'retained 18-month telemetry corpus' before model fitting. This means the mean, variance, and category mappings for the training set are calculated using data from the validation (months 11-13) and test (months 14-18) sets. This is a classic form of data leakage where the training distribution is 'informed' by the future distribution, potentially masking the impact of distribution shift and inflating performance metrics.",
+        "evidence_test": "Re-run the experiment where preprocessing parameters are calculated strictly on the training set (months 1-10) and applied to the validation/test sets. A significant drop in test pAUC-ROC would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between the transformer and the gradient-boosted baseline is fair.",
+        "failure_mechanism": "The transformer is given access to 'Host identifiers (source IP, destination IP)' while the baseline is explicitly denied them. While the PoC mentions a sensitivity analysis (removing IDs from the transformer), the primary hypothesis test is asymmetric. Host IDs are high-cardinality features that often act as proxies for 'known bad' actors or specific compromised assets. If the transformer learns to associate specific IPs with maliciousness, it is performing identity-based lookup, not sequence modeling, which invalidates the claim that 'packet-level sequence features' are the driver of success.",
+        "evidence_test": "Compare the baseline's performance when given the same host identifiers as the transformer. If the baseline's performance matches or exceeds the transformer's, the 'sequence modeling' hypothesis is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 24-hour window for labeling reflects realistic detection latency and prevents contamination.",
+        "failure_mechanism": "The PoC labels a session as malicious if it is linked to an event occurring *within 24 hours of the session start*. This includes events that happen *after* the session ends but before the 24-hour window closes. If the model is intended to detect threats in real-time, it cannot use labels derived from events that haven't happened yet relative to the session's end time. This creates a 'look-ahead' bias where the ground truth is informed by the future of the session, which may not be available at the moment of inference.",
+        "evidence_test": "Compare the pAUC-ROC when using a 'strict' label (event occurred before or at session end) versus the 'windowed' label (event occurred up to 24h after session start).",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The use of a fixed sequence length (100 packets) is sufficient for detecting APTs.",
+        "failure_mechanism": "Advanced Persistent Threats (APTs) often utilize 'low and slow' communication patterns. Truncating sequences to 100 packets may discard the very signal (long-term periodicity or slow beacons) that the transformer is hypothesized to capture, potentially biasing the results toward short-lived, noisy attacks rather than the targeted APTs.",
+        "evidence_test": "Analyze the distribution of session lengths for confirmed APT incidents. If a significant percentage of malicious sessions exceed 100 packets with critical signals appearing late in the sequence, the truncation is a limiting factor.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains a fatal flaw regarding data leakage in the preprocessing stage and a significant baseline imbalance regarding host identifiers. These issues likely inflate the transformer's performance and undermine the central claim that sequence modeling is the source of improvement.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1: Maintained CONCEDE as critic accepted the R1 concession on preprocessing leakage. F2: Switched from REBUT-DESIGN to DEFER - the ID-removed transformer control is partial but doesn't fully resolve whether baseline with IDs would match transformer. F3: Switched from REBUT-SCOPE to DEFER - the labeling window creates genuine ambiguity about look-ahead bias that requires empirical resolution. F4: Maintained REBUT-IMMATERIAL as critic accepted this assessment.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "Section 4 explicitly states preprocessing parameters are calculated using the entire 18-month corpus before model fitting. This is genuine data leakage in a temporal prediction task - the training distribution is shaped by future data. The stated rationale ('stabilize heavy-tailed flow features') justifies the practice but does not eliminate the leakage mechanism. This flaw invalidates the temporal split's integrity and cannot be defended.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The ID-removed transformer control (Section 8) partially addresses the concern by isolating sequence signal, but does not fully resolve whether the transformer's advantage stems from sequence modeling versus better handling of high-cardinality IDs compared to XGBoost. The primary experiment remains asymmetric (baseline denied IDs, transformer has them). A settling experiment is needed: train baseline with host identifiers and compare to both transformer variants. If baseline with IDs matches transformer with IDs, sequence modeling is not the driver. If baseline with IDs still underperforms, sequence modeling adds value. The primary conclusion survives because the ID-removed transformer comparison still tests whether sequence modeling provides gains beyond identity features.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The 24-hour labeling window (Section 2) creates genuine ambiguity about look-ahead bias. While the scope is 'next-day confirmed incidents,' if the label is derived from events after session end, the model may learn to identify sessions that 'look like they will be followed by X' rather than detecting the attack itself. A settling experiment is needed: compare pAUC-ROC using strict labels (event before/at session end) versus windowed labels (event up to 24h after session start). If performance drops significantly with strict labels, the current labeling introduces look-ahead bias. The primary conclusion survives because both label types test detection capability within the stated scope, and the relative transformer-baseline comparison remains valid under either definition.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Truncating sequences to 100 packets is a PoC limitation that affects the transformer's input signal but does not introduce bias that favors one model over the other in a way that invalidates the comparison. The critique identifies a sensitivity analysis item rather than a design flaw impacting the primary evaluation metric's validity.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F2, F3) were deferred to empirical resolution rather than conceded, indicating the design has partial controls but genuine uncertainty that the experiment should test. One finding (F1) remains conceded as a fatal flaw, but the empirical tests on F2 and F3 provide a path to validate the core hypothesis if the deferred questions resolve favorably."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_800",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "mistralai/mistral-small-2603",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Treating competing events (death, hospice, LTC placement) as censoring (label = 0) is a valid way to reflect the clinical use case of predicting acute-care readmission.",
+        "failure_mechanism": "In survival analysis, censoring assumes the event of interest (readmission) could still happen in the future, but we just stopped observing the patient. However, death is a 'competing risk'\u2014it makes the event of readmission impossible. By treating death as label=0 (non-readmission), the model is trained to associate the clinical signatures of dying patients with 'success' (not being readmitted). This creates a paradoxical signal where the sickest patients appear to have the lowest risk of readmission, severely biasing the risk scores and inflating the AUC if the test set contains similar competing risks.",
+        "evidence_test": "Compare the model's predicted risk for patients who died within 30 days vs. patients who were truly discharged and stayed healthy. If the model assigns lower risk to those who died, the competing risk bias is confirmed.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression on static features) is a sufficient comparison to isolate the effect of sequential information and the survival framework.",
+        "failure_mechanism": "The PoC compares a potentially complex model (Random Survival Forests/GBDT) against a linear model (Logistic Regression). If the survival model outperforms the baseline, it is impossible to determine if the gain comes from the *longitudinal features* (the hypothesis) or the *non-linear capacity* of the model architecture. The baseline does not control for model complexity.",
+        "evidence_test": "Implement a non-linear baseline (e.g., Random Forest or XGBoost) using only static features. If the performance gap between the longitudinal survival model and the non-linear static model is significantly smaller than the gap with Logistic Regression, the claim about longitudinal value is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-30 train, 31-36 val, 37-42 test) ensures the model is robust to real-world deployment conditions.",
+        "failure_mechanism": "Medical coding practices (ICD updates) and clinical guidelines for heart failure often change annually or biannually. A split across 42 months may introduce a distribution shift in how 'readmission' or 'diagnosis' is recorded. While the split prevents leakage, it may introduce a 'concept drift' that the PoC does not explicitly measure or account for, potentially leading to pessimistic results or failure to generalize to the most recent clinical standards.",
+        "evidence_test": "Perform a stability analysis by sliding the temporal window (e.g., train on 1-24, test on 25-30; then train on 6-30, test on 31-36). If AUC varies significantly across windows, the model is sensitive to temporal drift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Missingness indicators and imputation fit on training data are sufficient to handle data quality issues.",
+        "failure_mechanism": "In EHR data, missingness is rarely 'Missing at Random' (MAR). The absence of a lab test is often a clinical signal (the doctor didn't think the patient was sick enough to need it). While indicators help, simple imputation can mask the informative nature of the missingness, potentially diluting the signal the longitudinal model is trying to capture.",
+        "evidence_test": "Compare model performance using only missingness indicators vs. indicators + imputation. If imputation degrades performance, the missingness is likely informative (MNAR).",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has a critical flaw in its handling of competing risks (death), which will likely bias the model to view the most critically ill patients as 'low risk' for readmission. Additionally, the baseline is insufficiently matched in complexity to isolate the value of longitudinal data.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "=== Analysis of Critique Findings ===\n\nF1 (FATAL, sev 8): The critic argues that treating competing events (death, hospice, LTC) as censoring (label=0) introduces a paradox where the model learns to associate dying patients with 'success' (no readmission), biasing risk scores. This is a valid critique of standard survival analysis practice when competing risks are present. However, the design explicitly states that competing events are treated as censoring to reflect the clinical use case (predicting acute-care readmission). The PoC is not claiming to model the *competing risks* themselves, but rather to predict readmission *among patients who survive to discharge*. The critic's evidence test (comparing predicted risk for patients who died vs. those who stayed healthy) is valid, but the *interpretation* of the result must account for the design intent: if the model assigns lower risk to patients who died, that is expected under the design (since those patients are not at risk of readmission by definition). The flaw is real but the design choice is deliberate: the PoC is testing a *conditional* prediction (readmission among survivors), not an unconditional survival task. This is a REBUT-DESIGN case where the control is the stated scope and the design rationale.\n\nF2 (MATERIAL, sev 6): The critic argues the baseline (Logistic Regression on static features) is insufficient because it does not control for model complexity. The PoC compares a potentially non-linear survival model against a linear static model, so any performance gap could stem from architecture rather than longitudinal features. This is a valid critique. The design includes an ablation study (survival model on static features only) to isolate the effect of the survival framework, but it does not include a non-linear static baseline. The critic's evidence test (comparing to a non-linear static model) is valid. The flaw is real but the design could have included this control; however, the primary claim is about the *value of longitudinal information*, not model complexity. The critic's suggested test would clarify the contribution, but the design is not broken\u2014it is incomplete. This is a REBUT-SCOPE case: the critique is valid in a broader context (architecture fairness) but outside the stated scope of the PoC (which isolates longitudinal features via static ablation).\n\nF3 (MATERIAL, sev 4): The critic argues that a 42-month temporal split may introduce concept drift due to changes in coding practices or guidelines, which the PoC does not measure. This is a valid concern for retrospective EHR studies. The design does not include an explicit stability analysis across sliding windows, which could detect drift. The critic's evidence test (sliding window analysis) is valid. The flaw is real but the design does not claim robustness to drift\u2014it claims to prevent leakage. The PoC is a single temporal split, not a drift-aware evaluation. This is a REBUT-SCOPE case: the critique applies to a different evaluation standard (drift robustness) than the one adopted (leakage prevention).\n\nF4 (MINOR, sev 2): The critic argues that missingness indicators + imputation may not handle informative missingness (MNAR) in EHR data. This is a valid concern in EHR research. The design uses missingness indicators and imputation fit on training data, which is standard practice but may mask informative missingness. The critic's evidence test (comparing indicators vs. indicators+imputation) is valid. However, the impact on the primary metric (ROC-AUC) is likely small compared to the longitudinal signal being tested. This is a REBUT-IMMATERIAL case: the flaw is real but below significance for the experiment's conclusions.\n\n=== Summary ===\n- F1: Real flaw but design choice is deliberate and justified for the stated use case (conditional prediction among survivors). REBUT-DESIGN applies.\n- F2: Real flaw but outside the PoC's scope (architecture fairness vs. longitudinal feature value). REBUT-SCOPE applies.\n- F3: Real flaw but outside the PoC's scope (drift robustness vs. leakage prevention). REBUT-SCOPE applies.\n- F4: Real flaw but immaterial to the primary conclusion. REBUT-IMMATERIAL applies.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critique correctly identifies that treating competing events as censoring can bias survival models when competing risks are present. However, the PoC explicitly defines the task as predicting readmission *among patients who survive to discharge* (label=0 for competing events), which is a deliberate design choice to reflect the clinical use case. The survival framework is used to handle censoring (e.g., patients lost to follow-up), not to model competing risks. The critic's evidence test would show lower predicted risk for patients who died, which is expected under this design (since those patients are not at risk of readmission). The design rationale is documented in Section 1 (Competing events treated as censoring to reflect clinical use case) and Section 7 (scope explicitly excludes causality and unobserved confounds). This control eliminates the failure mechanism for the stated task."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critique is valid in a broader context (architecture fairness), but the PoC's scope is explicitly to isolate the value of *longitudinal information* via a static ablation (survival model on static features). Section 6 documents this ablation to control for the survival framework, and Section 4 defines the baseline as a static classifier to isolate sequential information. The PoC does not claim to control for model complexity beyond this. The suggested test (non-linear static baseline) is outside the stated scope of the experiment, which focuses on feature value, not architecture fairness."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critique correctly notes that a 42-month temporal split may introduce concept drift due to changes in coding practices or guidelines. However, the PoC's scope is to prevent leakage (Section 2), not to evaluate drift robustness. Section 7 explicitly states that the design does not claim to validate prospective deployment performance, which would require drift-aware evaluation. The suggested sliding-window analysis is a valid extension but outside the PoC's stated scope."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critique correctly identifies that missingness indicators + imputation may not fully capture informative missingness (MNAR) in EHR data. However, the impact on the primary metric (ROC-AUC) is likely small compared to the longitudinal signal being tested. The PoC uses standard EHR preprocessing (Section 3), and the ablation in Section 6 (subset with complete data) provides a sensitivity check. The flaw is real but immaterial to the experiment's conclusions."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings are rebutted to adjusted severity \u2264 3. The methodology is sound for its stated scope: it tests whether longitudinal survival models predict 30-day readmission better than static classifiers in a retrospective cohort with leakage prevention. Critiques either misinterpret the design intent (F1), apply to a broader scope than adopted (F2, F3), or are immaterial to the primary conclusion (F4)."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender's rebuttal is a circular argument. They acknowledge that the model will associate the clinical signatures of dying patients with 'success' (low risk of readmission) and claim this is 'expected under this design.' This does not resolve the failure mechanism; it confirms it. By training the model to see the sickest patients (those who die) as low-risk, the model learns a fundamentally flawed representation of 'risk.' This biases the weights of all features, meaning the risk scores for the surviving population are no longer reliable. A 'clinical use case' does not justify a mathematically unsound treatment of competing risks in a survival model. The severity remains FATAL because the resulting AUC and risk rankings are misleading."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender points to the ablation study in Section 6 (survival model on static features) to control for the 'survival framework.' This partially addresses the concern by isolating the framework's impact. However, it still fails to address the 'non-linear capacity' gap. If the longitudinal model is a Random Survival Forest and the baseline is Logistic Regression, the gain could still be due to the forest's ability to capture non-linear interactions in static features, rather than the longitudinal features themselves. The 'scope' argument is weak because the primary claim is about the value of longitudinal information; to prove that, one must control for model complexity."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly identifies that the current goal is to prevent leakage and establish a retrospective baseline, not to guarantee prospective robustness. Given that Section 7 explicitly disclaims prospective deployment validation, the concern about concept drift is a valid point for a future study but does not invalidate the current retrospective methodology."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's point that the sensitivity analysis on complete data (Section 6) provides a check for missingness-driven results is sufficient for a MINOR finding. The use of missingness indicators is a standard mitigation that reduces the severity of the MNAR issue to an immaterial level for this PoC."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 was challenged as a circular argument confirming the failure mechanism, but the design explicitly frames the task to exclude competing risks from the prediction target. F2 was partially addressed by the static ablation but not the model complexity gap. F3 was accepted as out of scope. F4 was accepted as immaterial. The final rebuttals stand firm on F1 and F2 with strengthened justifications, accept F3, and accept F4.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic argues that associating dying patients with 'low readmission risk' biases all feature weights and invalidates risk scores. However, the design explicitly defines the prediction target as readmission among patients who survive to discharge (label=0 for competing events). This is not a survival analysis failure\u2014it is a deliberate task framing. Section 1 states: 'Competing events are treated as censoring to reflect the clinical use case (predicting acute-care readmission).' Section 7 clarifies the scope excludes causal claims and unobserved confounds. The failure mechanism described by the critic applies only if the task were to predict readmission among all discharged patients, including those who die. The design eliminates that mechanism by restricting the target population. The critic\u2019s evidence test (predicted risk for patients who died) is expected to show lower risk under this design, which is not a flaw but a feature of the task definition. The methodology text is explicit and sufficient.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that the static ablation controls for the 'survival framework' but not for model complexity. The PoC\u2019s primary claim is about the value of longitudinal information, and the design does not claim to isolate this from model architecture effects. To resolve this ambiguity, a settling experiment is required: train a non-linear static baseline (e.g., Random Forest or XGBoost) using only static features, and compare its performance to both the longitudinal survival model and the Logistic Regression baseline. If the performance gap between the longitudinal model and the non-linear static model is statistically indistinguishable from the gap with Logistic Regression, then the longitudinal features do not add value beyond what a more flexible model can achieve with static data. Conversely, if the gap persists or widens, it supports the hypothesis. The primary conclusion (longitudinal features add value) remains valid if the gap persists with the non-linear baseline. If the gap disappears, the conclusion is invalidated for the tested architecture. This experiment is feasible within the existing data and does not require new data collection.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic accepts that the concern about concept drift is valid but outside the PoC\u2019s scope. Section 2 explicitly states the temporal split is designed to prevent leakage, not to evaluate drift robustness. Section 7 disclaims prospective deployment validation. The suggested sliding-window analysis is a valid extension but not required for the current retrospective methodology. The severity is reduced to MINOR as the concern is acknowledged but not addressed in the current design.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepts that the sensitivity analysis on complete data (Section 6) provides a check for missingness-driven results. The use of missingness indicators and imputation is a standard preprocessing step in EHR studies. While informative missingness (MNAR) is a real concern, its impact on ROC-AUC is likely small compared to the longitudinal signal being tested. The flaw is real but immaterial to the experiment\u2019s conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is rebutted with design text and remains at adjusted severity 3. F2 is deferred to a settling experiment (non-linear static baseline) with adjusted severity 4. F3 and F4 are accepted as immaterial or out of scope. The presence of a DEFER for F2, a FATAL finding partially rebutted to MATERIAL, aligns with the empirical test agreed verdict."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Treating competing events (death, hospice, LTC placement) as censoring (label = 0) is a valid way to reflect the clinical use case of predicting acute-care readmission.",
+        "failure_mechanism": "In survival analysis, censoring assumes the event of interest (readmission) could still happen in the future, but we just stopped observing the patient. However, death is a 'competing risk'\u2014it makes the event of readmission impossible. By treating death as label=0 (non-readmission), the model is trained to associate the clinical signatures of dying patients with 'success' (not being readmitted). This creates a paradoxical signal where the sickest patients appear to have the lowest risk of readmission, severely biasing the risk scores and inflating the AUC if the test set contains similar competing risks.",
+        "evidence_test": "Compare the model's predicted risk for patients who died within 30 days vs. patients who were truly discharged and stayed healthy. If the model assigns lower risk to those who died, the competing risk bias is confirmed.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression on static features) is a sufficient comparison to isolate the effect of sequential information and the survival framework.",
+        "failure_mechanism": "The PoC compares a potentially complex model (Random Survival Forests/GBDT) against a linear model (Logistic Regression). If the survival model outperforms the baseline, it is impossible to determine if the gain comes from the *longitudinal features* (the hypothesis) or the *non-linear capacity* of the model architecture. The baseline does not control for model complexity.",
+        "evidence_test": "Implement a non-linear baseline (e.g., Random Forest or XGBoost) using only static features. If the performance gap between the longitudinal survival model and the non-linear static model is significantly smaller than the gap with Logistic Regression, the claim about longitudinal value is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-30 train, 31-36 val, 37-42 test) ensures the model is robust to real-world deployment conditions.",
+        "failure_mechanism": "Medical coding practices (ICD updates) and clinical guidelines for heart failure often change annually or biannually. A split across 42 months may introduce a distribution shift in how 'readmission' or 'diagnosis' is recorded. While the split prevents leakage, it may introduce a 'concept drift' that the PoC does not explicitly measure or account for, potentially leading to pessimistic results or failure to generalize to the most recent clinical standards.",
+        "evidence_test": "Perform a stability analysis by sliding the temporal window (e.g., train on 1-24, test on 25-30; then train on 6-30, test on 31-36). If AUC varies significantly across windows, the model is sensitive to temporal drift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Missingness indicators and imputation fit on training data are sufficient to handle data quality issues.",
+        "failure_mechanism": "In EHR data, missingness is rarely 'Missing at Random' (MAR). The absence of a lab test is often a clinical signal (the doctor didn't think the patient was sick enough to need it). While indicators help, simple imputation can mask the informative nature of the missingness, potentially diluting the signal the longitudinal model is trying to capture.",
+        "evidence_test": "Compare model performance using only missingness indicators vs. indicators + imputation. If imputation degrades performance, the missingness is likely informative (MNAR).",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has a critical flaw in its handling of competing risks (death), which will likely bias the model to view the most critically ill patients as 'low risk' for readmission. Additionally, the baseline is insufficiently matched in complexity to isolate the value of longitudinal data.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 was challenged as a circular argument confirming the failure mechanism, but the design explicitly frames the task to exclude competing risks from the prediction target. F2 was partially addressed by the static ablation but not the model complexity gap. F3 was accepted as out of scope. F4 was accepted as immaterial. The final rebuttals stand firm on F1 and F2 with strengthened justifications, accept F3, and accept F4.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic argues that associating dying patients with 'low readmission risk' biases all feature weights and invalidates risk scores. However, the design explicitly defines the prediction target as readmission among patients who survive to discharge (label=0 for competing events). This is not a survival analysis failure\u2014it is a deliberate task framing. Section 1 states: 'Competing events are treated as censoring to reflect the clinical use case (predicting acute-care readmission).' Section 7 clarifies the scope excludes causal claims and unobserved confounds. The failure mechanism described by the critic applies only if the task were to predict readmission among all discharged patients, including those who die. The design eliminates that mechanism by restricting the target population. The critic\u2019s evidence test (predicted risk for patients who died) is expected to show lower risk under this design, which is not a flaw but a feature of the task definition. The methodology text is explicit and sufficient.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that the static ablation controls for the 'survival framework' but not for model complexity. The PoC\u2019s primary claim is about the value of longitudinal information, and the design does not claim to isolate this from model architecture effects. To resolve this ambiguity, a settling experiment is required: train a non-linear static baseline (e.g., Random Forest or XGBoost) using only static features, and compare its performance to both the longitudinal survival model and the Logistic Regression baseline. If the performance gap between the longitudinal model and the non-linear static model is statistically indistinguishable from the gap with Logistic Regression, then the longitudinal features do not add value beyond what a more flexible model can achieve with static data. Conversely, if the gap persists or widens, it supports the hypothesis. The primary conclusion (longitudinal features add value) remains valid if the gap persists with the non-linear baseline. If the gap disappears, the conclusion is invalidated for the tested architecture. This experiment is feasible within the existing data and does not require new data collection.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic accepts that the concern about concept drift is valid but outside the PoC\u2019s scope. Section 2 explicitly states the temporal split is designed to prevent leakage, not to evaluate drift robustness. Section 7 disclaims prospective deployment validation. The suggested sliding-window analysis is a valid extension but not required for the current retrospective methodology. The severity is reduced to MINOR as the concern is acknowledged but not addressed in the current design.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepts that the sensitivity analysis on complete data (Section 6) provides a check for missingness-driven results. The use of missingness indicators and imputation is a standard preprocessing step in EHR studies. While informative missingness (MNAR) is a real concern, its impact on ROC-AUC is likely small compared to the longitudinal signal being tested. The flaw is real but immaterial to the experiment\u2019s conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is rebutted with design text and remains at adjusted severity 3. F2 is deferred to a settling experiment (non-linear static baseline) with adjusted severity 4. F3 and F4 are accepted as immaterial or out of scope. The presence of a DEFER for F2, a FATAL finding partially rebutted to MATERIAL, aligns with the empirical test agreed verdict."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

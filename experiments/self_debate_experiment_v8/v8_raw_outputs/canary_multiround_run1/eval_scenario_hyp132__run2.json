@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_hyp132",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The performance difference between the enhanced transformer model and the logistic regression baseline is attributable to the addition of ticket text features.",
+        "failure_mechanism": "The enhanced model uses a transformer architecture with substantially higher capacity than the logistic regression baseline; any observed improvement could be due to increased model flexibility rather than the text features themselves.",
+        "evidence_test": "Train a comparator model with the same architecture as the enhanced model but using only the structured metadata features (i.e., a transformer\u2011only baseline). If its PR\u2011AUC matches or exceeds the logistic regression baseline, then the gain from adding text is not due to architecture. Conversely, if the transformer\u2011only baseline performs worse than the logistic regression, then the architecture itself is harmful and the text contribution is confounded.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "All features (including rolling window features such as prior SLA compliance rate and prior ticket count) are computed using only information available at ticket creation time, ensuring no temporal leakage.",
+        "failure_mechanism": "If the rolling window statistics are calculated by aggregating over the entire dataset (including future tickets) rather than a strictly preceding window, the model will have access to future information, inflating performance. The description does not specify the computation method, leaving open a silent misconfiguration where the feature engineering step inadvertently leaks future labels.",
+        "evidence_test": "Audit the feature generation code to verify that for each ticket the rolling statistics are computed exclusively from tickets with timestamps strictly earlier than the ticket\u2019s creation timestamp. A simple sanity check is to compute the same feature using an expanding window and compare; any discrepancy indicates leakage. Alternatively, hold out a recent month and recompute features using only prior data; if the model\u2019s performance drops substantially when using correctly windowed features, leakage was present.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Ticket body text is extracted strictly at creation time and contains no information from agent responses or internal notes.",
+        "failure_mechanism": "The post\u2011hoc audit only scans for a handful of response\u2011related phrases (e.g., 'assigned to', 'resolved'). Sophisticated leakage\u2014such as internal notes that paraphrase the customer issue, ticket edits by agents before first response, or system\u2011generated metadata inserted into the body\u2014could remain undetected, allowing the model to learn proxy signals that are not available at real\u2011time inference.",
+        "evidence_test": "Perform a more comprehensive leakage check: compare the ticket body at creation (as stored in the immutable audit log) with the body used for feature extraction; any divergence indicates post\u2011creation modification. Additionally, train a probe model to predict whether a ticket received an agent note before first response using only the extracted text; significant predictive power would reveal hidden leakage.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The relationship between ticket text (and metadata) and SLA breach risk is stable over the 36\u2011month period, so a model trained on months 1\u201124 will generalize to months 31\u201136.",
+        "failure_mechanism": "If the underlying process drifts\u2014for example, due to product changes, policy updates, or shifting customer communication styles\u2014the patterns learned from early data may no longer hold in the test period. The temporal split alone does not guard against concept drift; performance gains observed in the held\u2011out window could be an artifact of transient correlations that will not persist in deployment.",
+        "evidence_test": "Monitor performance metrics (e.g., PR\u2011AUC) in a rolling\u2011window fashion: train on months 1\u201124, validate on 25\u201130, test on 31\u201136, then repeat the exercise shifting the windows forward (e.g., train 4\u201127, validate 28\u201133, test 34\u201139 if data were available) or evaluate on subsequent months beyond the original test set. A significant degradation in later windows would indicate non\u2011stationarity. Additionally, train a domain classifier to distinguish training vs. test tickets based on text features; high accuracy would signal distribution shift.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC presents a reasonable temporal hold\u2011out design but suffers from several methodological gaps: the model comparison confounds architecture with text feature effectiveness, rolling\u2011window features may leak future information, text extraction timing is not fully verified, and the assumption of temporal stability is untested. Together, these weaknesses weaken the causal claim that text features drive the observed performance gain.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims that the model capacity difference (Transformer vs. Logistic Regression) confounds the effect of the text features. However, the design intent is to test if a transformer-enhanced approach (which requires a transformer to process the text) outperforms a metadata-only baseline. A transformer-only baseline on structured metadata is not a standard or efficient design choice for tabular data, and the primary hypothesis is about the utility of the text modality. The gain is expected to come from the text, and the model capacity is a necessary consequence of adding that modality.\n\nF2 claims a potential for temporal leakage in rolling window features. The methodology explicitly states in Section 2 that the dataset is divided into 'contiguous time windows to prevent future information leakage' and in Section 7 that 'Temporal leakage' is a controlled confound. While the specific SQL/code implementation isn't shown, the design requirement for 'chronologically held-out' evaluation and the explicit mention of leakage prevention in the Confound Controls section indicates this was a deliberate design constraint.\n\nF3 argues that the post-hoc audit for response phrases is insufficient to catch all leakage. The methodology in Section 3 specifies that text is extracted 'strictly at ticket creation time, before any agent response or internal notes are added.' The audit is a secondary verification step, not the primary mechanism of prevention. The primary mechanism is the extraction point (creation time). The critic's suggestion to use an immutable audit log is a valid engineering best practice, but the design's commitment to 'creation time' extraction is a sound methodological control.\n\nF4 suggests that concept drift over 36 months could invalidate the results. The methodology explicitly addresses this in Section 7 ('Operational drift') by using a 6-month chronologically separate test window to 'reflect realistic deployment in a changing environment.' The purpose of the temporal split is precisely to test if the model generalizes across time. The critic is asking for a rolling-window validation, which is a more rigorous stability analysis, but the current design (Train -> Val -> Test) is the standard protocol for establishing a performance baseline in a non-stationary environment.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The hypothesis is specifically whether adding ticket text (via a transformer) improves prediction over metadata alone. A transformer is required to effectively process the high-dimensional text embeddings. Comparing it to a Logistic Regression baseline for metadata is appropriate because LR is the industry standard for structured metadata; adding a transformer to metadata alone would be an unnatural architectural choice that doesn't serve the hypothesis of 'text utility'."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly lists 'Temporal leakage' as a Confound Control (Section 7) and specifies the use of 'contiguous time windows to prevent future information leakage' (Section 2). The intent to compute features based on the chronological split is a core pillar of the design."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The primary control is the extraction point: 'strictly at ticket creation time' (Section 3). The post-hoc audit is a supplementary check, not the sole defense. The design intent is to use the initial customer submission, which is a distinct event in the ticketing lifecycle."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The experiment's scope is to establish if the model achieves higher PR-AUC on chronologically held-out tickets. The 6-month test window is specifically designed to account for 'Operational drift' (Section 7). While rolling-window analysis would provide more detail on the rate of decay, it is outside the scope of a PoC intended to prove initial predictive lift."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were rebutted based on explicit design controls (Temporal Leakage, Operational Drift, and Extraction Timing) or a clarification of the experimental scope. Every adjusted severity is \u2264 3, qualifying the methodology for exoneration."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender argues that a transformer is necessary to process text and that comparing to a logistic regression baseline is appropriate because LR is the industry standard for metadata. This does not address the failure mechanism that the observed performance gain could stem from the transformer's higher capacity rather than the text features themselves. A proper control would be a transformer\u2011only baseline using the same metadata features; the defender provides no evidence that such a control was considered or that the architecture does not confer an advantage independent of text. Thus the rebuttal is generic and fails to isolate the effect of text."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender cites design statements about temporal leakage being a confound control and the use of contiguous time windows. However, the failure mechanism concerns a silent misconfiguration where rolling window statistics might inadvertently incorporate future tickets. The defender's justification does not demonstrate that the implementation actually computes these features using only prior timestamps; it merely restates intent. Without evidence of correct computation (e.g., code audit or sanity check), the concern about leakage remains unresolved."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender points to the extraction point ('strictly at ticket creation time') as the primary control and treats the post\u2011hoc audit as supplementary. This does not rebut the specific failure mechanism that sophisticated leakage\u2014such as agent edits to the ticket body before first response, internal notes paraphrasing the issue, or system\u2011generated metadata inserted into the body\u2014could evade a simple phrase\u2011based audit. The defender offers no method to detect or rule out these subtler forms of contamination, leaving the concern unaddressed."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender frames the experiment as a proof\u2011of\u2011concept focused on initial predictive lift and claims that assessing long\u2011term stability is outside scope. This does not engage the failure mechanism that concept drift (e.g., product or policy changes) could cause the observed performance in the held\u2011out window to be a transient correlation that will not persist. The temporal split alone does not guarantee stability, and the defender provides no analysis (e.g., rolling\u2011window evaluation or domain shift measurement) to show that drift is negligible. Hence the rebuttal merely dismisses the concern rather than resolving it."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am contesting F1, F3, and F4, as the critic is mischaracterizing the design's intent or the scope of a predictive performance test. For F1, the architecture is a means to an end (processing text), and the baseline is the standard for the data type. For F3, the design relies on the data source (creation-time snapshot), not the audit. For F4, the temporal split is the standard method for testing generalization in this context. However, I am deferring F2 because the critic correctly identifies that 'intent' to avoid leakage in rolling windows is not a mechanical guarantee, and an empirical audit of the feature engineering code is the only way to resolve this.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic's demand for a 'transformer-only baseline on metadata' is a category error. The hypothesis is not 'Does a transformer outperform Logistic Regression?', but 'Does adding ticket text improve prediction?'. The transformer is the necessary tool for the text; the LR is the appropriate benchmark for the metadata. If the enhanced model wins, the 'capacity' of the transformer is exactly what is required to extract the signal from the text. A transformer trained on a few dozen structured features would be an over-parameterized absurdity that does not serve as a meaningful control for the utility of text.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that stating an intent to prevent leakage is not the same as a mechanical guarantee in the implementation of rolling window statistics. Since the design description does not detail the exact SQL/code logic for the windowing (e.g., 'WHERE timestamp < current_ticket_timestamp'), this is a genuine ambiguity that can only be resolved by a code audit or the suggested sanity check.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic focuses on the 'audit' (the supplementary check) while ignoring the 'extraction point' (the primary control). The design specifies that text is extracted 'strictly at ticket creation time'. In a production B2B SaaS database, the 'initial description' is typically stored in an immutable field or a specific versioned snapshot. By targeting the creation-time record, the design mechanically excludes any subsequent agent edits, internal notes, or system updates. The audit is to catch accidental ingestion of the wrong field, not to filter a contaminated one.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic is conflating 'predictive performance' with 'long-term stability analysis'. The objective of this experiment is to test if the model outperforms the baseline on chronologically held-out data. The 6-month test window is the industry-standard method for validating that a model generalizes to the immediate future. While rolling-window analysis is a valuable tool for monitoring decay over years, it is a separate investigation into the *rate* of drift, not a prerequisite for proving that a model is currently more predictive than a baseline.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted the architectural and scope concerns (F1, F3, F4), but deferred F2 to an empirical code audit, as the critic correctly identified a potential silent misconfiguration in rolling window logic."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The performance difference between the enhanced transformer model and the logistic regression baseline is attributable to the addition of ticket text features.",
+        "failure_mechanism": "The enhanced model uses a transformer architecture with substantially higher capacity than the logistic regression baseline; any observed improvement could be due to increased model flexibility rather than the text features themselves.",
+        "evidence_test": "Train a comparator model with the same architecture as the enhanced model but using only the structured metadata features (i.e., a transformer\u2011only baseline). If its PR\u2011AUC matches or exceeds the logistic regression baseline, then the gain from adding text is not due to architecture. Conversely, if the transformer\u2011only baseline performs worse than the logistic regression, then the architecture itself is harmful and the text contribution is confounded.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "All features (including rolling window features such as prior SLA compliance rate and prior ticket count) are computed using only information available at ticket creation time, ensuring no temporal leakage.",
+        "failure_mechanism": "If the rolling window statistics are calculated by aggregating over the entire dataset (including future tickets) rather than a strictly preceding window, the model will have access to future information, inflating performance. The description does not specify the computation method, leaving open a silent misconfiguration where the feature engineering step inadvertently leaks future labels.",
+        "evidence_test": "Audit the feature generation code to verify that for each ticket the rolling statistics are computed exclusively from tickets with timestamps strictly earlier than the ticket\u2019s creation timestamp. A simple sanity check is to compute the same feature using an expanding window and compare; any discrepancy indicates leakage. Alternatively, hold out a recent month and recompute features using only prior data; if the model\u2019s performance drops substantially when using correctly windowed features, leakage was present.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Ticket body text is extracted strictly at creation time and contains no information from agent responses or internal notes.",
+        "failure_mechanism": "The post\u2011hoc audit only scans for a handful of response\u2011related phrases (e.g., 'assigned to', 'resolved'). Sophisticated leakage\u2014such as internal notes that paraphrase the customer issue, ticket edits by agents before first response, or system\u2011generated metadata inserted into the body\u2014could remain undetected, allowing the model to learn proxy signals that are not available at real\u2011time inference.",
+        "evidence_test": "Perform a more comprehensive leakage check: compare the ticket body at creation (as stored in the immutable audit log) with the body used for feature extraction; any divergence indicates post\u2011creation modification. Additionally, train a probe model to predict whether a ticket received an agent note before first response using only the extracted text; significant predictive power would reveal hidden leakage.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The relationship between ticket text (and metadata) and SLA breach risk is stable over the 36\u2011month period, so a model trained on months 1\u201124 will generalize to months 31\u201136.",
+        "failure_mechanism": "If the underlying process drifts\u2014for example, due to product changes, policy updates, or shifting customer communication styles\u2014the patterns learned from early data may no longer hold in the test period. The temporal split alone does not guard against concept drift; performance gains observed in the held\u2011out window could be an artifact of transient correlations that will not persist in deployment.",
+        "evidence_test": "Monitor performance metrics (e.g., PR\u2011AUC) in a rolling\u2011window fashion: train on months 1\u201124, validate on 25\u201130, test on 31\u201136, then repeat the exercise shifting the windows forward (e.g., train 4\u201127, validate 28\u201133, test 34\u201139 if data were available) or evaluate on subsequent months beyond the original test set. A significant degradation in later windows would indicate non\u2011stationarity. Additionally, train a domain classifier to distinguish training vs. test tickets based on text features; high accuracy would signal distribution shift.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC presents a reasonable temporal hold\u2011out design but suffers from several methodological gaps: the model comparison confounds architecture with text feature effectiveness, rolling\u2011window features may leak future information, text extraction timing is not fully verified, and the assumption of temporal stability is untested. Together, these weaknesses weaken the causal claim that text features drive the observed performance gain.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am contesting F1, F3, and F4, as the critic is mischaracterizing the design's intent or the scope of a predictive performance test. For F1, the architecture is a means to an end (processing text), and the baseline is the standard for the data type. For F3, the design relies on the data source (creation-time snapshot), not the audit. For F4, the temporal split is the standard method for testing generalization in this context. However, I am deferring F2 because the critic correctly identifies that 'intent' to avoid leakage in rolling windows is not a mechanical guarantee, and an empirical audit of the feature engineering code is the only way to resolve this.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic's demand for a 'transformer-only baseline on metadata' is a category error. The hypothesis is not 'Does a transformer outperform Logistic Regression?', but 'Does adding ticket text improve prediction?'. The transformer is the necessary tool for the text; the LR is the appropriate benchmark for the metadata. If the enhanced model wins, the 'capacity' of the transformer is exactly what is required to extract the signal from the text. A transformer trained on a few dozen structured features would be an over-parameterized absurdity that does not serve as a meaningful control for the utility of text.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that stating an intent to prevent leakage is not the same as a mechanical guarantee in the implementation of rolling window statistics. Since the design description does not detail the exact SQL/code logic for the windowing (e.g., 'WHERE timestamp < current_ticket_timestamp'), this is a genuine ambiguity that can only be resolved by a code audit or the suggested sanity check.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic focuses on the 'audit' (the supplementary check) while ignoring the 'extraction point' (the primary control). The design specifies that text is extracted 'strictly at ticket creation time'. In a production B2B SaaS database, the 'initial description' is typically stored in an immutable field or a specific versioned snapshot. By targeting the creation-time record, the design mechanically excludes any subsequent agent edits, internal notes, or system updates. The audit is to catch accidental ingestion of the wrong field, not to filter a contaminated one.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic is conflating 'predictive performance' with 'long-term stability analysis'. The objective of this experiment is to test if the model outperforms the baseline on chronologically held-out data. The 6-month test window is the industry-standard method for validating that a model generalizes to the immediate future. While rolling-window analysis is a valuable tool for monitoring decay over years, it is a separate investigation into the *rate* of drift, not a prerequisite for proving that a model is currently more predictive than a baseline.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted the architectural and scope concerns (F1, F3, F4), but deferred F2 to an empirical code audit, as the critic correctly identified a potential silent misconfiguration in rolling window logic."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

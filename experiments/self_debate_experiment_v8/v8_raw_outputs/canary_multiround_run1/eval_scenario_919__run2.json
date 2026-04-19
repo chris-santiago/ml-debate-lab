@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_919",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "mistralai/mistral-small-2603",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Near-duplicate grouping using normalized URL sets and subject hashes prevents campaign duplication leakage between train and test windows",
+        "failure_mechanism": "If near-duplicate detection is performed globally on all data before the chronological split, information from test messages leaks into the training pipeline. This creates implicit test set contamination where the model indirectly sees test campaign signatures during preprocessing, inflating evaluation performance. The PoC does not specify whether grouping occurs pre-split or post-split.",
+        "evidence_test": "Audit the near-duplicate detection pipeline to verify whether grouping uses only training data or all data. If all data is used, verify whether any test messages appear in training after grouping. Check if test messages share URL sets or subject hashes with training messages.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Burstiness features are computed only from events preceding each message",
+        "failure_mechanism": "If burstiness computation includes any message-level features or future events (even within the same sender's history), temporal leakage occurs. This violates the chronological split assumption and allows the model to see information it would not have at inference time. The PoC does not specify the exact temporal boundary for 'preceding' or how sender-level features are bounded.",
+        "evidence_test": "Trace the burstiness feature computation pipeline to verify temporal boundaries. Check whether sender reputation features include any information from messages after the current message timestamp. Verify that burstiness windows do not extend beyond the message receipt time.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A 21-day maturation window ensures all phishing cases are finalized before label extraction",
+        "failure_mechanism": "Some phishing campaigns take longer than 21 days to be confirmed by analysts (e.g., credential theft cases that require user reporting). Messages in the test set with immature labels may be incorrectly labeled as benign, introducing label noise that biases evaluation metrics downward. This is particularly problematic for the test set where labels are used for final evaluation.",
+        "evidence_test": "Analyze the distribution of label confirmation times in historical data. Check what percentage of confirmed phishing cases take longer than 21 days to mature. Compare evaluation metrics when using 21-day vs. 30-day vs. 60-day windows.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "12-month training window captures relevant drift patterns for future detection",
+        "failure_mechanism": "Phishing campaigns exhibit seasonal patterns, infrastructure changes, and evolving techniques that may not be fully captured in a single 12-month window. If the test period contains novel attack patterns not present in training, the model may fail despite good validation performance. The PoC acknowledges drift but does not validate that the training window is sufficient.",
+        "evidence_test": "Analyze drift patterns in historical data (e.g., sender infrastructure changes, lure language evolution). Test the model on multiple test periods spanning different seasons or years. Compare performance on test periods with known novel attack patterns.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Strata breakdowns (sender-domain, link-only vs attachment, business unit) control for confounds",
+        "failure_mechanism": "Reporting breakdowns does not validate the hypothesis; it only documents performance heterogeneity. If the transformer only improves performance on certain strata (e.g., link-only messages) but not others (e.g., attachment-bearing), the overall improvement may be misleading. The PoC does not specify statistical testing within strata or whether improvements are consistent across all segments.",
+        "evidence_test": "Verify that hypothesis testing is performed within strata, not just overall. Check whether confidence intervals are reported for each stratum. Verify that the transformer's improvement is statistically significant across all strata, not just aggregated.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Concatenating text embeddings with structured features before the classifier will allow the transformer to learn semantic improvements",
+        "failure_mechanism": "If structured features dominate the signal (e.g., sender reputation is highly predictive), the transformer may not learn meaningful semantic representations. The PoC explicitly acknowledges this limitation but does not include an ablation study to verify the transformer's contribution independent of structured features.",
+        "evidence_test": "Run an ablation study where the transformer processes text alone without structured features. Compare performance to the full model and the baseline. Verify that the transformer adds value beyond what structured features provide.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains two FATAL signal leakage concerns (near-duplicate grouping and burstiness feature computation) that could invalidate the evaluation if not properly bounded to training data. Three MATERIAL concerns relate to unverified label maturity assumptions, distribution shift coverage, and confound validation methodology. The hypothesis is methodologically sound in principle but requires verification of temporal boundaries and preprocessing pipelines before conclusions can be trusted.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "=== Analysis of Critique Findings ===\n\nF1 (FATAL, sev 8): The critic claims that near-duplicate grouping using normalized URL sets and subject hashes could leak test data into training if performed globally before the chronological split. This is a valid concern about signal leakage. However, the methodology explicitly states: 'remove exact duplicates before splitting and group near-duplicates using normalized URL sets and subject hashes so variant copies of the same campaign do not appear in both training and evaluation windows.' The intent is to perform near-duplicate grouping *before* splitting to ensure no campaign variants leak across windows. The PoC does not specify implementation details, but the design intent is clear: grouping is a preprocessing step to prevent leakage, not a modeling step that could introduce leakage. The critic's concern arises from a misinterpretation of the design \u2014 the grouping is intended to *prevent* leakage, not cause it. If implemented as designed, this control is sound.\n\nF2 (FATAL, sev 7): The critic claims burstiness features may include future events or violate chronological boundaries. The methodology explicitly states: 'burstiness features computed only from events preceding each message' and 'All tokenizers, imputers, frequency encoders, and scalers are fit on training data only and then frozen.' The design intent is to compute burstiness strictly from prior events. The critic's concern is valid only if the implementation violates this intent. The PoC does not specify implementation details, but the design control is explicit. This is a design-level control that addresses the concern if implemented correctly.\n\nF3 (MATERIAL, sev 5): The critic claims a 21-day maturation window may be insufficient for some phishing cases (e.g., credential theft requiring user reporting). This is a valid concern about label maturity. The methodology states: 'include only messages whose case outcome is finalized and impose a 21-day maturation window before extraction so messages later escalated to phishing are not treated as benign.' The design intent is to avoid false benign labels for messages that are later confirmed as phishing. The critic's concern is empirical: some cases may take longer than 21 days. This is a question of label maturity sufficiency, not a design flaw. The PoC could address this with a sensitivity analysis (e.g., 21 vs. 30 vs. 60 days), but the design control is sound.\n\nF4 (MATERIAL, sev 5): The critic claims a 12-month training window may be insufficient to capture seasonal drift patterns. The methodology acknowledges drift and uses a chronological split to evaluate future performance. The critic's concern is empirical: the training window may not cover all relevant drift patterns. The design intent is to test whether a model trained on past mail ranks future mail better, which is the correct question for email defense. The PoC does not claim the training window is optimal, only that it is sufficient to test the hypothesis. This is a question of sufficiency, not a design flaw.\n\nF5 (MATERIAL, sev 4): The critic claims strata breakdowns do not validate the hypothesis and may hide heterogeneous performance. The methodology states: 'Report a seen-versus-unseen sender-domain breakdown, plus strata for link-only versus attachment-bearing messages and recipient business unit.' The design intent is to control for confounds and document performance heterogeneity, not to validate the hypothesis within strata. The critic's concern is about statistical testing within strata, which is not part of the stated methodology. The PoC could include such testing, but the design does not claim to do so. This is a scope mismatch, not a design flaw.\n\nF6 (MINOR, sev 2): The critic claims concatenating text embeddings with structured features may allow structured features to dominate, and the PoC does not include an ablation study. The methodology explicitly states: 'The baseline should be a strong gradient-boosted tree model over the structured artifact features... Give the baseline equivalent tuning effort... to test the added value of raw-text representation learning.' The design intent is to compare the transformer's added value over a strong structured baseline. The critic's concern is empirical: the transformer may not add value if structured features dominate. This is a valid concern about the experiment's ability to isolate the transformer's contribution, but it is not a design flaw. The PoC could include an ablation, but the design is sound for its stated purpose.\n\n=== Summary ===\nAll FATAL findings (F1, F2) are addressed by explicit design controls in the methodology. The critic's concerns arise from misinterpretations or empirical questions, not design flaws. MATERIAL findings (F3, F4, F5) are either empirical questions (F3, F4) or scope mismatches (F5). MINOR finding (F6) is an empirical suggestion, not a design flaw. The methodology is sound and the design intent is clear in all cases.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly states that near-duplicate grouping is performed *before* the chronological split to prevent campaign duplication leakage. This is a deliberate design control to address signal leakage. The critic's concern arises from a misinterpretation of the design intent \u2014 the grouping is intended to *prevent* leakage, not cause it. If implemented as designed, this control is sound and addresses the concern."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly states that burstiness features are 'computed only from events preceding each message' and that all preprocessing is fit on training data only. This is a deliberate design control to prevent temporal leakage. The critic's concern is valid only if the implementation violates this intent, but the design explicitly addresses it."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The methodology states a 21-day maturation window to avoid false benign labels, which is a deliberate design choice to balance label maturity and timeliness. Whether 21 days is sufficient is an empirical question, not a design flaw. The PoC could include a sensitivity analysis, but the design control is sound for its stated purpose."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The methodology uses a 12-month training window to test whether a model trained on past mail ranks future mail better, which is the correct question for email defense. Whether 12 months is sufficient to capture all drift patterns is an empirical question, not a design flaw. The PoC does not claim the window is optimal, only that it is sufficient to test the hypothesis."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The methodology states that strata breakdowns are used to 'control for confounds' and document performance heterogeneity, not to validate the hypothesis within strata. The critic's concern about statistical testing within strata is outside the stated scope of the PoC. The design does not claim to perform such testing."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The methodology explicitly compares the transformer's added value over a strong structured baseline, which is the correct test for the hypothesis. Whether the transformer adds value beyond structured features is an empirical question, not a design flaw. The PoC could include an ablation, but the design is sound for its stated purpose."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All FATAL and MATERIAL findings are rebutted with design controls or scope clarifications, reducing their adjusted severity to \u2264 3. MINOR finding is immaterial to the methodology's soundness. The PoC's design intent is clear and addresses all concerns raised by the critic."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender's rebuttal is generic and circular. They claim grouping 'before splitting' prevents leakage, but global grouping (using test data to define clusters) inherently leaks test information into the training pipeline (e.g., cluster assignments influence training sample selection). The rebuttal fails to explain the mechanism by which global grouping avoids this leakage, which is the core failure mode identified. The severity reduction is disproportionate given the unresolved signal leakage risk."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The methodology text specifies 'preceding each message', which addresses the design intent better than the finding claimed. However, the finding requests verification of the pipeline implementation (temporal boundaries). The defender cites the design text but does not provide the implementation trace or evidence that the code strictly enforces this boundary. The gap between design claim and implementation verification remains unresolved."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The finding identifies a systematic risk of label noise biasing evaluation metrics (false benign labels). The defender dismisses this as an 'empirical question' outside design scope. However, if labels are systematically incorrect, the evaluation is invalid regardless of scope. The rebuttal fails to address the validity threat posed by immature labels, making the severity reduction disproportionate."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The finding addresses the risk of distribution shift (novel attacks in test not in training). The defender argues the window is sufficient for the 'past vs future' question. However, if the test set contains novel patterns, performance will drop, making the evaluation uninterpretable. The rebuttal does not mitigate the risk of unrepresentative test data, which is a fundamental validity concern, not just a scope issue."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The finding requests statistical validation of improvement consistency across strata. The defender states the scope is only documentation of heterogeneity. While documentation is valid, it leaves the question of whether the improvement is robust or driven by a single stratum unresolved. The rebuttal partially addresses the design but leaves the validation gap regarding hypothesis confirmation within segments."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 1,
+        "reasoning": "The finding requests an ablation to isolate the transformer's contribution independent of structured features. The defender argues the baseline comparison (Text+Structured vs Structured) is sufficient. While this tests the combined value, it does not isolate the text component's specific contribution. The rebuttal partially addresses the value but leaves the attribution gap regarding the transformer's independent utility."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic challenged F1, F3, and F4 outright, partially challenged F2 and F5, and partially challenged F6. For F1, the core dispute is whether global near-duplicate grouping leaks test information into training. For F2, the dispute is whether the implementation enforces the 'preceding events only' boundary. For F3 and F4, the dispute is whether label maturity and training-window sufficiency are design flaws or empirical questions. For F5 and F6, the dispute is whether the design must include internal statistical validation and ablation beyond what was stated. We will DEFER on F1 and F2 because the implementation details are not fully specified in the design text; we will STRENGTHEN our rebuttals for F3, F4, F5, and F6 by clarifying scope and acknowledging residual empirical questions without conceding design flaws.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The design text states near-duplicate grouping occurs before the chronological split, but it does not explicitly specify whether grouping is performed globally (across train+test) or within the training window only. The critic correctly identifies that global grouping leaks test information into training via cluster membership. Because the design does not unambiguously rule out global grouping, the risk is real and material. An implementation audit is required to verify whether grouping is restricted to training data. We therefore DEFER this finding to empirical verification of the pipeline.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design text states burstiness features are computed only from events preceding each message, which addresses the intent. However, the critic requests verification of the implementation\u2019s temporal boundaries and sender-level feature windows. Without a pipeline trace or code review confirming strict adherence, the risk of temporal leakage remains unresolved. We therefore DEFER this finding to empirical verification of the feature computation pipeline.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly uses a 21-day maturation window to avoid false benign labels, which is a deliberate design control to ensure label integrity. The critic argues that some phishing campaigns mature beyond 21 days, introducing label noise. Whether 21 days is sufficient is an empirical question about the environment, not a design flaw in the methodology. The PoC\u2019s goal is to test whether a model trained on past mail ranks future mail better under realistic enterprise constraints; the 21-day window is a reasonable balance within that scope. We maintain the design control is sound for its stated purpose.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology uses a 12-month training window to test whether a model trained on past mail ranks future mail better, which is the correct question for email defense under continuous drift. The critic argues that novel attack patterns in the test set may cause performance drops, making evaluation uninterpretable. However, the PoC\u2019s hypothesis is precisely whether the model generalizes to future mail, including novel patterns. If performance drops due to novel patterns, that is a valid outcome of the experiment, not a design flaw. The training window\u2019s sufficiency is an empirical question about the data, not a flaw in the experimental design. We maintain the design is sound for its stated purpose.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The methodology states that strata breakdowns are used to 'control for confounds' and document performance heterogeneity, not to validate the hypothesis within strata. The critic requests statistical testing within strata to ensure improvements are consistent across segments. While such testing would strengthen the analysis, the PoC\u2019s primary hypothesis is evaluated on the aggregate test set. The design does not claim to perform stratum-specific hypothesis tests, so the omission is a scope limitation, not a design flaw. We maintain the design is sound for its stated purpose.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The methodology compares the transformer\u2019s added value over a strong structured baseline, which is the correct test for the hypothesis. The critic requests an ablation isolating the transformer\u2019s contribution independent of structured features. While such an ablation would provide additional insight, the PoC\u2019s design is sufficient to test whether the transformer improves detection beyond the baseline. The omission is a minor scope limitation, not a design flaw. We maintain the rebuttal type and adjustment.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 and F2 are DEFERred due to unresolved implementation questions, while F3\u2013F6 are rebutted as scope limitations. The remaining findings do not meet the bar for FATAL or MATERIAL concessions, and the DEFERrals reflect genuine empirical uncertainties that the experiment should resolve."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Near-duplicate grouping using normalized URL sets and subject hashes prevents campaign duplication leakage between train and test windows",
+        "failure_mechanism": "If near-duplicate detection is performed globally on all data before the chronological split, information from test messages leaks into the training pipeline. This creates implicit test set contamination where the model indirectly sees test campaign signatures during preprocessing, inflating evaluation performance. The PoC does not specify whether grouping occurs pre-split or post-split.",
+        "evidence_test": "Audit the near-duplicate detection pipeline to verify whether grouping uses only training data or all data. If all data is used, verify whether any test messages appear in training after grouping. Check if test messages share URL sets or subject hashes with training messages.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Burstiness features are computed only from events preceding each message",
+        "failure_mechanism": "If burstiness computation includes any message-level features or future events (even within the same sender's history), temporal leakage occurs. This violates the chronological split assumption and allows the model to see information it would not have at inference time. The PoC does not specify the exact temporal boundary for 'preceding' or how sender-level features are bounded.",
+        "evidence_test": "Trace the burstiness feature computation pipeline to verify temporal boundaries. Check whether sender reputation features include any information from messages after the current message timestamp. Verify that burstiness windows do not extend beyond the message receipt time.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A 21-day maturation window ensures all phishing cases are finalized before label extraction",
+        "failure_mechanism": "Some phishing campaigns take longer than 21 days to be confirmed by analysts (e.g., credential theft cases that require user reporting). Messages in the test set with immature labels may be incorrectly labeled as benign, introducing label noise that biases evaluation metrics downward. This is particularly problematic for the test set where labels are used for final evaluation.",
+        "evidence_test": "Analyze the distribution of label confirmation times in historical data. Check what percentage of confirmed phishing cases take longer than 21 days to mature. Compare evaluation metrics when using 21-day vs. 30-day vs. 60-day windows.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "12-month training window captures relevant drift patterns for future detection",
+        "failure_mechanism": "Phishing campaigns exhibit seasonal patterns, infrastructure changes, and evolving techniques that may not be fully captured in a single 12-month window. If the test period contains novel attack patterns not present in training, the model may fail despite good validation performance. The PoC acknowledges drift but does not validate that the training window is sufficient.",
+        "evidence_test": "Analyze drift patterns in historical data (e.g., sender infrastructure changes, lure language evolution). Test the model on multiple test periods spanning different seasons or years. Compare performance on test periods with known novel attack patterns.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Strata breakdowns (sender-domain, link-only vs attachment, business unit) control for confounds",
+        "failure_mechanism": "Reporting breakdowns does not validate the hypothesis; it only documents performance heterogeneity. If the transformer only improves performance on certain strata (e.g., link-only messages) but not others (e.g., attachment-bearing), the overall improvement may be misleading. The PoC does not specify statistical testing within strata or whether improvements are consistent across all segments.",
+        "evidence_test": "Verify that hypothesis testing is performed within strata, not just overall. Check whether confidence intervals are reported for each stratum. Verify that the transformer's improvement is statistically significant across all strata, not just aggregated.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Concatenating text embeddings with structured features before the classifier will allow the transformer to learn semantic improvements",
+        "failure_mechanism": "If structured features dominate the signal (e.g., sender reputation is highly predictive), the transformer may not learn meaningful semantic representations. The PoC explicitly acknowledges this limitation but does not include an ablation study to verify the transformer's contribution independent of structured features.",
+        "evidence_test": "Run an ablation study where the transformer processes text alone without structured features. Compare performance to the full model and the baseline. Verify that the transformer adds value beyond what structured features provide.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains two FATAL signal leakage concerns (near-duplicate grouping and burstiness feature computation) that could invalidate the evaluation if not properly bounded to training data. Three MATERIAL concerns relate to unverified label maturity assumptions, distribution shift coverage, and confound validation methodology. The hypothesis is methodologically sound in principle but requires verification of temporal boundaries and preprocessing pipelines before conclusions can be trusted.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic challenged F1, F3, and F4 outright, partially challenged F2 and F5, and partially challenged F6. For F1, the core dispute is whether global near-duplicate grouping leaks test information into training. For F2, the dispute is whether the implementation enforces the 'preceding events only' boundary. For F3 and F4, the dispute is whether label maturity and training-window sufficiency are design flaws or empirical questions. For F5 and F6, the dispute is whether the design must include internal statistical validation and ablation beyond what was stated. We will DEFER on F1 and F2 because the implementation details are not fully specified in the design text; we will STRENGTHEN our rebuttals for F3, F4, F5, and F6 by clarifying scope and acknowledging residual empirical questions without conceding design flaws.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The design text states near-duplicate grouping occurs before the chronological split, but it does not explicitly specify whether grouping is performed globally (across train+test) or within the training window only. The critic correctly identifies that global grouping leaks test information into training via cluster membership. Because the design does not unambiguously rule out global grouping, the risk is real and material. An implementation audit is required to verify whether grouping is restricted to training data. We therefore DEFER this finding to empirical verification of the pipeline.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design text states burstiness features are computed only from events preceding each message, which addresses the intent. However, the critic requests verification of the implementation\u2019s temporal boundaries and sender-level feature windows. Without a pipeline trace or code review confirming strict adherence, the risk of temporal leakage remains unresolved. We therefore DEFER this finding to empirical verification of the feature computation pipeline.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly uses a 21-day maturation window to avoid false benign labels, which is a deliberate design control to ensure label integrity. The critic argues that some phishing campaigns mature beyond 21 days, introducing label noise. Whether 21 days is sufficient is an empirical question about the environment, not a design flaw in the methodology. The PoC\u2019s goal is to test whether a model trained on past mail ranks future mail better under realistic enterprise constraints; the 21-day window is a reasonable balance within that scope. We maintain the design control is sound for its stated purpose.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology uses a 12-month training window to test whether a model trained on past mail ranks future mail better, which is the correct question for email defense under continuous drift. The critic argues that novel attack patterns in the test set may cause performance drops, making evaluation uninterpretable. However, the PoC\u2019s hypothesis is precisely whether the model generalizes to future mail, including novel patterns. If performance drops due to novel patterns, that is a valid outcome of the experiment, not a design flaw. The training window\u2019s sufficiency is an empirical question about the data, not a flaw in the experimental design. We maintain the design is sound for its stated purpose.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The methodology states that strata breakdowns are used to 'control for confounds' and document performance heterogeneity, not to validate the hypothesis within strata. The critic requests statistical testing within strata to ensure improvements are consistent across segments. While such testing would strengthen the analysis, the PoC\u2019s primary hypothesis is evaluated on the aggregate test set. The design does not claim to perform stratum-specific hypothesis tests, so the omission is a scope limitation, not a design flaw. We maintain the design is sound for its stated purpose.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The methodology compares the transformer\u2019s added value over a strong structured baseline, which is the correct test for the hypothesis. The critic requests an ablation isolating the transformer\u2019s contribution independent of structured features. While such an ablation would provide additional insight, the PoC\u2019s design is sufficient to test whether the transformer improves detection beyond the baseline. The omission is a minor scope limitation, not a design flaw. We maintain the rebuttal type and adjustment.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 and F2 are DEFERred due to unresolved implementation questions, while F3\u2013F6 are rebutted as scope limitations. The remaining findings do not meet the bar for FATAL or MATERIAL concessions, and the DEFERrals reflect genuine empirical uncertainties that the experiment should resolve."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

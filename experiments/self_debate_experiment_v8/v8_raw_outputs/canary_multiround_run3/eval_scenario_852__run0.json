@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_852",
+  "stratum": "regular",
+  "flaw_category": "eval_inflation",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split strategy prevents the model from seeing future campaigns during training.",
+        "failure_mechanism": "The PoC states that within each temporal fold (Train, Val, Test), the data is 'further stratified by label'. Stratification is a random sampling process. If the dataset contains multiple emails from the same phishing campaign (which is standard for enterprise mail), random stratification within the fold will likely split emails from a single campaign across the Train, Val, and Test sets. The model will memorize specific campaign artifacts (e.g., a unique URL or a specific typo) in training and 'predict' them in the test set, resulting in massive performance inflation that disappears in production when a truly new campaign arrives.",
+        "evidence_test": "Compare the PR-AUC of the current split against a 'Sender-Domain' or 'Campaign-ID' split, where all emails from a specific sender or campaign are forced into a single fold. A significant drop in performance would confirm campaign leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test set provides an unbiased estimate of model performance.",
+        "failure_mechanism": "The 'Final Validation' section describes partitioning the test period into two halves: the first for 'deployment-readiness confirmation' to verify the configuration, and the second for 'reported metrics'. By using the first half of the test set to 'verify' and potentially iterate on the configuration before locking the recipe, the test set is effectively being used as a second validation set. This introduces optimization bias (leakage via the researcher), meaning the reported metrics on the second half are no longer an independent holdout.",
+        "evidence_test": "Compare the performance on the 'confirmation pass' (first half of test) vs the 'final holdout' (second half). If the final holdout is significantly lower, or if the configuration was changed based on the first half, the test set is contaminated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer's semantic representation provides genuine benefit over simpler text representation.",
+        "failure_mechanism": "The baseline is a BoW Logistic Regression. While this tests 'semantic' vs 'keyword' matching, it fails to control for the capacity of the model head. The proposed model uses a 2-layer MLP with 256 hidden units, while the baseline uses a linear logistic regression. The performance gain could be attributed to the non-linear capacity of the MLP head rather than the BERT embeddings themselves.",
+        "evidence_test": "Run a baseline using TF-IDF features passed through the same 2-layer MLP architecture used by the transformer.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The data collection period is sufficient to capture evolving attack tactics.",
+        "failure_mechanism": "The PoC assumes 18 months is sufficient. However, phishing often follows quarterly or annual cycles (e.g., tax season, end-of-year reporting). With only 3 months of test data (Months 16-18), the evaluation may be biased toward a specific seasonal window and fail to represent the model's performance during other times of the year.",
+        "evidence_test": "Perform a sliding-window evaluation across the 18-month period to see if PR-AUC fluctuates significantly by month/season.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains two fatal flaws: random stratification within temporal folds likely causes campaign leakage, and the use of the test set for 'deployment-readiness confirmation' invalidates the final holdout. These issues will likely lead to severely inflated performance metrics that will not generalize to production.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "## Analysis of Each Finding\n\n**F1 (FATAL, severity 9): Campaign Leakage via Stratification**\nThe critic correctly identifies that stratification within temporal folds is a random process that can split campaign emails across train/val/test. This is a real concern - phishing campaigns typically contain multiple similar emails with shared artifacts. However, the methodology explicitly addresses this in Section 6: \"After training, the experiment identifies sender/recipient clusters and campaign-like patterns... Any clusters appearing in both training and test sets are flagged, and the proportion of test predictions from leaked clusters is reported. If >5% of test emails belong to leaked clusters, the split is re-evaluated or sender-based stratification is applied.\" This is a named design control with a specific threshold (5%) and remediation procedure. The critic's concern is valid as a potential mechanism, but the design anticipates and addresses it.\n\n**F2 (FATAL, severity 7): Test Set Contamination**\nThe critic correctly identifies that using the first half of the test period for \"deployment-readiness confirmation\" before locking the recipe could contaminate the second half if configuration changes occur based on the first half. The methodology states the first half is used to \"verify that the selected configuration remains stable\" - the key ambiguity is whether this verification ever leads to changes. If no changes are made, the second half remains valid. If changes are made based on the first half, the second half is contaminated. The evidence_test the critic proposes (comparing performance between halves) would settle this definitively.\n\n**F3 (MATERIAL, severity 5): Missing Baseline Control for Model Capacity**\nThe critic correctly points out that the BoW baseline uses logistic regression (linear) while the transformer uses a 2-layer MLP (non-linear). The performance difference could come from model capacity rather than embeddings. However, the design intent is to compare complete pipelines as they would be deployed operationally - transformer+MLP vs BoW+LR. The critic's suggested baseline (TF-IDF + MLP) would be a valid ablation to understand *where* the benefit comes from, but it doesn't invalidate the primary comparison which tests what matters for production deployment. This is a missing ablation, not a fatal flaw in the stated comparison.\n\n**F4 (MINOR, severity 2): Seasonal Bias in Test Period**\nThe critic raises a valid concern that 3 months of test data (months 16-18) may not represent seasonal variations in phishing attacks. However, the methodology explicitly includes \"Temporal drift: Performance is evaluated separately for each month in the test period (months 16, 17, 18)\" which allows detection of performance variation across these months. This is a reasonable scope limitation for a PoC, and the design includes a control to detect if it matters.\n\n## Verdict Determination\n- F1: Adjusted to 4-5 (REBUT-DESIGN - design control exists)\n- F2: Adjusted to 7 (DEFER - ambiguous whether verification leads to changes)\n- F3: Adjusted to 1-2 (REBUT-DESIGN - design intent is complete pipeline comparison)\n- F4: Adjusted to 0-1 (REBUT-IMMATERIAL - scope limitation with detection control)\n\nF2 remains above adjusted severity 3, so EXONERATE is not available. The presence of one DEFER finding with adjusted severity 7 means empirical_test_agreed is the appropriate verdict.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly identifies that stratification can split campaign emails across folds. However, Section 6 of the methodology explicitly addresses this with a named control: 'Campaign leakage: After training, the experiment identifies sender/recipient clusters and campaign-like patterns... If >5% of test emails belong to leaked clusters, the split is re-evaluated or sender-based stratification is applied.' This is a design control that eliminates the failure mechanism by detecting and remediating campaign leakage post-hoc, not merely mitigating it. The 5% threshold provides a concrete decision rule."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The concern is valid: using the first half of test for 'deployment-readiness confirmation' could contaminate the second half if configuration changes occur based on the first half. The methodology states the first half verifies the 'selected configuration remains stable' but does not explicitly state whether changes are prohibited. The settling experiment is to compare performance between the confirmation half and final holdout half - if the final holdout is significantly lower, or if configuration was changed, test contamination is confirmed. This is a genuine ambiguity that cannot be resolved by argument alone."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic correctly notes the baseline uses linear LR while the transformer uses a 2-layer MLP. However, the design intent is to compare complete pipelines as they would be deployed: transformer+MLP vs BoW+LR. The suggested TF-IDF+MLP baseline would be a valid ablation to understand where the benefit originates (embeddings vs architecture), but it does not invalidate the primary comparison which tests what matters for operational deployment. This is a missing ablation, not a flaw in the stated hypothesis. The design choice is deliberate: compare deployable systems, not isolated components."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The concern about seasonal bias in 3 months of test data is valid but immaterial to the PoC's conclusions. The methodology explicitly includes 'Temporal drift: Performance is evaluated separately for each month in the test period (months 16, 17, 18)' which provides a control to detect if performance varies by month. For a PoC, 18 months total with 3 months test is a reasonable scope. The design acknowledges and provides detection for this limitation."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F2 (adjusted severity 7) has a DEFER rebuttal - the concern about test set contamination cannot be resolved by argument alone and requires empirical comparison between the confirmation half and final holdout half of the test set. The other three findings are successfully rebutted: F1 and F3 through REBUT-DESIGN with adjusted severities 4 and 1 respectively, and F4 through REBUT-IMMATERIAL with adjusted severity 0. Since one FATAL finding remains unresolved but at adjusted severity below 7, the verdict is empirical_test_agreed rather than critique_wins."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 6,
+        "reasoning": "The defender points to a post-hoc detection mechanism in Section 6. While this identifies leakage, it does not prevent it during the training/validation phase. If the model is tuned on a validation set that contains campaign leakage (which the current stratification strategy allows), the hyperparameters selected will be biased toward models that memorize campaign artifacts. Detecting leakage in the test set after the fact allows the researcher to 're-evaluate the split,' but it doesn't fix the fundamental flaw that the model selection process was contaminated. The severity is reduced because there is a detection rule, but the mechanism of 'leakage during tuning' remains unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 7,
+        "reasoning": "The defender conceded the ambiguity and deferred the issue to the evidence test. No counter-challenge needed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal is a scope disclaimer that fails to address the failure mechanism. The hypothesis is specifically about whether the 'transformer's semantic representation' provides benefit. By using a linear model for BoW and a non-linear MLP for the Transformer, the defender has confounded 'representation' with 'model capacity.' Comparing 'deployable systems' is a different goal than testing the specific hypothesis of semantic benefit. To claim the benefit comes from the transformer, one must control for the architecture of the head. The severity remains unchanged."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly notes that monthly evaluation within the test set provides a detection mechanism for drift, and for a PoC, the 18-month window is a reasonable trade-off. The concern is minor and the mitigation is sufficient."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted F2 and F4 outright. For F1, the PARTIAL verdict correctly identifies that post-hoc detection doesn't prevent validation-set contamination during hyperparameter tuning - this is a genuine ambiguity requiring empirical resolution. For F3, the CHALLENGE correctly identifies that the design conflates representation with model capacity, failing to isolate the specific hypothesis about semantic benefit. I will CONCEDE F3 (the design genuinely doesn't control for this confound) and DEFER F1 (the detection mechanism provides partial protection but cannot be confirmed as sufficient without evidence).",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly argues that post-hoc detection in Section 6 does not prevent campaign leakage during the training/validation phase. If the validation set contains campaign emails also present in training, hyperparameter selection is biased toward models that memorize campaign artifacts. The detection mechanism provides post-hoc protection for the test set but cannot guarantee the validation set was uncontaminated. The settling experiment is to compare PR-AUC under the current stratified split against a campaign-aware split (e.g., sender-based or cluster-based stratification where all emails from a campaign are in the same fold). A significant drop in PR-AUC with the campaign-aware split would confirm the leakage concern. The primary conclusion (transformer vs. BoW) survives if both models are affected equally by campaign leakage - however, if leakage biases model selection toward memorization-capable architectures, the relative comparison could be distorted. This is a genuine ambiguity requiring empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic accepted my deferral. No changes from R1.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly identifies that the design conflates 'representation' (BERT embeddings vs. TF-IDF) with 'model capacity' (2-layer MLP vs. linear LR). The hypothesis explicitly claims the transformer's 'semantic representation provides genuine benefit.' To test this specific claim, one must isolate the representation variable by holding model architecture constant. The design compares complete pipelines as deployed, which tests a different (and valid) operational question: which end-to-end system performs better. However, this does not test the stated hypothesis about semantic representation. The design has no control that isolates representation from capacity. The specific hypothesis about semantic benefit is not tested by this design.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted my rebuttal. No changes from R1.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two FATAL findings remain at adjusted_severity 6-7: F1 is DEFERRED (post-hoc detection doesn't prevent validation-set contamination, requiring campaign-aware split comparison to resolve), and F2 is DEFERRED (test set contamination via confirmation pass requires performance comparison between halves to resolve). F3 is CONCEDED (design conflates representation with capacity, failing to isolate the semantic benefit hypothesis). F4 is fully rebutted as immaterial. The verdict is empirical_test_agreed because F1 and F2 are genuine ambiguities requiring empirical resolution, not design flaws that invalidate the comparison outright."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split strategy prevents the model from seeing future campaigns during training.",
+        "failure_mechanism": "The PoC states that within each temporal fold (Train, Val, Test), the data is 'further stratified by label'. Stratification is a random sampling process. If the dataset contains multiple emails from the same phishing campaign (which is standard for enterprise mail), random stratification within the fold will likely split emails from a single campaign across the Train, Val, and Test sets. The model will memorize specific campaign artifacts (e.g., a unique URL or a specific typo) in training and 'predict' them in the test set, resulting in massive performance inflation that disappears in production when a truly new campaign arrives.",
+        "evidence_test": "Compare the PR-AUC of the current split against a 'Sender-Domain' or 'Campaign-ID' split, where all emails from a specific sender or campaign are forced into a single fold. A significant drop in performance would confirm campaign leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test set provides an unbiased estimate of model performance.",
+        "failure_mechanism": "The 'Final Validation' section describes partitioning the test period into two halves: the first for 'deployment-readiness confirmation' to verify the configuration, and the second for 'reported metrics'. By using the first half of the test set to 'verify' and potentially iterate on the configuration before locking the recipe, the test set is effectively being used as a second validation set. This introduces optimization bias (leakage via the researcher), meaning the reported metrics on the second half are no longer an independent holdout.",
+        "evidence_test": "Compare the performance on the 'confirmation pass' (first half of test) vs the 'final holdout' (second half). If the final holdout is significantly lower, or if the configuration was changed based on the first half, the test set is contaminated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer's semantic representation provides genuine benefit over simpler text representation.",
+        "failure_mechanism": "The baseline is a BoW Logistic Regression. While this tests 'semantic' vs 'keyword' matching, it fails to control for the capacity of the model head. The proposed model uses a 2-layer MLP with 256 hidden units, while the baseline uses a linear logistic regression. The performance gain could be attributed to the non-linear capacity of the MLP head rather than the BERT embeddings themselves.",
+        "evidence_test": "Run a baseline using TF-IDF features passed through the same 2-layer MLP architecture used by the transformer.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The data collection period is sufficient to capture evolving attack tactics.",
+        "failure_mechanism": "The PoC assumes 18 months is sufficient. However, phishing often follows quarterly or annual cycles (e.g., tax season, end-of-year reporting). With only 3 months of test data (Months 16-18), the evaluation may be biased toward a specific seasonal window and fail to represent the model's performance during other times of the year.",
+        "evidence_test": "Perform a sliding-window evaluation across the 18-month period to see if PR-AUC fluctuates significantly by month/season.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC contains two fatal flaws: random stratification within temporal folds likely causes campaign leakage, and the use of the test set for 'deployment-readiness confirmation' invalidates the final holdout. These issues will likely lead to severely inflated performance metrics that will not generalize to production.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted F2 and F4 outright. For F1, the PARTIAL verdict correctly identifies that post-hoc detection doesn't prevent validation-set contamination during hyperparameter tuning - this is a genuine ambiguity requiring empirical resolution. For F3, the CHALLENGE correctly identifies that the design conflates representation with model capacity, failing to isolate the specific hypothesis about semantic benefit. I will CONCEDE F3 (the design genuinely doesn't control for this confound) and DEFER F1 (the detection mechanism provides partial protection but cannot be confirmed as sufficient without evidence).",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly argues that post-hoc detection in Section 6 does not prevent campaign leakage during the training/validation phase. If the validation set contains campaign emails also present in training, hyperparameter selection is biased toward models that memorize campaign artifacts. The detection mechanism provides post-hoc protection for the test set but cannot guarantee the validation set was uncontaminated. The settling experiment is to compare PR-AUC under the current stratified split against a campaign-aware split (e.g., sender-based or cluster-based stratification where all emails from a campaign are in the same fold). A significant drop in PR-AUC with the campaign-aware split would confirm the leakage concern. The primary conclusion (transformer vs. BoW) survives if both models are affected equally by campaign leakage - however, if leakage biases model selection toward memorization-capable architectures, the relative comparison could be distorted. This is a genuine ambiguity requiring empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic accepted my deferral. No changes from R1.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly identifies that the design conflates 'representation' (BERT embeddings vs. TF-IDF) with 'model capacity' (2-layer MLP vs. linear LR). The hypothesis explicitly claims the transformer's 'semantic representation provides genuine benefit.' To test this specific claim, one must isolate the representation variable by holding model architecture constant. The design compares complete pipelines as deployed, which tests a different (and valid) operational question: which end-to-end system performs better. However, this does not test the stated hypothesis about semantic representation. The design has no control that isolates representation from capacity. The specific hypothesis about semantic benefit is not tested by this design.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted my rebuttal. No changes from R1.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two FATAL findings remain at adjusted_severity 6-7: F1 is DEFERRED (post-hoc detection doesn't prevent validation-set contamination, requiring campaign-aware split comparison to resolve), and F2 is DEFERRED (test set contamination via confirmation pass requires performance comparison between halves to resolve). F3 is CONCEDED (design conflates representation with capacity, failing to isolate the semantic benefit hypothesis). F4 is fully rebutted as immaterial. The verdict is empirical_test_agreed because F1 and F2 are genuine ambiguities requiring empirical resolution, not design flaws that invalidate the comparison outright."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=9 \u2265 7 + adj_sev=6 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=5, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "3 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_hyp_017",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label definition (sustained chargeback within 120 days) accurately captures all fraudulent transactions and only fraudulent transactions.",
+        "failure_mechanism": "Chargeback-based labels are a proxy for fraud, not ground truth. Not all fraud results in chargebacks (some is detected and blocked earlier), and not all chargebacks represent fraud (customer disputes, family fraud, 'friendly' fraud). This creates label noise: false negatives (fraud not labeled as fraud) and false positives (chargeback but not fraud). The magnitude of this mislabeling is unknown and could differ across time periods if customer behavior or dispute patterns change.",
+        "evidence_test": "Audit a random sample of transactions labeled 'fraud' and 'legitimate' against external fraud detection signals (e.g., confirmed fraud cases from investigations, police reports, merchant collaboration). Estimate false positive and false negative rates in the label. Compare label quality across train/val/test periods.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between transformer and gradient-boosted baseline is fair because both receive the same raw data and time window access.",
+        "failure_mechanism": "The transformer receives raw transaction sequences (last 10-30 transactions per account) while the baseline receives hand-engineered aggregates. This is an unfair comparison: any performance difference could be due to (a) the sequence modeling architecture, (b) access to more granular transaction-level information, or (c) the transformer's ability to learn complex feature interactions automatically rather than relying on human-engineered aggregates. The experiment cannot isolate which factor drives improvement. The hypothesis explicitly targets 'sequence modeling' but the design conflates architecture with feature representation.",
+        "evidence_test": "Run ablations: (1) gradient-boosted trees on the same raw sequence features the transformer uses, and (2) transformer on the same aggregate features the baseline uses. If transformer still outperforms in both cases, the architecture matters. If only outperforms when using raw sequences, the advantage is from feature representation, not architecture.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The evaluation metric (PR-AUC at fixed FPR of 2-5%) is sufficient to determine operational success.",
+        "failure_mechanism": "PR-AUC at a single fixed FPR evaluates performance at one operating point, not overall ranking ability. The choice of 2-5% FPR is arbitrary \u2014 different thresholds within this range could yield different winner conclusions. More critically, this metric does not capture the full operational tradeoff: a model that performs well at 2% FPR may perform poorly at 5% FPR, and the business may need to operate at different FPRs as review capacity changes. The metric also treats all false positives identically, but operational cost may vary (e.g., blocking a high-value legitimate transaction vs. flagging a low-value one).",
+        "evidence_test": "Report precision-recall curves across the full FPR range (0-20%). Compare models at multiple operational FPR points (1%, 2%, 5%, 10%). If conclusions change across FPR points, report this sensitivity. Consider weighted precision that accounts for transaction value or customer impact.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Temporal split (train months 1-12, val 13-16, test 17-24) with distribution checks is sufficient to ensure valid comparison.",
+        "failure_mechanism": "The design mentions checking 'fraud rates and feature distributions' across splits but does not specify: (a) what magnitude of shift triggers concern, (b) how shift is handled in model selection, or (c) whether the transformer and baseline are equally robust to shift. Complex models like transformers are often more sensitive to distribution shift than simpler models. If fraud patterns evolve significantly between training and test periods, the test set may not reflect the model's true deployment performance. The out-of-time degradation analysis (comparing months 17-20 vs 21-24) is a secondary metric, not used for model selection.",
+        "evidence_test": "Quantify distribution shift using statistical tests (KS test for continuous features, chi-square for categorical) between train/val/test. Report shift magnitude for key features. Test model performance under simulated distribution shift (e.g., inject synthetic fraud pattern changes). Compare robustness of both models to shift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 120-day chargeback window for label definition does not introduce bias.",
+        "failure_mechanism": "Transactions occurring in the final 120 days of the study period (approximately months 22-24) are excluded from the dataset because their fraud status is unknown (censored labels). If fraud patterns or transaction types in these final months differ systematically from earlier periods (e.g., seasonal fraud campaigns, new merchant categories), excluding them creates selection bias. The test set (months 17-24) is affected by this exclusion more than training (months 1-12), as the most recent months have the highest proportion of censored transactions.",
+        "evidence_test": "Analyze the proportion of transactions excluded per month. Compare fraud rates and feature distributions between included and excluded transactions (where observable). If excluded transactions differ significantly, report this as a limitation and consider sensitivity analysis with alternative windows (60-day, 180-day).",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Both models use class weighting to handle imbalance, ensuring fair comparison.",
+        "failure_mechanism": "The design states both models use 'class weighting' but does not specify the weighting scheme (e.g., inverse frequency, effective number of samples, focal loss parameters). Different weighting strategies can significantly impact precision-recall tradeoffs. If the transformer uses focal loss while the baseline uses simple class weights, the comparison is confounded by different loss functions, not just architecture.",
+        "evidence_test": "Use identical class weighting scheme for both models. Report the exact weighting strategy and hyperparameters. If using focal loss for transformer, implement equivalent focal loss for baseline to isolate architecture effects.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The feature timing audit ensures no post-transaction leakage.",
+        "failure_mechanism": "While the design includes a 'feature timing audit' to ensure only authorization-time features are used, the document does not provide this audit. Without seeing the explicit list of features and their computation times, it's impossible to verify that: (a) aggregate features truly use only past information, (b) the transformer's sequence features don't include future transactions, (c) IP-inferred geolocation is computed at authorization time and not updated post-hoc.",
+        "evidence_test": "Include the feature timing audit document as an appendix. For each feature, specify: exact computation time, data source, and whether any look-ahead bias is possible. Have a second reviewer verify the audit.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "This PoC has significant methodology flaws that would require resolution before the experiment can produce interpretable results. The most critical are: (1) chargeback-based labels are an unverified proxy for ground-truth fraud, (2) the comparison between transformer and baseline is unfair because they use different feature representations (raw sequences vs aggregates), making it impossible to isolate whether any improvement comes from architecture or data, and (3) the evaluation metric evaluates a single arbitrary operating point rather than overall ranking ability. These issues would need to be addressed before the experiment could meaningfully test the stated hypothesis.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I have analyzed all seven critique findings against the provided methodology. \n\nF1 (Label Noise, Severity 8): The critic argues chargeback labels are noisy and may vary over time. However, Section 9 ('Scope of Conclusions') explicitly limits the experiment's scope to 'this specific task and data period' using 'operational ground truth'. The objective is a relative comparison (Transformer vs. Baseline) on available data, not absolute fraud truth. External validation is outside the PoC scope. The design is sound for its stated goal.\n\nF2 (Fairness, Severity 7): The critic argues the comparison conflates architecture with feature representation. Section 9 explicitly states: 'It does not establish whether the gain is due to sequence modeling... ablation studies... would be needed to isolate the mechanism.' The experiment is scoped for performance comparison, not mechanism isolation. The critique asks for a different experiment.\n\nF3 (Metric, Severity 6): The critic argues the fixed FPR metric is insufficient. Section 6 defines the metric to answer the specific business question ('At our operational review budget...'). Secondary metrics are listed for broader analysis. The metric is a deliberate design choice aligned with the business constraint in Section 1.\n\nF4 (Distribution Shift, Severity 5): The critic claims the design lacks shift thresholds. Section 3 and 8 explicitly state 'Fraud rates and feature distributions are verified across all three sets' and 'Temporal stability: ... computed per time window'. The verification process is the control. The critique asks for more specific thresholds, which is a refinement, not a flaw.\n\nF5 (Label Window Bias, Severity 4): The critic argues excluding the final 120 days creates selection bias. Section 2 states this exclusion is 'to avoid censored labels'. This is a necessary trade-off to ensure label integrity. The design prioritizes ground truth quality over data completeness.\n\nF6 (Class Weighting, Severity 3): The critic notes the weighting scheme is unspecified. This is a documentation detail. The design states 'Both models use class weighting' and 'equal effort' for fair comparison. The intent is clear, and the detail does not invalidate the hypothesis test.\n\nF7 (Feature Audit, Severity 2): The critic notes the audit document is not provided. Section 8 states 'A document lists the computation time...'. The methodology includes the control; the absence of the appendix in the text does not negate the design control.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The PoC scope (Section 9) explicitly limits conclusions to 'this specific task and data period' using 'operational ground truth'. External validation against police reports or merchant data is outside the scope of a relative model comparison PoC. The design is sound for its stated objective."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Section 9 explicitly states ablations are needed to isolate mechanism and are not part of this design. The experiment's goal is performance comparison, not mechanism isolation. The critique requests a different experiment than the one defined."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The metric is chosen to answer the specific business question defined in Section 1 (fixed review budget). Secondary metrics cover broader tradeoffs. The design deliberately prioritizes operational relevance over academic ranking metrics."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Section 3 and 8 explicitly include distribution verification and temporal stability checks as controls. The design mandates verifying distributions to detect unexpected shifts, which is the appropriate control for a PoC."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "Exclusion of censored labels is a necessary control for label integrity (Section 2), prioritizing ground truth quality over data volume. This trade-off is standard in fraud detection to avoid label noise."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "This is a documentation detail. The design states 'Both models use class weighting' and 'equal effort' for fair comparison. The intent is clear, and the specific hyperparameter value does not invalidate the hypothesis test."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Section 8 explicitly mandates the audit as a control ('A document lists the computation time...'). The methodology includes the control; the absence of the appendix in the text does not negate the design control."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been rebutted with adjusted severity \u2264 3. The methodology is sound for its stated scope and objectives, and the critique either requests out-of-scope validation (F1, F2) or asks for documentation details rather than identifying design flaws (F3-F7)."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal invokes scope limitation (Section 9) to limit conclusions. However, my finding\u6307\u63a7 the label mechanism itself is flawed - chargeback-based labels create unknown label noise (false negatives: fraud detected and blocked before chargeback; false positives: chargebacks for non-fraud reasons like customer disputes). The scope statement does not address whether both models are equally affected by this label noise, or whether the comparison metric ('recall') actually measures fraud detection or chargeback filed rate. The mechanism of the flaw (label noise) is unaddressed. A scope statement cannot remediate a flaw in the label definition itself."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal correctly cites Section 9 (ablations are outside scope). However, my finding is that the comparison is fundamentally unfair because the transformer receives raw sequences (10-30 transactions per account) while the baseline receives aggregates over those same transactions. This is an architectural confound: any improvement could come from (a) the transformer architecture, (b) access to more granular features, or (c) learning complex feature interactions automatically. The scope statement does not resolve this confound - it merely accepts that the experiment cannot isolate the mechanism. The severity adjustment to 2 is disproportionate given that this flaw prevents the hypothesis ('transformer outperforms gradient-boosted baseline') from being interpretable as an architecture claim."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal justifies the metric choice by the specific business question (fixed review budget). This provides some mechanistic rationale: evaluating at the operational threshold is relevant. However, my finding also noted that different FPR thresholds within the 2-5% range could yield different winner conclusions, and the design does not explore this sensitivity. The rebuttal does not address the threshold sensitivity concern, only the single-point choice. The severity adjustment to 2 is too severe given the unaddressed sensitivity concern."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal cites distribution verification and stability checks in Sections 3 and 8. However, my finding specified that the design does not define (a) what magnitude of shift triggers concern, (b) how shift is handled in model selection, or (c) whether transformer and baseline are equally robust to shift. The rebuttal asserts that verification is the 'appropriate control' but does not specify what the control actually does. The mechanism (handling of distribution shift) is unaddressed. Verification without defined thresholds and actions is incomplete."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal frames the 120-day window exclusion as a 'necessary control for label integrity' and cites standard practice. This addresses part of the mechanism (censoring is intentional to avoid label noise). However, my finding was about selection bias: if the excluded transactions in months 22-24 differ systematically from earlier periods (e.g., seasonal fraud, new merchant categories), the test set has different fraud patterns than training/validation. The rebuttal does not provide analysis showing that excluded transactions are comparable to included ones. The bias concern is not resolved."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal frames this as a 'documentation detail' and 'minor.' However, my finding was that different loss functions (focal loss vs. simple class weights) confound the architecture comparison. If the transformer uses focal loss while the baseline uses inverse frequency weighting, they are not comparing architectures - they are comparing loss functions that happen to be embedded in different architectures. The rebuttal does not address whether both models use the same weighting scheme. The fairness of comparison is not resolved by noting it is a documentation issue."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly points to Section 8 which explicitly mandates the feature timing audit as a control. The design includes this control even if the audit itself is not reproduced in the methodology text. This meets the standard for ACCEPT: the design includes the control mechanism, and its absence from the text is not evidence it was omitted from the design. The control exists."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic's R2 challenges reveal that several R1 rebuttals overstated what the design controls. For F1-F6, the design has partial controls but cannot fully eliminate the concerns without empirical validation. I am switching from REBUT-SCOPE/REBUT-DESIGN to DEFER for these findings, as the design has a partial answer but the magnitude needs empirical resolution. F7 is ACCEPTED as the design explicitly includes the feature timing audit control. The overall verdict is empirical_test_agreed because multiple findings are deferred pending empirical resolution, and no FATAL findings remain CONCEDEd.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly identifies that a scope statement cannot remediate a fundamental label quality issue. The design uses the same chargeback-based labels for both models, so the relative comparison should remain valid IF the noise is symmetric. However, we cannot assume symmetry without empirical evidence. The primary conclusion (which model performs better) can survive if the label noise affects both models equally, even if absolute metrics are biased.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that the comparison confounds architecture with feature representation. Section 9 explicitly states ablations are outside scope, which is legitimate for a performance comparison experiment. However, the hypothesis mentions 'sequence modeling' which the design doesn't isolate. The experiment can validate 'transformer outperforms baseline' without isolating why, but we cannot claim the advantage is from architecture alone.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly notes that the design doesn't explore threshold sensitivity within the 2-5% range. The metric is operationally relevant for the stated business question, but we cannot assume the ranking is consistent across the entire operational range without empirical testing. The primary conclusion survives if the ranking is stable across the 2-5% FPR band.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly identifies that verification without defined thresholds and actions is incomplete. Section 3 and 8 mandate distribution checks, but don't specify what magnitude triggers concern or how it's handled. The design has a partial control (verification exists) but cannot eliminate the concern without empirical quantification of shift magnitude and model robustness.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that the design doesn't analyze whether excluded transactions differ systematically from included ones. The 120-day exclusion is a necessary control for label integrity, but creates potential selection bias if excluded transactions have different fraud patterns. The primary conclusion survives if the bias affects both models equally.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critic correctly identifies that different loss functions would confound the architecture comparison. The design states 'both models use class weighting' but doesn't specify identical schemes. This is a genuine design gap that requires empirical validation. The primary conclusion survives if the ranking is consistent across weighting schemes.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic correctly accepts that Section 8 explicitly mandates the feature timing audit as a control. The design includes this control even if the audit itself is not reproduced in the methodology text. The absence of the appendix does not negate the design control.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Multiple findings are deferred pending empirical validation (F1-F6), which is the correct outcome for genuinely ambiguous questions where both parties have valid points. No FATAL findings are CONCEDEd, and the design has partial controls for all concerns. The verdict reflects that reasonable people can disagree and empirical evidence is the right arbiter."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label definition (sustained chargeback within 120 days) accurately captures all fraudulent transactions and only fraudulent transactions.",
+        "failure_mechanism": "Chargeback-based labels are a proxy for fraud, not ground truth. Not all fraud results in chargebacks (some is detected and blocked earlier), and not all chargebacks represent fraud (customer disputes, family fraud, 'friendly' fraud). This creates label noise: false negatives (fraud not labeled as fraud) and false positives (chargeback but not fraud). The magnitude of this mislabeling is unknown and could differ across time periods if customer behavior or dispute patterns change.",
+        "evidence_test": "Audit a random sample of transactions labeled 'fraud' and 'legitimate' against external fraud detection signals (e.g., confirmed fraud cases from investigations, police reports, merchant collaboration). Estimate false positive and false negative rates in the label. Compare label quality across train/val/test periods.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between transformer and gradient-boosted baseline is fair because both receive the same raw data and time window access.",
+        "failure_mechanism": "The transformer receives raw transaction sequences (last 10-30 transactions per account) while the baseline receives hand-engineered aggregates. This is an unfair comparison: any performance difference could be due to (a) the sequence modeling architecture, (b) access to more granular transaction-level information, or (c) the transformer's ability to learn complex feature interactions automatically rather than relying on human-engineered aggregates. The experiment cannot isolate which factor drives improvement. The hypothesis explicitly targets 'sequence modeling' but the design conflates architecture with feature representation.",
+        "evidence_test": "Run ablations: (1) gradient-boosted trees on the same raw sequence features the transformer uses, and (2) transformer on the same aggregate features the baseline uses. If transformer still outperforms in both cases, the architecture matters. If only outperforms when using raw sequences, the advantage is from feature representation, not architecture.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The evaluation metric (PR-AUC at fixed FPR of 2-5%) is sufficient to determine operational success.",
+        "failure_mechanism": "PR-AUC at a single fixed FPR evaluates performance at one operating point, not overall ranking ability. The choice of 2-5% FPR is arbitrary \u2014 different thresholds within this range could yield different winner conclusions. More critically, this metric does not capture the full operational tradeoff: a model that performs well at 2% FPR may perform poorly at 5% FPR, and the business may need to operate at different FPRs as review capacity changes. The metric also treats all false positives identically, but operational cost may vary (e.g., blocking a high-value legitimate transaction vs. flagging a low-value one).",
+        "evidence_test": "Report precision-recall curves across the full FPR range (0-20%). Compare models at multiple operational FPR points (1%, 2%, 5%, 10%). If conclusions change across FPR points, report this sensitivity. Consider weighted precision that accounts for transaction value or customer impact.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Temporal split (train months 1-12, val 13-16, test 17-24) with distribution checks is sufficient to ensure valid comparison.",
+        "failure_mechanism": "The design mentions checking 'fraud rates and feature distributions' across splits but does not specify: (a) what magnitude of shift triggers concern, (b) how shift is handled in model selection, or (c) whether the transformer and baseline are equally robust to shift. Complex models like transformers are often more sensitive to distribution shift than simpler models. If fraud patterns evolve significantly between training and test periods, the test set may not reflect the model's true deployment performance. The out-of-time degradation analysis (comparing months 17-20 vs 21-24) is a secondary metric, not used for model selection.",
+        "evidence_test": "Quantify distribution shift using statistical tests (KS test for continuous features, chi-square for categorical) between train/val/test. Report shift magnitude for key features. Test model performance under simulated distribution shift (e.g., inject synthetic fraud pattern changes). Compare robustness of both models to shift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 120-day chargeback window for label definition does not introduce bias.",
+        "failure_mechanism": "Transactions occurring in the final 120 days of the study period (approximately months 22-24) are excluded from the dataset because their fraud status is unknown (censored labels). If fraud patterns or transaction types in these final months differ systematically from earlier periods (e.g., seasonal fraud campaigns, new merchant categories), excluding them creates selection bias. The test set (months 17-24) is affected by this exclusion more than training (months 1-12), as the most recent months have the highest proportion of censored transactions.",
+        "evidence_test": "Analyze the proportion of transactions excluded per month. Compare fraud rates and feature distributions between included and excluded transactions (where observable). If excluded transactions differ significantly, report this as a limitation and consider sensitivity analysis with alternative windows (60-day, 180-day).",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Both models use class weighting to handle imbalance, ensuring fair comparison.",
+        "failure_mechanism": "The design states both models use 'class weighting' but does not specify the weighting scheme (e.g., inverse frequency, effective number of samples, focal loss parameters). Different weighting strategies can significantly impact precision-recall tradeoffs. If the transformer uses focal loss while the baseline uses simple class weights, the comparison is confounded by different loss functions, not just architecture.",
+        "evidence_test": "Use identical class weighting scheme for both models. Report the exact weighting strategy and hyperparameters. If using focal loss for transformer, implement equivalent focal loss for baseline to isolate architecture effects.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The feature timing audit ensures no post-transaction leakage.",
+        "failure_mechanism": "While the design includes a 'feature timing audit' to ensure only authorization-time features are used, the document does not provide this audit. Without seeing the explicit list of features and their computation times, it's impossible to verify that: (a) aggregate features truly use only past information, (b) the transformer's sequence features don't include future transactions, (c) IP-inferred geolocation is computed at authorization time and not updated post-hoc.",
+        "evidence_test": "Include the feature timing audit document as an appendix. For each feature, specify: exact computation time, data source, and whether any look-ahead bias is possible. Have a second reviewer verify the audit.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "This PoC has significant methodology flaws that would require resolution before the experiment can produce interpretable results. The most critical are: (1) chargeback-based labels are an unverified proxy for ground-truth fraud, (2) the comparison between transformer and baseline is unfair because they use different feature representations (raw sequences vs aggregates), making it impossible to isolate whether any improvement comes from architecture or data, and (3) the evaluation metric evaluates a single arbitrary operating point rather than overall ranking ability. These issues would need to be addressed before the experiment could meaningfully test the stated hypothesis.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic's R2 challenges reveal that several R1 rebuttals overstated what the design controls. For F1-F6, the design has partial controls but cannot fully eliminate the concerns without empirical validation. I am switching from REBUT-SCOPE/REBUT-DESIGN to DEFER for these findings, as the design has a partial answer but the magnitude needs empirical resolution. F7 is ACCEPTED as the design explicitly includes the feature timing audit control. The overall verdict is empirical_test_agreed because multiple findings are deferred pending empirical resolution, and no FATAL findings remain CONCEDEd.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly identifies that a scope statement cannot remediate a fundamental label quality issue. The design uses the same chargeback-based labels for both models, so the relative comparison should remain valid IF the noise is symmetric. However, we cannot assume symmetry without empirical evidence. The primary conclusion (which model performs better) can survive if the label noise affects both models equally, even if absolute metrics are biased.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that the comparison confounds architecture with feature representation. Section 9 explicitly states ablations are outside scope, which is legitimate for a performance comparison experiment. However, the hypothesis mentions 'sequence modeling' which the design doesn't isolate. The experiment can validate 'transformer outperforms baseline' without isolating why, but we cannot claim the advantage is from architecture alone.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly notes that the design doesn't explore threshold sensitivity within the 2-5% range. The metric is operationally relevant for the stated business question, but we cannot assume the ranking is consistent across the entire operational range without empirical testing. The primary conclusion survives if the ranking is stable across the 2-5% FPR band.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly identifies that verification without defined thresholds and actions is incomplete. Section 3 and 8 mandate distribution checks, but don't specify what magnitude triggers concern or how it's handled. The design has a partial control (verification exists) but cannot eliminate the concern without empirical quantification of shift magnitude and model robustness.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that the design doesn't analyze whether excluded transactions differ systematically from included ones. The 120-day exclusion is a necessary control for label integrity, but creates potential selection bias if excluded transactions have different fraud patterns. The primary conclusion survives if the bias affects both models equally.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critic correctly identifies that different loss functions would confound the architecture comparison. The design states 'both models use class weighting' but doesn't specify identical schemes. This is a genuine design gap that requires empirical validation. The primary conclusion survives if the ranking is consistent across weighting schemes.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic correctly accepts that Section 8 explicitly mandates the feature timing audit as a control. The design includes this control even if the audit itself is not reproduced in the methodology text. The absence of the appendix does not negate the design control.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Multiple findings are deferred pending empirical validation (F1-F6), which is the correct outcome for genuinely ambiguous questions where both parties have valid points. No FATAL findings are CONCEDEd, and the design has partial controls for all concerns. The verdict reflects that reasonable people can disagree and empirical evidence is the right arbiter."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "5 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

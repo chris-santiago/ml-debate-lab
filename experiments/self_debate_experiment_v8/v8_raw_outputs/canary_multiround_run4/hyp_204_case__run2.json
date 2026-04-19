@@ -1,0 +1,411 @@
+{
+  "case_id": "hyp_204_case",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The label definition (requiring a ticket opened within 24h, high/critical severity, and open >4h, with a 30-day maturation window) provides a clean, unbiased ground truth for high\u2011priority incidents.",
+        "failure_mechanism": "By discarding alerts that do not meet the strict criteria (e.g., fast\u2011resolved true positives, delayed analyst decisions >30d, or tickets closed quickly but still genuine), the labeled set suffers from survivorship bias. This makes the remaining incidents easier to rank (e.g., longer\u2011lasting events may be more correlated with features), inflating Recall@5 and attributing performance to the model when it is partly due to label selection.",
+        "evidence_test": "Compare model performance on the labeled set versus the excluded set (using a provisional label such as any ticket opened within 24h regardless of duration or resolution). A substantial drop in Recall@5 when including the excluded alerts would confirm selection bias.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The extended features (ticket count, median resolution time, median severity from the past 7 days on the same host) contain only information available at triage time and do not leak the label.",
+        "failure_mechanism": "If the current alert results in a ticket, that ticket falls within the same 7\u2011day window, causing the ticket\u2011count and severity statistics to be directly influenced by the label being predicted. This creates a leakage path whereby the model can infer the label from the features, artificially boosting ranking performance independent of the LambdaMART objective.",
+        "evidence_test": "Re\u2011compute the ticket\u2011based features using a lagged window that ends strictly before the alert timestamp (e.g., past 7 days ending at t\u20111 second) and measure the change in feature\u2011label correlation and test\u2011set Recall@5. A significant performance decrease indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The analyst behavior features (rule\u2011specific count and escalation rate over the past 30 days) reflect historical analyst behavior and do not incorporate information from the current alert.",
+        "failure_mechanism": "The current alert increments the count for its rule; if the alert is labeled high\u2011priority, it may also be more likely to be escalated, thus the escalation rate and count become partially dependent on the label. This provides indirect label leakage that can inflate the ranking model\u2019s apparent effectiveness.",
+        "evidence_test": "Re\u2011compute the analyst behavior features using a window that ends before the alert timestamp (e.g., past 30 days excluding the current day) and evaluate Recall@5. A noticeable drop would confirm leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hyperparameters tuned on the validation set (months 15\u201118) to maximize Recall@5 will generalize to the held\u2011out test set (months 19\u201124).",
+        "failure_mechanism": "Abrupt shifts in attacker tactics, detection rule updates, or analyst behavior within the validation period can cause the validation\u2011optimized hyperparameters to overfit to transient patterns. When these patterns do not persist in the test period, the reported Recall@5 will be overly optimistic.",
+        "evidence_test": "Plot Recall@5 per month across the entire 24\u2011month span (including training, validation, and test). If validation performance is markedly higher than the subsequent test months, or if a model trained on months 1\u201114 shows monotonic degradation month\u2011over\u2011month, this indicates validation overfitting due to concept drift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Grouping alerts by host and 24\u2011hour window guarantees independence between groups and prevents any temporal leakage across the train/validation/test splits.",
+        "failure_mechanism": "Alerts occurring near a split boundary (e.g., just before midnight) can have their 24\u2011hour window straddle the boundary, incorporating alerts from the future period into features such as host risk score or recent alert count. This violates the strict chronological split and leaks future information into training.",
+        "evidence_test": "Audit the timestamps of alerts relative to the split boundaries; for any alert whose 24\u2011hour window includes alerts from a later split, flag it as a potential leak. Quantify the proportion of such alerts and assess feature dependence on future data.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The logistic regression baseline on the baseline feature set provides a sufficient lower bound to demonstrate that learning\u2011to\u2011rank adds value beyond a simple classifier.",
+        "failure_mechanism": "A weak baseline (e.g., logistic regression on limited features) may make the ranking model appear superior even if the ranking objective itself offers little gain. A stronger heuristic baseline (such as ranking by vendor severity score or alert count) might already achieve high Recall@5, diminishing the perceived advantage of LambdaMART.",
+        "evidence_test": "Compute Recall@5 for simple heuristic baselines (e.g., descending vendor severity, descending host alert count) on the test set and compare to the LambdaMART model. If the heuristic performs within a small margin of the model, the claimed benefit of learning\u2011to\u2011rank is questionable.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC relies on several unverified assumptions: label selection bias, potential feature leakage via ticket and analyst behavior features, and possible overfitting to temporal patterns in the validation set. While the design includes many controls, these flaws could materially affect the conclusion that learning\u2011to\u2011rank outperforms binary classification for SOC alert triage.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Let me analyze each finding systematically:\n\n**F1 (MATERIAL):** The critic claims survivorship bias in label definition. However, the label criteria (ticket within 24h, high/critical severity, open >4h) reflect what the enterprise actually treats as high-priority incidents - this is a deliberate design choice, not an oversight. Both ranking and classification models use identical labels, so the relative comparison remains valid. The concern about absolute performance inflation is real but does not invalidate the comparative hypothesis.\n\n**F2 (FATAL):** The critic correctly identifies that ticket-based features (count, median resolution time, median severity from past 7 days on same host) can include the current alert's ticket if one was created. This creates direct label leakage - if the alert generated a ticket, the feature immediately reflects the label. The methodology does not implement any lag to exclude current-alert information.\n\n**F3 (FATAL):** Similar to F2, analyst behavior features (rule-specific count and escalation rate over past 30 days) include the current alert's contribution. If the current alert is high-priority, it increments the count and potentially the escalation rate, creating indirect leakage.\n\n**F4 (MATERIAL):** The critic raises a valid concern about validation overfitting due to concept drift. The methodology includes a partial control (stratification by test-set month) but this only detects drift after it occurs, not prevent hyperparameter overfitting to transient validation patterns. The magnitude of this concern is empirically uncertain.\n\n**F5 (MINOR):** The concern about 24-hour windows straddling temporal split boundaries is technically valid but represents edge cases. The primary temporal split (months 1-14/15-18/19-24) is maintained at the alert level; the 24-hour windowing is for ranking within groups.\n\n**F6 (MATERIAL):** The methodology explicitly includes an ablation study (LambdaMART on baseline features only) to isolate ranking gains from feature gains. This directly addresses the critic's concern about weak baselines.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The label definition is a deliberate operational choice reflecting what the enterprise treats as high-priority incidents (ticket within 24h, high/critical severity, open >4h). This is not survivorship bias but rather defining the target variable precisely. Both ranking and classification models use identical labels, preserving the validity of the comparative conclusion. The concern about absolute performance inflation does not affect the relative ranking-vs-classification comparison."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies that ticket-based features (ticket count, median resolution time, median severity from past 7 days on same host) can include information from the current alert's ticket if one was created within that window. This creates direct label leakage - the feature directly reflects whether a ticket exists for the current alert. No lag mechanism is implemented to exclude current-alert information. This is a genuine FATAL flaw that would artificially inflate ranking performance."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The analyst behavior features (rule-specific count and escalation rate over past 30 days) include the current alert's contribution. If the current alert is labeled high-priority, it increments the count and potentially influences the escalation rate, creating indirect label leakage. The methodology does not implement any temporal exclusion (e.g., ending the window before the current day). This is a genuine FATAL flaw."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The methodology includes a partial control (stratification by test-set month to detect drift), but this only monitors rather than prevents validation overfitting. The settling experiment would be: train on months 1-14 only, then evaluate month-over-month Recall@5 to detect monotonic degradation. If degradation is gradual and monotonic, the concern is minor; if there's a sharp drop from validation to test, the concern is validated. The design has a mitigation but the magnitude of the concern is empirically uncertain."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The concern about 24-hour windows straddling temporal split boundaries is technically valid but represents edge cases at boundary timestamps. The primary chronological split (months 1-14/15-18/19-24) is maintained at the alert level. The 24-hour windowing is for ranking within groups (alerts on same host within 24 hours), not for defining the train/validation/test split. This does not materially affect the experiment's conclusions."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly includes an ablation study (LambdaMART on baseline features only, no text or ticket history) to verify that performance gains come from the ranking objective, not richer features. This directly addresses the critic's concern. The comparison between LambdaMART-baseline and logistic-regression-baseline isolates the ranking-vs-classification question. Adding heuristic baselines (vendor severity ranking) would be a useful extension but is not required to test the core hypothesis."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL findings (F2 and F3) were CONCEDed - both identify genuine label leakage in the extended features (ticket-based features and analyst behavior features). These findings remain at adjusted severity 9, which exceeds the threshold for EXONERATE. The verdict is critique_wins because material findings with adjusted severity \u2265 7 were conceded. The methodology requires empirical revision to implement proper temporal lagging on the extended features before the hypothesis can be reliably tested."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender argues that the label definition is a deliberate operational target and that both models share identical labels, preserving the comparative conclusion. However, this does not address the survivorship bias mechanism: by discarding fast\u2011resolved true positives and delayed decisions, the remaining incident set may be easier to rank (e.g., longer\u2011lasting events more correlated with features), inflating Recall@5 independent of model merit. No mechanistic explanation or evidence is provided that the selected set does not correlate with ranking\u2011predictive features, so the concern remains unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "justification": "The defender concedes that ticket\u2011based features can include the current alert\u2019s ticket, confirming direct label leakage. This directly matches the failure mechanism and validates the FATAL severity."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "justification": "The defender concedes that analyst behavior features include the current alert\u2019s contribution, creating indirect label leakage. This directly matches the failure mechanism and validates the FATAL severity."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender notes that the design includes a partial control (month\u2011by\u2011month stratification) that only monitors drift rather than preventing validation overfitting, and acknowledges that the magnitude of the concern is empirically uncertain. This partially addresses the concern but leaves unresolved whether validation\u2011optimized hyperparameters overfit to transient patterns, so a residual risk remains."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The defender dismisses the boundary\u2011window issue as edge cases and asserts that the primary chronological split is maintained at the alert level, but provides no evidence that the proportion of alerts whose 24\u2011hour windows cross split boundaries is negligible or that features like host risk score are unaffected. The failure mechanism\u2014future data leaking into features via the 24\u2011hour window\u2014remains unaddressed, so the concern persists."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender points to the ablation study (LambdaMART on baseline features only) to show that gains come from ranking, not richer features, but does not address the critic\u2019s point about a weak logistic regression baseline. The concern that a stronger heuristic baseline (e.g., ranking by vendor severity) might already achieve high Recall@5, diminishing the perceived advantage of LambdaMART, is left unanswered. Thus the rebuttal fails to engage with the specific failure mechanism."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am accepting the conceded findings (F2, F3) unchanged. For F1, F5, and F6, I am strengthening my rebuttals with clearer mechanistic explanations of how the design addresses the concerns. For F4, the critic's PARTIAL verdict acknowledges my partial control; I will clarify why the existing month-by-month stratification qualifies as the settling experiment and why the primary conclusion survives even if the concern is validated.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic challenges that survivorship bias inflates Recall@5, but this conflates absolute performance with relative comparison. The design uses IDENTICAL labels for both ranking and classification models - any inflation from survivorship bias (e.g., longer-lasting events being easier to rank) affects BOTH models equally because they train and test on the same labeled set. The comparative conclusion (ranking vs classification) remains valid regardless of absolute performance inflation. The label definition is a deliberate operational target (what the enterprise treats as high-priority), not an artifact. The design controls for this through identical label usage, not through changing the label definition.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies that ticket-based features (ticket count, median resolution time, median severity from past 7 days on same host) can include information from the current alert's ticket if one was created within that 7-day window. This creates direct label leakage - the feature directly reflects whether a ticket exists for the current alert, which is the label being predicted. No lag mechanism is implemented to exclude current-alert information. This FATAL flaw is confirmed.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The analyst behavior features (rule-specific count and escalation rate over past 30 days) include the current alert's contribution. If the current alert is labeled high-priority, it increments the count and potentially influences the escalation rate, creating indirect label leakage. The methodology does not implement any temporal exclusion (e.g., ending the window before the current day). This FATAL flaw is confirmed.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The design explicitly includes month-by-month stratification in the test set to detect drift - this IS the settling experiment. The experiment: train on months 1-14 only, then evaluate Recall@5 month-over-month. If validation performance is markedly higher than subsequent test months, the concern is validated. Importantly, the PRIMARY CONCLUSION survives if the critique is correct: if validation overfitting occurs, both the ranking model and classification model would be affected (both are tuned on the same validation set using the same metric), so the relative comparison remains valid. The absolute Recall@5 may be optimistic, but the relative ranking-vs-classification conclusion is robust to asymmetric overfitting because both models undergo identical validation tuning. The design has a partial control (monitoring) that provides empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic challenges that 24-hour windows straddling temporal split boundaries leak future information. However, the design implements the temporal split at the alert level (months 1-14/15-18/19-24), not at the window level. The 24-hour windowing is used ONLY for ranking within groups (alerts on the same host within a 24-hour period) - it does not define the train/validation/test split. Features like 'host risk score' and 'alert count on host in past 24 hours' are computed relative to each alert's own timestamp, not relative to the split boundary. An alert at 11pm on March 31 uses a window ending at 11pm March 31 - it does NOT use data from April 1. The chronological split is enforced at the alert timestamp level, which eliminates the mechanism the critic describes. This is a specific design control that prevents the failure mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic challenges that the logistic regression baseline is weak and that heuristic baselines (vendor severity ranking) might achieve similar Recall@5. However, the scope of this experiment is to compare learning-to-rank vs binary classification on the SAME feature set - not to beat all possible heuristics. The design includes appropriate baselines for this scope: (1) logistic regression on baseline features, (2) LambdaMART on baseline features (ablation), and (3) LambdaMART on extended features (the main comparison). The comparison between LambdaMART-baseline and logistic-regression-baseline isolates the ranking-vs-classification question. Adding heuristic baselines would be a useful extension but is outside the defined scope. The ablation study already addresses whether richer features or the ranking objective drive performance gains.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL findings (F2, F3) were conceded and remain at adjusted_severity 9 - these are confirmed label leakage flaws that invalidate the experiment's primary conclusion. The remaining findings are successfully rebutted or deferred, but the presence of two conceded FATAL findings means the critique prevails on the most material issues."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The label definition (requiring a ticket opened within 24h, high/critical severity, and open >4h, with a 30-day maturation window) provides a clean, unbiased ground truth for high\u2011priority incidents.",
+        "failure_mechanism": "By discarding alerts that do not meet the strict criteria (e.g., fast\u2011resolved true positives, delayed analyst decisions >30d, or tickets closed quickly but still genuine), the labeled set suffers from survivorship bias. This makes the remaining incidents easier to rank (e.g., longer\u2011lasting events may be more correlated with features), inflating Recall@5 and attributing performance to the model when it is partly due to label selection.",
+        "evidence_test": "Compare model performance on the labeled set versus the excluded set (using a provisional label such as any ticket opened within 24h regardless of duration or resolution). A substantial drop in Recall@5 when including the excluded alerts would confirm selection bias.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The extended features (ticket count, median resolution time, median severity from the past 7 days on the same host) contain only information available at triage time and do not leak the label.",
+        "failure_mechanism": "If the current alert results in a ticket, that ticket falls within the same 7\u2011day window, causing the ticket\u2011count and severity statistics to be directly influenced by the label being predicted. This creates a leakage path whereby the model can infer the label from the features, artificially boosting ranking performance independent of the LambdaMART objective.",
+        "evidence_test": "Re\u2011compute the ticket\u2011based features using a lagged window that ends strictly before the alert timestamp (e.g., past 7 days ending at t\u20111 second) and measure the change in feature\u2011label correlation and test\u2011set Recall@5. A significant performance decrease indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The analyst behavior features (rule\u2011specific count and escalation rate over the past 30 days) reflect historical analyst behavior and do not incorporate information from the current alert.",
+        "failure_mechanism": "The current alert increments the count for its rule; if the alert is labeled high\u2011priority, it may also be more likely to be escalated, thus the escalation rate and count become partially dependent on the label. This provides indirect label leakage that can inflate the ranking model\u2019s apparent effectiveness.",
+        "evidence_test": "Re\u2011compute the analyst behavior features using a window that ends before the alert timestamp (e.g., past 30 days excluding the current day) and evaluate Recall@5. A noticeable drop would confirm leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hyperparameters tuned on the validation set (months 15\u201118) to maximize Recall@5 will generalize to the held\u2011out test set (months 19\u201124).",
+        "failure_mechanism": "Abrupt shifts in attacker tactics, detection rule updates, or analyst behavior within the validation period can cause the validation\u2011optimized hyperparameters to overfit to transient patterns. When these patterns do not persist in the test period, the reported Recall@5 will be overly optimistic.",
+        "evidence_test": "Plot Recall@5 per month across the entire 24\u2011month span (including training, validation, and test). If validation performance is markedly higher than the subsequent test months, or if a model trained on months 1\u201114 shows monotonic degradation month\u2011over\u2011month, this indicates validation overfitting due to concept drift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Grouping alerts by host and 24\u2011hour window guarantees independence between groups and prevents any temporal leakage across the train/validation/test splits.",
+        "failure_mechanism": "Alerts occurring near a split boundary (e.g., just before midnight) can have their 24\u2011hour window straddle the boundary, incorporating alerts from the future period into features such as host risk score or recent alert count. This violates the strict chronological split and leaks future information into training.",
+        "evidence_test": "Audit the timestamps of alerts relative to the split boundaries; for any alert whose 24\u2011hour window includes alerts from a later split, flag it as a potential leak. Quantify the proportion of such alerts and assess feature dependence on future data.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The logistic regression baseline on the baseline feature set provides a sufficient lower bound to demonstrate that learning\u2011to\u2011rank adds value beyond a simple classifier.",
+        "failure_mechanism": "A weak baseline (e.g., logistic regression on limited features) may make the ranking model appear superior even if the ranking objective itself offers little gain. A stronger heuristic baseline (such as ranking by vendor severity score or alert count) might already achieve high Recall@5, diminishing the perceived advantage of LambdaMART.",
+        "evidence_test": "Compute Recall@5 for simple heuristic baselines (e.g., descending vendor severity, descending host alert count) on the test set and compare to the LambdaMART model. If the heuristic performs within a small margin of the model, the claimed benefit of learning\u2011to\u2011rank is questionable.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC relies on several unverified assumptions: label selection bias, potential feature leakage via ticket and analyst behavior features, and possible overfitting to temporal patterns in the validation set. While the design includes many controls, these flaws could materially affect the conclusion that learning\u2011to\u2011rank outperforms binary classification for SOC alert triage.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am accepting the conceded findings (F2, F3) unchanged. For F1, F5, and F6, I am strengthening my rebuttals with clearer mechanistic explanations of how the design addresses the concerns. For F4, the critic's PARTIAL verdict acknowledges my partial control; I will clarify why the existing month-by-month stratification qualifies as the settling experiment and why the primary conclusion survives even if the concern is validated.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic challenges that survivorship bias inflates Recall@5, but this conflates absolute performance with relative comparison. The design uses IDENTICAL labels for both ranking and classification models - any inflation from survivorship bias (e.g., longer-lasting events being easier to rank) affects BOTH models equally because they train and test on the same labeled set. The comparative conclusion (ranking vs classification) remains valid regardless of absolute performance inflation. The label definition is a deliberate operational target (what the enterprise treats as high-priority), not an artifact. The design controls for this through identical label usage, not through changing the label definition.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies that ticket-based features (ticket count, median resolution time, median severity from past 7 days on same host) can include information from the current alert's ticket if one was created within that 7-day window. This creates direct label leakage - the feature directly reflects whether a ticket exists for the current alert, which is the label being predicted. No lag mechanism is implemented to exclude current-alert information. This FATAL flaw is confirmed.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The analyst behavior features (rule-specific count and escalation rate over past 30 days) include the current alert's contribution. If the current alert is labeled high-priority, it increments the count and potentially influences the escalation rate, creating indirect label leakage. The methodology does not implement any temporal exclusion (e.g., ending the window before the current day). This FATAL flaw is confirmed.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The design explicitly includes month-by-month stratification in the test set to detect drift - this IS the settling experiment. The experiment: train on months 1-14 only, then evaluate Recall@5 month-over-month. If validation performance is markedly higher than subsequent test months, the concern is validated. Importantly, the PRIMARY CONCLUSION survives if the critique is correct: if validation overfitting occurs, both the ranking model and classification model would be affected (both are tuned on the same validation set using the same metric), so the relative comparison remains valid. The absolute Recall@5 may be optimistic, but the relative ranking-vs-classification conclusion is robust to asymmetric overfitting because both models undergo identical validation tuning. The design has a partial control (monitoring) that provides empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic challenges that 24-hour windows straddling temporal split boundaries leak future information. However, the design implements the temporal split at the alert level (months 1-14/15-18/19-24), not at the window level. The 24-hour windowing is used ONLY for ranking within groups (alerts on the same host within a 24-hour period) - it does not define the train/validation/test split. Features like 'host risk score' and 'alert count on host in past 24 hours' are computed relative to each alert's own timestamp, not relative to the split boundary. An alert at 11pm on March 31 uses a window ending at 11pm March 31 - it does NOT use data from April 1. The chronological split is enforced at the alert timestamp level, which eliminates the mechanism the critic describes. This is a specific design control that prevents the failure mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic challenges that the logistic regression baseline is weak and that heuristic baselines (vendor severity ranking) might achieve similar Recall@5. However, the scope of this experiment is to compare learning-to-rank vs binary classification on the SAME feature set - not to beat all possible heuristics. The design includes appropriate baselines for this scope: (1) logistic regression on baseline features, (2) LambdaMART on baseline features (ablation), and (3) LambdaMART on extended features (the main comparison). The comparison between LambdaMART-baseline and logistic-regression-baseline isolates the ranking-vs-classification question. Adding heuristic baselines would be a useful extension but is outside the defined scope. The ablation study already addresses whether richer features or the ranking objective drive performance gains.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL findings (F2, F3) were conceded and remain at adjusted_severity 9 - these are confirmed label leakage flaws that invalidate the experiment's primary conclusion. The remaining findings are successfully rebutted or deferred, but the presence of two conceded FATAL findings means the critique prevails on the most material issues."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

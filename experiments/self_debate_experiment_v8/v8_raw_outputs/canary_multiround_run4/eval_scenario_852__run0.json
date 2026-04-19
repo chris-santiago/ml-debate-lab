@@ -1,0 +1,352 @@
+{
+  "case_id": "eval_scenario_852",
+  "stratum": "regular",
+  "flaw_category": "eval_inflation",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split strategy prevents the model from seeing future campaigns during training.",
+        "failure_mechanism": "The PoC states that within each temporal fold (Train, Val, Test), data is 'further stratified by label'. In a time-series context, stratification usually involves shuffling the data to ensure class balance. If the data is shuffled within the 12-month training block and 3-month test block, but the 'Campaign leakage' check only happens *after* training, the model may have learned specific, short-lived campaign signatures that span the boundary of the split. More critically, if the 'stratification' process involves any global shuffling before the temporal split is applied, the temporal integrity is destroyed. Even with a strict temporal split, the 'Campaign leakage' control is reactive (reporting the proportion) rather than proactive (removing the leakage), meaning the final metrics will be inflated by the model's ability to memorize specific campaign IDs/strings that appear in both sets.",
+        "evidence_test": "Compare the PR-AUC of the model on the test set versus a 'Clean Test Set' where all emails sharing a sender, subject line, or URL with the training set have been purged. A significant drop in performance on the Clean Test Set confirms the model is memorizing campaigns rather than learning phishing semantics.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test set provides an unbiased estimate of production performance.",
+        "failure_mechanism": "The 'Final Validation' section describes partitioning the test period into two halves: the first for 'deployment-readiness confirmation' to verify the configuration, and the second for 'reported metrics'. Using the first half of the test set to 'verify' and potentially 'lock' the training recipe constitutes a second validation step. This is a form of data leakage (specifically, 'test-set leakage' or 'overfitting to the test set'). The final reported metrics are no longer from a blind holdout, as the model configuration was influenced by the first half of the test data.",
+        "evidence_test": "Compare the performance on the first half of the test set vs. the second half. If the second half is significantly lower, or if the 'confirmation pass' led to any change in hyperparameters or architecture, the test set has been contaminated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The comparison between the Transformer and BoW baseline is fair and isolates semantic benefit.",
+        "failure_mechanism": "The BoW baseline uses TF-IDF with a fixed `max_features = 10,000`. The Transformer uses a pretrained BERT-like model with a vocabulary typically around 30,000 tokens and high-dimensional embeddings. The BoW model is severely constrained by the feature limit, whereas the Transformer's 'capacity' to represent rare tokens (via subwords) is vastly higher. The performance gap may be a result of the arbitrary 10k feature cap on the baseline rather than the architectural superiority of the Transformer.",
+        "evidence_test": "Run the BoW baseline with an expanded vocabulary (e.g., 50k or 100k features) or use a character-level n-gram model to see if the performance gap closes.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The metadata features are properly scaled to prevent leakage.",
+        "failure_mechanism": "The PoC mentions scaling metadata features using statistics from the training set. However, 'Sender domain reputation' is defined as the 'fraction of emails from this domain labeled malicious in the training set'. This is a target-encoded feature. If the training set contains multiple emails from the same domain, the model can learn to associate a specific domain's historical maliciousness with the label. While the *scaler* is fit on train, the *feature value itself* is a leak of the target label within the training set, which often leads to overfitting on specific high-volume malicious senders that may not persist in the test set.",
+        "evidence_test": "Compare the model's performance on 'Known Senders' (domains seen in train) vs 'Unknown Senders' (domains appearing for the first time in test). A massive delta indicates the model is relying on target-leakage in the reputation feature rather than generalizable patterns.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "HTML tag stripping is sufficient preprocessing for the Transformer.",
+        "failure_mechanism": "Phishing attacks often use specific HTML obfuscation techniques (e.g., zero-width spaces, hidden divs, or CSS-based text manipulation) to bypass filters. By stripping all HTML tags and non-ASCII characters *before* the BERT tokenizer, the PoC removes the very signals (structural anomalies) that a Transformer could potentially use to identify a phishing attempt.",
+        "evidence_test": "Compare performance using the current preprocessing vs. a version that replaces HTML tags with special tokens (e.g., `<TAG>`) instead of stripping them.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains two FATAL flaws regarding data leakage: first, a reactive rather than proactive approach to campaign leakage in a temporal split, and second, the use of the test set for 'deployment-readiness confirmation' before final reporting. These issues likely inflate the reported performance metrics.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "## Pass 1 Analysis\n\n**F1 (Temporal Split & Campaign Leakage):** The critic claims stratification within temporal folds may shuffle data across time boundaries, breaking temporal integrity. However, the methodology explicitly applies a chronological split first (Train: Months 1-12, Test: Months 16-18), then stratifies by label *within* each temporal block. This is standard practice for maintaining class balance within a time-ordered split \u2014 it does NOT shuffle across time boundaries. The chronological split is the primary control; the campaign leakage check is secondary transparency. The critic's concern about \"global shuffling before temporal split\" is not supported by the methodology description. The design is sound.\n\n**F2 (Test Set Leakage via Final Validation):** The methodology partitions the test period into two random halves \u2014 first for \"deployment-readiness confirmation\" to verify configuration stability, second for reported metrics. This is ambiguous: if the confirmation step leads to any hyperparameter or architecture changes based on the first half of test data, that is test set leakage. However, if it's merely a verification step with no model changes, it's not leakage. The critical question is whether the validation set (months 13-15) already locked hyperparameters. The methodology states hyperparameters are tuned on validation, then the test period is partitioned. If the confirmation pass doesn't modify the locked configuration, there's no leakage. The concern is plausible but hinges on implementation details not specified.\n\n**F3 (BoW Baseline Capacity):** The critic correctly notes the BoW baseline uses max_features=10,000 while the Transformer has vastly higher capacity. This is an intentional design choice to create a \"simpler\" baseline that tests whether the Transformer's semantic understanding provides genuine benefit over simpler representation. The methodology explicitly states this intent. However, if the performance gap closes with expanded vocabulary, the conclusion would change. This is a valid concern about baseline adequacy, but it's a design choice with a clear rationale \u2014 not an inadvertent flaw.\n\n**F4 (Sender Reputation Target Leakage):** The critic correctly identifies that sender domain reputation (fraction of emails labeled malicious per domain in training) is a target-encoded feature that could cause overfitting to specific high-volume senders. The methodology explicitly addresses this with a control: a metadata-only baseline. If this baseline achieves >80% of the Transformer's PR-AUC, the conclusion is that sender reputation drives performance. This is a deliberate design choice with a built-in verification mechanism. The concern is acknowledged and controlled.\n\n**F5 (HTML Preprocessing):** The critic notes that stripping HTML removes structural signals (zero-width spaces, hidden divs) that could aid detection. However, the primary phishing signals (urgency language, impersonation attempts) are in the text itself. BERT can still capture semantic patterns. This is a minor preprocessing choice with uncertain impact. The evidence_test proposed would be informative but the concern is at MINOR level.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The temporal split is explicitly chronological: Train=Months 1-12, Test=Months 16-18. The methodology states 'within each temporal fold, the data is further stratified by label' \u2014 stratification maintains class balance within each time block, it does NOT shuffle across time boundaries. The chronological split is applied first, then stratification within folds. The critic's claim that 'global shuffling before the temporal split' would destroy temporal integrity is not supported by the methodology description. The design correctly prevents future campaigns from appearing in training by construction. The 'Campaign leakage' check is a transparency measure, not the primary control."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The methodology is ambiguous on whether the 'deployment-readiness confirmation' step can modify hyperparameters or architecture. If it can, this is test set leakage. The evidence_test (comparing first-half vs second-half performance) would settle this. If the second half is significantly lower, or if any changes resulted from the confirmation pass, the test set is contaminated. However, if the confirmation pass merely verifies a locked configuration without changes, there's no leakage. The design intent is unclear from the document \u2014 this requires empirical verification. The settling experiment would compare performance on first vs second half of test, and examine whether any hyperparameter changes occurred after the confirmation pass."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The 10,000 feature cap on BoW is a deliberate design choice, not an oversight. The methodology explicitly states the comparison 'isolates whether the transformer's semantic representation and fine-tuning provide genuine benefit over simpler text representation.' The constrained baseline tests whether architectural sophistication adds value over a simple approach. If the critic's evidence_test (expanding vocabulary) closes the gap, the conclusion would change \u2014 but that's a finding about baseline adequacy, not a flaw in the current design. The design choice is justified by the experiment's stated goal."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly acknowledges this concern and includes a control: 'A metadata-only baseline (no text, only sender reputation and structural features) is trained on the same splits. If this model achieves >80% of the transformer's test PR-AUC, the conclusion is that sender reputation, not semantic understanding, drives performance.' This is a proactive control that directly addresses the target-leakage concern. The design anticipates and tests for this confound. The critic's evidence_test (comparing known vs unknown senders) would provide additional insight, but the design already has a built-in verification mechanism."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The concern is valid but immaterial to the primary evaluation. The primary phishing signals (urgency language, impersonation attempts, suspicious requests) are semantic patterns in the text that BERT can capture. HTML obfuscation techniques are edge cases. The experiment's primary metric is PR-AUC on phishing detection \u2014 if stripping HTML materially affects this, it would be captured in the results. The proposed evidence_test would be informative but the impact is likely minimal relative to the experiment's core question about Transformer vs BoW performance."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F2 (test set leakage concern) has adjusted severity 7 and uses DEFER \u2014 the methodology is ambiguous on whether the deployment-readiness confirmation can modify hyperparameters, and this requires empirical verification (comparing first-half vs second-half test performance). F1 is rebutted via REBUT-DESIGN with adjusted severity 4 (temporal split is maintained by construction). F3, F4, and F5 are all effectively rebutted with adjusted severities \u2264 2. Since one finding uses DEFER and no FATAL findings were CONCEDEd, the verdict is empirical_test_agreed."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender successfully clarified that the temporal split precedes stratification, resolving the concern about global shuffling. However, the core failure mechanism regarding 'Campaign Leakage' remains: the control is reactive (reporting) rather than proactive (removing). If a campaign spans the boundary of Month 12 and Month 16, the model can memorize specific strings/IDs. Reporting the proportion of leaked clusters after the fact does not remove the inflation from the final PR-AUC. The severity is reduced because the temporal split is sound, but the leakage mechanism is not mitigated."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 7,
+        "reasoning": "The defender has deferred the finding, acknowledging the ambiguity and agreeing that the evidence test would resolve the issue. No counter-argument is needed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal is generic and circular. The defender argues that the 10k cap is a 'deliberate design choice' to test 'simpler text representation.' However, a BoW model with 10k features is not just 'simpler'\u2014it is potentially under-capacitated compared to a Transformer's vocabulary. If the Transformer wins simply because it can see more unique tokens, the experiment fails to isolate 'semantic representation' from 'vocabulary size.' The defender's argument that this is a 'finding about baseline adequacy' is exactly why the finding is MATERIAL; the baseline must be adequate to make the comparison meaningful."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly identified a specific, proactive control in the methodology (the metadata-only baseline) that directly addresses the risk of sender reputation driving the results. This mechanistic check effectively mitigates the concern."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender argues that HTML obfuscation is an edge case relative to the primary goal of comparing semantic representations. Given the low original severity and the focus of the hypothesis, this is a reasonable scope-based dismissal."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am accepting the critic's challenges on F1 (PARTIAL) and F3 (CHALLENGE), while maintaining my position on F2 (defer), F4, and F5 (both accepted). For F1, the critic correctly identifies that while the temporal split is sound, the campaign leakage control is reactive rather than proactive - this requires empirical verification. For F3, the critic correctly points out that the design lacks a control for vocabulary size, which could confound the comparison. I am converting F3 to CONCEDE because the design has no control for this concern and it could invalidate the primary conclusion.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly accepts that the temporal split is applied before stratification (no global shuffling). However, the 'Campaign leakage' control is reactive - it reports the proportion after training but does not proactively remove overlapping campaigns before the split. The 3-month gap (months 12-16) provides some protection, but if a campaign spans this boundary, the model could memorize specific strings. The settling experiment is the critic's proposed 'Clean Test Set' comparison: purge all test emails sharing sender, subject line, or URL with training set, then compare PR-AUC. If both models drop equally, the relative comparison holds. If the drop differs significantly, the conclusion could change. The design has a partial control (temporal split) but cannot eliminate this concern without proactive campaign removal.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic accepts my deferral. The methodology is ambiguous on whether the 'deployment-readiness confirmation' can modify hyperparameters. The evidence_test (comparing first-half vs second-half test performance, and checking for hyperparameter changes) would definitively resolve this. If no changes occur after the confirmation pass, there's no leakage. If changes occur, the test set is contaminated.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly challenges that the 10,000 feature cap may make the BoW baseline under-capacitated relative to the Transformer's vocabulary. If the Transformer wins because it can represent more unique tokens (via subword tokenization) rather than because of superior semantic representation, the experiment fails to isolate the variable of interest. The design does not include a control for vocabulary size (e.g., BoW with 50k features). The critic's evidence_test would directly test this: if BoW with expanded vocabulary closes the gap, the conclusion changes. This concern could invalidate the primary conclusion (that Transformer provides semantic benefit over BoW). The design has no control for this, so I concede the finding.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic accepts my identification of the proactive metadata-only baseline control. This control directly tests whether sender reputation drives performance. If it achieves >80 of the transformer's PR-AUC, the conclusion adjusts. The design anticipates and mitigates this concern.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic accepts the scope-based dismissal. HTML obfuscation is an edge case relative to the primary comparison of semantic representations.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings are deferred (F1 and F2), requiring empirical verification: F1 needs the clean test set comparison to determine if campaign leakage affects the relative comparison, and F2 needs the first-half vs second-half test comparison to determine if the confirmation step contaminated the holdout. One finding (F3) is conceded because the design lacks a control for vocabulary size, which could invalidate the primary conclusion. The remaining findings (F4, F5) are successfully rebutted. The presence of two DEFER findings makes empirical_test_agreed the correct verdict."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split strategy prevents the model from seeing future campaigns during training.",
+        "failure_mechanism": "The PoC states that within each temporal fold (Train, Val, Test), data is 'further stratified by label'. In a time-series context, stratification usually involves shuffling the data to ensure class balance. If the data is shuffled within the 12-month training block and 3-month test block, but the 'Campaign leakage' check only happens *after* training, the model may have learned specific, short-lived campaign signatures that span the boundary of the split. More critically, if the 'stratification' process involves any global shuffling before the temporal split is applied, the temporal integrity is destroyed. Even with a strict temporal split, the 'Campaign leakage' control is reactive (reporting the proportion) rather than proactive (removing the leakage), meaning the final metrics will be inflated by the model's ability to memorize specific campaign IDs/strings that appear in both sets.",
+        "evidence_test": "Compare the PR-AUC of the model on the test set versus a 'Clean Test Set' where all emails sharing a sender, subject line, or URL with the training set have been purged. A significant drop in performance on the Clean Test Set confirms the model is memorizing campaigns rather than learning phishing semantics.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test set provides an unbiased estimate of production performance.",
+        "failure_mechanism": "The 'Final Validation' section describes partitioning the test period into two halves: the first for 'deployment-readiness confirmation' to verify the configuration, and the second for 'reported metrics'. Using the first half of the test set to 'verify' and potentially 'lock' the training recipe constitutes a second validation step. This is a form of data leakage (specifically, 'test-set leakage' or 'overfitting to the test set'). The final reported metrics are no longer from a blind holdout, as the model configuration was influenced by the first half of the test data.",
+        "evidence_test": "Compare the performance on the first half of the test set vs. the second half. If the second half is significantly lower, or if the 'confirmation pass' led to any change in hyperparameters or architecture, the test set has been contaminated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The comparison between the Transformer and BoW baseline is fair and isolates semantic benefit.",
+        "failure_mechanism": "The BoW baseline uses TF-IDF with a fixed `max_features = 10,000`. The Transformer uses a pretrained BERT-like model with a vocabulary typically around 30,000 tokens and high-dimensional embeddings. The BoW model is severely constrained by the feature limit, whereas the Transformer's 'capacity' to represent rare tokens (via subwords) is vastly higher. The performance gap may be a result of the arbitrary 10k feature cap on the baseline rather than the architectural superiority of the Transformer.",
+        "evidence_test": "Run the BoW baseline with an expanded vocabulary (e.g., 50k or 100k features) or use a character-level n-gram model to see if the performance gap closes.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The metadata features are properly scaled to prevent leakage.",
+        "failure_mechanism": "The PoC mentions scaling metadata features using statistics from the training set. However, 'Sender domain reputation' is defined as the 'fraction of emails from this domain labeled malicious in the training set'. This is a target-encoded feature. If the training set contains multiple emails from the same domain, the model can learn to associate a specific domain's historical maliciousness with the label. While the *scaler* is fit on train, the *feature value itself* is a leak of the target label within the training set, which often leads to overfitting on specific high-volume malicious senders that may not persist in the test set.",
+        "evidence_test": "Compare the model's performance on 'Known Senders' (domains seen in train) vs 'Unknown Senders' (domains appearing for the first time in test). A massive delta indicates the model is relying on target-leakage in the reputation feature rather than generalizable patterns.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "HTML tag stripping is sufficient preprocessing for the Transformer.",
+        "failure_mechanism": "Phishing attacks often use specific HTML obfuscation techniques (e.g., zero-width spaces, hidden divs, or CSS-based text manipulation) to bypass filters. By stripping all HTML tags and non-ASCII characters *before* the BERT tokenizer, the PoC removes the very signals (structural anomalies) that a Transformer could potentially use to identify a phishing attempt.",
+        "evidence_test": "Compare performance using the current preprocessing vs. a version that replaces HTML tags with special tokens (e.g., `<TAG>`) instead of stripping them.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains two FATAL flaws regarding data leakage: first, a reactive rather than proactive approach to campaign leakage in a temporal split, and second, the use of the test set for 'deployment-readiness confirmation' before final reporting. These issues likely inflate the reported performance metrics.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am accepting the critic's challenges on F1 (PARTIAL) and F3 (CHALLENGE), while maintaining my position on F2 (defer), F4, and F5 (both accepted). For F1, the critic correctly identifies that while the temporal split is sound, the campaign leakage control is reactive rather than proactive - this requires empirical verification. For F3, the critic correctly points out that the design lacks a control for vocabulary size, which could confound the comparison. I am converting F3 to CONCEDE because the design has no control for this concern and it could invalidate the primary conclusion.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly accepts that the temporal split is applied before stratification (no global shuffling). However, the 'Campaign leakage' control is reactive - it reports the proportion after training but does not proactively remove overlapping campaigns before the split. The 3-month gap (months 12-16) provides some protection, but if a campaign spans this boundary, the model could memorize specific strings. The settling experiment is the critic's proposed 'Clean Test Set' comparison: purge all test emails sharing sender, subject line, or URL with training set, then compare PR-AUC. If both models drop equally, the relative comparison holds. If the drop differs significantly, the conclusion could change. The design has a partial control (temporal split) but cannot eliminate this concern without proactive campaign removal.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic accepts my deferral. The methodology is ambiguous on whether the 'deployment-readiness confirmation' can modify hyperparameters. The evidence_test (comparing first-half vs second-half test performance, and checking for hyperparameter changes) would definitively resolve this. If no changes occur after the confirmation pass, there's no leakage. If changes occur, the test set is contaminated.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly challenges that the 10,000 feature cap may make the BoW baseline under-capacitated relative to the Transformer's vocabulary. If the Transformer wins because it can represent more unique tokens (via subword tokenization) rather than because of superior semantic representation, the experiment fails to isolate the variable of interest. The design does not include a control for vocabulary size (e.g., BoW with 50k features). The critic's evidence_test would directly test this: if BoW with expanded vocabulary closes the gap, the conclusion changes. This concern could invalidate the primary conclusion (that Transformer provides semantic benefit over BoW). The design has no control for this, so I concede the finding.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic accepts my identification of the proactive metadata-only baseline control. This control directly tests whether sender reputation drives performance. If it achieves >80 of the transformer's PR-AUC, the conclusion adjusts. The design anticipates and mitigates this concern.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic accepts the scope-based dismissal. HTML obfuscation is an edge case relative to the primary comparison of semantic representations.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings are deferred (F1 and F2), requiring empirical verification: F1 needs the clean test set comparison to determine if campaign leakage affects the relative comparison, and F2 needs the first-half vs second-half test comparison to determine if the confirmation step contaminated the holdout. One finding (F3) is conceded because the design lacks a control for vocabulary size, which could invalidate the primary conclusion. The remaining findings (F4, F5) are successfully rebutted. The presence of two DEFER findings makes empirical_test_agreed the correct verdict."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=5, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}
