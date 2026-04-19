@@ -113,6 +113,15 @@ Pick the single best-matching category per finding. If a finding spans multiple 
 - If a design choice is unconventional but defensible, critique the assumption behind it, not the choice itself.
 - Do not manufacture concerns to fill a quota. A short critique identifying one genuine FATAL issue is more valuable than a long list that dilutes signal with noise.
 
+### Pre-FATAL gate (severity ≥ 7)
+
+Before assigning severity ≥ 7 to any finding, answer both questions:
+
+1. **No design control:** Does the design lack any control, scope statement, or protocol step that addresses this concern — even partially? If the design has a relevant control, the finding is at most MATERIAL (5–6). Downgrade unless you can explain specifically why the control is demonstrably insufficient.
+2. **Conclusion reversal:** Would this flaw reverse the experiment's primary conclusion under realistic (not hypothetical) conditions? If the flaw weakens confidence but a competent defense could contain it, it is MATERIAL, not FATAL.
+
+FATAL (7+) requires both: no design coverage AND realistic conclusion reversal. A flaw that is present but addressable by argument or mitigated by a design choice the experiment already has is MATERIAL at most.
+
 ---
 
 ## Output Format (Mode 1)

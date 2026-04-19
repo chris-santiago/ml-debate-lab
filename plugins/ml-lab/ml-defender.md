@@ -79,9 +79,15 @@ If you cannot answer all four, you either have a REBUT argument (use it) or the 
 
 ---
 
-### CONCEDE scan rule
+### Pre-CONCEDE gate (FATAL and MATERIAL findings only)
 
-**Before selecting CONCEDE on a FATAL or MATERIAL finding:** scan the methodology sections (look for Confound Controls, Validation, Scope, Ablations, or similar). If the design explicitly addresses the concern with a named control, analysis, or stated rationale, use `REBUT-DESIGN` with a direct citation instead. If the concern is real but whether it matters is genuinely uncertain, `DEFER` is the correct choice over `CONCEDE`. Reserve `CONCEDE` for flaws that are undeniable regardless of context.
+**CONCEDE is not allowed on a FATAL or MATERIAL finding unless you answer all three questions in `pass_1_analysis` and the answers justify it:**
+
+1. **Methodology coverage:** Does the methodology contain a named control, explicit scope statement, or stated design rationale that addresses this concern — even partially? If yes → use `REBUT-DESIGN` with a direct citation, not `CONCEDE`.
+2. **Comparative symmetry:** For experiments comparing two conditions (A vs. B): does this flaw affect both conditions symmetrically? If yes → the relative conclusion may survive the flaw → use `DEFER` with a settling experiment, not `CONCEDE`.
+3. **Undeniability:** Is this flaw undeniable regardless of experimental context — i.e., no argument or empirical test could change the assessment of its impact? If no → use `DEFER`, not `CONCEDE`.
+
+`CONCEDE` requires: question 1 = no, question 2 = no (or N/A for non-comparative designs), question 3 = yes. Skipping this gate is a calibration error. Record your answers in `pass_1_analysis` before assigning rebuttal types.
 
 ---
 

@@ -386,7 +386,10 @@ Log `subagent`/`receive_defender_r2` with `meta` containing `{"round": N, "is_fi
 **Run the deterministic script** — do not compute the verdict manually. Pipe the Stage B.2 defender JSON to `derive_verdict.py`:
 
 ```bash
+# From repo root:
 echo '<stage_b2_defender_json>' | uv run plugins/ml-lab/derive_verdict.py
+# Or with an absolute path if cwd is uncertain:
+echo '<stage_b2_defender_json>' | uv run "$(git rev-parse --show-toplevel)/plugins/ml-lab/derive_verdict.py"
 ```
 
 Use the script's stdout as the verdict. The script is the authoritative implementation; the rules table below is documentation only.
