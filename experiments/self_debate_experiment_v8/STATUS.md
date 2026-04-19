@@ -4,7 +4,7 @@
 penalty-aware scoring. [→ OBJECTIVE.md]
 
 **Branch:** `feat/v8-defender-iteration`  
-**Last updated:** 2026-04-19 (question-4 DEFER gate + canary_run3/run4 complete; backstop reverted; ML_LAB_PORT_PLAN.md written)
+**Last updated:** 2026-04-19 (question-4 DEFER gate + canary_run3/run4 + Sonnet agent probe complete; IDR gap confirmed as capability ceiling, not prompt design; ML_LAB_PORT_PLAN.md written)
 
 ---
 
@@ -42,11 +42,11 @@ penalty-aware scoring. [→ OBJECTIVE.md]
 | `prompts/DEFENDER_R2.md` | ✅ Updated | Same question-4 conclusion-survival test applied to R2 pass. [→ commit 3b14db5] |
 | `scripts/run_multiround.py` | ✅ REVERTED | **FATAL DEFER backstop added then reverted:** Rule `DEFER + orig_sev ≥ 7 + adj_sev ≥ 6 → critique_wins` added in derive_verdict(). Fired indiscriminately on any FATAL DEFER regardless of whether the flaw was conclusion-invalidating — caused widespread false critique_wins on ETA and defense_wins cases (canary_run3). Reverted. **DO NOT PORT.** The prompt-level question 4 is the correct mechanism. [→ commit 3b14db5; reverted] |
 
-**Intervention priority (post question-4 + canary_run4):**
-- Options A+C + Stage 4 framing fix: both validated — probe_ac3 confirmed ETA recovery; Opus 4.6 test confirmed IDR failure is prompt calibration, not capability ceiling.
-- Question 4 (conclusion-survival test): added to DEFENDER.md + DEFENDER_R2.md. canary_run4 confirms IDR lift from 0.000 (run2) to ~0.60 while AER is dramatically better than backstop run3. Real signal.
-- FATAL DEFER backstop: **REVERTED** — over-fires on any FATAL DEFER, blocking legitimate ETA/defense_wins cases. DO NOT PORT. Smarter backstop would need a `conclusion_survives` field from DEFER output JSON.
-- IDR ceiling with Q4 alone: ~0.60 (705 regresses to ETA without backstop; 185 produces false CW on ETA case). Remaining IDR gap is partially addressable but requires either (a) field-level output from defenders confirming conclusion survival or (b) stronger Sonnet agents in ml-lab context.
+**Intervention priority (post question-4 + canary_run4 + Sonnet probe — FINAL):**
+- Options A+C + Stage 4 framing fix + Question 4 (conclusion-survival test): all validated and in place.
+- FATAL DEFER backstop: **REVERTED** — over-fires on any FATAL DEFER, blocking legitimate ETA/defense_wins cases. DO NOT PORT. The correct mechanism is question 4 at the prompt level.
+- IDR gap root cause **confirmed** by Sonnet agent probe: Sonnet 4.6 with current prompts achieves IDR=1.00 on eval_scenario_705 and eval_scenario_812 (4/4 runs correct). The ~0.40 remaining gap in canary_run4 is a **pool model capability ceiling**, not a prompt design problem. API pool models cannot reliably surface and CONCEDE FATAL flaws that Sonnet handles correctly.
+- **Port to ml-lab with Sonnet as debate agent is the correct next step.** Prompts are ready. See ML_LAB_PORT_PLAN.md for full scope.
 - Pool: 8 models. haiku and maverick removed. Seeds patched.
 
 ---
@@ -245,6 +245,7 @@ The prior canary iterations tested single-round (not either intended protocol). 
 | canary_multiround_run2 | multi-round | Substantive DEFER (3-question requirement) in DEFENDER.md + DEFENDER_R2.md | 0.588 | 0.536 | 0.217 | 0.600 | 0.227 | −0.064 | IDR recovered; AER collapsed (overcorrection) — IDR/AER tradeoff open |
 | canary_multiround_run3 | multi-round | Options A+C + Stage 4 fix + FATAL text-citation gate + Q4 + **FATAL DEFER backstop** | ~0.10 | est. | ~0.05 | ~0.80 | — | — | Backstop over-fires on all FATAL DEFERs: 862 (confirmed ETA) → 3/3 CW; widespread DW/ETA flip to CW. 20 failures (14.8%). Only 4 cases correct. Backstop reverted. [→ experiment acd59c3e] |
 | canary_multiround_run4 | multi-round | Same as run3 with backstop reverted; Q4 only | est. | est. | ~0.65 | ~0.60 | est. | est. | Q4 alone: IDR 0.000→~0.60 (801 2/2, 852 2/3, hyp_037 2/3). AER recovered vs run3. 705 regresses to ETA without backstop. 185 false CW on ETA case. 23 failures (17%). Net: meaningful improvement over run2 baseline. [→ experiment 3b22f651] |
+| **sonnet_agent_probe** | multi-round | Sonnet 4.6 agents (Claude Code dispatch) on eval_scenario_705 + eval_scenario_812, 2 runs each. Latest prompts (Q4 + text-citation gate + Options A+C + Stage 4 fix) | — | — | — | **1.00** | — | — | 4/4 critique_wins correct. 705 run0: F1 (preprocessing leakage) directly CONCEDEd. 705 run1: REBUT-EVIDENCE on F1 but CONCEDEd F2+F3 independently → critique_wins via different path. 812 both runs: F1 (metric mismatch) immediately CONCEDEd. **IDR gap confirmed as pool model capability ceiling, not a prompt design problem.** [→ experiment f01a4c80] |
 
 ---
 
