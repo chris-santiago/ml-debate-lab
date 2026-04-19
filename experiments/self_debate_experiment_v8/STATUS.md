@@ -296,9 +296,39 @@ The prior canary iterations tested single-round (not either intended protocol). 
 
 **Trigger:** Protocol and scoring reframe — `empirical_test_agreed` is now a valid and expected outcome for genuinely ambiguous cases. Prior labels applied `critique_wins` to all regular (flawed) cases, which was correct only for undeniable flaws (leakage, direct metric mismatch). Cases where a competent defender can produce a mechanistically valid partial rebuttal, and the significance is empirically uncertain, should be `empirical_test_agreed`.
 
-**Labeling criterion:**
+**Labeling criterion (refined 2026-04-18, decision bdd068dd):**
+
+- `defense_wins`: Two valid paths:
+  1. Critic concerns are **clearly invalid** — scope errors, factual misreads, or strawman attacks. The critic is wrong.
+  2. Critic concerns are **real but genuinely trivial** — they won't materially affect the primary metric or the experiment's conclusions. The defender correctly uses REBUT-IMMATERIAL.
+  *Note: "planted_issues=[]" is not sufficient for this label. The right test is whether a competent critic would find anything real and material to push back on.*
+
+- `empirical_test_agreed`: The design is sound but **real uncertainties remain that could materially affect conclusions**. Mitigation is not proof — when both critic and defender could be right, experiment provides empirical evidence. This is the **expected and correct outcome for most serious ML designs** with acknowledged limitations.
+
 - `critique_wins`: No design control can rebut this. Undeniable flaws: preprocessing leakage, test-set contamination, direct hypothesis/metric mismatch. A competent defender scanning the methodology finds nothing to cite.
-- `empirical_test_agreed`: The flaw is real but a defender can construct a valid partial rebuttal, and whether it changes the conclusion requires empirical verification. Examples: unequal baseline tuning, proxy label validity, scope-based cohort restriction, partial reproducibility.
+
+**Second re-labeling pass complete (2026-04-19):** All 23 `defense_wins` cases reviewed under the refined criterion. 6 re-labeled to `empirical_test_agreed`:
+
+| Case | Reason |
+|---|---|
+| eval_scenario_858 | Proxy label validity (agent clicks) — ~300-query sanity check can't detect large-scale invalidity |
+| eval_scenario_848 | 30-day phishing grace period → training labels ≥30 days behind current campaigns |
+| eval_scenario_862 | 1–7 day label lag + 1-month test set — phishing campaigns evolve in days |
+| eval_scenario_868 | 7-day dwell staleness + undefined 4-source label aggregation conflict resolution |
+| eval_scenario_hyp_140_0 | 7-day alert disposition window selects for fast-resolution incidents only |
+| hyp_155 | 30-day label exclusion window + frozen graph can't adapt to new senders in test |
+
+Reviewed but kept `defense_wins`: hyp_204_case — subagent flagged 30-day maturation window, but this applies uniformly across all splits (no train/test asymmetry), unlike phishing staleness cases.
+
+**Final case distribution (45 total):**
+
+| Label | Count | % |
+|---|---|---|
+| `defense_wins` | 17 | 38% |
+| `empirical_test_agreed` | 23 | 51% |
+| `critique_wins` | 5 | 11% |
+
+(Stratum counts unchanged: 23 defense / 12 regular / 10 mixed — correct_position now diverges from stratum for 12 cases.)
 
 **Changes (7 cases re-labeled):**
 
