@@ -13,7 +13,6 @@ The v8 experiment developed a structured, multi-round debate protocol that repla
 - **Options A+C**: resolve/mitigate distinction for DEFER; DEFER > CONCEDE reframing
 - **FATAL text-citation gate**: REBUT-DESIGN on FATAL findings requires specific methodology text
 - **Question 4 / conclusion-survival test**: DEFER requires confirming primary conclusion survives the flaw
-- **FATAL DEFER backstop**: `derive_verdict()` maps DEFER + orig_sev ≥ 7 + adj_sev ≥ 6 → `critique_wins`
 - **Stage 4 user-message framing**: explicit three-path framing (REBUT / DEFER / CONCEDE)
 
 The port is not incremental — it is replacing the prose debate protocol with a structured JSON protocol end-to-end.
@@ -55,7 +54,7 @@ The orchestrator runs Stage A once, then loops Stage B until a stopping conditio
 | No finding changed `rebuttal_type` or `adj_sev` since the previous Stage B round | Stop — no movement |
 | `max_rounds` reached | Force-resolve residual DEFERs; apply derive_verdict() and stop |
 
-**Force-resolution at cap:** Any finding still in DEFER at max_rounds is treated as unresolved. The orchestrator applies derive_verdict() with current adj_sev values — the FATAL DEFER backstop fires if applicable; otherwise residual DEFERs yield ETA.
+**Force-resolution at cap:** Any finding still in DEFER at max_rounds is treated as unresolved. The orchestrator applies derive_verdict() with current adj_sev values — residual DEFERs yield ETA.
 
 ### Final vs. intermediate rounds
 
