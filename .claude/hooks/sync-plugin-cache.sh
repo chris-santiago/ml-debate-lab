@@ -102,6 +102,29 @@ case "$FILE_PATH" in
     mkdir -p "$BARE"
     rsync -a --exclude='.orphaned_at' \
       "$REPO_ROOT/plugins/ml-lab/" "$BARE/"
+    # Sync agent files to ~/.claude/agents/ — driven by plugin.json agents list
+    python3 - << PYEOF
+import json, shutil, os
+plugin_json = '$REPO_ROOT/plugins/ml-lab/.claude-plugin/plugin.json'
+agents_dir = os.path.expanduser('~/.claude/agents')
+src_dir = '$REPO_ROOT/plugins/ml-lab'
+try:
+    with open(plugin_json) as f:
+        d = json.load(f)
+    agent_files = [a.lstrip('./') for a in d.get('agents', [])]
+    extras = ['derive_verdict.py']
+    synced = []
+    for fname in agent_files + extras:
+        src = os.path.join(src_dir, fname)
+        dst = os.path.join(agents_dir, fname)
+        if os.path.exists(src) and os.path.isdir(agents_dir):
+            shutil.copy2(src, dst)
+            synced.append(fname)
+    if synced:
+        print(f'  agents synced: {", ".join(synced)}')
+except Exception as e:
+    print(f'WARNING: ~/.claude/agents/ sync failed: {e}')
+PYEOF
     ;;
 esac
 
