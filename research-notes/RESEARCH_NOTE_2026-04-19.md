@@ -1,68 +1,61 @@
 # Research Note — ml-lab (v8 Multi-Round Prototype)
 
-*2026-04-19 | 15 entries | scope: this session*
+*2026-04-19 | scope: this session (full day)*
 
 ## Summary
-This session completed the core v8 multi-round protocol build: Phase 0 existence proof,
-Gate 1 case audit (3 new hard defense cases added), canary labeling re-passes, two full
-canary runs (45 cases × 3 runs), and a diagnostic DEFER fix. The session resolved the
-IDR=0.000 collapse from canary_run1 but surfaced a tradeoff: the substantive DEFER
-requirement (3-question test) recovered IDR to 0.600 but overcorrected on AER (0.739 →
-0.217), collapsing ambiguity recognition. The IDR/AER tradeoff is now the primary open
-design tension.
+This session extended the v8 multi-round prototype with two diagnostic workstreams: (1) IDR/AER tradeoff
+resolution via Options A+C (resolve/mitigate distinction + DEFER>CONCEDE reframing), and (2) model quality
+comparison using Opus agents on harder cases. Both confirmed that the IDR failure is a prompt calibration
+problem, not a model capability issue. A separate short-circuit failure mode was identified (critic returning
+no_material_findings on ETA cases) and traced to claude-3-haiku and llama-4-maverick. Both models removed
+from pool. The Stage 4 framing fix (explicit DEFER/CONCEDE conditions in user message) is in place but
+unconfirmed — probe_stage4b was noisy and short-circuit removals did not resolve it.
 
 ## Key Decisions
-- **Skip Phase 0.5** [da8f8113]: v7 prompts baseline run superseded — v7 failure mode
-  already documented (sycophantic concessions), v8 scorer validated on Phase 0 live runs.
-- **Collapse adjudicator to derive_verdict()** [c93e0fb6]: adjudicator LLM replaced by
-  a deterministic Python lookup table. Eliminates one API call per run, removes sampling
-  variance, aligns benchmark with production ml-lab behavior. AOR now measures defender
-  self-consistency, not LLM override rate.
-- **Refined correct_position labeling criterion** [bdd068dd]: `defense_wins` reserved for
-  airtight designs OR trivially-wrong critic concerns (real but genuinely insignificant).
-  `empirical_test_agreed` for sound designs with real uncertainties. Second re-labeling
-  pass applied to all 23 defense_wins cases → 6 re-labeled ETA → final distribution:
-  17 defense_wins / 23 empirical_test_agreed / 5 critique_wins.
-- **DEFER requires substantive justification** [ed352ea]: DEFER must answer: (1) what
-  experiment settles this, (2) what result vindicates the design, (3) what result validates
-  the critique. Applied to both DEFENDER.md and DEFENDER_R2.md.
+- **Skip Phase 0.5** [da8f8113]: v7 prompts baseline run superseded — v7 failure mode already documented.
+- **Collapse adjudicator to derive_verdict()** [c93e0fb6]: deterministic Python lookup, eliminates API call.
+- **Refined correct_position labeling** [bdd068dd]: second re-labeling pass → final distribution 17/23/5.
+- **DEFER requires substantive justification** [ed352ea]: 3-question test applied to both defender prompts.
+- **Options A+C implemented** [50bf6b4]: resolve/mitigate distinction added to DEFENDER.md + DEFENDER_R2.md;
+  DEFER reframed as stronger conclusion than CONCEDE. Confirmed working on ETA cases when full debate runs.
+- **Stage 4 user message fix** [dd87a4f]: build_defender_r2_user_msg rewritten to name all three paths
+  (REBUT/DEFER/CONCEDE) with explicit conditions, replacing binary "defend or concede" framing.
+- **Exclude claude-3-haiku from pool entirely** [44a246c + today]: as critic → short-circuits on ETA cases;
+  as defender → malformed JSON. Removed from models.json and all seeds.
+- **Exclude llama-4-maverick from pool** [today]: same short-circuit pattern as haiku on critique_wins cases.
+  Pool now 8 models.
 
 ## Discoveries & Results
-- **Phase 0 existence proof** [7a83d0a4] `confirmed`: 4/4 runs → defense_wins on clean
-  eval_scenario_858 defense case. Pipeline bugs fixed (EXONERATE threshold, flaw_category
-  taxonomy).
-- **canary_multiround_run1** [923199c9] `confirmed` (multi-round, 45 cases × 3 runs):
-  DER=0.471, FDR=0.786, AER=0.739, IDR=0.000, FHR=0.773, MCC=−0.107. ETA identified
-  as path of least resistance — DEFER costs zero, FATAL rule fires on partial rebuttals,
-  producing systematic over-hedging.
-- **Substantive DEFER probe** [ab4ee47f] `confirmed`: Both probe cases (858, 777) correct
-  after 3-question DEFER requirement added.
-- **canary_multiround_run2** [25c519a4] `inconclusive`: IDR: 0.000 → 0.600 ✓. AER:
-  0.739 → 0.217 ✗ (overcorrection). FDR: 0.786 → 0.536 ✗. DER: 0.471 → 0.588 ✓.
-  FHR: 0.773 → 0.227 ✓. MCC: −0.107 → −0.064. FCE: 0.260 (remains high).
+- **Phase 0 existence proof** [7a83d0a4] `confirmed`: 4/4 → defense_wins on clean eval_scenario_858.
+- **canary_multiround_run1** [923199c9] `confirmed`: DER=0.471, FDR=0.786, AER=0.739, IDR=0.000, MCC=−0.107.
+- **canary_multiround_run2** [25c519a4] `inconclusive`: IDR 0.000→0.600 ✓; AER 0.739→0.217 ✗ (IDR/AER tradeoff).
+- **probe_ac2** [1c24f469] `confirmed`: Options A+C fixed ETA prediction on 862 and 185 when full debate ran.
+  Remaining defense_wins from critic short-circuits (haiku), not defender prompt failure.
+- **probe_ac3** [4919d0ee] `confirmed`: Removing haiku from critic resolved short-circuits. Both ETA cases
+  correctly predict empirical_test_agreed by majority vote (185: 3/3; 862: 2/3, one fluctuation absorbed).
+- **Opus model quality** [d5346fae] `inconclusive`: Opus 4.6 produces ETA on all 3 harder cases.
+  Correct on kirca2022 (GT=ETA). Misses 812 and 852 (GT=critique_wins) — no CONCEDEs produced at any model size.
+  IDR failure is prompt calibration, not capability ceiling.
+- **probe_stage4b** `inconclusive`: Stage 4 framing fix did not move critique_wins cases. 2/6 runs
+  short-circuited (maverick). Full debate runs produced ETA, not critique_wins. Noisy result — needs
+  clean re-run after maverick removal.
 
 ## Issues
-- **ETA/IDR tradeoff** (open, high): DEFER quality requirement improves IDR but collapses
-  AER. Root cause: when DEFER is hard, defenders either fight (REBUT) or fold (CONCEDE);
-  both paths lose ambiguity recognition. No clear fix yet — may require separate prompting
-  for genuinely ambiguous vs. undeniable-flaw cases.
-- **5 partial-run cases** (open, low): 5/45 cases completed only 1 run due to API rate
-  limits during canary_multiround_run2. Majority vote over 1 run is the full result for
-  those cases.
-- **canary_full.json sync gap** [ff3a889d] `resolved`: canary_full.json was silently out
-  of sync with canary_cases.json after Gate 1 additions. Fixed; both files now at 45 cases.
+- **Short-circuit failures** (partially resolved): haiku and maverick both returned no_material_findings on
+  cases where other models found 4–6 advancing findings. Both removed. May be a broader critic calibration
+  issue — watch for recurrence with remaining 8-model pool.
+- **Stage 4 DEFER→CONCEDE gap** (open, high): critique_wins cases never produce CONCEDEs. Stage 4
+  framing fix is in place but probe_stage4b was too noisy to confirm. Needs clean re-probe.
+- **5 partial-run cases** (open, low): 5/45 cases completed only 1 run in canary_multiround_run2.
 
 ## Current State
-canary_multiround_run2 scored. Primary metric (MCC=−0.064) remains below threshold
-(target: baseline + 0.06 MMD). AER floor (≥0.50) not met at 0.217. FDR floor (≥0.60)
-not met at 0.536. IDR floor (≥0.60) now met at 0.600. All three prompt intervention
-slots still available: DEFER calibration, CONCEDE trigger, severity adjustment caps.
+Pool reduced to 8 models (haiku + maverick removed). All seeds patched. Stage 4 framing fix committed
+but unvalidated. Next required action: clean probe_stage4 re-run with updated seeds to test whether
+explicit DEFER/CONCEDE conditions move critique_wins cases off ETA.
 
 ## Next Steps
-- Diagnose AER collapse: examine canary_multiround_run2 ETA case transcripts where
-  prediction was defense_wins — are defenders using REBUT-DESIGN or CONCEDE on cases
-  that should DEFER?
-- Design targeted fix that raises DEFER friction on undeniable flaws without penalizing
-  genuine uncertainty recognition
-- Consider whether FCE (0.260) and FAR (0.176) require separate interventions
-- Run next canary iteration once intervention direction is identified
+- Re-run probe_stage4 with new seeds (maverick removed) — get clean signal on Stage 4 framing fix
+- If Stage 4 fix confirmed: run full canary_multiround_run3 on updated pool + prompts
+- If Stage 4 fix fails: diagnose whether CONCEDE requires additional critic-side calibration
+  (critic needs to produce findings the defender cannot rebut, not just finding findings)
+- Watch for short-circuit recurrence with remaining pool — if it persists, consider critic prompt fix

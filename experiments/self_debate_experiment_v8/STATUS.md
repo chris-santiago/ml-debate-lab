@@ -4,7 +4,7 @@
 penalty-aware scoring. [→ OBJECTIVE.md]
 
 **Branch:** `feat/v8-defender-iteration`  
-**Last updated:** 2026-04-19 (canary_multiround_run2 complete; AER/IDR tradeoff open)
+**Last updated:** 2026-04-19 (Options A+C probed; haiku + maverick removed; Stage 4 framing fix in place, unvalidated)
 
 ---
 
@@ -34,12 +34,15 @@ penalty-aware scoring. [→ OBJECTIVE.md]
 | `prompts/DEFENDER_R2.md` | ✅ Added | R2 defender prompt for multi-round protocol. Mirrors DEFENDER.md rebuttal logic with three-path decision tree (REBUT/DEFER/CONCEDE) for ACCEPT/CHALLENGE/PARTIAL verdicts from R2 critic. |
 | `prompts/DEFENDER.md` | ✅ Updated | **Substantive DEFER requirement:** DEFER must name (1) specific settling experiment, (2) result that vindicates the design and mechanism, (3) result that validates the critique and what changes. "I'm not sure" is not a valid DEFER. [→ experiment ab4ee47f] |
 | `prompts/DEFENDER_R2.md` | ✅ Updated | Same 3-question DEFER requirement applied to R2 pass. Invalid `challenge_verdict=DEFER` from R2 critic coerced to CHALLENGE in `run_multiround.py`. [→ experiment ab4ee47f] |
+| `prompts/DEFENDER.md` | ✅ Updated | **Options A+C:** Resolve/mitigate distinction added — REBUT-DESIGN requires control *eliminates* mechanism; if only mitigates → DEFER. DEFER reframed as stronger than CONCEDE (design has partial answer vs. no answer). [→ commit 50bf6b4] |
+| `prompts/DEFENDER_R2.md` | ✅ Updated | Same Options A+C applied to R2 pass — resolve/mitigate test in decision tree step 2; DEFER>CONCEDE reframing added. [→ commit 50bf6b4] |
+| `scripts/run_multiround.py` | ✅ Updated | **Stage 4 framing fix:** `build_defender_r2_user_msg` rewritten to name all three R2 paths (REBUT/DEFER/CONCEDE) with explicit conditions. Old binary "defend or concede" framing suppressed DEFER awareness. [→ commit dd87a4f] |
 
-**Intervention priority (post canary_multiround_run2):** Primary open tension is IDR/AER tradeoff.
-Substantive DEFER requirement recovered IDR (0.000 → 0.600) but collapsed AER (0.739 → 0.217).
-Root cause: when DEFER is hard, defenders resort to REBUT or CONCEDE, both of which lose ambiguity
-recognition on genuinely uncertain cases. Next intervention: distinguish between "ambiguous significance"
-and "undeniable flaw" in DEFER guidance without enumerating specific flaw types.
+**Intervention priority (post Options A+C + pool cleanup):**
+- Options A+C confirmed working on ETA cases (probe_ac3: 185 3/3 ✓, 862 2/3 ✓). AER fix is gated on critic short-circuits, not defender prompts.
+- Stage 4 framing fix in place but unvalidated — probe_stage4b was noisy (maverick short-circuits, 2 failures). Needs clean re-probe.
+- IDR gap (critique_wins cases) remains open — no CONCEDEs produced at any model size including Opus 4.6. Requires further calibration.
+- Pool reduced to 8 models: haiku removed (short-circuits as critic, malformed JSON as defender); maverick removed (same short-circuit pattern). Seeds patched.
 
 ---
 
@@ -152,14 +155,16 @@ Also fixed: canary_full.json was out of sync with canary_cases.json (7 additions
       Keep in pool. Reasoning trace parsing handled by `strip_think_tags()` in run_pipeline.py.
       Cost accounted for in MODELS.md estimate. CER inflation risk monitored via MES.
 
-- [x] **Pool trimmed to 10 models** [→ canary run 1 diagnostics]
+- [x] **Pool trimmed to 8 models** [→ canary run 1 diagnostics + probe_ac3 + probe_stage4b]
       `xiaomi/mimo-v2-flash` dropped (extreme per-run variance + inverted critiques). [→ experiment f634bda9]
-      `z-ai/glm-4.7-flash` dropped (4/27 assignments timed out or returned empty responses in canary run 1).
-      Pool now 10 models. canary_seeds.json regenerated (random.seed(42)) with zero bad-model assignments.
+      `z-ai/glm-4.7-flash` dropped (4/27 timeouts/empty in canary run 1).
+      `anthropic/claude-3-haiku` dropped (short-circuits as critic; malformed JSON as defender). [→ experiment 4919d0ee]
+      `meta-llama/llama-4-maverick` dropped (same short-circuit pattern on critique_wins cases). [→ today]
+      Pool now 8 models. canary_seeds.json, probe_ac_seeds.json, probe_stage4_seeds.json all patched.
 
 - [x] **Model seed file generated** [→ MODELS.md §Seed Control, PROTOCOL.md §Phase 2]
-      canary_seeds.json: 45 cases × 3 runs = 135 assignments. random.seed(42), independent
-      draws per run from 10-model pool. Holds constant across all canary iterations.
+      canary_seeds.json: 45 cases × 3 runs = 135 assignments. Holds constant across canary iterations.
+      Patched twice: haiku critic exclusion (seed=99), then full haiku + maverick removal (seed=88).
 
 - [x] **FHR baseline defined** [→ OBJECTIVE.md §Success Criteria]
       No pre-run absolute target meaningful without data. Resolved: FHR floor is
