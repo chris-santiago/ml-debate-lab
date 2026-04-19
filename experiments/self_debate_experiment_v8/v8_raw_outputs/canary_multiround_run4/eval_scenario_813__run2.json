@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_813",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The BiLSTM-CRF baseline is a fair comparison to the Transformer because it uses 'established prior art' and equivalent tuning effort.",
+        "failure_mechanism": "The Transformer is initialized with domain-specific pretrained weights (SciBERT/PubMedBERT) containing millions of parameters and knowledge from millions of documents. The BiLSTM-CRF uses static embeddings (GloVe/FastText) and is trained from scratch on only 1,600 reports. The 'advantage' measured will likely be the difference between 'massive-scale pretraining' and 'small-sample supervised learning', rather than a comparison of architectures or the specific hypothesis of 'domain adaptation' vs 'hand-crafted features'. The baseline is effectively handicapped by the lack of a comparable pretrained language model backbone.",
+        "evidence_test": "Include a third model: a Transformer initialized with random weights (no pretraining) but the same architecture as the clinical BERT. If the pretrained BERT significantly outperforms the random BERT, the gain is due to the pretraining corpus, not the architecture or the specific clinical fine-tuning process.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (Months 1-24 train, 25-30 val, 31-36 test) prevents leakage and assesses robustness to drift.",
+        "failure_mechanism": "While temporal splitting is generally good, the sample size for the test set is extremely small (200 reports) relative to the total corpus (200,000). In clinical settings, report styles often shift based on the specific radiologist on call or seasonal pathology (e.g., pneumonia spikes in winter). A 6-month window for testing may capture a seasonal artifact or a specific clinician's style rather than a generalizable temporal drift, leading to high variance in the F1 score that bootstrap resampling cannot fully mitigate if the underlying sample is not representative of the long-term distribution.",
+        "evidence_test": "Compare the distribution of entity types and report lengths in the test set (Months 31-36) against a random sample of the same size from the training set. If the distributions differ significantly, the 'drift' being measured is a sampling artifact of the time window.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The use of a clinical-domain adapted BERT tokenizer ensures appropriate tokenization for radiology reports.",
+        "failure_mechanism": "Radiology reports are notorious for non-standard abbreviations, idiosyncratic punctuation (e.g., 'Lungs: clear. Heart: normal size.'), and specific formatting. If the SciBERT/PubMedBERT tokenizer was trained on PubMed abstracts (formal academic prose) rather than clinical notes (telegraphic prose), it may over-fragment clinical shorthand into meaningless sub-tokens. This increases the sequence length and makes span-boundary detection harder for the Transformer, potentially masking its actual capability.",
+        "evidence_test": "Analyze the average number of sub-tokens per word for clinical entities in the test set. Compare this to the sub-token rate for non-entity text. A high fragmentation rate for entities suggests a tokenizer mismatch.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The BiLSTM-CRF's use of POS tags via spaCy is a valid feature.",
+        "failure_mechanism": "Standard spaCy POS taggers are trained on general English (web text/news). Clinical radiology text is often noun-heavy and lacks standard sentence structure (e.g., 'No pleural effusion noted'). The POS tagger will likely produce high error rates on this domain, providing the BiLSTM-CRF with noisy features that could degrade its performance relative to the Transformer, which learns its own internal representations.",
+        "evidence_test": "Compute the accuracy of the spaCy POS tagger on a small gold-standard sample of the radiology reports. If accuracy is significantly lower than the tagger's reported general-domain accuracy, the feature is a liability.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has a critical flaw in its baseline selection: it compares a massively pretrained Transformer against a shallow BiLSTM-CRF trained on a tiny dataset, meaning it measures the value of pretraining rather than the hypothesis of architecture/feature superiority. Additionally, the test set size is small enough to be susceptible to seasonal or clinician-specific noise despite the temporal split.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding in order, referencing the methodology design intent and controls.\n\n**F1 (Severity 8 - FATAL):** The critic claims the BiLSTM-CRF baseline is handicapped because it lacks comparable pretraining, making the comparison unfair. The methodology explicitly states the hypothesis: \"whether a domain-adapted transformer, when fine-tuned with token-level labels on clinical radiology reports, achieves higher span-level F1 than a BiLSTM-CRF baseline.\" This is a pragmatic comparison of two established approaches in the literature: a modern transformer with clinical pretraining vs. a traditional feature-engineered BiLSTM-CRF. The design intent is to test whether the transformer's end-to-end approach (with its pretraining) outperforms the prior art approach. The baseline is not 'handicapped'\u2014it uses standard, well-established features (pretrained static embeddings, character CNN, POS tags) that represent the state-of-the-art before transformers. The methodology acknowledges in Section 8 that the experiment does not isolate whether the advantage is due to architecture, pretraining, or capacity. That's a limitation of scope, not a fatal flaw. The critic's suggested third model (random-initialized transformer) would test a different hypothesis (pretraining vs. architecture). The current design is valid for its stated hypothesis.\n\n**F2 (Severity 6 - MATERIAL):** The critic claims the 6-month test window may capture seasonal or clinician-specific artifacts rather than generalizable drift, leading to high variance. The methodology uses a temporal split specifically to assess robustness to realistic drift, which includes seasonal variations and changes in clinician practice\u2014these are exactly the real-world shifts the model must handle. The test set size (200 reports) is standard for a labeled clinical dataset (1% of corpus). The methodology includes bootstrap resampling to estimate confidence intervals, which accounts for sample variance. Furthermore, the design includes a confound control: \"Modality generalization: Per-modality F1 scores are reported separately.\" This allows detection of whether performance drops are due to modality shifts. The critic's evidence test (comparing entity distribution between test and training) would be interesting but doesn't invalidate the split strategy; it would merely characterize the nature of the drift. The temporal split is a deliberate, justified design choice.\n\n**F3 (Severity 4 - MATERIAL):** The critic claims the clinical BERT tokenizer may over-fragment radiology shorthand, harming transformer performance. The methodology states the transformer uses a \"clinical domain-adapted BERT tokenizer (e.g., SciBERT or PubMedBERT).\" These tokenizers are trained on biomedical literature, which includes clinical language. While radiology reports have unique characteristics, the tokenizer choice is standard for clinical NLP. The critic's concern is theoretical\u2014there's no evidence presented that tokenization failure actually occurred. The methodology includes a confound control: \"Vocabulary coverage: OOV rates are compared between transformer and BiLSTM vocabularies.\" This directly addresses whether tokenization mismatch is a problem. If OOV rates are comparable, the concern is mitigated. Without evidence of actual tokenization harm in the PoC results, this remains a theoretical concern.\n\n**F4 (Severity 2 - MINOR):** The critic claims spaCy POS tags may be inaccurate on clinical text, providing noisy features to the BiLSTM-CRF. This is a valid observation but minor. The BiLSTM-CRF uses multiple feature types (word embeddings, character CNN, lexical flags). Noisy POS tags would be one among many features; the model can learn to downweight unreliable signals. The methodology doesn't claim POS tags are optimal\u2014they are a standard baseline feature. The critic's suggested test (measuring POS accuracy) is reasonable but not required for the PoC's validity. This finding is below significance for the experiment's primary conclusion about transformer vs. BiLSTM-CRF performance.\n\nAfter analysis: F1 is a scope misunderstanding, F2 is a deliberate design choice, F3 is a theoretical concern with a mitigating control, and F4 is a minor implementation detail. None constitute genuine fatal or material flaws that invalidate the methodology.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic misunderstands the experiment's stated hypothesis. The methodology explicitly aims to compare a domain-adapted transformer against a BiLSTM-CRF baseline representing established prior art (Section 4: 'Baseline justification'). The hypothesis is whether the transformer's pretraining and domain adaptation provide an advantage in this clinical setting. The design is not intended to isolate architecture from pretraining; that is acknowledged as out of scope (Section 8: 'What the experiment does not establish'). The BiLSTM-CRF is not 'handicapped'\u2014it uses standard, well-tuned features that represent the pre-transformer state-of-the-art. The comparison is fair for the stated pragmatic objective."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The temporal split is a deliberate design choice justified in Section 2: to 'assess the model's robustness to realistic vocabulary drift and clinical presentation shifts.' Seasonal artifacts and clinician-specific styles are part of real-world drift the model must handle. The test set size (200 reports) is adequate given the labeled sample size (2,000 total) and is analyzed with bootstrap confidence intervals. The design includes a confound control: 'Modality generalization: Per-modality F1 scores are reported separately' (Section 8), which detects if performance drops are due to distributional shifts. The split strategy is sound for the experiment's objective."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critique makes an empirical claim about tokenizer fragmentation harming performance without evidence from the PoC output. The methodology uses standard clinical-domain tokenizers (SciBERT/PubMedBERT) and includes a direct confound control: 'Vocabulary coverage: OOV rates are compared between transformer and BiLSTM vocabularies' (Section 8). This control would reveal if tokenization mismatch is problematic. Without data showing actual tokenization failure or performance degradation attributable to it, the concern is speculative. The design has a mechanism to detect the issue."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The concern about spaCy POS tagger accuracy on clinical text is valid but minor. The BiLSTM-CRF uses multiple feature types; noisy POS tags are one signal among many. The model can learn to weight features appropriately. This does not affect the primary comparison's validity, as both models are evaluated on the same task with the same tuning effort. The finding is below significance for the experiment's conclusions."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been rebutted with adjustments bringing their effective severity to 3 or below (F1: 3, F2: 2, F3: 0, F4: 0). The methodology is sound, and the critiques either misunderstand the scope, challenge deliberate design choices, or raise theoretical concerns already mitigated by existing controls."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender uses a REBUT-SCOPE argument to claim that isolating architecture from pretraining is out of scope. However, the failure mechanism is not about the scope of the research, but about the validity of the 'advantage' being measured. If the goal is to see if 'domain adaptation' provides an advantage, comparing a model with millions of pretrained parameters to one with static embeddings and no pretraining is a confounded experiment. The 'advantage' is simply 'having a pretrained model' vs 'not having one'. To make this a fair comparison of domain adaptation, the baseline should be a non-domain-adapted pretrained model or the transformer should be compared against a randomly initialized version of itself. The severity remains high because the primary claim of the experiment is fundamentally confounded."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender argues that seasonal artifacts are 'part of real-world drift'. While true, the failure mechanism is that a 6-month window (especially one that might be skewed by a specific season) may not be representative of the general distribution, leading to high variance in the test result. The cited 'Per-modality F1' control does not address temporal or clinician-specific variance. However, the use of bootstrap confidence intervals does provide some statistical grounding. The concern is partially mitigated but the risk of a non-representative test window remains."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The defender claims the concern is speculative and points to 'OOV rates' as a control. This is a mechanistic misunderstanding: OOV (Out-of-Vocabulary) rates in subword tokenizers (like BERT's WordPiece) are almost always near zero because the model can fall back to characters. The failure mechanism is *over-fragmentation* (splitting a clinical term into 10 meaningless sub-tokens), which is not captured by OOV rates. The defender fails to address the specific mechanism of fragmentation and instead points to a metric that does not measure it."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender concedes the point that the POS tagger may be noisy but correctly argues that in a BiLSTM-CRF, the model can learn to down-weight unreliable features. Given the minor severity of the original finding, this is a reasonable justification."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am contesting the challenges for F1 and F3, as the design's scope and controls directly address the raised mechanisms. For F2, I accept the partial challenge and switch to DEFER, as the design's temporal split is a deliberate choice but the representativeness of the test window is a genuine empirical uncertainty that does not invalidate the primary conclusion. F4 is accepted as is.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's challenge mischaracterizes the experiment's hypothesis. The methodology explicitly states the comparison is between a 'domain-adapted transformer' and a 'BiLSTM-CRF baseline representing established prior art' (Section 4). The hypothesis is whether the transformer's pretraining and domain adaptation provide an advantage in this clinical setting over the prior art. This is a pragmatic, real-world comparison, not an ablation study to isolate components. The scope statement (Section 8) clarifies the experiment does not establish whether the advantage is due to architecture, pretraining, or capacity. Therefore, the baseline is not 'handicapped'; it is the correct counterfactual for the stated research question. A comparison against a randomly initialized transformer is a different, valid experiment, but it is out of scope for this one.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly notes that a 6-month test window may capture seasonal or clinician-specific artifacts, not just generalizable drift. The design's temporal split is a deliberate choice to simulate real-world deployment, and bootstrap CIs provide some variance estimation, but these do not fully guarantee the test window's representativeness. This is a genuine empirical uncertainty. The settling experiment is to compare the primary F1 result against results from multiple, non-overlapping 6-month test windows sampled from the full corpus (e.g., a rolling window analysis). If the transformer consistently outperforms the BiLSTM-CRF across all windows, the primary conclusion is robust. If performance varies dramatically and the advantage disappears in some windows, the conclusion is sensitive to temporal sampling. Crucially, the primary conclusion about the transformer's relative advantage can remain valid even if the specific test window is unrepresentative, as long as the potential sampling artifact affects both models equally\u2014the comparison is internally valid within the chosen test set. The flaw does not invalidate the metric; it questions its generalizability, which is precisely what the settling experiment would address.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critic is correct that OOV rates are a poor proxy for token fragmentation. However, the design includes a more direct control: 'Template memorization' checks (Section 8). If the transformer is severely hampered by fragmented tokenization of clinical entities, its ability to correctly predict non-template, novel entity spans would be degraded. This would manifest as poor performance on 'rare findings' (a reported secondary metric) and a low fraction of correct predictions that are verbatim templates. The methodology explicitly tracks F1 on rare findings (bottom 20% entity frequency). If the transformer's advantage holds or is even greater on rare findings\u2014where memorization is impossible and robust tokenization is critical\u2014it is strong evidence that tokenizer fragmentation is not a crippling issue. The design therefore has a specific, outcome-based control for the failure mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTed the R1 rebuttal. The noisy POS feature is one of many in the BiLSTM-CRF; the model can learn to down-weight it. This does not materially affect the fairness of the primary comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One finding (F2) has been deferred to a specific empirical test regarding temporal representativeness, while the other findings have been successfully rebutted or deemed immaterial. This indicates the core design is sound but has one point of genuine uncertainty requiring further evidence."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The BiLSTM-CRF baseline is a fair comparison to the Transformer because it uses 'established prior art' and equivalent tuning effort.",
+        "failure_mechanism": "The Transformer is initialized with domain-specific pretrained weights (SciBERT/PubMedBERT) containing millions of parameters and knowledge from millions of documents. The BiLSTM-CRF uses static embeddings (GloVe/FastText) and is trained from scratch on only 1,600 reports. The 'advantage' measured will likely be the difference between 'massive-scale pretraining' and 'small-sample supervised learning', rather than a comparison of architectures or the specific hypothesis of 'domain adaptation' vs 'hand-crafted features'. The baseline is effectively handicapped by the lack of a comparable pretrained language model backbone.",
+        "evidence_test": "Include a third model: a Transformer initialized with random weights (no pretraining) but the same architecture as the clinical BERT. If the pretrained BERT significantly outperforms the random BERT, the gain is due to the pretraining corpus, not the architecture or the specific clinical fine-tuning process.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (Months 1-24 train, 25-30 val, 31-36 test) prevents leakage and assesses robustness to drift.",
+        "failure_mechanism": "While temporal splitting is generally good, the sample size for the test set is extremely small (200 reports) relative to the total corpus (200,000). In clinical settings, report styles often shift based on the specific radiologist on call or seasonal pathology (e.g., pneumonia spikes in winter). A 6-month window for testing may capture a seasonal artifact or a specific clinician's style rather than a generalizable temporal drift, leading to high variance in the F1 score that bootstrap resampling cannot fully mitigate if the underlying sample is not representative of the long-term distribution.",
+        "evidence_test": "Compare the distribution of entity types and report lengths in the test set (Months 31-36) against a random sample of the same size from the training set. If the distributions differ significantly, the 'drift' being measured is a sampling artifact of the time window.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The use of a clinical-domain adapted BERT tokenizer ensures appropriate tokenization for radiology reports.",
+        "failure_mechanism": "Radiology reports are notorious for non-standard abbreviations, idiosyncratic punctuation (e.g., 'Lungs: clear. Heart: normal size.'), and specific formatting. If the SciBERT/PubMedBERT tokenizer was trained on PubMed abstracts (formal academic prose) rather than clinical notes (telegraphic prose), it may over-fragment clinical shorthand into meaningless sub-tokens. This increases the sequence length and makes span-boundary detection harder for the Transformer, potentially masking its actual capability.",
+        "evidence_test": "Analyze the average number of sub-tokens per word for clinical entities in the test set. Compare this to the sub-token rate for non-entity text. A high fragmentation rate for entities suggests a tokenizer mismatch.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The BiLSTM-CRF's use of POS tags via spaCy is a valid feature.",
+        "failure_mechanism": "Standard spaCy POS taggers are trained on general English (web text/news). Clinical radiology text is often noun-heavy and lacks standard sentence structure (e.g., 'No pleural effusion noted'). The POS tagger will likely produce high error rates on this domain, providing the BiLSTM-CRF with noisy features that could degrade its performance relative to the Transformer, which learns its own internal representations.",
+        "evidence_test": "Compute the accuracy of the spaCy POS tagger on a small gold-standard sample of the radiology reports. If accuracy is significantly lower than the tagger's reported general-domain accuracy, the feature is a liability.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has a critical flaw in its baseline selection: it compares a massively pretrained Transformer against a shallow BiLSTM-CRF trained on a tiny dataset, meaning it measures the value of pretraining rather than the hypothesis of architecture/feature superiority. Additionally, the test set size is small enough to be susceptible to seasonal or clinician-specific noise despite the temporal split.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am contesting the challenges for F1 and F3, as the design's scope and controls directly address the raised mechanisms. For F2, I accept the partial challenge and switch to DEFER, as the design's temporal split is a deliberate choice but the representativeness of the test window is a genuine empirical uncertainty that does not invalidate the primary conclusion. F4 is accepted as is.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's challenge mischaracterizes the experiment's hypothesis. The methodology explicitly states the comparison is between a 'domain-adapted transformer' and a 'BiLSTM-CRF baseline representing established prior art' (Section 4). The hypothesis is whether the transformer's pretraining and domain adaptation provide an advantage in this clinical setting over the prior art. This is a pragmatic, real-world comparison, not an ablation study to isolate components. The scope statement (Section 8) clarifies the experiment does not establish whether the advantage is due to architecture, pretraining, or capacity. Therefore, the baseline is not 'handicapped'; it is the correct counterfactual for the stated research question. A comparison against a randomly initialized transformer is a different, valid experiment, but it is out of scope for this one.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly notes that a 6-month test window may capture seasonal or clinician-specific artifacts, not just generalizable drift. The design's temporal split is a deliberate choice to simulate real-world deployment, and bootstrap CIs provide some variance estimation, but these do not fully guarantee the test window's representativeness. This is a genuine empirical uncertainty. The settling experiment is to compare the primary F1 result against results from multiple, non-overlapping 6-month test windows sampled from the full corpus (e.g., a rolling window analysis). If the transformer consistently outperforms the BiLSTM-CRF across all windows, the primary conclusion is robust. If performance varies dramatically and the advantage disappears in some windows, the conclusion is sensitive to temporal sampling. Crucially, the primary conclusion about the transformer's relative advantage can remain valid even if the specific test window is unrepresentative, as long as the potential sampling artifact affects both models equally\u2014the comparison is internally valid within the chosen test set. The flaw does not invalidate the metric; it questions its generalizability, which is precisely what the settling experiment would address.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critic is correct that OOV rates are a poor proxy for token fragmentation. However, the design includes a more direct control: 'Template memorization' checks (Section 8). If the transformer is severely hampered by fragmented tokenization of clinical entities, its ability to correctly predict non-template, novel entity spans would be degraded. This would manifest as poor performance on 'rare findings' (a reported secondary metric) and a low fraction of correct predictions that are verbatim templates. The methodology explicitly tracks F1 on rare findings (bottom 20% entity frequency). If the transformer's advantage holds or is even greater on rare findings\u2014where memorization is impossible and robust tokenization is critical\u2014it is strong evidence that tokenizer fragmentation is not a crippling issue. The design therefore has a specific, outcome-based control for the failure mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTed the R1 rebuttal. The noisy POS feature is one of many in the BiLSTM-CRF; the model can learn to down-weight it. This does not materially affect the fairness of the primary comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One finding (F2) has been deferred to a specific empirical test regarding temporal representativeness, while the other findings have been successfully rebutted or deemed immaterial. This indicates the core design is sound but has one point of genuine uncertainty requiring further evidence."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

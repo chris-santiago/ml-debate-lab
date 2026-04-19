@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_812",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "mistralai/mistral-small-2603",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The held-out cross-site test isolates the effect of site-specific generalization, allowing attribution of performance differences to site shift alone.",
+        "failure_mechanism": "Because the cross-site test consists of the most recent 12 months from a held-out hospital, while training data draws from the oldest 60% of other hospitals, any performance drop may be due to temporal changes in reporting style, terminology, or templates rather than site differences. This conflates site and time shifts.",
+        "evidence_test": "Create an additional test set consisting of the most recent 12 months from the same hospitals used for training/validation (i.e., an in-site temporal holdout). Compare model performance on this set versus the cross-site set; if performance drops similarly, the observed cross-site deficit is likely driven by temporal shift rather than site shift.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Report-level recall (fraction of reports with at least one correctly detected follow-up span) is a suitable primary metric for assessing the model's ability to not miss actionable follow-up recommendations.",
+        "failure_mechanism": "The metric rewards detection of any single span per report, allowing a model to achieve high recall by predicting only one easy-to-detect span while missing other recommendations in the same report. This inflates apparent performance and does not reflect the clinical need to capture all recommendations.",
+        "evidence_test": "Examine span-level recall and precision, as well as per-entity-type F1, on the test sets. If report-level recall is high but span-level recall is low or precision is poor, the metric is misleading. Additionally, compute the fraction of reports where the model detects all recommended spans.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Using a domain-aware Transformer (SciBERT/BioBERT) with a tokenizer fit on the training set yields a model that leverages pretrained linguistic knowledge for improved follow-up extraction.",
+        "failure_mechanism": "Retraining the tokenizer on the training data alters the subword vocabulary relative to the pretrained model's embedding matrix. Unless the embedding matrix is correspondingly resized and reinitialized (or mapped), the token embeddings will be misaligned, causing the model to ignore or corrupt pretrained knowledge. This can silently degrade Transformer performance, making it difficult to attribute any observed advantage to the architecture rather than to a misconfiguration.",
+        "evidence_test": "Verify whether the embedding matrix is reinitialized for new tokens or kept aligned with the pretrained weights. Compare test performance of two variants: (a) the described pipeline (tokenizer fit on training set, embedding matrix reinitialized/resized) and (b) a pipeline using the pretrained tokenizer unchanged (or with vocabulary extended via standard procedures). A significant performance gap indicates the misconfiguration matters.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The TF-IDF+CRF baseline represents a strong enough comparator to demonstrate the Transformer's added value.",
+        "failure_mechanism": "Without a simpler baseline (e.g., rule-based keyword matcher or majority-class predictor), it is unclear whether the CRF already solves the task near optimally, leaving little room for improvement. If the task is easy, any model may appear to perform similarly, obscuring true differences.",
+        "evidence_test": "Run a rule-based baseline that flags reports containing any of a curated list of follow-up keywords (repeat, follow-up, referral, etc.) and report its report-level recall. If this baseline approaches the CRF's performance, the task may be saturated, weakening the claim that the Transformer provides a meaningful gain.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC contains several methodological issues: a confounding temporal shift in the cross-site test, an overly lenient primary metric, a potential silent misconfiguration due to tokenizer retraining, and a lack of a simple baseline. Together, these weaken the claim that a domain-adapted Transformer definitively outperforms a TF-IDF+CRF model for follow-up recommendation extraction.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic claims the cross-site test conflates site and temporal shifts because the cross-site test is the most recent 12 months from a held-out hospital, while training data is the oldest 60% of other hospitals. This is a valid critique of the design's ability to isolate site-specific effects. The methodology does not explicitly control for temporal shift within the cross-site evaluation, which could confound attribution of performance differences to site differences alone. However, the design includes a temporal holdout within the same sites (in-distribution test: most recent 20% of train/val source systems), which can help diagnose whether temporal shift is a factor. The critic's evidence test (comparing performance on in-site temporal holdout vs. cross-site) is already partially addressed by the in-distribution test, but not fully disentangled from site effects. The uncertainty is whether temporal shift is the dominant factor in cross-site performance drops, which the current design cannot fully resolve without an additional temporal-only holdout from the cross-site hospital.\n\nF2: The critic claims report-level recall inflates performance by allowing a model to achieve high recall by detecting only one easy span while missing others in the same report. This is a valid critique of the metric's alignment with clinical needs. The methodology defines report-level recall as the fraction of reports with at least one correctly detected follow-up span, which does not require detecting all spans. The secondary metrics include span-level precision/recall and per-entity-type F1, which can reveal this issue. However, the primary metric does not directly measure the ability to capture all recommendations, which is a clinical need. The critic's evidence test (examining span-level recall and precision) is valid, but the methodology already includes these secondary metrics, which can partially address the concern. The uncertainty is whether the primary metric's inflation is material to the conclusion.\n\nF3: The critic claims retraining the tokenizer on the training set and not resizing/reinitializing the embedding matrix misaligns pretrained knowledge, degrading Transformer performance. This is a valid concern about silent misconfiguration. The methodology states the tokenizer vocabulary is fit on the training set and frozen, but does not explicitly address whether the embedding matrix is resized/reinitialized. This could corrupt the pretrained embeddings for new tokens, undermining the Transformer's advantage. The critic's evidence test (comparing performance with/without tokenizer retraining) is valid and necessary to resolve this.\n\nF4: The critic claims the TF-IDF+CRF baseline may be too strong, leaving little room for improvement, and suggests adding a rule-based baseline. This is a valid concern about baseline adequacy. The methodology does not include a simpler baseline (e.g., rule-based keyword matcher), which could help contextualize the CRF's performance. The critic's evidence test (running a rule-based baseline) is valid and would clarify whether the task is saturated.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critique correctly identifies that the cross-site test may conflate site and temporal shifts. However, the design includes an in-distribution temporal holdout (most recent 20% of train/val source systems) that can help diagnose temporal shift effects. While not a perfect disentanglement, the experiment is scoped to test generalization across sites *and* time implicitly. The critic's evidence test is valid but not strictly necessary for the stated scope: the design tests whether the Transformer generalizes to a new site *in the most recent time period*, which is a realistic clinical scenario. The conflation is acknowledged as a limitation but does not invalidate the primary claim."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The critique correctly notes that report-level recall can inflate performance by rewarding detection of any single span per report. However, the methodology includes secondary metrics (span-level precision/recall, per-entity-type F1) that directly measure extraction fidelity and can reveal this issue. The primary metric aligns with the clinical goal of not missing actionable reports, while secondary metrics ensure span-level quality. The critic's concern is valid but does not invalidate the primary evaluation, as the secondary metrics provide necessary context."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critique correctly identifies a silent misconfiguration risk: retraining the tokenizer without resizing/reinitializing the embedding matrix can corrupt pretrained knowledge. However, the methodology explicitly states that the tokenizer vocabulary is 'fit on the training set only and frozen for validation and test,' and the embedding matrix is not mentioned as being resized. This is a valid empirical claim: the critic's evidence test (comparing performance with/without tokenizer retraining) is necessary to resolve the uncertainty. The design does not address this, so the finding stands as unresolved. The adjusted severity reflects that this is a genuine flaw requiring empirical verification."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critique correctly notes that the TF-IDF+CRF baseline may be too strong, but the methodology includes secondary metrics (per-entity-type F1, span-level precision/recall) that can reveal gaps in the CRF's performance. The primary claim is about the Transformer's added value over the CRF, not absolute performance. A rule-based baseline is not necessary to demonstrate relative improvement, though it could provide context. The concern is minor and does not affect the validity of the primary comparison."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 and F2 are rebutted as design choices justified by the experiment's scope, while F3 remains unresolved and requires empirical verification (DEFER is not needed as REBUT-EVIDENCE captures the uncertainty). F4 is immaterial. The presence of one unresolved finding (F3) with adjusted severity 4 necessitates an empirical test, resulting in 'empirical_test_agreed'."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender provides an in-distribution temporal holdout (most recent 20% of train/val source systems) that could be used to diagnose temporal shift effects, but the original claim that the cross-site test isolates site shift alone remains unsupported. The design still conflates site and time in the cross-site test, and the defender does not explain how the holdout is used to disentangle the two effects."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "While the defender correctly points out that secondary metrics (span-level precision/recall, per-entity-type F1) can reveal the issue of inflated report-level recall, the model selection still relies solely on report-level recall. This allows a model to achieve high recall by detecting only one easy span while missing other recommendations, and the secondary metrics do not mitigate this selection bias."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender did not identify any error in the critic's factual premise; they acknowledged the risk of tokenizer retraining misaligning the embedding matrix and agreed that the design does not address it, merely noting that empirical verification is needed. This fails to resolve the concern that silent misconfiguration could corrupt pretrained knowledge and obscure any true Transformer advantage."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender notes that secondary metrics can reveal gaps in the CRF's performance, but this does not address the core concern that if the task is easy, CRF may already be near ceiling, making it difficult to detect any Transformer advantage. A weaker baseline would be needed to establish headroom for improvement."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Critic challenges F1, F2, and F4 as PARTIAL, and F3 as CHALLENGE. For F1 and F2, the design includes mitigating controls (in-distribution temporal holdout and secondary metrics), but the critic argues they are insufficient to fully address the conflation or selection bias. For F3, the critic reaffirms the silent misconfiguration is unaddressed and material. For F4, the critic argues the CRF may be too strong, though the concern is minor. We will DEFER on F1 and F2 as genuine ambiguities requiring empirical resolution, STAND FIRM on F3 by conceding the design flaw, and STAND FIRM on F4 by maintaining the baseline is adequate for relative comparison.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic is correct that the in-distribution temporal holdout (most recent 20% of train/val source systems) does not fully disentangle site and temporal shifts in the cross-site test. While the design acknowledges both site and temporal generalization as goals, the conflation remains a real ambiguity: performance differences on the cross-site test could stem from either factor. The critic\u2019s evidence test (comparing performance on an in-site temporal holdout vs. cross-site holdout) is the appropriate way to resolve this uncertainty. We accept the challenge and DEFER to empirical evidence.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic is correct that model selection based solely on report-level recall allows a model to achieve high recall by detecting only one easy span per report, while missing other recommendations. Although secondary metrics (span-level precision/recall, per-entity-type F1) are reported, they are not used for model selection. This creates a selection bias: the model chosen may optimize for the wrong objective. The critic\u2019s evidence test (examining span-level recall and the fraction of reports where all spans are detected) is necessary to resolve whether the metric inflates performance. We accept the challenge and DEFER to empirical evidence.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that the design does not address the silent misconfiguration risk: retraining the tokenizer without resizing/reinitializing the embedding matrix can corrupt pretrained knowledge. This is a genuine flaw that could materially affect the primary evaluation metric. The methodology does not include any control for this issue, and the critic\u2019s evidence test (comparing performance with/without tokenizer retraining) is necessary to resolve the uncertainty. We concede the finding as a fatal flaw.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic argues that without a simpler baseline (e.g., rule-based keyword matcher), it is unclear whether the CRF already solves the task near optimally. However, the primary claim is about the Transformer\u2019s added value *relative to the CRF*, not absolute performance. The CRF is a reasonable, interpretable baseline for entity extraction in clinical text, and the secondary metrics (per-entity-type F1, span-level precision/recall) can reveal gaps in its performance. While a rule-based baseline could provide context, it is not necessary to demonstrate relative improvement. The concern is minor and does not affect the validity of the primary comparison.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F2) are DEFERred due to genuine ambiguities requiring empirical resolution, and one finding (F3) is conceded as a fatal flaw. F4 is rebutted as minor and does not affect the primary claims. The empirical test agreed verdict reflects the need for additional experiments to resolve the conflation of site and temporal shifts, selection bias in model choice, and the silent tokenizer misconfiguration."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The held-out cross-site test isolates the effect of site-specific generalization, allowing attribution of performance differences to site shift alone.",
+        "failure_mechanism": "Because the cross-site test consists of the most recent 12 months from a held-out hospital, while training data draws from the oldest 60% of other hospitals, any performance drop may be due to temporal changes in reporting style, terminology, or templates rather than site differences. This conflates site and time shifts.",
+        "evidence_test": "Create an additional test set consisting of the most recent 12 months from the same hospitals used for training/validation (i.e., an in-site temporal holdout). Compare model performance on this set versus the cross-site set; if performance drops similarly, the observed cross-site deficit is likely driven by temporal shift rather than site shift.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Report-level recall (fraction of reports with at least one correctly detected follow-up span) is a suitable primary metric for assessing the model's ability to not miss actionable follow-up recommendations.",
+        "failure_mechanism": "The metric rewards detection of any single span per report, allowing a model to achieve high recall by predicting only one easy-to-detect span while missing other recommendations in the same report. This inflates apparent performance and does not reflect the clinical need to capture all recommendations.",
+        "evidence_test": "Examine span-level recall and precision, as well as per-entity-type F1, on the test sets. If report-level recall is high but span-level recall is low or precision is poor, the metric is misleading. Additionally, compute the fraction of reports where the model detects all recommended spans.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Using a domain-aware Transformer (SciBERT/BioBERT) with a tokenizer fit on the training set yields a model that leverages pretrained linguistic knowledge for improved follow-up extraction.",
+        "failure_mechanism": "Retraining the tokenizer on the training data alters the subword vocabulary relative to the pretrained model's embedding matrix. Unless the embedding matrix is correspondingly resized and reinitialized (or mapped), the token embeddings will be misaligned, causing the model to ignore or corrupt pretrained knowledge. This can silently degrade Transformer performance, making it difficult to attribute any observed advantage to the architecture rather than to a misconfiguration.",
+        "evidence_test": "Verify whether the embedding matrix is reinitialized for new tokens or kept aligned with the pretrained weights. Compare test performance of two variants: (a) the described pipeline (tokenizer fit on training set, embedding matrix reinitialized/resized) and (b) a pipeline using the pretrained tokenizer unchanged (or with vocabulary extended via standard procedures). A significant performance gap indicates the misconfiguration matters.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The TF-IDF+CRF baseline represents a strong enough comparator to demonstrate the Transformer's added value.",
+        "failure_mechanism": "Without a simpler baseline (e.g., rule-based keyword matcher or majority-class predictor), it is unclear whether the CRF already solves the task near optimally, leaving little room for improvement. If the task is easy, any model may appear to perform similarly, obscuring true differences.",
+        "evidence_test": "Run a rule-based baseline that flags reports containing any of a curated list of follow-up keywords (repeat, follow-up, referral, etc.) and report its report-level recall. If this baseline approaches the CRF's performance, the task may be saturated, weakening the claim that the Transformer provides a meaningful gain.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC contains several methodological issues: a confounding temporal shift in the cross-site test, an overly lenient primary metric, a potential silent misconfiguration due to tokenizer retraining, and a lack of a simple baseline. Together, these weaken the claim that a domain-adapted Transformer definitively outperforms a TF-IDF+CRF model for follow-up recommendation extraction.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Critic challenges F1, F2, and F4 as PARTIAL, and F3 as CHALLENGE. For F1 and F2, the design includes mitigating controls (in-distribution temporal holdout and secondary metrics), but the critic argues they are insufficient to fully address the conflation or selection bias. For F3, the critic reaffirms the silent misconfiguration is unaddressed and material. For F4, the critic argues the CRF may be too strong, though the concern is minor. We will DEFER on F1 and F2 as genuine ambiguities requiring empirical resolution, STAND FIRM on F3 by conceding the design flaw, and STAND FIRM on F4 by maintaining the baseline is adequate for relative comparison.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic is correct that the in-distribution temporal holdout (most recent 20% of train/val source systems) does not fully disentangle site and temporal shifts in the cross-site test. While the design acknowledges both site and temporal generalization as goals, the conflation remains a real ambiguity: performance differences on the cross-site test could stem from either factor. The critic\u2019s evidence test (comparing performance on an in-site temporal holdout vs. cross-site holdout) is the appropriate way to resolve this uncertainty. We accept the challenge and DEFER to empirical evidence.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic is correct that model selection based solely on report-level recall allows a model to achieve high recall by detecting only one easy span per report, while missing other recommendations. Although secondary metrics (span-level precision/recall, per-entity-type F1) are reported, they are not used for model selection. This creates a selection bias: the model chosen may optimize for the wrong objective. The critic\u2019s evidence test (examining span-level recall and the fraction of reports where all spans are detected) is necessary to resolve whether the metric inflates performance. We accept the challenge and DEFER to empirical evidence.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that the design does not address the silent misconfiguration risk: retraining the tokenizer without resizing/reinitializing the embedding matrix can corrupt pretrained knowledge. This is a genuine flaw that could materially affect the primary evaluation metric. The methodology does not include any control for this issue, and the critic\u2019s evidence test (comparing performance with/without tokenizer retraining) is necessary to resolve the uncertainty. We concede the finding as a fatal flaw.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic argues that without a simpler baseline (e.g., rule-based keyword matcher), it is unclear whether the CRF already solves the task near optimally. However, the primary claim is about the Transformer\u2019s added value *relative to the CRF*, not absolute performance. The CRF is a reasonable, interpretable baseline for entity extraction in clinical text, and the secondary metrics (per-entity-type F1, span-level precision/recall) can reveal gaps in its performance. While a rule-based baseline could provide context, it is not necessary to demonstrate relative improvement. The concern is minor and does not affect the validity of the primary comparison.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F2) are DEFERred due to genuine ambiguities requiring empirical resolution, and one finding (F3) is conceded as a fatal flaw. F4 is rebutted as minor and does not affect the primary claims. The empirical test agreed verdict reflects the need for additional experiments to resolve the conflation of site and temporal shifts, selection bias in model choice, and the silent tokenizer misconfiguration."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

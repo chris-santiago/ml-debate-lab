@@ -1,0 +1,293 @@
+{
+  "case_id": "hyp_204_case",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "nvidia/nemotron-3-super-120b-a12b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between the Ranking model and the Baseline model isolates the effect of the ranking objective (LambdaMART) vs. the classification objective (Logistic Regression).",
+        "failure_mechanism": "The experiment introduces a massive confound by giving the Ranking model 'Extended features' (TF-IDF text, ticket metadata, analyst behavior) while the Baseline model only receives 'Baseline features'. Even with the ablation model (LambdaMART on baseline features), the primary comparison is between a high-capacity non-linear model with rich features and a low-capacity linear model with sparse features. The 'Baseline' is too weak to serve as a meaningful counterfactual for the hypothesis; any gain could be attributed to the model architecture (GBDT vs. LogReg) or the features, rather than the ranking loss function.",
+        "evidence_test": "Train a Logistic Regression model using the 'Extended features' and compare its Recall@5 to the LambdaMART model using the same extended features. If LogReg with extended features significantly outperforms LogReg with baseline features, the original 'Baseline' was an invalid control.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The feature set reflects information available at triage time and prevents label leakage.",
+        "failure_mechanism": "The 'Extended features' include 'Incident-response ticket metadata from the past 7 days on the same host: ticket count, median resolution time, median severity assigned'. In a SOC environment, a 'high-priority incident' often consists of a cluster of related alerts. If an analyst has already opened a high-severity ticket for a host due to Alert A, and Alert B (the target of prediction) is part of the same attack, the metadata from Alert A's ticket is a direct proxy for the label of Alert B. This is 'intra-incident leakage' where the model learns to identify alerts that are part of an already-discovered incident rather than predicting the priority of an alert in isolation.",
+        "evidence_test": "Remove all ticket metadata features for any host that has an open ticket at the exact timestamp of the alert being predicted. If performance drops significantly, the model was relying on 'already-triaged' signals rather than 'triage-worthy' signals.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Recall@5 is a robust primary metric for the stakeholder's objective.",
+        "failure_mechanism": "Recall@5 measures if the 'needle' is in the top 5, but it does not penalize the model for filling those 5 slots with 'routine' alerts that are trivial to identify. In a high-volume SOC, if the model simply ranks the 5 most 'obvious' high-severity vendor alerts at the top, it may achieve high Recall@5 while failing to surface the 'hidden' critical incidents that actually require ML to find. Without a baseline of 'Vendor Severity Ranking', we cannot know if the ML is adding value or just mirroring the vendor's logic.",
+        "evidence_test": "Compare the Recall@5 of the models against a 'Heuristic Baseline' that simply ranks alerts by Vendor Severity score. If the ML model does not significantly outperform the vendor score, the metric is inflating the perceived utility of the model.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 30-day maturation window eliminates ambiguous cases.",
+        "failure_mechanism": "By excluding alerts that haven't reached a 'mature' label, the PoC creates a selection bias. In production, the model must act on alerts in real-time. If the 'ambiguous' cases (those that never get a ticket or take >30 days to resolve) have different feature distributions than the 'mature' cases, the test set is no longer representative of the production inference distribution.",
+        "evidence_test": "Analyze the distribution of features (e.g., alert frequency, rule IDs) for the excluded 'immature' alerts versus the included 'mature' alerts. A significant divergence indicates a distribution shift between evaluation and production.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC suffers from critical flaws in baseline selection and signal leakage. Specifically, it compares a powerful model with rich features against a weak linear model with sparse features, and it uses ticket metadata that likely leaks the 'incident' status of related alerts on the same host.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 alleges that the comparison between the ranking model (LambdaMART with extended features) and the baseline model (Logistic regression with baseline features) confounds the ranking objective with model capacity and feature richness, making any performance gain attributable to those factors rather than the loss function. The methodology includes an ablation model (LambdaMART trained on baseline features only) that isolates the effect of the ranking objective while holding features constant, and ensures both models receive identical hyperparameter tuning. This design allows attribution of gains to ranking vs. features, addressing the critic's concern.\n\nF2 claims that the 'Incident-response ticket metadata' feature introduces intra-incident leakage because historical ticket data from a host can signal that an alert is part of an already-discovered incident, effectively leaking the label. The methodology explicitly excludes post-investigation fields (resolution reason, analyst comments, etc.) to prevent label leakage, and the ticket metadata consists of historical aggregates (ticket count, median resolution time, median severity) that are available at triage time and reflect prior analyst activity, not the future outcome of the alert being scored. Thus the feature does not constitute leakage; it is a legitimate signal of host context.\n\nF3 argues that Recall@5 can be inflated by simply ranking the most obvious high-severity vendor alerts, and that without a heuristic baseline (vendor severity ranking) we cannot know if the ML adds value. The methodology includes difficulty stratification: Recall@5 is computed separately for high and low vendor-severity alerts to verify that performance is not merely mirroring vendor scores. This control directly tests whether the model adds value beyond the vendor's logic, addressing the critic's concern.\n\nF4 contends that the 30-day maturation window creates selection bias by excluding alerts that never mature or take >30 days to label, potentially causing a distribution shift between evaluation and production. While this is a valid consideration, the window is applied uniformly across all time periods to ensure label reliability, and the excluded alerts constitute a small fraction with uncertain labels. The impact on the primary comparison of ranking vs. classification is expected to be minor, making this a minor concern rather than a threat to the experiment's conclusions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design includes an ablation model (LambdaMART trained on the baseline feature set only) that isolates the effect of the ranking objective while holding features and model capacity constant. By comparing this ablation to the baseline (Logistic regression on baseline features) we can attribute any gain to the ranking loss; comparing the ranking model to the ablation isolates the contribution of extended features. This controls for the confounds of model architecture and feature richness raised by the critic."
+      },
+      {
+        "finding_id": "F2",
+        "rebuttal_type": "REBUT-DESIGN",
+        "original_severity": 7,
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Ticket metadata (count, median resolution time, median severity) consists of historical aggregates available at triage time and does not include post-investigation fields that could leak the label. The label definition depends on whether the alert triggers a new high-severity ticket within 24 hours; prior ticket activity is permissible context and not leakage. The methodology's explicit exclusion of post-investigation fields and the temporal split further prevent future information from influencing training."
+      },
+      {
+        "finding_id": "F3",
+        "rebuttal_type": "REBUT-DESIGN",
+        "original_severity": 5,
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology stratifies Recall@5 by vendor severity (high vs. low) to determine whether the model merely amplifies pre-existing vendor scores. If the model shows strong Recall@5 on low vendor-severity alerts, it demonstrates value beyond the vendor's heuristic, directly addressing the critic's concern about metric inflation."
+      },
+      {
+        "finding_id": "F4",
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "original_severity": 2,
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The 30-day maturation window ensures reliable labels by excluding ambiguous cases; any resulting selection bias is minor and applies uniformly across train, validation, and test splits. The primary comparison of ranking vs. classification relies on relative performance, which is unlikely to be overturned by this small, consistent exclusion."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted with adjustments that bring their adjusted severity to 3 or below, satisfying the EXONERATE condition and indicating that the methodology remains sound under scrutiny."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly pointed out the existence of the ablation model (LambdaMART on baseline features). This creates a clean chain of comparison: [LogReg Baseline] -> [LambdaMART Baseline] isolates the ranking objective/model capacity, and [LambdaMART Baseline] -> [LambdaMART Extended] isolates the feature set. This mechanistically resolves the confound."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal is generic and fails to address the specific failure mechanism of 'intra-incident leakage'. The defender argues that historical aggregates are 'permissible context', but ignores the fact that in SOC operations, a single attack generates a cluster of alerts. If Alert A triggers a high-severity ticket, and Alert B (the target) is part of the same attack, the 'median severity' or 'ticket count' for that host in the last 7 days will be spiked by Alert A. The model is thus predicting 'this host is currently under attack' rather than 'this alert is high priority'. The exclusion of post-investigation fields does not prevent this, as the ticket for Alert A exists *before* Alert B is triaged."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "Stratifying by vendor severity is a good diagnostic, but it doesn't fully replace a heuristic baseline. While it shows if the model finds 'hidden' incidents (low vendor severity), it doesn't quantify the actual lift over a simple 'Sort by Vendor Severity' strategy across the whole dataset. The concern about metric inflation is reduced but not eliminated."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal is a generic 'it's minor' statement. It does not address the mechanism of distribution shift. If alerts that are 'ambiguous' (never resulting in a ticket) have different feature profiles than those that are 'mature', the model is being evaluated on a filtered subset of reality. This is a classic selection bias that can lead to over-optimistic performance estimates when deployed on the full, unfiltered stream."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1: challenge accepted \u2013 keep original rebuttal. F2: challenge upheld \u2013 no design control for intra\u2011incident leakage, so concede. F3: challenge partial but design\u2019s stratification by vendor severity directly tests whether the model adds value beyond the vendor heuristic; strengthen the design\u2011based rebuttal. F4: challenge upheld \u2013 selection bias may affect absolute performance but not the relative ranking\u2011vs\u2011classification comparison; defer to a full\u2011stream experiment to confirm robustness.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design includes an ablation model (LambdaMART trained on baseline features only) that isolates the ranking objective while holding features and model capacity constant. Comparing LogReg baseline \u2192 LambdaMART baseline isolates the effect of the ranking loss/model capacity, and LambdaMART baseline \u2192 LambdaMART extended isolates the effect of the added features. This cleanly addresses the confound of architecture vs. ranking objective raised by the critic.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies intra\u2011incident leakage: ticket metadata (count, median resolution time, median severity) from the past 7 days can reflect an already\u2011opened high\u2011severity ticket for the same attack, giving the ranking model a direct proxy for the label of the target alert. The methodology only excludes post\u2011investigation fields; it does not prevent this form of leakage, and no control (e.g., masking ticket metadata when an open ticket exists on the host) is present. Because the leakage could materially inflate the ranking model\u2019s Recall@5 relative to the baseline, the concern is valid and the design does not mitigate it.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design stratifies Recall@5 by vendor severity (high vs. low) to determine whether the model merely amplifies pre\u2011existing vendor scores. If the model shows strong Recall@5 on low\u2011vendor\u2011severity alerts, it demonstrates value beyond the vendor\u2019s heuristic, directly addressing the metric\u2011inflation concern. This stratification is a specific, implemented control that lets us verify the model is not just mirroring vendor logic.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The 30\u2011day maturation window creates a selected sample of \u2018mature\u2019 alerts; the critic warns this may induce distribution shift relative to the full, unfiltered stream. While this could affect absolute performance estimates, both the ranking and baseline models are trained and evaluated on exactly the same filtered data, so any shift impacts them equally. To resolve whether the relative ranking\u2011vs\u2011classification conclusion holds in production, we propose an experiment: train and test both models on the full stream using labels defined after a longer (e.g., 60\u2011day) window or via manual review of a sampled subset, then compare their Recall@5. If the relative advantage of the ranking model persists, the primary conclusion is validated; if it disappears or reverses, the conclusion would be called into question. Because the experiment targets the relative comparison, the primary conclusion can survive even if the critique is correct about absolute performance.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F2 was conceded due to an uncontrolled intra\u2011incident leakage that materially affects the primary metric, leaving a FATAL finding with adjusted severity above the acceptance threshold."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between the Ranking model and the Baseline model isolates the effect of the ranking objective (LambdaMART) vs. the classification objective (Logistic Regression).",
+        "failure_mechanism": "The experiment introduces a massive confound by giving the Ranking model 'Extended features' (TF-IDF text, ticket metadata, analyst behavior) while the Baseline model only receives 'Baseline features'. Even with the ablation model (LambdaMART on baseline features), the primary comparison is between a high-capacity non-linear model with rich features and a low-capacity linear model with sparse features. The 'Baseline' is too weak to serve as a meaningful counterfactual for the hypothesis; any gain could be attributed to the model architecture (GBDT vs. LogReg) or the features, rather than the ranking loss function.",
+        "evidence_test": "Train a Logistic Regression model using the 'Extended features' and compare its Recall@5 to the LambdaMART model using the same extended features. If LogReg with extended features significantly outperforms LogReg with baseline features, the original 'Baseline' was an invalid control.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The feature set reflects information available at triage time and prevents label leakage.",
+        "failure_mechanism": "The 'Extended features' include 'Incident-response ticket metadata from the past 7 days on the same host: ticket count, median resolution time, median severity assigned'. In a SOC environment, a 'high-priority incident' often consists of a cluster of related alerts. If an analyst has already opened a high-severity ticket for a host due to Alert A, and Alert B (the target of prediction) is part of the same attack, the metadata from Alert A's ticket is a direct proxy for the label of Alert B. This is 'intra-incident leakage' where the model learns to identify alerts that are part of an already-discovered incident rather than predicting the priority of an alert in isolation.",
+        "evidence_test": "Remove all ticket metadata features for any host that has an open ticket at the exact timestamp of the alert being predicted. If performance drops significantly, the model was relying on 'already-triaged' signals rather than 'triage-worthy' signals.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Recall@5 is a robust primary metric for the stakeholder's objective.",
+        "failure_mechanism": "Recall@5 measures if the 'needle' is in the top 5, but it does not penalize the model for filling those 5 slots with 'routine' alerts that are trivial to identify. In a high-volume SOC, if the model simply ranks the 5 most 'obvious' high-severity vendor alerts at the top, it may achieve high Recall@5 while failing to surface the 'hidden' critical incidents that actually require ML to find. Without a baseline of 'Vendor Severity Ranking', we cannot know if the ML is adding value or just mirroring the vendor's logic.",
+        "evidence_test": "Compare the Recall@5 of the models against a 'Heuristic Baseline' that simply ranks alerts by Vendor Severity score. If the ML model does not significantly outperform the vendor score, the metric is inflating the perceived utility of the model.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 30-day maturation window eliminates ambiguous cases.",
+        "failure_mechanism": "By excluding alerts that haven't reached a 'mature' label, the PoC creates a selection bias. In production, the model must act on alerts in real-time. If the 'ambiguous' cases (those that never get a ticket or take >30 days to resolve) have different feature distributions than the 'mature' cases, the test set is no longer representative of the production inference distribution.",
+        "evidence_test": "Analyze the distribution of features (e.g., alert frequency, rule IDs) for the excluded 'immature' alerts versus the included 'mature' alerts. A significant divergence indicates a distribution shift between evaluation and production.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC suffers from critical flaws in baseline selection and signal leakage. Specifically, it compares a powerful model with rich features against a weak linear model with sparse features, and it uses ticket metadata that likely leaks the 'incident' status of related alerts on the same host.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1: challenge accepted \u2013 keep original rebuttal. F2: challenge upheld \u2013 no design control for intra\u2011incident leakage, so concede. F3: challenge partial but design\u2019s stratification by vendor severity directly tests whether the model adds value beyond the vendor heuristic; strengthen the design\u2011based rebuttal. F4: challenge upheld \u2013 selection bias may affect absolute performance but not the relative ranking\u2011vs\u2011classification comparison; defer to a full\u2011stream experiment to confirm robustness.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design includes an ablation model (LambdaMART trained on baseline features only) that isolates the ranking objective while holding features and model capacity constant. Comparing LogReg baseline \u2192 LambdaMART baseline isolates the effect of the ranking loss/model capacity, and LambdaMART baseline \u2192 LambdaMART extended isolates the effect of the added features. This cleanly addresses the confound of architecture vs. ranking objective raised by the critic.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies intra\u2011incident leakage: ticket metadata (count, median resolution time, median severity) from the past 7 days can reflect an already\u2011opened high\u2011severity ticket for the same attack, giving the ranking model a direct proxy for the label of the target alert. The methodology only excludes post\u2011investigation fields; it does not prevent this form of leakage, and no control (e.g., masking ticket metadata when an open ticket exists on the host) is present. Because the leakage could materially inflate the ranking model\u2019s Recall@5 relative to the baseline, the concern is valid and the design does not mitigate it.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design stratifies Recall@5 by vendor severity (high vs. low) to determine whether the model merely amplifies pre\u2011existing vendor scores. If the model shows strong Recall@5 on low\u2011vendor\u2011severity alerts, it demonstrates value beyond the vendor\u2019s heuristic, directly addressing the metric\u2011inflation concern. This stratification is a specific, implemented control that lets us verify the model is not just mirroring vendor logic.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The 30\u2011day maturation window creates a selected sample of \u2018mature\u2019 alerts; the critic warns this may induce distribution shift relative to the full, unfiltered stream. While this could affect absolute performance estimates, both the ranking and baseline models are trained and evaluated on exactly the same filtered data, so any shift impacts them equally. To resolve whether the relative ranking\u2011vs\u2011classification conclusion holds in production, we propose an experiment: train and test both models on the full stream using labels defined after a longer (e.g., 60\u2011day) window or via manual review of a sampled subset, then compare their Recall@5. If the relative advantage of the ranking model persists, the primary conclusion is validated; if it disappears or reverses, the conclusion would be called into question. Because the experiment targets the relative comparison, the primary conclusion can survive even if the critique is correct about absolute performance.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F2 was conceded due to an uncontrolled intra\u2011incident leakage that materially affects the primary metric, leaving a FATAL finding with adjusted severity above the acceptance threshold."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=7 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

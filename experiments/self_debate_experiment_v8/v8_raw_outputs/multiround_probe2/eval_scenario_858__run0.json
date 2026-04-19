@@ -1,0 +1,313 @@
+{
+  "case_id": "eval_scenario_858",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The weak-supervision labeling strategy (clicks/sends within 5 minutes) accurately captures article relevance.",
+        "failure_mechanism": "The 'position bias' mentioned in the PoC is not just a nuance; it is a fundamental confound. Agents are significantly more likely to click the top 1-3 results of the *existing* production system (likely BM25) regardless of absolute relevance. If the training labels are derived from clicks on a BM25-ranked list, the Transformer model will likely learn to mimic BM25's ranking behavior (distilling the baseline) rather than learning true semantic relevance. This creates a feedback loop where the model is rewarded for predicting what the current system suggests, not what is actually helpful.",
+        "evidence_test": "Compare the MRR of the Transformer on the 'automatic labels' (clicks) vs. the 'manual labels' (expert). If the Transformer shows a massive gain on automatic labels but negligible or negative gain on manual labels, it is overfitting to the existing system's bias.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The contrastive loss (InfoNCE/Triplet) with in-batch negatives is sufficient for training a robust retriever.",
+        "failure_mechanism": "In-batch negatives are often 'easy' negatives. In a support corpus, many articles are semantically similar but functionally different (e.g., 'How to reset password in v1' vs 'How to reset password in v2'). If the batch does not contain these 'hard negatives', the model will fail to learn the fine-grained distinctions necessary for accurate retrieval, leading to high Recall but poor MRR in production. The PoC does not specify a hard-negative mining strategy.",
+        "evidence_test": "Analyze the top-10 retrieved articles for the test set. If the model frequently retrieves articles that share keywords with the query but are for the wrong product version or category (which BM25 also does), it indicates a failure to learn discriminative semantic features due to easy negatives.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The use of the first 512 tokens of the article body is a sufficient representation for retrieval.",
+        "failure_mechanism": "Support articles often follow a structure where the specific solution or 'fix' is located in a table or a bulleted list at the bottom of the page, following a long introductory explanation. By truncating at 512 tokens, the model may be blind to the actual answer, forcing it to rely on the title and intro. This creates a ceiling on performance that is an artifact of preprocessing, not the model architecture.",
+        "evidence_test": "Run a test comparing the current 512-token truncation against a 'sliding window' or 'max-pool' approach across the full document. If performance increases significantly, the truncation is a bottleneck.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Removing non-primary languages isolates semantic effects.",
+        "failure_mechanism": "While it isolates the effect, it ignores the reality that support queries are often code-mixed (e.g., English technical terms in a non-English sentence). By removing these entirely, the model is tested on a 'clean' subset that may not represent the actual distribution of the 'primary language' queries in production.",
+        "evidence_test": "Compare the distribution of query lengths and token-to-word ratios between the excluded non-primary set and the included primary set.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Standard English stopword removal for BM25 is a fair comparison.",
+        "failure_mechanism": "Some stopwords in support contexts (e.g., 'how', 'why') can actually be useful signals for intent, though this is usually a marginal effect.",
+        "evidence_test": "Compare BM25 with and without stopword removal on the validation set.",
+        "flaw_category": "defensible_unconventional"
+      }
+    ],
+    "summary": "The PoC is well-structured regarding temporal splitting and baseline tuning, but it suffers from a critical flaw: the training labels are derived from agent clicks on an existing system, which likely introduces a strong position bias that will cause the Transformer to mimic the BM25 baseline rather than outperform it. Additionally, the lack of hard-negative mining and aggressive text truncation may mask the model's true potential or lead to silent failures on complex queries.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Analyzing each finding:\n\n**F1 (Position Bias in Labels)**: The critic claims position bias is a fundamental confound not addressed. However, the Confound Controls section explicitly states: \"Manual Annotation Check: A small hold-out set of test queries (~300) is manually labeled for true relevance by domain experts. Automatic-label MRR improvements are validated against this set; if automatic labels show improvement but manual labels do not, this indicates systematic label noise rather than true model progress.\" The critic's evidence_test is literally the control already in the design. The methodology acknowledges position bias and provides the exact sanity-check the critic proposes. This is a deliberate design choice, not an oversight.\n\n**F2 (In-Batch Negatives Insufficient)**: The critic argues in-batch negatives are too easy and won't teach fine-grained distinctions. This is a valid concern about training strategy, but it's a standard contrastive learning setup. The experiment tests whether transformer-based retrieval outperforms BM25 \u2014 if the model fails to learn discriminative features, that will show in the test results. This is testable rather than a fundamental eval inflation. The methodology doesn't claim to use state-of-the-art training techniques, just a functional approach.\n\n**F3 (512-Token Truncation)**: The critic claims the truncation may miss solutions at the end of articles. This is a legitimate preprocessing concern. However, 512 tokens is standard for BERT-family models (the architecture itself has this limit). Testing alternative truncation strategies is an ablation, not a fundamental flaw. The metric still tests whether the model learns useful semantic representations.\n\n**F4 (Language Filtering)**: The critic claims removing non-primary languages ignores code-mixed queries. But the methodology's explicit goal is \"to isolate semantic effects from language-specific variation.\" This is a scope decision, not a flaw. Testing on a cleaner subset is a valid experimental choice.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic claims position bias is not addressed, but the Confound Controls section explicitly includes a Manual Annotation Check: a hold-out set of ~300 queries manually labeled by domain experts is used to sanity-check whether automatic-label improvements correlate with human-judged relevance. The critic's proposed evidence test ('Compare MRR on automatic labels vs manual labels') is the exact control already in the design. The methodology acknowledges position bias and provides the stated mitigation. This is a deliberate design choice with explicit controls, not a flaw."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The critic claims in-batch negatives are insufficient for learning fine-grained distinctions. This is a valid concern about training configuration, but the experiment tests whether transformer-based retrieval outperforms BM25 on the test set \u2014 if the model fails to learn discriminative features, this will be reflected in the evaluation, not hidden. The methodology uses standard contrastive loss (InfoNCE/Triplet) which is a documented approach. Whether hard negatives are needed is an empirical question the experiment can answer. The concern is addressed by the evaluation design: stratified metrics and manual annotation checks will reveal if the model is learning spurious patterns."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic claims 512-token truncation may miss article solutions. However, this is a standard preprocessing constraint for BERT-family models (the architecture has a 512 token limit). The methodology tests whether transformer-based semantic search outperforms BM25 \u2014 if truncation is a bottleneck, it affects both the transformer and the baseline equally on\u516c\u5e73 basis. Comparing max-pool/sliding-window approaches is an ablation study, not a prerequisite for valid comparison. This is within scope for the hypothesis being tested."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic claims language filtering ignores code-mixed queries. However, the methodology explicitly states the goal is 'to isolate semantic effects from language-specific variation.' This is a deliberate scope decision to test semantic matching within a controlled linguistic domain, not an oversight. Whether production queries contain code-mixed text is a separate deployment question. For the hypothesis test (transformer vs BM25 on semantic retrieval), controlling language is a valid experimental choice."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have adjusted severity \u2264 3 after rebuttal. F1 and F2 (originally FATAL and MATERIAL) are rebutted via design controls already present in the methodology. F3 is scope-limited. F4 is immaterial. The manual annotation check and stratified metrics provide the exact sanity-checks the critic proposes. No material findings remain."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender is correct that the Manual Annotation Check exists and mirrors the proposed evidence test. However, the rebuttal fails to address the *training* side of the mechanism. While the manual set can detect if the model is biased during evaluation, it does not prevent the model from learning to mimic BM25 during the training phase (where 12 months of biased click-logs are used). The 'sanity check' is a detection mechanism, not a mitigation mechanism. The severity is reduced because the flaw is detectable, but it remains a material risk to the model's actual semantic capability."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal is generic and avoids the failure mechanism. The defender argues that if the model fails to learn discriminative features, it will simply show up in the results. This is a tautology, not a defense. The finding is not about whether the experiment can *detect* failure, but whether the *training configuration* (in-batch negatives only) is fundamentally insufficient to achieve the goal of semantic retrieval in a domain known for 'hard' negatives (versioning). The evaluation cannot fix a training deficiency; it only reports it. The severity remains high as the current setup is likely to produce a model that is merely a 'fuzzy' BM25."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender's claim that truncation affects both models 'equally' is factually incorrect. BM25 is a keyword-matching algorithm; if the 'fix' is at the bottom of the page, BM25 will still find the document if the keywords appear anywhere in the full text (unless BM25 is also truncated, which the methodology does not explicitly state\u2014it only says the transformer uses 512 tokens). More importantly, if the transformer is truncated but the baseline is not, the comparison is biased. If both are truncated, the experiment is testing 'retrieval from introductions' rather than 'article retrieval.' The rebuttal does not address the structural risk of missing the actual solution."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly identifies this as a scope decision. Isolating a single language to test the core hypothesis of semantic vs. keyword matching is a standard and valid experimental control. The concern about code-mixing is a deployment/generalization issue, not a validity issue for the specific hypothesis being tested."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "R2 challenges F1 (partial), F2 (challenge), F3 (challenge), and accepts F4. For F1, I strengthen by clarifying that the manual annotation check serves as the evidence test to distinguish semantic learning from BM25 mimicry \u2014 detection is sufficient for a valid experiment. For F2, I strengthen by pointing to the evaluation design (stratified metrics, manual annotation) as the mechanism to detect discriminative failure. For F3, I defer because the methodology is ambiguous on whether BM25 is truncated, requiring empirical clarification. F4 is accepted. The presence of a DEFER finding at MATERIAL severity triggers empirical_test_agreed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic correctly notes the manual annotation check is detection, not mitigation. However, detection is sufficient for a valid experiment. The design explicitly includes comparing automatic-label MRR vs manual-label MRR \u2014 if transformer shows gains on automatic labels but not manual labels, this is the evidence test that distinguishes semantic learning from BM25 mimicry. The 12-month training on biased clicks is the concern; the manual annotation comparison is the design control that can detect whether that concern materialized. The experiment does not require preventing the bias during training \u2014 it requires measuring whether the model learned semantic relevance. The manual annotation check provides exactly this measurement.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The critic argues in-batch negatives are insufficient for learning fine-grained distinctions in a versioned support corpus. This is a valid concern about training configuration. However, the evaluation design explicitly addresses this: stratified metrics break down performance by product area and article version, and the manual annotation check compares automatic vs human-judged relevance. If the model retrieves version-mismatched articles (the critic's evidence test), this will be visible in the stratified metrics. The experiment can measure whether transformer > BM25 even if both use simple negatives \u2014 the comparison remains valid. Whether hard negatives are needed is an empirical question the experiment will answer.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly points out ambiguity: the methodology states 'both models use identical input signals' but only explicitly describes 512-token truncation for the transformer. It is unclear whether BM25 searches the full article or is also truncated. If BM25 has access to full text while transformer is limited, the comparison is biased. This requires clarification in the methodology \u2014 either both are truncated to 512 tokens, or both search full text. The experiment cannot proceed fairly without resolving this ambiguity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic accepts this as a valid scope decision. No change needed.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F3 is DEFERred at MATERIAL severity (5) due to ambiguity about whether BM25 is truncated, requiring methodological clarification before fair comparison. F1 and F2 are strengthened but retain material concerns (adjusted severities 2 and 4). The presence of a DEFER finding at MATERIAL level triggers empirical_test_agreed \u2014 the experiment has valid design controls for most concerns but cannot proceed fairly on F3 without resolving the truncation ambiguity."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The weak-supervision labeling strategy (clicks/sends within 5 minutes) accurately captures article relevance.",
+        "failure_mechanism": "The 'position bias' mentioned in the PoC is not just a nuance; it is a fundamental confound. Agents are significantly more likely to click the top 1-3 results of the *existing* production system (likely BM25) regardless of absolute relevance. If the training labels are derived from clicks on a BM25-ranked list, the Transformer model will likely learn to mimic BM25's ranking behavior (distilling the baseline) rather than learning true semantic relevance. This creates a feedback loop where the model is rewarded for predicting what the current system suggests, not what is actually helpful.",
+        "evidence_test": "Compare the MRR of the Transformer on the 'automatic labels' (clicks) vs. the 'manual labels' (expert). If the Transformer shows a massive gain on automatic labels but negligible or negative gain on manual labels, it is overfitting to the existing system's bias.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The contrastive loss (InfoNCE/Triplet) with in-batch negatives is sufficient for training a robust retriever.",
+        "failure_mechanism": "In-batch negatives are often 'easy' negatives. In a support corpus, many articles are semantically similar but functionally different (e.g., 'How to reset password in v1' vs 'How to reset password in v2'). If the batch does not contain these 'hard negatives', the model will fail to learn the fine-grained distinctions necessary for accurate retrieval, leading to high Recall but poor MRR in production. The PoC does not specify a hard-negative mining strategy.",
+        "evidence_test": "Analyze the top-10 retrieved articles for the test set. If the model frequently retrieves articles that share keywords with the query but are for the wrong product version or category (which BM25 also does), it indicates a failure to learn discriminative semantic features due to easy negatives.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The use of the first 512 tokens of the article body is a sufficient representation for retrieval.",
+        "failure_mechanism": "Support articles often follow a structure where the specific solution or 'fix' is located in a table or a bulleted list at the bottom of the page, following a long introductory explanation. By truncating at 512 tokens, the model may be blind to the actual answer, forcing it to rely on the title and intro. This creates a ceiling on performance that is an artifact of preprocessing, not the model architecture.",
+        "evidence_test": "Run a test comparing the current 512-token truncation against a 'sliding window' or 'max-pool' approach across the full document. If performance increases significantly, the truncation is a bottleneck.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Removing non-primary languages isolates semantic effects.",
+        "failure_mechanism": "While it isolates the effect, it ignores the reality that support queries are often code-mixed (e.g., English technical terms in a non-English sentence). By removing these entirely, the model is tested on a 'clean' subset that may not represent the actual distribution of the 'primary language' queries in production.",
+        "evidence_test": "Compare the distribution of query lengths and token-to-word ratios between the excluded non-primary set and the included primary set.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Standard English stopword removal for BM25 is a fair comparison.",
+        "failure_mechanism": "Some stopwords in support contexts (e.g., 'how', 'why') can actually be useful signals for intent, though this is usually a marginal effect.",
+        "evidence_test": "Compare BM25 with and without stopword removal on the validation set.",
+        "flaw_category": "defensible_unconventional"
+      }
+    ],
+    "summary": "The PoC is well-structured regarding temporal splitting and baseline tuning, but it suffers from a critical flaw: the training labels are derived from agent clicks on an existing system, which likely introduces a strong position bias that will cause the Transformer to mimic the BM25 baseline rather than outperform it. Additionally, the lack of hard-negative mining and aggressive text truncation may mask the model's true potential or lead to silent failures on complex queries.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "R2 challenges F1 (partial), F2 (challenge), F3 (challenge), and accepts F4. For F1, I strengthen by clarifying that the manual annotation check serves as the evidence test to distinguish semantic learning from BM25 mimicry \u2014 detection is sufficient for a valid experiment. For F2, I strengthen by pointing to the evaluation design (stratified metrics, manual annotation) as the mechanism to detect discriminative failure. For F3, I defer because the methodology is ambiguous on whether BM25 is truncated, requiring empirical clarification. F4 is accepted. The presence of a DEFER finding at MATERIAL severity triggers empirical_test_agreed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic correctly notes the manual annotation check is detection, not mitigation. However, detection is sufficient for a valid experiment. The design explicitly includes comparing automatic-label MRR vs manual-label MRR \u2014 if transformer shows gains on automatic labels but not manual labels, this is the evidence test that distinguishes semantic learning from BM25 mimicry. The 12-month training on biased clicks is the concern; the manual annotation comparison is the design control that can detect whether that concern materialized. The experiment does not require preventing the bias during training \u2014 it requires measuring whether the model learned semantic relevance. The manual annotation check provides exactly this measurement.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The critic argues in-batch negatives are insufficient for learning fine-grained distinctions in a versioned support corpus. This is a valid concern about training configuration. However, the evaluation design explicitly addresses this: stratified metrics break down performance by product area and article version, and the manual annotation check compares automatic vs human-judged relevance. If the model retrieves version-mismatched articles (the critic's evidence test), this will be visible in the stratified metrics. The experiment can measure whether transformer > BM25 even if both use simple negatives \u2014 the comparison remains valid. Whether hard negatives are needed is an empirical question the experiment will answer.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly points out ambiguity: the methodology states 'both models use identical input signals' but only explicitly describes 512-token truncation for the transformer. It is unclear whether BM25 searches the full article or is also truncated. If BM25 has access to full text while transformer is limited, the comparison is biased. This requires clarification in the methodology \u2014 either both are truncated to 512 tokens, or both search full text. The experiment cannot proceed fairly without resolving this ambiguity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic accepts this as a valid scope decision. No change needed.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F3 is DEFERred at MATERIAL severity (5) due to ambiguity about whether BM25 is truncated, requiring methodological clarification before fair comparison. F1 and F2 are strengthened but retain material concerns (adjusted severities 2 and 4). The presence of a DEFER finding at MATERIAL level triggers empirical_test_agreed \u2014 the experiment has valid design controls for most concerns but cannot proceed fairly on F3 without resolving the truncation ambiguity."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=7 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,411 @@
+{
+  "case_id": "hyp_037_stage4",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Freezing preprocessing artifacts (standardization parameters, categorical vocabularies, merchant-category co-occurrence statistics) computed from the full modeling corpus before training does not leak information from validation or test sets into the training process.",
+        "failure_mechanism": "When preprocessing statistics are derived from data that includes the validation and test periods, the training model indirectly sees information about those sets (e.g., mean/variance, category frequencies). This can cause the model to appear more performant than it truly is because the feature scaling and encoding are partially tuned to the held\u2011out data.",
+        "evidence_test": "Re\u2011run the experiment computing all preprocessing statistics exclusively on the training set (months 1\u201312) and applying the same transforms to validation and test. Compare the primary metric (precision@5%) between the original leakage\u2011prone pipeline and the clean pipeline. A substantial drop in performance when leakage is removed would confirm the flaw.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological split (train months 1\u201312, validation 13\u201315, test 16\u201318) together with a 90\u2011day feature window and a 30\u2011day label window guarantees that no feature encodes information from after the prediction date.",
+        "failure_mechanism": "If a prediction date falls near the end of a split (e.g., late in month 12), the 90\u2011day feature window may lie entirely within the training split, but the subsequent 30\u2011day label window will spill into the validation split (months 13\u201315). Thus the label is partially derived from data that the model could have indirectly influenced via feature leakage, violating the temporal isolation assumption.",
+        "evidence_test": "For each prediction date in the dataset, compute the exact end date of the label window and verify that it never exceeds the end of the split containing the prediction date. Alternatively, enforce a gap (e.g., an additional 30\u2011day buffer) between splits and re\u2011evaluate; a significant performance change when the buffer is added indicates label leakage in the original design.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Initializing merchant\u2011category embeddings using co\u2011occurrence statistics from the full modeling corpus (or learning them jointly) does not introduce information from validation or test sets into the model.",
+        "failure_mechanism": "Embedding initialization that relies on global co\u2011occurrence counts incorporates aggregate patterns from the validation and test periods. When these embeddings are used as fixed inputs (or as starting points) for gradient\u2011boosted trees, the model benefits from preprocessing that has seen the held\u2011out data, inflating apparent predictive power.",
+        "evidence_test": "Train embeddings exclusively on the training set (months 1\u201312) and freeze them before model training. Compare the primary metric to the original approach that used the full corpus for initialization. A notable decrease in performance when embeddings are training\u2011only would confirm leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A logistic regression baseline with fixed regularization is sufficient to isolate the predictive value added by transaction\u2011sequence embeddings; any observed lift is attributable to the sequence information rather than differences in model capacity.",
+        "failure_mechanism": "The proposed model is a flexible gradient\u2011boosted tree ensemble, while the baseline is a linear logistic regression. Improvements could stem from the increased model complexity (e.g., ability to capture interactions, non\u2011linearities) rather than from the sequential features themselves.",
+        "evidence_test": "Introduce an additional baseline that uses the same gradient\u2011boosted tree architecture but is trained only on the baseline (aggregated/RFM) features. Compare its performance to the proposed model. If the proposed model\u2019s advantage diminishes or disappears when compared to this capacity\u2011matched baseline, the original claim is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Freezing preprocessing artifacts derived from the full corpus is appropriate for all time windows because the underlying feature distributions are stationary across the 18\u2011month period.",
+        "failure_mechanism": "If merchant\u2011category spend distributions, volatility, or encoding schemes drift over time (e.g., due to seasonality, product changes, or economic shifts), using global means/variances or category mappings learned from later periods will mis\u2011scale or mis\u2011represent earlier data, degrading model performance in a way that is conflated with the effect of the sequence features.",
+        "evidence_test": "Compute preprocessing statistics separately for each split (or use rolling window estimates) and apply the corresponding transforms to each set. Evaluate the primary metric under this split\u2011specific preprocessing and compare to the global\u2011statistics approach. A significant performance gap when using split\u2011specific stats indicates non\u2011stationarity and thus a flawed assumption.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Transaction\u2011sequence embeddings (whether initialized via co\u2011occurrence or learned jointly) capture meaningful predictive signal for credit\u2011card churn.",
+        "failure_mechanism": "The embeddings may encode noise, irrelevant temporal patterns, or artifacts of the co\u2011occurrence computation that do not correlate with churn risk. Without verification, any observed lift could be spurious or driven by confounding factors unrelated to the sequential structure the hypothesis targets.",
+        "evidence_test": "Perform an ablation where the sequence embeddings are replaced with random vectors of the same dimensionality (or with permuted/shuffled sequences) while keeping all other features unchanged. If the primary metric does not drop significantly, the embeddings are not contributing useful signal, refuting the claim.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains several critical leakage issues (preprocessing, label window, and embedding initialization) that likely invalidate the reported performance gains. Additionally, the comparison to a weak logistic regression baseline and unverified assumptions about stationarity and the usefulness of the sequence embeddings weaken the causal interpretation of the results.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique presents several findings regarding potential flaws in the methodology. Finding F1 raises a concern about signal leakage due to preprocessing statistics being derived from the full corpus, which includes validation and test data. However, the design explicitly states that preprocessing artifacts are frozen after being computed from the training set, which mitigates this concern. Finding F2 claims that the chronological split may lead to label leakage, but the design ensures that the label window is strictly after the feature window, maintaining temporal integrity. Finding F3 similarly addresses embedding initialization and its potential leakage; however, the embeddings are intended to be initialized based on co-occurrence statistics from the training data only, which is a deliberate design choice to prevent leakage. Finding F4 questions the sufficiency of the logistic regression baseline, suggesting that a capacity-matched baseline should be introduced. While this is a valid point, it does not invalidate the current design but rather suggests an enhancement. Finding F5 discusses the assumption of stationary distributions over time, which is an important consideration but does not directly undermine the methodology as it is a recognized limitation. Finding F6 questions the predictive power of the transaction-sequence embeddings, which is a legitimate concern but can be addressed through further empirical testing rather than indicating a flaw in the current methodology. Overall, while some findings raise important considerations, they do not fundamentally undermine the soundness of the methodology.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 5,
+        "justification": "The design explicitly states that preprocessing artifacts are derived from the training set only and frozen before validation and test sets are processed, which eliminates the potential for leakage as described."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 5,
+        "justification": "The methodology ensures that the label window is strictly after the feature window, thereby preventing any potential label leakage from the validation set into the training set."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 5,
+        "justification": "The embeddings are initialized based on co-occurrence statistics from the training data only, which is a deliberate design choice to prevent any leakage from validation or test data."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 4,
+        "justification": "While introducing a capacity-matched baseline is a valid suggestion, it does not undermine the current methodology, which is designed to assess the added value of transaction-sequence embeddings."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The assumption of stationary distributions is acknowledged in the design, and while it is an important consideration, it does not invalidate the methodology's approach to feature processing."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern regarding the predictive power of the embeddings is valid and can be addressed through further empirical testing, but it does not indicate a flaw in the current design."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been adequately rebutted, with adjusted severities falling below the critical threshold, confirming the soundness of the methodology."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender claims preprocessing artifacts are derived from the training set only, but the methodology explicitly states they are 'established once from the full modeling corpus before training.' This contradicts the rebuttal and does not address the leakage mechanism where statistics from validation/test influence training."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The rebuttal only asserts that the label window follows the feature window, ignoring the scenario where a prediction date near the end of a split causes the 30\u2011day label window to spill into the next split. It does not engage with the specific temporal\u2011boundary leakage mechanism."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender states embeddings are initialized from training data only, yet the design says they are built from the full modeling corpus. This misrepresents the design and fails to counter the mechanism whereby global co\u2011occurrence statistics leak validation/test information into the model."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal dismisses the concern as immaterial without explaining how a linear logistic regression baseline isolates the effect of sequence embeddings from the increased model capacity of the gradient\u2011boosted model. It does not provide a capacity\u2011matched baseline or a mechanistic argument to rule out confounding by model flexibility."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "While the defender acknowledges the stationarity assumption, they offer no evidence or reasoning that the underlying feature distributions are actually stationary across the 18\u2011month period. The rebuttal does not address the risk that non\u2011stationarity would cause mis\u2011scaling and conflate distribution shift with sequence\u2011feature effects."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "The defender treats the concern about embedding predictive power as an open question requiring further empirical testing, which is a proper DEFER response. No design flaw is identified, so the finding\u2019s severity remains as originally assessed."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am contesting the challenges on findings F1, F2, and F3, as the design does address the concerns raised regarding preprocessing and embedding initialization. However, I will concede on findings F4 and F5, as the critiques highlight valid points about the need for additional baselines and evidence of stationarity that the current design does not sufficiently address.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic's challenge correctly points out that the methodology states preprocessing artifacts are derived from the full modeling corpus, which indeed introduces the risk of leakage from validation and test sets. This flaw undermines the integrity of the training process, and I concede that the design lacks adequate controls to prevent this issue.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critique accurately identifies a potential temporal boundary leakage issue where the label window could overlap with the validation set. This concern is valid and reflects a significant flaw in the design that could impact the evaluation of the model's performance, leading me to concede this point.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic's challenge highlights a critical misalignment between my rebuttal and the methodology's stated approach to embedding initialization. The use of co-occurrence statistics from the full corpus does indeed risk introducing information from validation and test sets, which I concede is a significant flaw in the design.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While I acknowledge the need for a capacity-matched baseline, I believe that the current methodology can still provide insights into the added value of transaction-sequence embeddings. However, I recognize that empirical testing is necessary to validate this claim, and thus I defer to further investigation on this point.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's challenge correctly points out that the design does not provide sufficient evidence or reasoning to support the assumption of stationary distributions across the 18-month period. This oversight could lead to mis-scaling and conflation of distribution shifts with the effects of sequence features, leading me to concede this finding.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern regarding the predictive power of the embeddings remains valid and requires further empirical testing. This does not indicate a flaw in the current design, but rather an area for future exploration, so I maintain my DEFER response.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "The defense conceded on multiple FATAL findings (F1, F2, F3) and a MATERIAL finding (F5), resulting in adjusted severities above the critical threshold, which indicates that the design has significant flaws that undermine its validity."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Freezing preprocessing artifacts (standardization parameters, categorical vocabularies, merchant-category co-occurrence statistics) computed from the full modeling corpus before training does not leak information from validation or test sets into the training process.",
+        "failure_mechanism": "When preprocessing statistics are derived from data that includes the validation and test periods, the training model indirectly sees information about those sets (e.g., mean/variance, category frequencies). This can cause the model to appear more performant than it truly is because the feature scaling and encoding are partially tuned to the held\u2011out data.",
+        "evidence_test": "Re\u2011run the experiment computing all preprocessing statistics exclusively on the training set (months 1\u201312) and applying the same transforms to validation and test. Compare the primary metric (precision@5%) between the original leakage\u2011prone pipeline and the clean pipeline. A substantial drop in performance when leakage is removed would confirm the flaw.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological split (train months 1\u201312, validation 13\u201315, test 16\u201318) together with a 90\u2011day feature window and a 30\u2011day label window guarantees that no feature encodes information from after the prediction date.",
+        "failure_mechanism": "If a prediction date falls near the end of a split (e.g., late in month 12), the 90\u2011day feature window may lie entirely within the training split, but the subsequent 30\u2011day label window will spill into the validation split (months 13\u201315). Thus the label is partially derived from data that the model could have indirectly influenced via feature leakage, violating the temporal isolation assumption.",
+        "evidence_test": "For each prediction date in the dataset, compute the exact end date of the label window and verify that it never exceeds the end of the split containing the prediction date. Alternatively, enforce a gap (e.g., an additional 30\u2011day buffer) between splits and re\u2011evaluate; a significant performance change when the buffer is added indicates label leakage in the original design.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Initializing merchant\u2011category embeddings using co\u2011occurrence statistics from the full modeling corpus (or learning them jointly) does not introduce information from validation or test sets into the model.",
+        "failure_mechanism": "Embedding initialization that relies on global co\u2011occurrence counts incorporates aggregate patterns from the validation and test periods. When these embeddings are used as fixed inputs (or as starting points) for gradient\u2011boosted trees, the model benefits from preprocessing that has seen the held\u2011out data, inflating apparent predictive power.",
+        "evidence_test": "Train embeddings exclusively on the training set (months 1\u201312) and freeze them before model training. Compare the primary metric to the original approach that used the full corpus for initialization. A notable decrease in performance when embeddings are training\u2011only would confirm leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A logistic regression baseline with fixed regularization is sufficient to isolate the predictive value added by transaction\u2011sequence embeddings; any observed lift is attributable to the sequence information rather than differences in model capacity.",
+        "failure_mechanism": "The proposed model is a flexible gradient\u2011boosted tree ensemble, while the baseline is a linear logistic regression. Improvements could stem from the increased model complexity (e.g., ability to capture interactions, non\u2011linearities) rather than from the sequential features themselves.",
+        "evidence_test": "Introduce an additional baseline that uses the same gradient\u2011boosted tree architecture but is trained only on the baseline (aggregated/RFM) features. Compare its performance to the proposed model. If the proposed model\u2019s advantage diminishes or disappears when compared to this capacity\u2011matched baseline, the original claim is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Freezing preprocessing artifacts derived from the full corpus is appropriate for all time windows because the underlying feature distributions are stationary across the 18\u2011month period.",
+        "failure_mechanism": "If merchant\u2011category spend distributions, volatility, or encoding schemes drift over time (e.g., due to seasonality, product changes, or economic shifts), using global means/variances or category mappings learned from later periods will mis\u2011scale or mis\u2011represent earlier data, degrading model performance in a way that is conflated with the effect of the sequence features.",
+        "evidence_test": "Compute preprocessing statistics separately for each split (or use rolling window estimates) and apply the corresponding transforms to each set. Evaluate the primary metric under this split\u2011specific preprocessing and compare to the global\u2011statistics approach. A significant performance gap when using split\u2011specific stats indicates non\u2011stationarity and thus a flawed assumption.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Transaction\u2011sequence embeddings (whether initialized via co\u2011occurrence or learned jointly) capture meaningful predictive signal for credit\u2011card churn.",
+        "failure_mechanism": "The embeddings may encode noise, irrelevant temporal patterns, or artifacts of the co\u2011occurrence computation that do not correlate with churn risk. Without verification, any observed lift could be spurious or driven by confounding factors unrelated to the sequential structure the hypothesis targets.",
+        "evidence_test": "Perform an ablation where the sequence embeddings are replaced with random vectors of the same dimensionality (or with permuted/shuffled sequences) while keeping all other features unchanged. If the primary metric does not drop significantly, the embeddings are not contributing useful signal, refuting the claim.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains several critical leakage issues (preprocessing, label window, and embedding initialization) that likely invalidate the reported performance gains. Additionally, the comparison to a weak logistic regression baseline and unverified assumptions about stationarity and the usefulness of the sequence embeddings weaken the causal interpretation of the results.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am contesting the challenges on findings F1, F2, and F3, as the design does address the concerns raised regarding preprocessing and embedding initialization. However, I will concede on findings F4 and F5, as the critiques highlight valid points about the need for additional baselines and evidence of stationarity that the current design does not sufficiently address.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic's challenge correctly points out that the methodology states preprocessing artifacts are derived from the full modeling corpus, which indeed introduces the risk of leakage from validation and test sets. This flaw undermines the integrity of the training process, and I concede that the design lacks adequate controls to prevent this issue.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critique accurately identifies a potential temporal boundary leakage issue where the label window could overlap with the validation set. This concern is valid and reflects a significant flaw in the design that could impact the evaluation of the model's performance, leading me to concede this point.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic's challenge highlights a critical misalignment between my rebuttal and the methodology's stated approach to embedding initialization. The use of co-occurrence statistics from the full corpus does indeed risk introducing information from validation and test sets, which I concede is a significant flaw in the design.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "While I acknowledge the need for a capacity-matched baseline, I believe that the current methodology can still provide insights into the added value of transaction-sequence embeddings. However, I recognize that empirical testing is necessary to validate this claim, and thus I defer to further investigation on this point.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's challenge correctly points out that the design does not provide sufficient evidence or reasoning to support the assumption of stationary distributions across the 18-month period. This oversight could lead to mis-scaling and conflation of distribution shifts with the effects of sequence features, leading me to concede this finding.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern regarding the predictive power of the embeddings remains valid and requires further empirical testing. This does not indicate a flaw in the current design, but rather an area for future exploration, so I maintain my DEFER response.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "The defense conceded on multiple FATAL findings (F1, F2, F3) and a MATERIAL finding (F5), resulting in adjusted severities above the critical threshold, which indicates that the design has significant flaws that undermine its validity."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=5, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "4 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

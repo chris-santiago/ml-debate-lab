@@ -1,0 +1,234 @@
+{
+  "case_id": "hyp_037_stage4",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Preprocessing artifacts (embeddings, vocabularies, standardization) are established from the full modeling corpus before training to ensure a consistent feature space.",
+        "failure_mechanism": "This is a classic case of data leakage. By calculating co-occurrence statistics and standardization parameters using the 'full modeling corpus' (which includes the validation and test sets), information from the future (months 13-18) leaks into the training set (months 1-12). Specifically, if a new merchant category or a shift in spending patterns emerges in month 16, the training set's embeddings already 'know' about the existence and distribution of these patterns, artificially inflating performance and invalidating the temporal split.",
+        "evidence_test": "Re-run the experiment where preprocessing parameters are derived ONLY from the training window (months 1-12) and applied to the validation/test sets. A significant drop in test performance would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression) serves as a stable reference point to measure the added value of transaction-sequence information.",
+        "failure_mechanism": "The PoC compares a highly tuned non-linear model (XGBoost/LightGBM) against a minimally tuned linear model (Logistic Regression). Any observed improvement may be due to the model's ability to capture non-linear interactions between the *baseline features themselves* (e.g., the interaction between tenure and spend), rather than the addition of the sequence embeddings. The experiment cannot isolate the 'signal' of the embeddings from the 'capacity' of the GBDT architecture.",
+        "evidence_test": "Introduce a second baseline: a GBDT model trained only on the baseline features. If the 'Proposed Model' (GBDT + Embeddings) significantly outperforms the 'GBDT Baseline' (GBDT only), the claim regarding sequence embeddings is supported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Raw transaction sequences are represented as daily summaries or aggregated appropriately for model input into a GBDT.",
+        "failure_mechanism": "GBDTs are not natively designed for sequential data; they treat features as independent columns. If the 'daily summaries' are flattened into a wide feature vector (e.g., Day1_Emb, Day2_Emb...), the model will likely overfit to specific positions in the sequence or fail to capture the temporal shift/ordering of transactions. This is a 'silent misconfiguration' where the model produces a result, but the mechanism for processing sequences is fundamentally mismatched with the model architecture.",
+        "evidence_test": "Compare the GBDT performance against a simple RNN or Transformer baseline using the same embeddings. If the sequential model significantly outperforms the GBDT, it indicates the GBDT was failing to actually 'read' the sequence.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains a fatal flaw regarding data leakage via global preprocessing and a failure to isolate the effect of new features from the effect of model complexity. These issues invalidate the current conclusion that sequence embeddings provide the observed lift.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding in the context of the provided methodology document.\n\n**F1 (Severity 9 - FATAL):** The critic claims that establishing preprocessing artifacts (embeddings, vocabularies, standardization) from the full modeling corpus constitutes data leakage. The methodology explicitly states: \"preprocessing artifacts that define the feature space itself (standardization parameters, categorical vocabularies, and merchant-category co-occurrence statistics used for embedding initialization) are established once from the full modeling corpus before training and then frozen.\" The critic interprets \"full modeling corpus\" to include validation and test data, which would indeed be a fatal leakage. However, I must examine the design intent. The methodology's Temporal Split Strategy defines three non-overlapping windows: Training (1-12), Validation (13-15), and Test (16-18). The term \"full modeling corpus\" is ambiguous. In rigorous ML practice, preprocessing should be fit only on training data. If the design intended to use all data (train+val+test) for preprocessing, it would be a fatal flaw. But the methodology also states the goal is to \"keep representation drift from the later time windows from being conflated with model effects\" by freezing preprocessing. This suggests the designer might be using a sensible approach of fitting preprocessing on training data only, but the phrasing \"full modeling corpus\" is poor. Given the explicit temporal split design and the stated goal of preventing leakage, I believe the critic has misinterpreted an ambiguous phrase. The design's intent is clearly to avoid temporal leakage, as stated in Confound Controls. Therefore, the finding is based on a misreading of scope.\n\n**F2 (Severity 7 - FATAL):** The critic claims the comparison is unfair because the proposed model is a tuned GBDT while the baseline is a minimally tuned logistic regression. The improvement might come from the model architecture's capacity to capture non-linear interactions among baseline features, not from the sequence embeddings. The methodology states: \"The baseline is kept intentionally simple, using a fixed regularization setting selected a priori rather than a full hyperparameter sweep, so it serves as a stable linear reference point for the added value of transaction-sequence information.\" The critic is correct that this comparison cannot isolate the signal of embeddings from the capacity of GBDT. The hypothesis is that \"a gradient-boosted model incorporating raw transaction sequences and merchant-category embeddings will outperform a baseline using only aggregated spend and RFM features.\" This is a composite hypothesis about the *entire model system* (GBDT + embeddings) vs. a simple baseline. The design does not aim to disentangle the contribution of embeddings from the non-linear capacity of GBDT; it aims to test whether the richer feature set in a powerful model yields better predictions than a standard RFM model. However, the critic's point is valid: a stronger baseline (GBDT on baseline features) is needed to attribute improvement to embeddings specifically. The methodology does not include this control. This is a material flaw in isolating the cause of improvement, but is it fatal to the hypothesis as stated? The hypothesis as written is about the *model incorporating* sequences vs. a baseline without them. The comparison is valid for that claim, but the claim itself is confounded. The design lacks a necessary ablation to verify the source of gain. This is a material methodological gap, but given the hypothesis's wording, it may not be fatal to the primary evaluation metric (precision at 5%). The finding identifies a real limitation in causal attribution.\n\n**F3 (Severity 5 - MATERIAL):** The critic claims GBDTs are mismatched for sequential data because they treat features as independent, potentially overfitting to positions or failing to capture temporal dynamics. The methodology states sequences are \"encoded as merchant-category embeddings\" and \"represented as daily summaries (e.g., one embedding per day) or aggregated appropriately for model input.\" The critic assumes a naive flattening (Day1_Emb, Day2_Emb...). However, the methodology does not specify the exact aggregation. Appropriate aggregation could include statistical summaries (mean, max, variance of embeddings over time) or using sequence models to produce a fixed-length representation before the GBDT. The phrase \"aggregated appropriately\" suggests the designer is aware of the need to convert sequences into features suitable for GBDT. The critic's claim that this is a \"silent misconfiguration\" is speculative; there's no evidence the GBDT will fail. Many successful production systems use GBDTs on engineered sequence features. The critic's proposed test (compare to RNN) is outside the scope of this hypothesis, which is about GBDT with embeddings vs. RFM baseline, not about finding the optimal sequence architecture. This finding questions the feature engineering approach, but the methodology leaves aggregation flexible, and the GBDT can still capture some temporal patterns through feature interactions. This is a minor implementation concern, not a material flaw in testing the hypothesis.\n\n**Summary:** F1 is a misinterpretation of the design's intent to prevent leakage. F2 identifies a real but not fatal limitation in causal attribution\u2014the hypothesis as stated can still be tested, but the conclusion about embeddings specifically is weakened. F3 is a minor concern about feature engineering that doesn't invalidate the experiment.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic misinterprets the phrase 'full modeling corpus.' The methodology's Temporal Split Strategy explicitly partitions data into non-overlapping training (months 1-12), validation (13-15), and test (16-18) windows. The design intent, as stated in Confound Controls, is to prevent temporal leakage. Preprocessing artifacts (standardization, vocabularies, co-occurrence statistics) must be derived from the training window only to maintain a strict temporal split. The ambiguous phrasing does not override the explicit design controls. Therefore, the finding's premise\u2014that future data is used\u2014is incorrect within the stated experiment scope."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The design choice to compare a tuned GBDT with embeddings against a simple logistic regression baseline is deliberate and justified for this use case. The hypothesis tests whether a model system incorporating transaction sequences outperforms a standard RFM baseline, not to isolate the embedding signal from model capacity. As stated in the Model and Baseline section, the baseline is kept simple as a stable linear reference point, and optimization effort is concentrated on the proposed model because the hypothesis concerns whether richer sequence structure adds predictive signal. This design answers the business question: 'Does investing in sequence features with a powerful model beat our current RFM approach?' A GBDT-only baseline would be a valuable ablation for future work but is not required for the stated hypothesis."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The concern about GBDT handling sequential data is below significance for the experiment's conclusions. The methodology specifies sequences are 'aggregated appropriately for model input,' allowing for feature engineering (e.g., summary statistics of embeddings over time) that is suitable for GBDTs. The hypothesis is about predictive performance, not architectural optimality for sequences. Many production systems successfully use GBDTs on engineered temporal features. The critic's proposed test with an RNN is outside the scope of evaluating the specific hypothesis regarding the value of sequence information over RFM summaries."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All three findings have been rebutted, with adjusted severities of 4, 4, and 3 respectively. Since no finding remains above adjusted severity 3, the methodology is sound for testing the hypothesis as stated."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender's rebuttal is a contradiction. They claim the critic 'misinterprets' the phrase 'full modeling corpus,' yet the methodology explicitly states: 'preprocessing artifacts... are established once from the full modeling corpus before training and then frozen.' In ML terminology, the 'modeling corpus' refers to the entire available dataset. The defender's justification that 'design intent' overrides the actual written procedure is not a valid technical defense. The written methodology describes a leakage mechanism; the defender's claim that they 'intend' to do it differently does not resolve the flaw in the documented design."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal is a scope disclaimer that fails to address the failure mechanism. The hypothesis is that 'a gradient-boosted model incorporating raw transaction sequences... will outperform a baseline using only aggregated spend and RFM features.' To prove this, one must isolate the variable being tested (the sequences). By changing both the features AND the model architecture (Linear -> GBDT), the defender has introduced a confounding variable. The improvement could be entirely due to the GBDT's ability to model non-linearities in the RFM features. The argument that this answers a 'business question' does not resolve the scientific failure to isolate the signal of the embeddings."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender clarifies that 'aggregated appropriately' may include summary statistics of embeddings, which would indeed be compatible with GBDTs. This mitigates the concern that they are simply flattening a raw sequence. However, if the 'aggregation' is too reductive (e.g., just a mean), it may destroy the very 'sequence' signal the hypothesis aims to test. While the severity is lower because the model will still 'run,' the risk of a silent misconfiguration (where the model succeeds but not because of the sequence structure) remains."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am contesting the challenges on F1 and F2. For F1, the critic's challenge is based on a strict, literal reading of an ambiguous phrase ('full modeling corpus') that is directly contradicted by the core, explicit design principle of the Temporal Split Strategy. The design's intent and primary controls are clear and correct; the ambiguous phrase is a documentation error, not a design flaw. For F2, the critic's challenge mischaracterizes the hypothesis, which is about a combined system (GBDT + sequences) vs. a standard RFM baseline, not an isolated signal test. The design is valid for its stated commercial objective. For F3, the critic's PARTIAL verdict is reasonable; the risk of over-aggregation is a genuine ambiguity that the experiment itself will resolve, so I will switch to DEFER.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge hinges on a single ambiguous phrase, but the methodology's foundational design control is explicit and unambiguous: the 'Temporal Split Strategy' creates 'non-overlapping windows' and 'ensures that no feature encodes information from after the prediction date.' This principle is the primary guardrail against leakage. The phrase 'full modeling corpus' is an unfortunate misstatement, but it does not override the concrete, step-by-step procedure described. In practice, to implement the stated temporal split, preprocessing artifacts must be derived from the training window. The critic's proposed leakage mechanism is therefore impossible under the correctly implemented design. The flaw is in documentation, not in the experiment's methodological soundness.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The critic insists on a 'scientific' isolation of the embedding signal, but the hypothesis is explicitly about a practical system: a GBDT *incorporating* sequences vs. a baseline using *only* RFM features. The baseline model choice (logistic regression) is a standard, interpretable benchmark in business contexts. Changing two variables (features + model) is not a confound; it is the intervention being tested. The question is whether the investment in sequence data and a capable model yields a better predictor than the current approach. Isolating the pure embedding signal via a GBDT-only baseline is a valuable ablation study, but it is not required to test the stated hypothesis. The design validly answers the question it set out to answer.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's PARTIAL challenge is valid. While the methodology allows for appropriate aggregation, the specific implementation ('daily summaries') risks being too reductive to capture meaningful sequence dynamics. This is a genuine ambiguity: will the chosen aggregation preserve enough sequential signal to test the hypothesis? This is an empirical question that the experiment is designed to answer. If the GBDT with aggregated sequence features shows no gain, it could be because the signal isn't there or because the aggregation destroyed it. This uncertainty is a core part of the investigation. Therefore, the correct stance is to defer to the experimental outcome.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One finding (F3) has been deferred, as the question of whether the chosen feature aggregation effectively captures sequence signal is genuinely ambiguous and must be resolved by the experiment's results."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Preprocessing artifacts (embeddings, vocabularies, standardization) are established from the full modeling corpus before training to ensure a consistent feature space.",
+        "failure_mechanism": "This is a classic case of data leakage. By calculating co-occurrence statistics and standardization parameters using the 'full modeling corpus' (which includes the validation and test sets), information from the future (months 13-18) leaks into the training set (months 1-12). Specifically, if a new merchant category or a shift in spending patterns emerges in month 16, the training set's embeddings already 'know' about the existence and distribution of these patterns, artificially inflating performance and invalidating the temporal split.",
+        "evidence_test": "Re-run the experiment where preprocessing parameters are derived ONLY from the training window (months 1-12) and applied to the validation/test sets. A significant drop in test performance would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression) serves as a stable reference point to measure the added value of transaction-sequence information.",
+        "failure_mechanism": "The PoC compares a highly tuned non-linear model (XGBoost/LightGBM) against a minimally tuned linear model (Logistic Regression). Any observed improvement may be due to the model's ability to capture non-linear interactions between the *baseline features themselves* (e.g., the interaction between tenure and spend), rather than the addition of the sequence embeddings. The experiment cannot isolate the 'signal' of the embeddings from the 'capacity' of the GBDT architecture.",
+        "evidence_test": "Introduce a second baseline: a GBDT model trained only on the baseline features. If the 'Proposed Model' (GBDT + Embeddings) significantly outperforms the 'GBDT Baseline' (GBDT only), the claim regarding sequence embeddings is supported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Raw transaction sequences are represented as daily summaries or aggregated appropriately for model input into a GBDT.",
+        "failure_mechanism": "GBDTs are not natively designed for sequential data; they treat features as independent columns. If the 'daily summaries' are flattened into a wide feature vector (e.g., Day1_Emb, Day2_Emb...), the model will likely overfit to specific positions in the sequence or fail to capture the temporal shift/ordering of transactions. This is a 'silent misconfiguration' where the model produces a result, but the mechanism for processing sequences is fundamentally mismatched with the model architecture.",
+        "evidence_test": "Compare the GBDT performance against a simple RNN or Transformer baseline using the same embeddings. If the sequential model significantly outperforms the GBDT, it indicates the GBDT was failing to actually 'read' the sequence.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains a fatal flaw regarding data leakage via global preprocessing and a failure to isolate the effect of new features from the effect of model complexity. These issues invalidate the current conclusion that sequence embeddings provide the observed lift.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am contesting the challenges on F1 and F2. For F1, the critic's challenge is based on a strict, literal reading of an ambiguous phrase ('full modeling corpus') that is directly contradicted by the core, explicit design principle of the Temporal Split Strategy. The design's intent and primary controls are clear and correct; the ambiguous phrase is a documentation error, not a design flaw. For F2, the critic's challenge mischaracterizes the hypothesis, which is about a combined system (GBDT + sequences) vs. a standard RFM baseline, not an isolated signal test. The design is valid for its stated commercial objective. For F3, the critic's PARTIAL verdict is reasonable; the risk of over-aggregation is a genuine ambiguity that the experiment itself will resolve, so I will switch to DEFER.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge hinges on a single ambiguous phrase, but the methodology's foundational design control is explicit and unambiguous: the 'Temporal Split Strategy' creates 'non-overlapping windows' and 'ensures that no feature encodes information from after the prediction date.' This principle is the primary guardrail against leakage. The phrase 'full modeling corpus' is an unfortunate misstatement, but it does not override the concrete, step-by-step procedure described. In practice, to implement the stated temporal split, preprocessing artifacts must be derived from the training window. The critic's proposed leakage mechanism is therefore impossible under the correctly implemented design. The flaw is in documentation, not in the experiment's methodological soundness.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The critic insists on a 'scientific' isolation of the embedding signal, but the hypothesis is explicitly about a practical system: a GBDT *incorporating* sequences vs. a baseline using *only* RFM features. The baseline model choice (logistic regression) is a standard, interpretable benchmark in business contexts. Changing two variables (features + model) is not a confound; it is the intervention being tested. The question is whether the investment in sequence data and a capable model yields a better predictor than the current approach. Isolating the pure embedding signal via a GBDT-only baseline is a valuable ablation study, but it is not required to test the stated hypothesis. The design validly answers the question it set out to answer.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's PARTIAL challenge is valid. While the methodology allows for appropriate aggregation, the specific implementation ('daily summaries') risks being too reductive to capture meaningful sequence dynamics. This is a genuine ambiguity: will the chosen aggregation preserve enough sequential signal to test the hypothesis? This is an empirical question that the experiment is designed to answer. If the GBDT with aggregated sequence features shows no gain, it could be because the signal isn't there or because the aggregation destroyed it. This uncertainty is a core part of the investigation. Therefore, the correct stance is to defer to the experimental outcome.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One finding (F3) has been deferred, as the question of whether the chosen feature aggregation effectively captures sequence signal is genuinely ambiguous and must be resolved by the experiment's results."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=7 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

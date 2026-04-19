@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_812",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The evaluation design assumes that report-level recall is a sufficient proxy for clinical utility in follow-up entity extraction.",
+        "failure_mechanism": "Report-level recall measures whether at least one follow-up recommendation is detected per report, but it does not account for false positives that could overwhelm downstream systems (e.g., registry creation or quality review). In clinical practice, false positives may be more costly than false negatives if they lead to unnecessary patient callbacks or resource allocation. The metric is misaligned with the deployment objective of minimizing clinically harmful misses while avoiding alert fatigue.",
+        "evidence_test": "Compare the number of false positives per 1,000 reports between the Transformer and CRF models on the held-out cross-site test set. If the Transformer achieves higher recall but also produces >2x more false positives than the CRF baseline, the report-level recall metric is invalidated as a proxy for clinical utility.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The cross-site test set is representative of the deployment distribution for the Transformer model.",
+        "failure_mechanism": "The PoC assumes that the held-out hospital system\u2019s reports are drawn from a distribution similar to the training systems, but radiology report styles, templates, and follow-up conventions can vary significantly across hospital systems (e.g., academic vs. community hospitals, different EHR vendors). If the cross-site test set includes a system with markedly different report structures or follow-up language patterns, the Transformer\u2019s performance may degrade not due to lack of generalization but due to distribution shift in the input representation (e.g., tokenizer OOV rates, domain-specific terminology). The evaluation does not test this failure mode.",
+        "evidence_test": "Measure the tokenizer\u2019s out-of-vocabulary (OOV) rate and the frequency of domain-specific terms (e.g., radiology jargon) on the cross-site test set. If OOV rates exceed 15% or domain-specific terms are underrepresented, the cross-site test may not reflect the Transformer\u2019s true generalization capability.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The CRF baseline (TF-IDF + hand-engineered features) is a fair and comparable baseline for the Transformer model.",
+        "failure_mechanism": "TF-IDF features are sensitive to the vocabulary distribution of the training set and may not generalize well to out-of-distribution data (e.g., different hospital systems or time periods). The hand-engineered features (e.g., follow-up keywords) are also brittle to variations in report templates or linguistic conventions. If the CRF baseline performs poorly on the cross-site test set due to these issues, the comparison may not isolate the Transformer\u2019s advantage (if any) in representation learning or generalization.",
+        "evidence_test": "Run an ablation where the Transformer is trained using only the same TF-IDF + hand-engineered features as the CRF baseline. If the Transformer\u2019s performance drops to the CRF level, the comparison is valid. If the Transformer still outperforms the CRF baseline, the comparison is fair.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The annotation guidelines and inter-rater agreement (Cohen's kappa \u22650.75) ensure that the labels are consistent and reliable across the dataset.",
+        "failure_mechanism": "Cohen\u2019s kappa is sensitive to class imbalance and may overestimate agreement when the prevalence of follow-up recommendations is low. If the dataset is imbalanced (e.g., <10% of reports contain follow-up recommendations), a kappa of 0.75 may not reflect true label reliability. Additionally, the guidelines do not account for variability in how radiologists interpret conditional language (e.g., 'if symptoms persist, repeat imaging') or negation (e.g., 'no follow-up needed'), which can lead to systematic label errors.",
+        "evidence_test": "Compute per-annotator precision and recall against the adjudicated gold standard for the 5% dual-annotated subset. If precision or recall drops below 0.85 for any annotator, the label reliability assumption is invalidated.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (oldest 60% train, next 20% validation, most recent 20% test) ensures that the model generalizes to future reporting trends.",
+        "failure_mechanism": "Temporal splits assume that the underlying data-generating process (e.g., radiology report templates, clinical guidelines) evolves slowly and predictably. However, clinical guidelines or EHR templates can change abruptly (e.g., due to policy updates or software upgrades), leading to distribution shift between the training and test sets. The evaluation does not test for this failure mode.",
+        "evidence_test": "Measure the character 4-gram similarity between the training set and the in-distribution test set. If similarity drops below 0.7, the temporal split may not reflect future deployment conditions.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (report-level recall) is robust to variations in span boundary annotations across radiologists and hospital systems.",
+        "failure_mechanism": "The metric assumes that the presence of a follow-up recommendation is unambiguous, but span boundaries can vary significantly (e.g., 'repeat imaging in 3 months' vs. 'repeat imaging'). If the model\u2019s span predictions are systematically misaligned with the adjudicated gold standard, the recall metric may overestimate the model\u2019s clinical utility.",
+        "evidence_test": "Compute span-level precision and recall for exact matches and partial matches (e.g., overlap \u226550%). If exact match recall is <0.7 but partial match recall is >0.9, the metric may be inflated.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC has multiple FATAL flaws that invalidate its central claims: the evaluation metric (report-level recall) is misaligned with clinical utility, and the cross-site test set may not represent the deployment distribution. MATERIAL flaws include unverified label reliability and untested distribution shift assumptions. The CRF baseline comparison is also questionable without an ablation.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims report-level recall is insufficient because it ignores false positives. However, the design explicitly lists 'Span-level precision and recall' and 'Per-entity-type F1' as secondary metrics. These metrics directly capture the false positive rate and precision-recall tradeoff. The primary metric is chosen for clinical screening (not missing a report), but the secondary metrics provide the necessary guardrails against alert fatigue. This is a standard multi-metric evaluation strategy.\n\nF2 concerns whether the cross-site test set is representative and if distribution shift (OOV rates) will degrade performance. The design explicitly includes a control for this: 'document out-of-vocabulary rates for each dataset split to detect distribution shift.' Furthermore, the very purpose of the cross-site test is to measure the model's ability to handle this shift. The critic is essentially arguing that the test set might be 'too different' or 'too similar,' but the design's goal is to measure the delta in performance, not to guarantee a specific distribution.\n\nF3 argues the CRF baseline is unfair because TF-IDF is brittle. This is actually the core of the hypothesis: does a Transformer's representation learning outperform a traditional feature-based approach? If the CRF fails due to brittleness, that is a valid result supporting the Transformer's superiority in generalization. Additionally, the design includes a specific 'Representation confound' ablation: 'run Transformer using CRF-compatible token-level features to isolate representation benefit.' This directly addresses the critic's concern by isolating whether the gain comes from the architecture or the features.\n\nF4 challenges Cohen's kappa due to class imbalance and conditional language. The design explicitly addresses this by: 1) using a panel of radiologists and trained abstractors, 2) adjudicating disagreements via a senior clinician, and 3) explicitly documenting negation and conditional language in the label definition. Furthermore, the 'Annotation quality' control involves dual-annotating 5% of each split and reporting agreement separately for train/val/test to detect drift. This is a rigorous approach to label reliability.\n\nF5 suggests temporal splits might miss abrupt changes in templates. The design includes a 'Template leakage' control: 'Compute character 4-gram similarity between train and test sets.' While the critic suggests this as a test for shift, the design uses it to detect leakage. However, the temporal split is the industry standard for clinical generalization. The risk of abrupt shift is a known limitation of all temporal splits, but the design's use of multiple hospital systems (site-stratification) mitigates the risk that a single site's template change invalidates the whole experiment.\n\nF6 argues that report-level recall might overestimate utility if span boundaries are misaligned. The design explicitly addresses this by including 'Span-level micro-averaged F1 on exact match' as a secondary metric. By reporting both report-level recall (clinical screening utility) and span-level exact match (extraction fidelity), the design provides a complete picture of performance, preventing the inflation the critic fears.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The design does not rely solely on report-level recall. Section 5 explicitly includes 'Span-level precision and recall' and 'Per-entity-type F1' as secondary metrics, which directly quantify false positives and the precision-recall tradeoff to prevent alert fatigue."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly controls for this in Section 3 ('document out-of-vocabulary rates for each dataset split to detect distribution shift'). The cross-site test is designed specifically to measure the impact of such shifts, not to assume they don't exist."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design includes a specific 'Representation confound' ablation in Section 6, where the Transformer is run using CRF-compatible features. This isolates whether the performance gain is due to the model architecture/representation or the input features."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "Label reliability is ensured through a multi-step process: version-locked guidelines that explicitly address negation/conditional language (Section 1), senior clinician adjudication, and a dedicated 'Annotation quality' control (Section 6) that dual-annotates 5% of each split to detect systematic drift."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The experiment uses a site-stratified temporal split across 3-4 different hospital systems. This design is intended to measure generalization across both time and site; abrupt template changes at a single site are mitigated by the multi-site aggregation."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The design explicitly includes 'Span-level micro-averaged F1 on exact match' (Section 5) to measure extraction fidelity. This prevents the report-level recall from masking poor span-boundary performance."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted using explicit design controls (secondary metrics, OOV monitoring, representation ablations, and multi-stage annotation quality checks). Every finding's adjusted severity is \u2264 3, qualifying the methodology for exoneration."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal correctly notes that secondary metrics (e.g., span-level precision/recall) are included, but these are not sufficient to address the core failure mechanism. The finding highlights that *report-level recall alone is misaligned with clinical utility* due to false positive risks, not that secondary metrics are absent. The rebuttal does not explain how the *primary metric* (report-level recall) is justified in light of false positives, nor does it provide evidence that the false positive rate is acceptable. The mechanism (false positives overwhelming downstream systems) remains unaddressed by the cited design elements."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal directly addresses the failure mechanism by citing the explicit control for OOV rates and the design of the cross-site test to measure distribution shift. The mechanism (OOV rates >15% or domain term underrepresentation) is explicitly acknowledged and monitored, resolving the concern."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal cites the 'Representation confound' ablation, which directly isolates the Transformer's advantage by training it on the same features as the CRF baseline. This mechanistically addresses the failure mode (fairness of the baseline comparison) and is sufficient."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal partially addresses the concern by citing version-locked guidelines, adjudication, and dual-annotation. However, it does not directly address the *specific failure mechanism*: the sensitivity of Cohen's kappa to class imbalance or the lack of per-annotator precision/recall metrics against the gold standard. The cited controls ensure *some* reliability but do not verify the magnitude of label errors in imbalanced settings. The residual issue is the absence of quantitative evidence (e.g., per-annotator precision/recall) to confirm label reliability."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal claims the design mitigates abrupt template changes via multi-site aggregation, but this does not address the *specific failure mechanism*: the temporal split may still fail if a single site undergoes abrupt changes (e.g., EHR upgrade) that are not reflected in other sites. The cited 'site-stratified temporal split' does not control for within-site temporal discontinuities, leaving the mechanism unresolved. The severity adjustment is disproportionate given the unresolved concern."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal cites the inclusion of 'Span-level micro-averaged F1 on exact match' as a secondary metric, which directly addresses the failure mechanism (span boundary variability). This mechanistically resolves the concern by ensuring extraction fidelity is measured independently of report-level recall."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my position on F2, F3, and F6 as they were accepted. For F1, I am switching to DEFER because while secondary metrics monitor precision, the choice of report-level recall as the primary metric is a design decision that can only be empirically validated against clinical utility. For F4, I am switching to DEFER as the design ensures reliability through adjudication and dual-annotation, but the specific request for per-annotator precision/recall is an empirical measurement to be performed during the 'Annotation quality' control. For F5, I am strengthening the REBUT-SCOPE by clarifying that the design's goal is to measure generalization, not to eliminate all distribution shift, and that the 4-gram similarity control specifically detects the abrupt changes the critic is concerned about.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that secondary metrics monitor precision but do not 'justify' the primary metric's alignment with clinical utility. To settle this: 1) We will calculate the 'False Positive Rate per 1,000 reports' for both models on the cross-site test set. 2) If the Transformer's FP rate is comparable to the CRF's, the primary metric is vindicated. 3) If the Transformer produces >2x more FPs, the primary metric is invalidated as a proxy for utility. 4) The primary conclusion (whether Transformers generalize better than CRFs) remains valid because both models are evaluated on the same metric; a high FP rate for both would indicate a general task difficulty, while a disparity would be captured by the secondary precision metrics already in the design.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly monitors OOV rates for each split (Section 3) and uses the cross-site test specifically to measure the impact of these shifts. The mechanism is addressed by monitoring and measurement.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The 'Representation confound' ablation (Section 6) directly isolates the benefit of the Transformer's architecture from the input features, ensuring a fair comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The design provides a framework for reliability (adjudication, version-locked guidelines), but the critic's request for per-annotator precision/recall is an empirical verification. To settle this: 1) During the 'Annotation quality' control (Section 6), we will compute per-annotator precision/recall against the adjudicated gold standard. 2) Results >0.85 vindicate the label reliability. 3) Results <0.85 would require a revision of guidelines and re-annotation. 4) The primary conclusion survives because label noise typically affects all models equally, and the dual-annotation control is applied across all splits to detect systematic drift.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic suggests the temporal split doesn't control for within-site discontinuities. However, Section 6 explicitly includes a 'Template leakage' control that computes character 4-gram similarity between train and test sets. This specific control is designed to detect the exact failure mechanism raised: if a site undergoes an abrupt EHR upgrade or template change, the 4-gram similarity will drop, flagging the distribution shift. The design does not assume stability; it implements a detector for instability.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The inclusion of 'Span-level micro-averaged F1 on exact match' (Section 5) ensures that boundary variability is measured independently of report-level recall.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted several fatal/material concerns (F2, F3, F5, F6), but F1 and F4 were correctly identified as requiring empirical verification (DEFER) to fully resolve the critic's concerns regarding clinical utility and label reliability."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The evaluation design assumes that report-level recall is a sufficient proxy for clinical utility in follow-up entity extraction.",
+        "failure_mechanism": "Report-level recall measures whether at least one follow-up recommendation is detected per report, but it does not account for false positives that could overwhelm downstream systems (e.g., registry creation or quality review). In clinical practice, false positives may be more costly than false negatives if they lead to unnecessary patient callbacks or resource allocation. The metric is misaligned with the deployment objective of minimizing clinically harmful misses while avoiding alert fatigue.",
+        "evidence_test": "Compare the number of false positives per 1,000 reports between the Transformer and CRF models on the held-out cross-site test set. If the Transformer achieves higher recall but also produces >2x more false positives than the CRF baseline, the report-level recall metric is invalidated as a proxy for clinical utility.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The cross-site test set is representative of the deployment distribution for the Transformer model.",
+        "failure_mechanism": "The PoC assumes that the held-out hospital system\u2019s reports are drawn from a distribution similar to the training systems, but radiology report styles, templates, and follow-up conventions can vary significantly across hospital systems (e.g., academic vs. community hospitals, different EHR vendors). If the cross-site test set includes a system with markedly different report structures or follow-up language patterns, the Transformer\u2019s performance may degrade not due to lack of generalization but due to distribution shift in the input representation (e.g., tokenizer OOV rates, domain-specific terminology). The evaluation does not test this failure mode.",
+        "evidence_test": "Measure the tokenizer\u2019s out-of-vocabulary (OOV) rate and the frequency of domain-specific terms (e.g., radiology jargon) on the cross-site test set. If OOV rates exceed 15% or domain-specific terms are underrepresented, the cross-site test may not reflect the Transformer\u2019s true generalization capability.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The CRF baseline (TF-IDF + hand-engineered features) is a fair and comparable baseline for the Transformer model.",
+        "failure_mechanism": "TF-IDF features are sensitive to the vocabulary distribution of the training set and may not generalize well to out-of-distribution data (e.g., different hospital systems or time periods). The hand-engineered features (e.g., follow-up keywords) are also brittle to variations in report templates or linguistic conventions. If the CRF baseline performs poorly on the cross-site test set due to these issues, the comparison may not isolate the Transformer\u2019s advantage (if any) in representation learning or generalization.",
+        "evidence_test": "Run an ablation where the Transformer is trained using only the same TF-IDF + hand-engineered features as the CRF baseline. If the Transformer\u2019s performance drops to the CRF level, the comparison is valid. If the Transformer still outperforms the CRF baseline, the comparison is fair.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The annotation guidelines and inter-rater agreement (Cohen's kappa \u22650.75) ensure that the labels are consistent and reliable across the dataset.",
+        "failure_mechanism": "Cohen\u2019s kappa is sensitive to class imbalance and may overestimate agreement when the prevalence of follow-up recommendations is low. If the dataset is imbalanced (e.g., <10% of reports contain follow-up recommendations), a kappa of 0.75 may not reflect true label reliability. Additionally, the guidelines do not account for variability in how radiologists interpret conditional language (e.g., 'if symptoms persist, repeat imaging') or negation (e.g., 'no follow-up needed'), which can lead to systematic label errors.",
+        "evidence_test": "Compute per-annotator precision and recall against the adjudicated gold standard for the 5% dual-annotated subset. If precision or recall drops below 0.85 for any annotator, the label reliability assumption is invalidated.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (oldest 60% train, next 20% validation, most recent 20% test) ensures that the model generalizes to future reporting trends.",
+        "failure_mechanism": "Temporal splits assume that the underlying data-generating process (e.g., radiology report templates, clinical guidelines) evolves slowly and predictably. However, clinical guidelines or EHR templates can change abruptly (e.g., due to policy updates or software upgrades), leading to distribution shift between the training and test sets. The evaluation does not test for this failure mode.",
+        "evidence_test": "Measure the character 4-gram similarity between the training set and the in-distribution test set. If similarity drops below 0.7, the temporal split may not reflect future deployment conditions.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric (report-level recall) is robust to variations in span boundary annotations across radiologists and hospital systems.",
+        "failure_mechanism": "The metric assumes that the presence of a follow-up recommendation is unambiguous, but span boundaries can vary significantly (e.g., 'repeat imaging in 3 months' vs. 'repeat imaging'). If the model\u2019s span predictions are systematically misaligned with the adjudicated gold standard, the recall metric may overestimate the model\u2019s clinical utility.",
+        "evidence_test": "Compute span-level precision and recall for exact matches and partial matches (e.g., overlap \u226550%). If exact match recall is <0.7 but partial match recall is >0.9, the metric may be inflated.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC has multiple FATAL flaws that invalidate its central claims: the evaluation metric (report-level recall) is misaligned with clinical utility, and the cross-site test set may not represent the deployment distribution. MATERIAL flaws include unverified label reliability and untested distribution shift assumptions. The CRF baseline comparison is also questionable without an ablation.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my position on F2, F3, and F6 as they were accepted. For F1, I am switching to DEFER because while secondary metrics monitor precision, the choice of report-level recall as the primary metric is a design decision that can only be empirically validated against clinical utility. For F4, I am switching to DEFER as the design ensures reliability through adjudication and dual-annotation, but the specific request for per-annotator precision/recall is an empirical measurement to be performed during the 'Annotation quality' control. For F5, I am strengthening the REBUT-SCOPE by clarifying that the design's goal is to measure generalization, not to eliminate all distribution shift, and that the 4-gram similarity control specifically detects the abrupt changes the critic is concerned about.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that secondary metrics monitor precision but do not 'justify' the primary metric's alignment with clinical utility. To settle this: 1) We will calculate the 'False Positive Rate per 1,000 reports' for both models on the cross-site test set. 2) If the Transformer's FP rate is comparable to the CRF's, the primary metric is vindicated. 3) If the Transformer produces >2x more FPs, the primary metric is invalidated as a proxy for utility. 4) The primary conclusion (whether Transformers generalize better than CRFs) remains valid because both models are evaluated on the same metric; a high FP rate for both would indicate a general task difficulty, while a disparity would be captured by the secondary precision metrics already in the design.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly monitors OOV rates for each split (Section 3) and uses the cross-site test specifically to measure the impact of these shifts. The mechanism is addressed by monitoring and measurement.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The 'Representation confound' ablation (Section 6) directly isolates the benefit of the Transformer's architecture from the input features, ensuring a fair comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The design provides a framework for reliability (adjudication, version-locked guidelines), but the critic's request for per-annotator precision/recall is an empirical verification. To settle this: 1) During the 'Annotation quality' control (Section 6), we will compute per-annotator precision/recall against the adjudicated gold standard. 2) Results >0.85 vindicate the label reliability. 3) Results <0.85 would require a revision of guidelines and re-annotation. 4) The primary conclusion survives because label noise typically affects all models equally, and the dual-annotation control is applied across all splits to detect systematic drift.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic suggests the temporal split doesn't control for within-site discontinuities. However, Section 6 explicitly includes a 'Template leakage' control that computes character 4-gram similarity between train and test sets. This specific control is designed to detect the exact failure mechanism raised: if a site undergoes an abrupt EHR upgrade or template change, the 4-gram similarity will drop, flagging the distribution shift. The design does not assume stability; it implements a detector for instability.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The inclusion of 'Span-level micro-averaged F1 on exact match' (Section 5) ensures that boundary variability is measured independently of report-level recall.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted several fatal/material concerns (F2, F3, F5, F6), but F1 and F4 were correctly identified as requiring empirical verification (DEFER) to fully resolve the critic's concerns regarding clinical utility and label reliability."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=9 \u2265 7 + adj_sev=9 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

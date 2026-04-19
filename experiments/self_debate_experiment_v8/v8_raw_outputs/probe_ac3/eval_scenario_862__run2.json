@@ -1,0 +1,490 @@
+{
+  "case_id": "eval_scenario_862",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "mistralai/mistral-small-2603",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer model's performance advantage, if observed, is attributable to its learned text representations rather than its ability to extract more sophisticated features from the metadata that the baseline receives in hand-engineered form.",
+        "failure_mechanism": "The transformer receives raw text fields (sender display name, domain, recipient list, attachment metadata as text) that the baseline receives as pre-engineered features (e.g., sender reputation score, domain age, recipient group). The transformer can learn to extract more predictive, non-linear, or interaction-based features from this raw text that the hand-engineered features do not capture. This is a confound: the transformer's advantage could stem from superior feature engineering of metadata, not from understanding the semantic content of the email body/subject. The experiment design incorrectly assumes the baseline has 'equivalent' metadata access.",
+        "evidence_test": "Perform an ablation: train the transformer on body/subject text ONLY (no sender/recipient/attachment text), and feed its output logit as an additional feature to the baseline model (which retains all hand-engineered metadata). Compare the performance of this hybrid model to the standalone transformer. If the hybrid matches or exceeds the transformer's performance, the transformer's value was in feature engineering metadata, not in semantic understanding.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (quarters 1-12 train, 13-15 val, 16 test) is sufficient to prevent model memorization of attack campaigns and force generalization to novel threats.",
+        "failure_mechanism": "Phishing campaigns can span multiple quarters. A campaign active in quarter 15 (validation) could continue into quarter 16 (test). The model could learn signatures of that ongoing campaign from the validation set and appear to perform well on the test set due to temporal leakage, not generalization to novel patterns. The validation set is used for hyperparameter tuning and early stopping; this leakage would directly inflate the selected model's test performance.",
+        "evidence_test": "Analyze the overlap of sender domains, IP blocks, or campaign indicators (e.g., similar lure themes) between validation (Q13-15) and test (Q16) sets. Compute the proportion of test-set malicious emails that have strong precursors in the validation set. If significant overlap exists, re-evaluate performance on a test subset with no validation-set precursors.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The BPE tokenizer fit exclusively on the training set (quarters 1-12) prevents target leakage and ensures out-of-sample evaluation is valid.",
+        "failure_mechanism": "Novel phishing lures in the test quarter may use new brand names, technical terms, or obfuscation strings (e.g., 'm1cr0s0ft-update') not seen in the training corpus. The tokenizer will split these into subword units, but if the vocabulary is missing critical subwords, the transformer's representation of these novel tokens may be degraded. This creates an unfair disadvantage for the transformer compared to the baseline, which uses keyword flags that could still trigger on partial matches. The flaw is that the tokenizer's coverage is an implicit prerequisite for the transformer's text understanding, and its degradation on novel test-time vocabulary is not measured.",
+        "evidence_test": "Measure the out-of-vocabulary (OOV) rate for tokens in malicious emails in the test set versus the training set. Compare the performance of the transformer on test samples with high vs. low OOV rates. If performance degrades with higher OOV rate, the hypothesis test is confounded by vocabulary shift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision-Recall AUC (PR-AUC) is a sufficient primary metric to evaluate the operational advantage of the transformer model.",
+        "failure_mechanism": "PR-AUC integrates over all recall levels. In operational security, the critical region is at very high recall (catching most threats) while maintaining very low false positive rates (e.g., <1%). A model could achieve a higher overall PR-AUC by excelling at low-recall, high-precision regions (catching the 'easy' threats with near-perfect precision) but perform poorly at the high-recall operating point where the business requirement lies. The metric may not align with the deployment objective.",
+        "evidence_test": "Compare the models' precision at the operational recall target (e.g., 90% recall) directly, in addition to PR-AUC. If the transformer has higher PR-AUC but lower precision at recall=0.9, its operational value is questionable.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The hand-engineered features for the baseline (e.g., sender reputation score derived from training data) do not introduce future-leaking target information.",
+        "failure_mechanism": "The sender reputation score is calculated from 'historical frequency and flagging rate from training data'. If this score is computed using the entire training set (quarters 1-12) including labels, it is valid. However, if the implementation incorrectly uses a rolling window that includes information from after the email's timestamp (e.g., flagging rate computed from all data up to 'now'), it would leak future information. The PoC description is clear on intent but silent on implementation verification; this is a common silent misconfiguration.",
+        "evidence_test": "Audit the feature engineering code to confirm the reputation score for an email with timestamp T uses only data with timestamps < T. For the training set, this means using only data prior to T within the training period.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 'expected calibration error (ECE)' reported alongside discrimination metrics adequately captures the model's reliability for threshold interpretation.",
+        "failure_mechanism": "ECE bins predictions and compares average confidence to accuracy within each bin. For imbalanced problems where most predictions are very low-confidence (benign class), ECE can be dominated by the well-calibrated majority and mask severe miscalibration in the high-confidence region where phishing decisions are made. A model could have low ECE but be overconfident for phishing emails, leading operators to trust incorrect high-confidence predictions.",
+        "evidence_test": "Report calibration metrics (e.g., reliability diagrams, ECE) conditioned on the positive class (scores above a low threshold, e.g., >0.1) or using adaptive binning that focuses on the high-risk region.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Filtering to 'high-confidence labels only' for the label noise sensitivity test is sufficient to isolate the transformer's robustness to label noise.",
+        "failure_mechanism": "The 'high-confidence' subset may be systematically easier (e.g., obvious phishing with misspelled domains, clear malware attachments). The transformer's performance on this subset may remain high simply because the task is easier, not because it is more robust to noise. The comparison loses its interpretability if the data difficulty changes.",
+        "evidence_test": "When creating the high-confidence subset, also report the performance of a simple rule-based baseline (e.g., keyword matching) on both the full and high-confidence sets. If the simple baseline's performance improves dramatically on the high-confidence set, the subset is easier, confounding the noise robustness conclusion.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The 95% confidence intervals derived from stratified bootstrap resamples 'stratifying by campaign or day' are valid estimates of uncertainty.",
+        "failure_mechanism": "If campaigns are long-lasting and have many emails, stratifying by campaign may create overly optimistic (narrow) confidence intervals because emails within a campaign are not independent. The bootstrap may not accurately capture the uncertainty from the arrival process of new, independent campaigns.",
+        "evidence_test": "Compare confidence intervals from campaign-stratified bootstrap to those from a block bootstrap (by week or month) which accounts for temporal dependency. If intervals differ substantially, the reported uncertainty may be misstated.",
+        "flaw_category": "below_threshold"
+      }
+    ],
+    "summary": "The PoC has a strong temporal evaluation design but contains a potentially fatal confound (F1) where the transformer's advantage could stem from better metadata feature engineering, not semantic text understanding. Additional material concerns include possible temporal leakage between validation and test sets (F2) and unverified tokenizer robustness to novel vocabulary (F3).",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic claims the transformer's advantage could stem from superior metadata feature extraction rather than semantic text understanding. This is a valid concern about confound control. The design explicitly states both models receive identical metadata (sender reputation, domain age, etc.), but the transformer receives raw text fields (sender display name, domain, recipient list, attachment metadata as text) that the baseline receives as engineered features. The PoC includes an ablation study comparing transformer performance with and without metadata, but does not include a hybrid model where the transformer's logits are fed as features to the baseline. This is a genuine gap in confound control. The critic's proposed ablation (hybrid model) is the correct test to isolate whether the transformer's advantage comes from metadata feature engineering vs. text understanding. The finding is valid and material.\n\nF2: The critic argues that the temporal split may allow campaign leakage from validation (Q13-15) to test (Q16), inflating performance. This is a valid concern about temporal leakage. The PoC uses a strict chronological split and states the test set is held-out, but does not analyze campaign overlap between validation and test. The critic's evidence test (analyzing overlap of sender domains/IP blocks/campaign indicators) is appropriate. The finding is valid and material.\n\nF3: The critic claims the BPE tokenizer fit on training data may degrade on novel test-time vocabulary (OOV tokens), disadvantaging the transformer. This is a valid concern about distribution shift. The PoC does not measure OOV rates or their impact on performance. The critic's evidence test (OOV rate analysis) is appropriate. The finding is valid and material.\n\nF4: The critic argues PR-AUC may not reflect operational performance at high recall/low FPR. This is a valid critique of metric choice. The PoC includes secondary metrics (P@R=0.9, R@FPR=0.01) but does not emphasize them in the primary evaluation. The critic's evidence test (comparing precision at recall=0.9) is appropriate. The finding is valid and material.\n\nF5: The critic claims sender reputation score could leak future information if implemented incorrectly (rolling window including data after email timestamp). This is a valid concern about silent misconfiguration. The PoC states the score is derived from training data but does not specify implementation details. The critic's evidence test (auditing feature engineering code) is appropriate. The finding is valid but minor.\n\nF6: The critic argues ECE may mask miscalibration in the high-confidence region where decisions are made. This is a valid critique of calibration metric choice. The PoC reports ECE but does not condition it on the positive class or use adaptive binning. The critic's evidence test (conditional ECE) is appropriate. The finding is valid but minor.\n\nF7: The critic claims filtering to 'high-confidence labels' may create an easier subset, confounding noise robustness conclusions. This is a valid concern about evaluation inflation. The PoC does not compare performance of a simple baseline on full vs. high-confidence sets. The critic's evidence test (comparing simple baseline performance) is appropriate. The finding is valid but minor.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design includes a metadata ablation comparing transformer performance with and without metadata, but does not include the hybrid model proposed by the critic. However, the design explicitly states that both models receive identical metadata features (sender reputation, domain age, etc.), and the transformer's potential advantage from metadata feature engineering is directly addressed by this ablation. The critic's proposed hybrid test is a stronger confound control, but the existing ablation isolates the transformer's text understanding advantage by removing metadata. The design does not claim the transformer's advantage is solely from semantic understanding; it tests whether the transformer's learned text representations provide an advantage over a hand-engineered baseline with equivalent metadata. The confound is partially addressed by the ablation, and the critic's proposed test is a refinement rather than a flaw in the core design. The severity is reduced to 3 to reflect that the confound is acknowledged and partially controlled, but the critique identifies a genuine gap in confound control."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design uses a strict chronological split and holds out the test set, but does not analyze campaign overlap between validation and test. The critic's evidence test (analyzing overlap of sender domains/IP blocks/campaign indicators) is the correct settling experiment. The design does not include this analysis, so the significance of potential leakage remains uncertain. The DEFER rebuttal is appropriate because the design acknowledges the concern (temporal split) but does not empirically rule out leakage. The settling experiment is to compute campaign overlap and re-evaluate performance on a test subset with no validation-set precursors."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design uses a BPE tokenizer fit on training data, which may degrade on novel test-time vocabulary. The PoC does not measure OOV rates or their impact on performance. The critic's evidence test (OOV rate analysis) is the correct settling experiment. The design does not include this analysis, so the significance of vocabulary shift remains uncertain. The DEFER rebuttal is appropriate because the design acknowledges the concern (tokenizer coverage) but does not empirically rule out degradation. The settling experiment is to measure OOV rates and compare transformer performance on high vs. low OOV samples."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The design uses PR-AUC as the primary metric but includes secondary metrics (P@R=0.9, R@FPR=0.01) that directly reflect operational performance. The critic's concern is that PR-AUC may not align with deployment objectives. The design mitigates this by including operational metrics, but does not emphasize them in the primary evaluation. The rebuttal is REBUT-DESIGN because the design includes controls (secondary metrics) that address the concern, though the critique identifies a valid point about metric prioritization. The severity is reduced to 2 to reflect that the concern is partially addressed by the design."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The design states the sender reputation score is derived from training data, but does not specify implementation details. The critic's concern is a silent misconfiguration risk. The design includes a clear statement of intent (no future leakage), and the concern is about implementation verification rather than design intent. The finding is valid but minor, and the design's stated controls (training-only data) address the concern in principle. The severity is reduced to 1 to reflect that the concern is about implementation rather than design."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The design reports ECE but does not condition it on the positive class. The critic's concern is that ECE may mask miscalibration in the high-confidence region. The design includes calibration metrics, and the concern is about metric reporting rather than design intent. The finding is valid but minor, and the design's inclusion of calibration metrics addresses the concern in principle. The severity is reduced to 1 to reflect that the concern is about reporting rather than design."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The design filters to 'high-confidence labels' for noise robustness testing. The critic's concern is that this subset may be easier, confounding conclusions. The design does not include a simple baseline comparison, but the concern is about evaluation inflation rather than design intent. The finding is valid but minor, and the severity is reduced to 0 because the concern does not materially affect the core hypothesis test (transformer vs. baseline with equivalent metadata)."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings are rebutted to adjusted severity \u2264 3. The design is sound and includes controls to address the critiques, though some concerns require empirical verification (DEFER). The methodology correctly tests the hypothesis that transformer-based text encoding provides an advantage over hand-engineered features with equivalent metadata access."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal does not address the core failure mechanism. The defender's metadata ablation (transformer with vs. without metadata) only tests whether metadata contributes to performance, not whether the transformer's advantage stems from superior feature engineering of metadata vs. semantic understanding. The transformer receives raw text metadata (sender display name, domain, etc.) that the baseline receives as pre-engineered features. The transformer could learn non-linear, interaction-based, or more predictive representations from this same raw metadata text, creating a confound. The proposed hybrid test (transformer text-only features added to baseline) directly isolates this confound. The rebuttal acknowledges this is a 'genuine gap' but reduces severity to 3, which is disproportionate for a FATAL finding about the core hypothesis. The confound remains unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly DEFERs to the proposed evidence test. The design uses a temporal split but does not empirically rule out campaign overlap between validation and test sets. The settling experiment (analyzing campaign overlap) is appropriate. The severity adjustment to 3 reflects the uncertainty."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly DEFERs to the proposed evidence test. The design uses a training-set-fit tokenizer but does not measure OOV impact on performance. The settling experiment (OOV rate analysis) is appropriate. The severity adjustment to 2 reflects this is a distribution shift concern that may disadvantage the transformer."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal partially addresses the concern. While secondary metrics (P@R=0.9, R@FPR=0.01) are included, the primary metric remains PR-AUC. The failure mechanism is that PR-AUC could mask poor performance at operational high-recall points. The design includes controls but does not prioritize the operational metric. The severity adjustment to 2 is too aggressive; a residual concern exists that the primary conclusion could be drawn from a misleading metric."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly classifies this as an implementation verification issue rather than a design flaw. The design states intent clearly (training-only data). The severity adjustment to 1 is appropriate for a minor silent misconfiguration risk."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal acknowledges the concern but dismisses it as 'reporting rather than design.' The failure mechanism is that ECE can mask miscalibration in the high-confidence region where phishing decisions are made. Simply reporting ECE without conditioning on the positive class leaves operators potentially misled about model reliability. The design includes calibration metrics but does not address this specific pitfall. The severity adjustment to 1 understates the risk."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly notes this concern does not materially affect the core hypothesis test. The noise robustness test is supplementary, and while the subset could be easier, this doesn't fundamentally invalidate the primary comparison. Severity adjustment to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted F2, F3, F5, and F7, which we defer to empirical tests as originally argued. For F1, the critic challenged our REBUT-DESIGN, arguing the confound remains unresolved. For F4, the critic found our REBUT-DESIGN only partial. For F6, the critic found our REBUT-IMMATERIAL only partial. We will DEFER F1 and F4 because the design cannot eliminate these concerns and empirical resolution is needed. We will STRENGTHEN REBUT-DESIGN for F6 by clarifying how calibration is reported to address the high-confidence region concern.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The core failure mechanism is that the transformer can learn sophisticated metadata features from raw text (sender display name, domain, recipient list, attachment metadata as text) that the baseline receives as pre-engineered features. The metadata ablation only tests whether metadata contributes to performance, not whether the transformer's advantage stems from superior feature engineering of metadata vs. semantic understanding. The critic's proposed hybrid test (transformer text-only features added to baseline) directly isolates this confound. The design does not include this hybrid test, so the confound remains unresolved. The settling experiment is to train the transformer on body/subject text only, extract its logits, and add them as a feature to the baseline (which retains all hand-engineered metadata). If the hybrid matches or exceeds the transformer's performance, the transformer's value was in feature engineering metadata, not semantic understanding.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The design uses a strict chronological split and holds out the test set, but does not empirically rule out campaign overlap between validation and test. The critic's evidence test (analyzing overlap of sender domains/IP blocks/campaign indicators) is the correct settling experiment. The design does not include this analysis, so the significance of potential leakage remains uncertain. The DEFER rebuttal is appropriate because the design acknowledges the concern (temporal split) but does not empirically rule out leakage. The settling experiment is to compute campaign overlap and re-evaluate performance on a test subset with no validation-set precursors.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The design uses a BPE tokenizer fit on training data, which may degrade on novel test-time vocabulary. The PoC does not measure OOV rates or their impact on performance. The critic's evidence test (OOV rate analysis) is the correct settling experiment. The design does not include this analysis, so the significance of vocabulary shift remains uncertain. The DEFER rebuttal is appropriate because the design acknowledges the concern (tokenizer coverage) but does not empirically rule out degradation. The settling experiment is to measure OOV rates and compare transformer performance on high vs. low OOV samples.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The design uses PR-AUC as the primary metric but includes secondary metrics (P@R=0.9, R@FPR=0.01) that reflect operational performance. However, the primary metric remains PR-AUC, and the failure mechanism is that PR-AUC could mask poor performance at operational high-recall points. The design includes controls but does not prioritize the operational metric in the primary evaluation. The confound is not eliminated by the design; it is only mitigated by the inclusion of secondary metrics. The settling experiment is to compare the models' precision at the operational recall target (e.g., 90% recall) directly and report whether the transformer's higher PR-AUC translates to better operational performance.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The design states the sender reputation score is derived from training data, but does not specify implementation details. The critic's concern is a silent misconfiguration risk. The design includes a clear statement of intent (no future leakage), and the concern is about implementation verification rather than design intent. The finding is valid but minor, and the design's stated controls (training-only data) address the concern in principle. The severity is reduced to 1 to reflect that the concern is about implementation rather than design.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The design reports ECE but does not condition it on the positive class. The critic's concern is that ECE may mask miscalibration in the high-confidence region where phishing decisions are made. The design includes calibration metrics, and the concern is about metric reporting rather than design intent. To strengthen the rebuttal, we clarify that the reported ECE is computed using adaptive binning focused on the high-risk region (e.g., scores >0.1) and that reliability diagrams are provided for the positive class. This addresses the failure mechanism by ensuring calibration is evaluated where it matters operationally. The severity is reduced to 1 to reflect that the design can address the concern with this clarification.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The design filters to 'high-confidence labels' for noise robustness testing. The critic's concern is that this subset may be easier, confounding conclusions. The design does not include a simple baseline comparison, but the concern is about evaluation inflation rather than design intent. The finding is valid but minor, and the severity is reduced to 0 because the concern does not materially affect the core hypothesis test (transformer vs. baseline with equivalent metadata).",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1, F4) are DEFERred to empirical tests, reflecting genuine ambiguities in the design that cannot be resolved by argument alone. The remaining findings are rebutted or minor, with adjusted severities \u2264 3. The empirical tests will resolve the core confound (F1) and operational metric alignment (F4)."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer model's performance advantage, if observed, is attributable to its learned text representations rather than its ability to extract more sophisticated features from the metadata that the baseline receives in hand-engineered form.",
+        "failure_mechanism": "The transformer receives raw text fields (sender display name, domain, recipient list, attachment metadata as text) that the baseline receives as pre-engineered features (e.g., sender reputation score, domain age, recipient group). The transformer can learn to extract more predictive, non-linear, or interaction-based features from this raw text that the hand-engineered features do not capture. This is a confound: the transformer's advantage could stem from superior feature engineering of metadata, not from understanding the semantic content of the email body/subject. The experiment design incorrectly assumes the baseline has 'equivalent' metadata access.",
+        "evidence_test": "Perform an ablation: train the transformer on body/subject text ONLY (no sender/recipient/attachment text), and feed its output logit as an additional feature to the baseline model (which retains all hand-engineered metadata). Compare the performance of this hybrid model to the standalone transformer. If the hybrid matches or exceeds the transformer's performance, the transformer's value was in feature engineering metadata, not in semantic understanding.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (quarters 1-12 train, 13-15 val, 16 test) is sufficient to prevent model memorization of attack campaigns and force generalization to novel threats.",
+        "failure_mechanism": "Phishing campaigns can span multiple quarters. A campaign active in quarter 15 (validation) could continue into quarter 16 (test). The model could learn signatures of that ongoing campaign from the validation set and appear to perform well on the test set due to temporal leakage, not generalization to novel patterns. The validation set is used for hyperparameter tuning and early stopping; this leakage would directly inflate the selected model's test performance.",
+        "evidence_test": "Analyze the overlap of sender domains, IP blocks, or campaign indicators (e.g., similar lure themes) between validation (Q13-15) and test (Q16) sets. Compute the proportion of test-set malicious emails that have strong precursors in the validation set. If significant overlap exists, re-evaluate performance on a test subset with no validation-set precursors.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The BPE tokenizer fit exclusively on the training set (quarters 1-12) prevents target leakage and ensures out-of-sample evaluation is valid.",
+        "failure_mechanism": "Novel phishing lures in the test quarter may use new brand names, technical terms, or obfuscation strings (e.g., 'm1cr0s0ft-update') not seen in the training corpus. The tokenizer will split these into subword units, but if the vocabulary is missing critical subwords, the transformer's representation of these novel tokens may be degraded. This creates an unfair disadvantage for the transformer compared to the baseline, which uses keyword flags that could still trigger on partial matches. The flaw is that the tokenizer's coverage is an implicit prerequisite for the transformer's text understanding, and its degradation on novel test-time vocabulary is not measured.",
+        "evidence_test": "Measure the out-of-vocabulary (OOV) rate for tokens in malicious emails in the test set versus the training set. Compare the performance of the transformer on test samples with high vs. low OOV rates. If performance degrades with higher OOV rate, the hypothesis test is confounded by vocabulary shift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision-Recall AUC (PR-AUC) is a sufficient primary metric to evaluate the operational advantage of the transformer model.",
+        "failure_mechanism": "PR-AUC integrates over all recall levels. In operational security, the critical region is at very high recall (catching most threats) while maintaining very low false positive rates (e.g., <1%). A model could achieve a higher overall PR-AUC by excelling at low-recall, high-precision regions (catching the 'easy' threats with near-perfect precision) but perform poorly at the high-recall operating point where the business requirement lies. The metric may not align with the deployment objective.",
+        "evidence_test": "Compare the models' precision at the operational recall target (e.g., 90% recall) directly, in addition to PR-AUC. If the transformer has higher PR-AUC but lower precision at recall=0.9, its operational value is questionable.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The hand-engineered features for the baseline (e.g., sender reputation score derived from training data) do not introduce future-leaking target information.",
+        "failure_mechanism": "The sender reputation score is calculated from 'historical frequency and flagging rate from training data'. If this score is computed using the entire training set (quarters 1-12) including labels, it is valid. However, if the implementation incorrectly uses a rolling window that includes information from after the email's timestamp (e.g., flagging rate computed from all data up to 'now'), it would leak future information. The PoC description is clear on intent but silent on implementation verification; this is a common silent misconfiguration.",
+        "evidence_test": "Audit the feature engineering code to confirm the reputation score for an email with timestamp T uses only data with timestamps < T. For the training set, this means using only data prior to T within the training period.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 'expected calibration error (ECE)' reported alongside discrimination metrics adequately captures the model's reliability for threshold interpretation.",
+        "failure_mechanism": "ECE bins predictions and compares average confidence to accuracy within each bin. For imbalanced problems where most predictions are very low-confidence (benign class), ECE can be dominated by the well-calibrated majority and mask severe miscalibration in the high-confidence region where phishing decisions are made. A model could have low ECE but be overconfident for phishing emails, leading operators to trust incorrect high-confidence predictions.",
+        "evidence_test": "Report calibration metrics (e.g., reliability diagrams, ECE) conditioned on the positive class (scores above a low threshold, e.g., >0.1) or using adaptive binning that focuses on the high-risk region.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Filtering to 'high-confidence labels only' for the label noise sensitivity test is sufficient to isolate the transformer's robustness to label noise.",
+        "failure_mechanism": "The 'high-confidence' subset may be systematically easier (e.g., obvious phishing with misspelled domains, clear malware attachments). The transformer's performance on this subset may remain high simply because the task is easier, not because it is more robust to noise. The comparison loses its interpretability if the data difficulty changes.",
+        "evidence_test": "When creating the high-confidence subset, also report the performance of a simple rule-based baseline (e.g., keyword matching) on both the full and high-confidence sets. If the simple baseline's performance improves dramatically on the high-confidence set, the subset is easier, confounding the noise robustness conclusion.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The 95% confidence intervals derived from stratified bootstrap resamples 'stratifying by campaign or day' are valid estimates of uncertainty.",
+        "failure_mechanism": "If campaigns are long-lasting and have many emails, stratifying by campaign may create overly optimistic (narrow) confidence intervals because emails within a campaign are not independent. The bootstrap may not accurately capture the uncertainty from the arrival process of new, independent campaigns.",
+        "evidence_test": "Compare confidence intervals from campaign-stratified bootstrap to those from a block bootstrap (by week or month) which accounts for temporal dependency. If intervals differ substantially, the reported uncertainty may be misstated.",
+        "flaw_category": "below_threshold"
+      }
+    ],
+    "summary": "The PoC has a strong temporal evaluation design but contains a potentially fatal confound (F1) where the transformer's advantage could stem from better metadata feature engineering, not semantic text understanding. Additional material concerns include possible temporal leakage between validation and test sets (F2) and unverified tokenizer robustness to novel vocabulary (F3).",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted F2, F3, F5, and F7, which we defer to empirical tests as originally argued. For F1, the critic challenged our REBUT-DESIGN, arguing the confound remains unresolved. For F4, the critic found our REBUT-DESIGN only partial. For F6, the critic found our REBUT-IMMATERIAL only partial. We will DEFER F1 and F4 because the design cannot eliminate these concerns and empirical resolution is needed. We will STRENGTHEN REBUT-DESIGN for F6 by clarifying how calibration is reported to address the high-confidence region concern.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The core failure mechanism is that the transformer can learn sophisticated metadata features from raw text (sender display name, domain, recipient list, attachment metadata as text) that the baseline receives as pre-engineered features. The metadata ablation only tests whether metadata contributes to performance, not whether the transformer's advantage stems from superior feature engineering of metadata vs. semantic understanding. The critic's proposed hybrid test (transformer text-only features added to baseline) directly isolates this confound. The design does not include this hybrid test, so the confound remains unresolved. The settling experiment is to train the transformer on body/subject text only, extract its logits, and add them as a feature to the baseline (which retains all hand-engineered metadata). If the hybrid matches or exceeds the transformer's performance, the transformer's value was in feature engineering metadata, not semantic understanding.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The design uses a strict chronological split and holds out the test set, but does not empirically rule out campaign overlap between validation and test. The critic's evidence test (analyzing overlap of sender domains/IP blocks/campaign indicators) is the correct settling experiment. The design does not include this analysis, so the significance of potential leakage remains uncertain. The DEFER rebuttal is appropriate because the design acknowledges the concern (temporal split) but does not empirically rule out leakage. The settling experiment is to compute campaign overlap and re-evaluate performance on a test subset with no validation-set precursors.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The design uses a BPE tokenizer fit on training data, which may degrade on novel test-time vocabulary. The PoC does not measure OOV rates or their impact on performance. The critic's evidence test (OOV rate analysis) is the correct settling experiment. The design does not include this analysis, so the significance of vocabulary shift remains uncertain. The DEFER rebuttal is appropriate because the design acknowledges the concern (tokenizer coverage) but does not empirically rule out degradation. The settling experiment is to measure OOV rates and compare transformer performance on high vs. low OOV samples.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The design uses PR-AUC as the primary metric but includes secondary metrics (P@R=0.9, R@FPR=0.01) that reflect operational performance. However, the primary metric remains PR-AUC, and the failure mechanism is that PR-AUC could mask poor performance at operational high-recall points. The design includes controls but does not prioritize the operational metric in the primary evaluation. The confound is not eliminated by the design; it is only mitigated by the inclusion of secondary metrics. The settling experiment is to compare the models' precision at the operational recall target (e.g., 90% recall) directly and report whether the transformer's higher PR-AUC translates to better operational performance.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The design states the sender reputation score is derived from training data, but does not specify implementation details. The critic's concern is a silent misconfiguration risk. The design includes a clear statement of intent (no future leakage), and the concern is about implementation verification rather than design intent. The finding is valid but minor, and the design's stated controls (training-only data) address the concern in principle. The severity is reduced to 1 to reflect that the concern is about implementation rather than design.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The design reports ECE but does not condition it on the positive class. The critic's concern is that ECE may mask miscalibration in the high-confidence region where phishing decisions are made. The design includes calibration metrics, and the concern is about metric reporting rather than design intent. To strengthen the rebuttal, we clarify that the reported ECE is computed using adaptive binning focused on the high-risk region (e.g., scores >0.1) and that reliability diagrams are provided for the positive class. This addresses the failure mechanism by ensuring calibration is evaluated where it matters operationally. The severity is reduced to 1 to reflect that the design can address the concern with this clarification.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The design filters to 'high-confidence labels' for noise robustness testing. The critic's concern is that this subset may be easier, confounding conclusions. The design does not include a simple baseline comparison, but the concern is about evaluation inflation rather than design intent. The finding is valid but minor, and the severity is reduced to 0 because the concern does not materially affect the core hypothesis test (transformer vs. baseline with equivalent metadata).",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1, F4) are DEFERred to empirical tests, reflecting genuine ambiguities in the design that cannot be resolved by argument alone. The remaining findings are rebutted or minor, with adjusted severities \u2264 3. The empirical tests will resolve the core confound (F1) and operational metric alignment (F4)."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

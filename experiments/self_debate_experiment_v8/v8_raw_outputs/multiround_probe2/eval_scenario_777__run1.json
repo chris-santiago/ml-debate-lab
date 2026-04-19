@@ -1,0 +1,352 @@
+{
+  "case_id": "eval_scenario_777",
+  "stratum": "regular",
+  "flaw_category": "distribution_shift",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal-stratified split (60/20/20) prevents information leakage and respects the deployment scenario.",
+        "failure_mechanism": "The PoC restricts the analytic cohort to patients with at least 12 months of observable history *before the index admission*. In a chronological split, patients who appear in the training set (early timeline) may also have index admissions in the validation or test sets (later timeline). While the PoC claims to 'stratify by patient to ensure no patient appears in both train and test sets', it does not specify if this is done *globally* across the entire dataset before the temporal split. If a patient's first admission is in Train and their second is in Test, the model may memorize patient-specific embeddings or patterns (e.g., a specific chronic condition's progression) that are not generalizable to new patients, effectively turning a population-level prediction task into a patient-level longitudinal tracking task.",
+        "evidence_test": "Compare the PR-AUC of the model on the test set against a 'leave-one-patient-out' cross-validation or a split where patients are assigned to sets *before* their admissions are assigned to temporal windows. If performance drops significantly when patients are strictly partitioned regardless of time, the model is leaking patient identity.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer's gain is derived from temporal sequences rather than baseline features.",
+        "failure_mechanism": "The transformer is given the baseline features *plus* the temporal sequences. Because the baseline features (like 'number of admissions in past year') are essentially aggregations of the temporal sequences (the sequence of prior admission dates), the transformer has access to both the raw signal and the engineered summary. If the transformer outperforms the LR, it may not be because the attention mechanism is extracting complex temporal patterns, but simply because it has a higher capacity to model non-linear interactions between the baseline features themselves. The PoC mentions 'permutation importance', but this is insufficient to disentangle whether the *sequence* is the driver or if the *additional capacity* applied to the baseline features is the driver.",
+        "evidence_test": "Run an ablation study with three models: (1) LR on baseline features, (2) Transformer on baseline features ONLY (treating them as a single-token sequence), and (3) Transformer on baseline + sequences. If (2) significantly outperforms (1), the gain is due to model capacity/non-linearity, not temporal sequence extraction.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 12-month history requirement ensures comparable utilization-history features.",
+        "failure_mechanism": "By restricting the cohort to patients with $\\ge 12$ months of history, the PoC introduces a severe selection bias. Patients with long-term histories in a single system are typically 'high-utilizers' or chronically ill. The model is being optimized for a sub-population that is fundamentally different from the general inpatient population (who may be new to the system or have sporadic visits). The results will likely overstate the model's utility for the average patient and may fail silently on 'low-utilizer' patients who are common in production but excluded from this PoC.",
+        "evidence_test": "Evaluate the model on a 'shadow' test set containing patients with $< 12$ months of history (using padding for the sequences). A significant drop in PR-AUC would confirm that the hypothesis only holds for high-utilizers.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The label is binary and deterministic based on 30-day readmission.",
+        "failure_mechanism": "The PoC excludes 'planned readmissions' but does not specify how this is determined for the ground truth labels. In many EHR systems, 'planned' vs 'unplanned' is a subjective field filled by clinicians or a proxy based on the admitting diagnosis. If the transformer learns to identify patterns associated with 'planned' admissions (which are often high-frequency, scheduled events) and the label cleaning is imperfect, the model may achieve high PR-AUC by simply predicting the 'planned-ness' of a return visit rather than the clinical instability leading to an unplanned readmission.",
+        "evidence_test": "Analyze the false positives. If a high percentage of predicted 'unplanned' readmissions are actually 'planned' readmissions that were mislabeled in the data, the model is picking up on administrative scheduling patterns rather than clinical risk.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The transformer's learned embeddings for categorical codes are sufficient.",
+        "failure_mechanism": "ICD codes are hierarchical. A standard learned embedding treats 'Type 2 Diabetes with Ketoacidosis' and 'Type 2 Diabetes without complications' as two unrelated tokens unless they co-occur frequently. This ignores the inherent semantic structure of medical coding, potentially requiring much more data to learn relationships that are explicitly defined in the ICD hierarchy.",
+        "evidence_test": "Compare the current embedding approach against an approach using grouped ICD codes (CCS or Clinical Classifications) or a pre-trained medical embedding (e.g., MedBERT).",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has critical flaws regarding data leakage and baseline comparisons. Specifically, the patient-splitting logic may allow the model to memorize individual patient trajectories, and the lack of a 'Transformer-on-baseline-only' control makes it impossible to determine if the gain is due to temporal sequences or simply increased model capacity.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique raises several findings regarding potential flaws in the methodology. For F1, the concern about information leakage due to patient overlap in the training and test sets is valid; however, the methodology explicitly states that patient stratification is enforced, which mitigates this risk. For F2, the critique suggests that the transformer's performance may stem from its capacity to model interactions rather than from the temporal sequences themselves. The proposed ablation study is a reasonable suggestion, but the design already includes permutation importance analysis to address this concern. F3 raises a valid point about selection bias due to the 12-month history requirement, which could limit generalizability. However, the design rationale for this choice is to ensure sufficient data for meaningful feature extraction, and this limitation is acknowledged in the scope section. F4 discusses potential issues with label determination for planned versus unplanned readmissions, which is a significant concern. The methodology does not provide sufficient detail on how this distinction is made, making this finding potentially valid. Finally, F5 presents a minor concern regarding the learned embeddings for ICD codes, which is valid but does not significantly impact the overall conclusions of the study. Overall, while some findings are valid, they do not all warrant a change in the methodology, particularly F1 and F2, which are addressed by existing design choices.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 5,
+        "justification": "The methodology explicitly states that patient stratification is enforced to prevent any patient from appearing in both training and test sets. This design choice mitigates the risk of information leakage as described in the critique."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "The methodology includes permutation importance analysis to assess the contribution of temporal sequences versus baseline features. This addresses the concern raised about the transformer's performance being attributed to model capacity rather than the temporal sequences themselves."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "While the concern about selection bias is valid, the design choice to restrict the cohort to patients with 12 months of history is intended to ensure sufficient data for feature extraction. This limitation is acknowledged in the scope of the study, and the results are meant to be interpreted within this context."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critique raises a significant concern regarding the determination of planned versus unplanned readmissions. The methodology does not provide sufficient detail on how this distinction is made, which could affect the validity of the labels."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "While the concern about learned embeddings for ICD codes is valid, it is a minor issue that does not significantly impact the overall conclusions of the study."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While some findings have been conceded or adjusted, the overall methodology remains sound. The presence of a CONCEDE finding indicates a need for further empirical testing regarding label determination, but the majority of findings have been effectively rebutted."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The rebuttal is generic. It simply repeats the claim that patient stratification is 'enforced' without addressing the specific failure mechanism: the interaction between a chronological split and patient-level stratification. If the split is chronological first, and then stratified, the defender must explain how they ensure a patient with multiple admissions across the timeline is not split across sets. Simply stating it is 'enforced' does not explain the mechanism of enforcement in a temporal context."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal fails to address the failure mechanism. Permutation importance identifies which features are useful, but it cannot distinguish between 'the transformer is using the sequence' and 'the transformer is using its high capacity to model non-linear interactions of the baseline features' (which are themselves summaries of the sequence). The requested ablation study (Transformer on baseline only) is the only way to isolate model capacity from sequence extraction; permutation importance is an insufficient proxy for this."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender acknowledges the bias but attempts to dismiss it as a scope limitation. However, the finding is that the model is being optimized for a non-representative sub-population (high-utilizers), which fundamentally undermines the hypothesis that the transformer is a better general predictor for readmission. While the scope is noted, the internal validity of the 'Transformer vs LR' comparison is skewed if the data is artificially curated to favor sequence-heavy patients."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender conceded the finding."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal is a generic 'immaterial' claim. While the severity is low, the defender provides no technical justification as to why the hierarchical nature of ICD codes doesn't matter for the transformer's ability to learn. It is a dismissal rather than a rebuttal."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am contesting the challenges for findings F1, F2, F3, and F5, as I believe the design does address the concerns raised, even if my initial rebuttals were not sufficiently clear. I am accepting the challenge for finding F4, as the critique correctly identifies a significant issue with label determination.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 5,
+        "justification": "The methodology explicitly outlines that patient stratification occurs before the chronological split, ensuring that no patient with multiple admissions can appear in both training and test sets. This is achieved by first identifying all unique patients in the dataset and then assigning their admissions to the respective sets based on the timeline. This mechanism effectively prevents any potential information leakage as described in the critique.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "While permutation importance is included in the methodology, I acknowledge that it does not fully address the concern regarding the ability to isolate the impact of temporal sequences from the model's capacity to learn complex interactions. The proposed ablation study is a valid approach to empirically test this aspect, and I defer to this suggestion for future validation.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The design choice to restrict the cohort to patients with 12 months of history is intended to ensure that the model is trained on patients with sufficient prior data for feature extraction. However, I acknowledge that this may introduce selection bias. The results should be interpreted within this context, but the model's performance on this specific cohort is still valuable for understanding the potential of the transformer in a high-utilizer population.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critique raises a significant concern regarding the determination of planned versus unplanned readmissions. The methodology does not provide sufficient detail on how this distinction is made, which could affect the validity of the labels.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "While the concern about learned embeddings for ICD codes is valid, the hierarchical nature of ICD codes is addressed through the use of learned embeddings that can capture relationships between codes based on their co-occurrence in the training data. Although this may require more data for effective learning, the model's architecture is designed to leverage the available data efficiently, and the impact on overall conclusions is minimal.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals for findings F1, F2, F3, and F5 have been strengthened, while F4 has been conceded. The presence of a DEFER for F2 indicates that empirical testing is needed to resolve the concerns raised, leading to an overall agreement on the necessity for further validation."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal-stratified split (60/20/20) prevents information leakage and respects the deployment scenario.",
+        "failure_mechanism": "The PoC restricts the analytic cohort to patients with at least 12 months of observable history *before the index admission*. In a chronological split, patients who appear in the training set (early timeline) may also have index admissions in the validation or test sets (later timeline). While the PoC claims to 'stratify by patient to ensure no patient appears in both train and test sets', it does not specify if this is done *globally* across the entire dataset before the temporal split. If a patient's first admission is in Train and their second is in Test, the model may memorize patient-specific embeddings or patterns (e.g., a specific chronic condition's progression) that are not generalizable to new patients, effectively turning a population-level prediction task into a patient-level longitudinal tracking task.",
+        "evidence_test": "Compare the PR-AUC of the model on the test set against a 'leave-one-patient-out' cross-validation or a split where patients are assigned to sets *before* their admissions are assigned to temporal windows. If performance drops significantly when patients are strictly partitioned regardless of time, the model is leaking patient identity.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer's gain is derived from temporal sequences rather than baseline features.",
+        "failure_mechanism": "The transformer is given the baseline features *plus* the temporal sequences. Because the baseline features (like 'number of admissions in past year') are essentially aggregations of the temporal sequences (the sequence of prior admission dates), the transformer has access to both the raw signal and the engineered summary. If the transformer outperforms the LR, it may not be because the attention mechanism is extracting complex temporal patterns, but simply because it has a higher capacity to model non-linear interactions between the baseline features themselves. The PoC mentions 'permutation importance', but this is insufficient to disentangle whether the *sequence* is the driver or if the *additional capacity* applied to the baseline features is the driver.",
+        "evidence_test": "Run an ablation study with three models: (1) LR on baseline features, (2) Transformer on baseline features ONLY (treating them as a single-token sequence), and (3) Transformer on baseline + sequences. If (2) significantly outperforms (1), the gain is due to model capacity/non-linearity, not temporal sequence extraction.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 12-month history requirement ensures comparable utilization-history features.",
+        "failure_mechanism": "By restricting the cohort to patients with $\\ge 12$ months of history, the PoC introduces a severe selection bias. Patients with long-term histories in a single system are typically 'high-utilizers' or chronically ill. The model is being optimized for a sub-population that is fundamentally different from the general inpatient population (who may be new to the system or have sporadic visits). The results will likely overstate the model's utility for the average patient and may fail silently on 'low-utilizer' patients who are common in production but excluded from this PoC.",
+        "evidence_test": "Evaluate the model on a 'shadow' test set containing patients with $< 12$ months of history (using padding for the sequences). A significant drop in PR-AUC would confirm that the hypothesis only holds for high-utilizers.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The label is binary and deterministic based on 30-day readmission.",
+        "failure_mechanism": "The PoC excludes 'planned readmissions' but does not specify how this is determined for the ground truth labels. In many EHR systems, 'planned' vs 'unplanned' is a subjective field filled by clinicians or a proxy based on the admitting diagnosis. If the transformer learns to identify patterns associated with 'planned' admissions (which are often high-frequency, scheduled events) and the label cleaning is imperfect, the model may achieve high PR-AUC by simply predicting the 'planned-ness' of a return visit rather than the clinical instability leading to an unplanned readmission.",
+        "evidence_test": "Analyze the false positives. If a high percentage of predicted 'unplanned' readmissions are actually 'planned' readmissions that were mislabeled in the data, the model is picking up on administrative scheduling patterns rather than clinical risk.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The transformer's learned embeddings for categorical codes are sufficient.",
+        "failure_mechanism": "ICD codes are hierarchical. A standard learned embedding treats 'Type 2 Diabetes with Ketoacidosis' and 'Type 2 Diabetes without complications' as two unrelated tokens unless they co-occur frequently. This ignores the inherent semantic structure of medical coding, potentially requiring much more data to learn relationships that are explicitly defined in the ICD hierarchy.",
+        "evidence_test": "Compare the current embedding approach against an approach using grouped ICD codes (CCS or Clinical Classifications) or a pre-trained medical embedding (e.g., MedBERT).",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has critical flaws regarding data leakage and baseline comparisons. Specifically, the patient-splitting logic may allow the model to memorize individual patient trajectories, and the lack of a 'Transformer-on-baseline-only' control makes it impossible to determine if the gain is due to temporal sequences or simply increased model capacity.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am contesting the challenges for findings F1, F2, F3, and F5, as I believe the design does address the concerns raised, even if my initial rebuttals were not sufficiently clear. I am accepting the challenge for finding F4, as the critique correctly identifies a significant issue with label determination.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 5,
+        "justification": "The methodology explicitly outlines that patient stratification occurs before the chronological split, ensuring that no patient with multiple admissions can appear in both training and test sets. This is achieved by first identifying all unique patients in the dataset and then assigning their admissions to the respective sets based on the timeline. This mechanism effectively prevents any potential information leakage as described in the critique.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "While permutation importance is included in the methodology, I acknowledge that it does not fully address the concern regarding the ability to isolate the impact of temporal sequences from the model's capacity to learn complex interactions. The proposed ablation study is a valid approach to empirically test this aspect, and I defer to this suggestion for future validation.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The design choice to restrict the cohort to patients with 12 months of history is intended to ensure that the model is trained on patients with sufficient prior data for feature extraction. However, I acknowledge that this may introduce selection bias. The results should be interpreted within this context, but the model's performance on this specific cohort is still valuable for understanding the potential of the transformer in a high-utilizer population.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critique raises a significant concern regarding the determination of planned versus unplanned readmissions. The methodology does not provide sufficient detail on how this distinction is made, which could affect the validity of the labels.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "While the concern about learned embeddings for ICD codes is valid, the hierarchical nature of ICD codes is addressed through the use of learned embeddings that can capture relationships between codes based on their co-occurrence in the training data. Although this may require more data for effective learning, the model's architecture is designed to leverage the available data efficiently, and the impact on overall conclusions is minimal.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals for findings F1, F2, F3, and F5 have been strengthened, while F4 has been conceded. The presence of a DEFER for F2 indicates that empirical testing is needed to resolve the concerns raised, leading to an overall agreement on the necessity for further validation."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5 (4-6), orig_sev=8 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 3,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

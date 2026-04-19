@@ -1,0 +1,352 @@
+{
+  "case_id": "eval_scenario_773",
+  "stratum": "regular",
+  "flaw_category": "missing_baselines",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The multimodal model's performance gain over the baseline is attributable to the added longitudinal and textual features rather than to superior hyperparameter tuning.",
+        "failure_mechanism": "Only the multimodal model undergoes hyperparameter optimization (5\u2011fold CV on the training set) while the baseline uses a fixed, clinically conservative configuration. This gives the multimodal model an unfair advantage: any observed improvement could stem from better\u2011tuned hyperparameters rather than from the supplemental features.",
+        "evidence_test": "Train a second baseline model with the same hyperparameter search procedure (same search space, same CV folds, same early\u2011stopping) as the multimodal model and compare its test\u2011set precision@80% recall to the multimodal model. If the gap shrinks to non\u2011significance (<5% absolute), the original claim is unsupported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chronological train/validation/test split guarantees that the test set represents future deployment performance because the underlying data distribution is stable over time.",
+        "failure_mechanism": "The design assumes stationarity (no concept drift) across the 5\u2011year period. If clinical practices, coding conventions, patient mix, or external interventions change between the training window (months\u202f1\u201136) and the test window (months\u202f43\u201160), the model may experience distribution shift, causing test performance to overestimate real\u2011world utility.",
+        "evidence_test": "Monitor performance metrics (e.g., precision@80% recall) month\u2011by\u2011month within the test window and compare them to the validation window. A systematic drift (e.g., declining precision over months) would indicate non\u2011stationarity. Additionally, train on months\u202f1\u201142 and test on months\u202f43\u201160 to see if performance changes when the training set is more recent.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Computing a linear\u2011trend slope from irregularly spaced vital/lab measurements yields a valid feature that captures the rate of change of a patient's physiology.",
+        "failure_mechanism": "When measurements are unevenly timed, ordinary least\u2011squares slope can be biased toward periods with dense sampling and may not reflect the true underlying physiological trend. This can introduce noise or systematic error into the feature, degrading model learning.",
+        "evidence_test": "Compare the slope feature to a more robust alternative (e.g., piecewise linear fit, Kalman filter estimate, or slope computed after linear interpolation to a regular grid) in a held\u2011out validation set. If the alternative yields consistently higher feature importance or model performance, the original slope feature is suboptimal.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Including note length as a feature allows the analysis to determine whether any improvement from discharge\u2011summary embeddings is independent of documentation verbosity.",
+        "failure_mechanism": "Note length is only a proxy for verbosity and may itself be confounded with patient complexity, clinician thoroughness, or EHR documentation habits. Controlling for length does not guarantee that the embedding signal is free from these confounds; residual confounding could still drive the observed performance gain.",
+        "evidence_test": "Perform a mediation analysis: regress readmission on embeddings, then on embeddings after removing the linear effect of note length (e.g., via residuals). If the residual embeddings still show significant association with readmission, length alone does not explain the effect. Alternatively, test interaction terms between embeddings and length to see if the effect varies with length.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratifying performance results by hospital and service line is sufficient to detect confounding by local practices or discharge patterns.",
+        "failure_mechanism": "Stratification controls for average differences across sites but does not account for interactions between site and time (e.g., a hospital adopting a new discharge protocol mid\u2011study) or for unmeasured confounders that vary within strata. Consequently, apparent uniform improvement could mask site\u2011specific temporal confounding.",
+        "evidence_test": "Fit a mixed\u2011effects model with random intercepts for hospital and random slopes for time (or include hospital\u202f\u00d7\u202ftime interaction terms) and test whether the multimodal advantage remains significant after accounting for such interactions. A significant interaction would indicate that stratification alone is insufficient.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC presents a thoughtful design but suffers from several methodological gaps: an unfair baseline comparison due to asymmetric hyperparameter tuning, unverified assumptions about temporal stationarity and feature engineering, and insufficient controls for confounding and label quality. These issues collectively weaken the causal claim that multimodal features drive the observed performance gain.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic claims that the difference in hyperparameter optimization (HPO) between the multimodal model and the baseline creates an unfair advantage. Looking at Section 4, the design explicitly states the baseline uses a 'fixed, clinically conservative hyperparameter configuration' to keep it 'interpretable' and avoid 'absorbing gains through extensive optimization of a deliberately simpler feature set.' The intent is to compare the multimodal approach against a stable, realistic clinical reference, not a theoretical maximum of a tabular model. However, the critic is correct that from a pure ML perspective, this introduces a confound. But since the goal is to see if multimodal inputs add 'practical value' over a 'stable tabular reference', this is a design choice. That said, the baseline is meant to be a reference; if the baseline is too weak, the gain is trivial. I must determine if this is a design choice or a flaw. It is a deliberate choice to avoid over-fitting a simple model to a complex task, but it does make the 'gain' attribution ambiguous. I will treat this as a design choice but acknowledge the trade-off.\n\nF2: The critic argues that the chronological split doesn't guarantee future performance due to potential concept drift. Section 2 and 7 explicitly address this. The split is chronological (months 1-36 train, 37-42 val, 43-60 test). This is the gold standard for testing temporal validity. The critic's suggestion to monitor month-by-month is a standard validation step, but the design already uses a large 18-month test window (which is 30% of the total data) to evaluate stability. The claim that the design 'assumes stationarity' is a misunderstanding; the chronological split is exactly how one *tests* for non-stationarity. If the model fails on the test set, the hypothesis is rejected. The design is sound.\n\nF3: The critic suggests that OLS slope on irregular data is biased. Section 3 describes the features as 'summary statistics' (min, max, mean, last, slope). In a Gradient Boosting model (XGBoost/LightGBM), the model can learn to weight the slope feature relative to others (like 'measurement frequency' or 'last value'). The 'bias' the critic mentions is essentially noise. In a PoC, a simple linear slope is a standard first-order approximation. This is a minor implementation detail that does not invalidate the hypothesis that longitudinal data adds value.\n\nF4: The critic claims that including note length as a feature is insufficient to decouple embeddings from verbosity. Section 7 states: 'Note length is explicitly included as a feature; feature importance analysis determines whether embeddings carry signal independent of length.' The critic suggests mediation analysis. While mediation analysis is more rigorous, feature importance in a tree-based model (which handles non-linear interactions) provides a strong first-order signal. If the embedding features have high importance while length has low importance, the signal is likely in the content. This is a reasonable control for a PoC.\n\nF5: The critic argues that stratification by hospital/service line doesn't account for site-time interactions. Section 6 and 7 specify that metrics are computed overall and stratified. The critic's suggestion of a mixed-effects model is a more advanced statistical approach, but for the purpose of this PoC\u2014establishing if multimodal features yield a \u22655% gain\u2014stratified reporting is the standard way to identify if the gain is driven by a single outlier site. The 'site-time interaction' is a secondary concern compared to the primary hypothesis.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The use of a fixed, conservative configuration for the baseline is a deliberate design choice (Section 4) to establish a 'stable tabular reference' that reflects current clinical practice. The goal is to measure practical utility over a realistic baseline, not to find the theoretical upper bound of a tabular model. The multimodal model's HPO is necessary to handle the significantly higher dimensionality of embeddings, which the baseline does not possess."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic misidentifies the purpose of the chronological split. The split (Section 2) is not an assumption of stationarity, but the mechanism used to test for it. By evaluating on an 18-month future window (months 43-60), the experiment directly measures the model's robustness to distribution shift. If drift occurs, the test set performance will drop, correctly leading to a failure of the hypothesis."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The use of a simple linear slope is a first-order approximation for a PoC. Because the model also receives 'measurement frequency' and 'last recorded value' (Section 3), the GBDT can compensate for the noise in the slope feature. This does not materially threaten the validity of the primary conclusion."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "Including note length as a feature and performing feature importance analysis (Section 7) is a sufficient control for a PoC to detect if verbosity is the primary driver. While mediation analysis is an option for final publication, the current design eliminates the possibility of length being the *sole* driver of the gain."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Stratification by hospital and service line (Section 6) is the standard approach to detect site-level confounding. The suggestion of mixed-effects models for site-time interactions is an optimization for statistical rigor that exceeds the requirements for establishing the primary hypothesis of a 5% precision gain."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted. The material concerns regarding HPO and temporal splits were addressed by cited design choices and the inherent nature of the chronological split, bringing all adjusted severities to \u2264 3."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender justifies the fixed baseline as a deliberate design choice to reflect current clinical practice and argues that hyperparameter optimization is necessary for the high-dimensional embedding model. However, this does not address the core failure mechanism: the multimodal model may gain an unfair advantage from superior tuning rather than from the added features. The rebuttal provides no evidence or analysis showing that the observed performance gap would persist if the baseline received the same tuning procedure, leaving the concern unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly clarifies that the chronological train/validation/test split is not an assumption of stationarity but a mechanism to test for it. By evaluating on an 18\u2011month future hold\u2011out window, the experiment directly measures robustness to distribution shift; if drift occurs, test performance will drop, which would correctly refute the hypothesis. This directly addresses the failure mechanism and renders the concern moot."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender notes that the linear slope is a first\u2011order approximation and that the model also receives measurement frequency and last recorded value, which may help compensate for noise. This partially mitigates the concern about feature noise but does not address the bias introduced by irregular sampling (OLS slope can be skewed toward densely sampled intervals). Because the bias issue remains unaddressed, the concern is only partially resolved."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender argues that including note length as a feature and performing feature importance analysis can rule out note length as the sole driver of any gain, which addresses part of the confounding worry. However, the rebuttal does not consider that note length may proxy for other confounders (patient complexity, clinician thoroughness, EHR habits); residual confounding could still drive the observed improvement. Thus the concern is mitigated but not eliminated."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The defender asserts that stratification by hospital and service line is the standard approach and sufficient for detecting site\u2011level confounding, dismissing the need for mixed\u2011effects models as exceeding the PoC\u2019s requirements. This does not engage with the specific failure mechanism: stratification ignores site\u2011time interactions (e.g., a hospital changing discharge protocols mid\u2011study) and unmeasured confounders that vary within strata. Consequently, the concern about masked temporal confounding remains unaddressed."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining the position on F2 (Accepted). For F1, I am switching to DEFER because while the design choice was intentional, the critic is correct that it introduces a tuning bias that cannot be argued away without empirical evidence. For F3 and F4, I am switching to DEFER as the design provides mitigation (additional features/length feature) but not total elimination of the noise/confounding mechanisms. For F5, I am switching to DEFER as stratification is a partial control, but site-time interactions require a specific statistical test to resolve.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The design prioritizes a 'stable clinical reference' over a 'theoretical upper bound' for the baseline. However, the critic is correct that this creates a tuning asymmetry. To settle this: we will train a 'Tuned Baseline' using the exact same 5-fold CV and HPO search space as the multimodal model. If the multimodal model still outperforms this Tuned Baseline by \u22655% precision@80% recall, the design is vindicated. If the gap disappears, the critique is validated. The primary conclusion (multimodal value) remains valid if the gap persists against the Tuned Baseline; if the gap only exists against the fixed baseline, the conclusion is invalidated. Thus, the result is deferred to this specific comparison.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The chronological split is the primary mechanism for testing distribution shift, not an assumption of stationarity. Evaluating on an 18-month future window directly measures real-world utility in the face of drift.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The design mitigates OLS slope bias by providing the model with measurement frequency and the last recorded value, allowing the GBDT to weight the slope's reliability. To settle the bias concern: we will replace the OLS slope with a slope calculated after linear interpolation to a regular grid. If the model performance remains stable or improves, the original feature was sufficient. If performance drops significantly, the critique is validated. The primary conclusion survives because this is a single feature among ~200; a suboptimal slope is unlikely to invalidate a 5% precision gain across the entire multimodal ensemble.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The design controls for verbosity by including note length as a feature. To settle whether residual confounding (e.g., clinician thoroughness) drives the gain: we will perform a mediation analysis regressing readmission on embeddings after removing the linear effect of note length. If the residual embeddings remain significant, the design is vindicated. If not, the critique is validated. The primary conclusion survives because the multimodal model combines longitudinal time-series AND text; even if text is partially confounded by thoroughness, the combined signal from Stream A and B is unlikely to be driven by a single documentation habit.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "Stratification by hospital/service line is a partial control for site-level variance. To settle the concern of site-time interactions: we will fit a mixed-effects model with random slopes for time across hospitals. If the multimodal advantage remains significant, the design is vindicated. If the advantage is driven by a few sites changing protocols, the critique is validated. The primary conclusion survives because the evaluation is performed on a large-scale multi-hospital dataset; site-specific temporal artifacts would likely be diluted in the overall precision@80% recall metric unless the effect is massive and systemic.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While the design's core temporal split is sound (F2), several concerns regarding tuning bias (F1), feature noise (F3), and confounding (F4, F5) were correctly identified as only partially mitigated. These have been deferred to specific empirical tests that will settle the debate."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The multimodal model's performance gain over the baseline is attributable to the added longitudinal and textual features rather than to superior hyperparameter tuning.",
+        "failure_mechanism": "Only the multimodal model undergoes hyperparameter optimization (5\u2011fold CV on the training set) while the baseline uses a fixed, clinically conservative configuration. This gives the multimodal model an unfair advantage: any observed improvement could stem from better\u2011tuned hyperparameters rather than from the supplemental features.",
+        "evidence_test": "Train a second baseline model with the same hyperparameter search procedure (same search space, same CV folds, same early\u2011stopping) as the multimodal model and compare its test\u2011set precision@80% recall to the multimodal model. If the gap shrinks to non\u2011significance (<5% absolute), the original claim is unsupported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chronological train/validation/test split guarantees that the test set represents future deployment performance because the underlying data distribution is stable over time.",
+        "failure_mechanism": "The design assumes stationarity (no concept drift) across the 5\u2011year period. If clinical practices, coding conventions, patient mix, or external interventions change between the training window (months\u202f1\u201136) and the test window (months\u202f43\u201160), the model may experience distribution shift, causing test performance to overestimate real\u2011world utility.",
+        "evidence_test": "Monitor performance metrics (e.g., precision@80% recall) month\u2011by\u2011month within the test window and compare them to the validation window. A systematic drift (e.g., declining precision over months) would indicate non\u2011stationarity. Additionally, train on months\u202f1\u201142 and test on months\u202f43\u201160 to see if performance changes when the training set is more recent.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Computing a linear\u2011trend slope from irregularly spaced vital/lab measurements yields a valid feature that captures the rate of change of a patient's physiology.",
+        "failure_mechanism": "When measurements are unevenly timed, ordinary least\u2011squares slope can be biased toward periods with dense sampling and may not reflect the true underlying physiological trend. This can introduce noise or systematic error into the feature, degrading model learning.",
+        "evidence_test": "Compare the slope feature to a more robust alternative (e.g., piecewise linear fit, Kalman filter estimate, or slope computed after linear interpolation to a regular grid) in a held\u2011out validation set. If the alternative yields consistently higher feature importance or model performance, the original slope feature is suboptimal.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Including note length as a feature allows the analysis to determine whether any improvement from discharge\u2011summary embeddings is independent of documentation verbosity.",
+        "failure_mechanism": "Note length is only a proxy for verbosity and may itself be confounded with patient complexity, clinician thoroughness, or EHR documentation habits. Controlling for length does not guarantee that the embedding signal is free from these confounds; residual confounding could still drive the observed performance gain.",
+        "evidence_test": "Perform a mediation analysis: regress readmission on embeddings, then on embeddings after removing the linear effect of note length (e.g., via residuals). If the residual embeddings still show significant association with readmission, length alone does not explain the effect. Alternatively, test interaction terms between embeddings and length to see if the effect varies with length.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratifying performance results by hospital and service line is sufficient to detect confounding by local practices or discharge patterns.",
+        "failure_mechanism": "Stratification controls for average differences across sites but does not account for interactions between site and time (e.g., a hospital adopting a new discharge protocol mid\u2011study) or for unmeasured confounders that vary within strata. Consequently, apparent uniform improvement could mask site\u2011specific temporal confounding.",
+        "evidence_test": "Fit a mixed\u2011effects model with random intercepts for hospital and random slopes for time (or include hospital\u202f\u00d7\u202ftime interaction terms) and test whether the multimodal advantage remains significant after accounting for such interactions. A significant interaction would indicate that stratification alone is insufficient.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC presents a thoughtful design but suffers from several methodological gaps: an unfair baseline comparison due to asymmetric hyperparameter tuning, unverified assumptions about temporal stationarity and feature engineering, and insufficient controls for confounding and label quality. These issues collectively weaken the causal claim that multimodal features drive the observed performance gain.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining the position on F2 (Accepted). For F1, I am switching to DEFER because while the design choice was intentional, the critic is correct that it introduces a tuning bias that cannot be argued away without empirical evidence. For F3 and F4, I am switching to DEFER as the design provides mitigation (additional features/length feature) but not total elimination of the noise/confounding mechanisms. For F5, I am switching to DEFER as stratification is a partial control, but site-time interactions require a specific statistical test to resolve.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The design prioritizes a 'stable clinical reference' over a 'theoretical upper bound' for the baseline. However, the critic is correct that this creates a tuning asymmetry. To settle this: we will train a 'Tuned Baseline' using the exact same 5-fold CV and HPO search space as the multimodal model. If the multimodal model still outperforms this Tuned Baseline by \u22655% precision@80% recall, the design is vindicated. If the gap disappears, the critique is validated. The primary conclusion (multimodal value) remains valid if the gap persists against the Tuned Baseline; if the gap only exists against the fixed baseline, the conclusion is invalidated. Thus, the result is deferred to this specific comparison.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The chronological split is the primary mechanism for testing distribution shift, not an assumption of stationarity. Evaluating on an 18-month future window directly measures real-world utility in the face of drift.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The design mitigates OLS slope bias by providing the model with measurement frequency and the last recorded value, allowing the GBDT to weight the slope's reliability. To settle the bias concern: we will replace the OLS slope with a slope calculated after linear interpolation to a regular grid. If the model performance remains stable or improves, the original feature was sufficient. If performance drops significantly, the critique is validated. The primary conclusion survives because this is a single feature among ~200; a suboptimal slope is unlikely to invalidate a 5% precision gain across the entire multimodal ensemble.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The design controls for verbosity by including note length as a feature. To settle whether residual confounding (e.g., clinician thoroughness) drives the gain: we will perform a mediation analysis regressing readmission on embeddings after removing the linear effect of note length. If the residual embeddings remain significant, the design is vindicated. If not, the critique is validated. The primary conclusion survives because the multimodal model combines longitudinal time-series AND text; even if text is partially confounded by thoroughness, the combined signal from Stream A and B is unlikely to be driven by a single documentation habit.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "Stratification by hospital/service line is a partial control for site-level variance. To settle the concern of site-time interactions: we will fit a mixed-effects model with random slopes for time across hospitals. If the multimodal advantage remains significant, the design is vindicated. If the advantage is driven by a few sites changing protocols, the critique is validated. The primary conclusion survives because the evaluation is performed on a large-scale multi-hospital dataset; site-specific temporal artifacts would likely be diluted in the overall precision@80% recall metric unless the effect is massive and systemic.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While the design's core temporal split is sound (F2), several concerns regarding tuning bias (F1), feature noise (F3), and confounding (F4, F5) were correctly identified as only partially mitigated. These have been deferred to specific empirical tests that will settle the debate."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

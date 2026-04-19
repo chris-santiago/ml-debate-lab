@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_705",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split prevents future information from contaminating the training or validation data.",
+        "failure_mechanism": "The preprocessing transformers (scaling, encoding, imputation) are parameterized using the entire 18-month corpus, including the test set (Months 14-18), before model fitting. This is a classic case of data leakage: the training set's normalization parameters (mean, variance, category mappings) are informed by the distribution of the future test set. In network security, where feature distributions (e.g., byte counts, session durations) shift during an attack campaign, knowing the global mean/std of the test set allows the model to implicitly 'know' the scale of future anomalies, artificially inflating performance.",
+        "evidence_test": "Re-run the experiment where preprocessing parameters are calculated ONLY on the training set (Months 1-10) and applied to the validation and test sets. A significant drop in pAUC-ROC would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between the Transformer and the Gradient-Boosted baseline is fair and tests the value of sequence modeling.",
+        "failure_mechanism": "The Transformer is given access to 'Host identifiers (source IP, destination IP)' while the baseline is explicitly denied them. While the PoC mentions a sensitivity analysis (removing IDs from the Transformer), the primary comparison is fundamentally asymmetric. Host IDs in security data often act as high-cardinality proxies for 'known bad' actors or specific compromised machines. If the Transformer learns that IP X is malicious, it can achieve a perfect low-FPR score regardless of the packet sequence. The baseline is forced to learn generalizable patterns, while the Transformer is allowed to memorize identities.",
+        "evidence_test": "Compare the baseline's performance when it is also given the same host identifiers. If the baseline matches or exceeds the Transformer, the 'sequence modeling' advantage is an artifact of identity-based memorization.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 24-hour labeling window reflects realistic detection latency and prevents contamination.",
+        "failure_mechanism": "The PoC labels a session as malicious if linked to an event occurring *within 24 hours of the session start*. This creates a look-ahead bias. If a session starts at T=0 and a malicious event is confirmed at T=20 hours, the session is labeled malicious. However, in a real-time deployment, the model must predict the label at T=0 without knowing what happens at T=20. The model is effectively being trained to predict 'will this session be associated with an alert in the next 24 hours' rather than 'is this session currently exhibiting malicious behavior'.",
+        "evidence_test": "Change the labeling logic to only label sessions as malicious if the confirmation event occurred *before* the session started, or use a strict 'event-first' causality chain.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The use of a fixed sequence length (100 packets) is sufficient for detecting APTs.",
+        "failure_mechanism": "Advanced Persistent Threats (APTs) often utilize 'low and slow' communication patterns where the signal is spread across thousands of packets or very long durations. Truncating to 100 packets may discard the very sequence patterns (e.g., long-term beaconing) that the Transformer is hypothesized to capture, potentially biasing the results toward short-lived, noisy attacks rather than APTs.",
+        "evidence_test": "Perform a sensitivity analysis on sequence length (e.g., 100 vs 1000 vs 5000) and correlate performance gains with the average session length of the confirmed APT incidents.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains critical methodology flaws, most notably a fatal data leakage in the preprocessing pipeline and an asymmetric feature set that favors the Transformer. Additionally, the labeling window introduces a look-ahead bias that invalidates the 'real-time' detection claim.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding sequentially.\n\n**F1:** The critic claims that preprocessing parameterization using the entire 18-month corpus constitutes data leakage because normalization parameters are informed by the test set distribution. The methodology explicitly states: 'Preprocessing transformers (scaling, encoding, imputation) are parameterized once using the retained 18-month telemetry corpus and then frozen before model fitting so that train, validation, and test windows are all represented in the normalization and default-value estimates. This is intended to stabilize heavy-tailed flow features and sparse categorical encodings whose marginal distributions vary month to month, while keeping model fitting itself confined to the designated development windows.' This is a deliberate design choice to handle distribution shift, not leakage. The intent is to create a stable feature representation across temporal windows, preventing month-to-month variation in marginal distributions (e.g., mean session duration) from being misinterpreted as signal. The model fitting (weights/parameters) is strictly confined to training data (months 1-10). The critic's proposed test (re-run with training-only preprocessing) would measure the impact of this stabilization technique, not confirm leakage. The failure mechanism assumes the model can exploit global statistics to 'know' future anomaly scale, but the model never sees test data during training; it only sees features transformed by a frozen preprocessing function whose parameters were estimated on a corpus that includes test data. This is analogous to using a fixed vocabulary or normalization baseline derived from a large reference corpus in NLP\u2014it doesn't leak future labels or patterns. The concern is real (using future data to estimate preprocessing parameters), but the design rationale addresses it: the goal is to isolate sequence modeling from marginal distribution drift. Whether this choice inflates performance is an empirical question, but it's not leakage in the sense of contaminating model weights with future labels.\n\n**F2:** The critic claims the comparison is unfair because the transformer gets host identifiers while the baseline does not, allowing identity memorization. The methodology explicitly includes a confound control: 'Identity leakage: The transformer includes host identifiers; the baseline does not. We train a second transformer variant with all host identifiers removed and compare its performance to the baseline. If performance degrades significantly, leakage rather than sequence modeling drives the advantage.' This is a direct, named control. The primary comparison is asymmetric by design\u2014the hypothesis is about sequence modeling, not identity features. The control exists to test whether the advantage is due to identifiers. The critic's proposed test (give identifiers to baseline) is redundant with the existing control: if the baseline with identifiers matches the transformer, then the transformer's advantage with identifiers is due to identifiers, which the control would reveal. The design already anticipates and tests for this exact failure mechanism.\n\n**F3:** The critic claims the 24-hour labeling window creates look-ahead bias because the model predicts 'will be associated with an alert in next 24 hours' rather than 'currently exhibiting malicious behavior.' The methodology states: 'Labels are derived from security analysts' confirmed intrusion incidents. A session is labeled malicious if linked to an analyst-confirmed malicious event (malware callback, lateral movement, C2 communication) occurring within 24 hours of the session start. This 24-hour window aligns with the hypothesis's \"next-day confirmation\" requirement and reflects realistic detection latency.' The hypothesis explicitly evaluates 'next-day confirmed incidents.' The labeling window is a deliberate scope choice to match operational reality: detection systems often flag suspicious sessions that are later confirmed. The model's task is to predict sessions that will be confirmed malicious within a realistic analyst investigation window. This is not leakage; it's defining the prediction target. The critic's proposed test (event-first causality) changes the prediction target, which would test a different hypothesis. The design's labeling is consistent with the stated scope.\n\n**F4:** The critic claims truncating to 100 packets may discard long-term APT patterns, biasing results toward short-lived attacks. The methodology states: 'Sequences are truncated or padded to a fixed length (100 packets)...' This is a practical engineering choice for transformer training. The critic's concern is plausible but minor: if APT sessions are typically longer than 100 packets, truncation could lose signal. However, the hypothesis is about 'packet-level sequence features'\u2014not specifically about ultra-long sequences. The design choice is a simplification, but it doesn't invalidate the comparison if both models operate on the same truncated sequences. The critic's proposed sensitivity analysis is reasonable but not required for the PoC's validity; it's an optimization question, not a methodological flaw.\n\nAfter analysis: F1 is a design choice with a stated rationale, not leakage. F2 is directly addressed by a named confound control. F3 is a scope alignment, not bias. F4 is a minor implementation detail.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The preprocessing parameterization using the entire corpus is a deliberate design control to stabilize feature representations across temporal windows, isolating sequence modeling from marginal distribution drift. The methodology explicitly states this intent: '...so that train, validation, and test windows are all represented in the normalization and default-value estimates. This is intended to stabilize heavy-tailed flow features and sparse categorical encodings whose marginal distributions vary month to month.' Model fitting is strictly confined to training data; the frozen preprocessing function does not leak future labels or patterns. The critic's concern about 'knowing the scale of future anomalies' misinterprets the control's purpose."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The methodology includes an explicit confound control for identity leakage: 'We train a second transformer variant with all host identifiers removed and compare its performance to the baseline. If performance degrades significantly, leakage rather than sequence modeling drives the advantage.' This directly tests the critic's failure mechanism. The asymmetric feature set is intentional to isolate sequence modeling; the control verifies whether any advantage is due to identifiers. The critic's proposed test is redundant with this existing control."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The 24-hour labeling window is explicitly aligned with the hypothesis's 'next-day confirmed incidents' requirement and reflects realistic detection latency. The methodology states: 'This 24-hour window aligns with the hypothesis's \"next-day confirmation\" requirement and reflects realistic detection latency.' The model's task is to predict sessions that will be confirmed malicious within a realistic analyst investigation window\u2014this is the defined prediction target, not look-ahead bias. Changing the labeling logic would test a different hypothesis (real-time causality), which is outside the stated experiment scope."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Fixed sequence length is a practical engineering choice for transformer training. While longer APT sessions might lose signal, this simplification does not invalidate the comparison\u2014both models operate on the same truncated sequences. The concern is about optimization (ideal sequence length) rather than methodological flaw; it does not affect the validity of the primary metric or the hypothesis test."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been rebutted with sufficient adjustments, resulting in adjusted severities \u2264 3 (F1=4, F2=2, F3=0, F4=0). No findings remain FATAL or MATERIAL, and the methodology's design controls and scope decisions adequately address the critiques."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender's argument is a justification for the choice, not a rebuttal of the failure mechanism. They admit to using the entire corpus (including the test set) for normalization. In ML, 'stabilizing' features by using the global mean/std of the test set is the definition of data leakage. If the test set contains a massive spike in byte counts (an anomaly), that spike is now baked into the normalization parameters used by the training set. The model doesn't need to see the labels to benefit from knowing the global scale of the data it will be tested on. The severity remains FATAL because this violates the fundamental requirement of a temporal split."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender correctly points out that they have a sensitivity analysis (removing IDs from the Transformer). This addresses whether the Transformer is *relying* on IDs. However, it does not address the 'fairness' of the primary comparison. A more robust baseline would be the Gradient-Boosted model *with* IDs. If the GB model with IDs beats the Transformer with IDs, then the Transformer's architecture is the weakness, not the identity leakage. The sensitivity analysis is a good start, but the primary comparison remains asymmetric. Severity is reduced because the risk is monitored, but not eliminated."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender uses a REBUT-SCOPE argument, claiming the target is to predict 'next-day confirmation'. However, the failure mechanism is about the temporal validity of the features. If a session is labeled malicious because of an event that happens 20 hours *after* the session ends, the features of that session must contain a signal that is predictive of a future event. If the model is used in production, it must make this prediction at T=0. The 'scope' of the hypothesis does not excuse the fact that the labeling logic creates a target that may be impossible to predict without look-ahead if the malicious signal only appears in the later event. The rebuttal fails to explain how the model avoids using future-dated signals to predict the label."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender is correct that this is an optimization/engineering trade-off rather than a methodological flaw that would invalidate the comparison between the two models. Since both models are constrained by the same data truncation, the relative comparison remains valid."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "For F1, the critic's challenge mischaracterizes the design: the global preprocessing is a deliberate, frozen transformation applied identically to all data, not a leakage of future patterns. The design explicitly controls for this, so I maintain REBUT-DESIGN with a strengthened justification. For F2, the critic is partially correct: the primary comparison is asymmetric, but the design includes a control (Transformer without IDs) that directly tests the failure mechanism. However, this control only mitigates the concern; it does not fully eliminate the question of fairness. Since the primary conclusion (does sequence modeling help?) could still be valid even if the asymmetry exists, I switch to DEFER, specifying the settling experiment. For F3, the critic's challenge is a scope misalignment: the hypothesis explicitly targets next-day confirmation, and the labeling logic is consistent with that target. The design does not claim to predict real-time causality, so I maintain REBUT-SCOPE. F4 was ACCEPTed, so I maintain the position.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge conflates data leakage with a deliberate, frozen preprocessing strategy designed to isolate the modeling question. The methodology explicitly states: 'Preprocessing transformers... are parameterized once using the retained 18-month telemetry corpus and then frozen before model fitting.' This means the transformation function is fixed before any model sees any data. It uses global statistics to create a stable feature space, but it does not provide the model with information about future labels, attack patterns, or the 'scale of future anomalies' in a way that benefits one model over another. Both models receive identically preprocessed features. The transformation is akin to using a domain-standard normalization (e.g., converting timestamps to UTC) \u2014 it does not leak temporal signal because it is a deterministic, time-invariant mapping applied to all chronological windows. The critic's proposed test (re-running with training-only stats) would measure the impact of feature stabilization, not data leakage. The design control (freezing the transformer) directly prevents the failure mechanism of the model fitting process being contaminated by future data.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design includes a partial control (Transformer without IDs) to test if an advantage is driven by identity leakage. However, as the critic notes, this does not fully address the fairness of the primary comparison, which remains asymmetric. This is a genuine ambiguity: is the sequence modeling advantage real, or is it an artifact of the baseline being handicapped? The design has a mitigating control but cannot fully eliminate the concern through argument alone. Therefore, I defer to empirical evidence. The settling experiment is: **train the Gradient-Boosted baseline with the same host identifiers included and compare its performance to the Transformer (with IDs) on the test set.** A result vindicating the design would be: the Transformer (with IDs) still significantly outperforms the boosted baseline with IDs, indicating the sequence architecture provides value beyond identity memorization. A result validating the critique would be: the boosted baseline with IDs matches or exceeds the Transformer's performance, indicating the primary advantage was due to feature asymmetry, not sequence modeling. The primary conclusion (does sequence modeling help?) can remain valid even if the critique is correct, because the control experiment (Transformer without IDs) already tests for reliance on IDs. If the Transformer without IDs still beats the baseline without IDs, the sequence modeling advantage is genuine regardless of the primary comparison's asymmetry. The flaw (asymmetry) does not inherently invalidate the primary metric; it merely adds a layer of interpretation that the settling experiment resolves.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic's challenge attempts to reframe the hypothesis. The methodology's scope is explicitly defined: 'The hypothesis asserts that a transformer-based model... will detect advanced persistent threats more accurately... evaluated at low false-positive rates on **next-day confirmed incidents**.' The 24-hour labeling window is the operationalization of 'next-day confirmed.' The model's task is to predict, at session start, whether this session will be linked to a confirmed incident within the next 24 hours. This is a valid and clearly scoped prediction target common in security operations where alerts are investigated post-facto. The critic's failure mechanism describes a different problem (real-time causality) that is outside the stated experiment scope. The design does not claim to predict 'currently exhibiting malicious behavior'; it claims to predict 'will be confirmed malicious.' There is no look-ahead bias because the label is defined using information available only after the 24-hour window closes, and all labeling is done retrospectively. The model is not using 'future-dated signals'; it is using session-start features to predict a future outcome, which is the intended task.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTed the R1 rebuttal. The fixed sequence length is an engineering trade-off that applies equally to both models, so the relative comparison remains valid. The concern about capturing long-term APT patterns is an optimization question, not a methodological flaw that biases the hypothesis test.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One finding (F2) has been deferred to a settling experiment, indicating a genuine ambiguity in the design that requires empirical resolution. The other findings have been successfully rebutted or are immaterial, with no FATAL or MATERIAL findings conceded at a severity above 3."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split prevents future information from contaminating the training or validation data.",
+        "failure_mechanism": "The preprocessing transformers (scaling, encoding, imputation) are parameterized using the entire 18-month corpus, including the test set (Months 14-18), before model fitting. This is a classic case of data leakage: the training set's normalization parameters (mean, variance, category mappings) are informed by the distribution of the future test set. In network security, where feature distributions (e.g., byte counts, session durations) shift during an attack campaign, knowing the global mean/std of the test set allows the model to implicitly 'know' the scale of future anomalies, artificially inflating performance.",
+        "evidence_test": "Re-run the experiment where preprocessing parameters are calculated ONLY on the training set (Months 1-10) and applied to the validation and test sets. A significant drop in pAUC-ROC would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between the Transformer and the Gradient-Boosted baseline is fair and tests the value of sequence modeling.",
+        "failure_mechanism": "The Transformer is given access to 'Host identifiers (source IP, destination IP)' while the baseline is explicitly denied them. While the PoC mentions a sensitivity analysis (removing IDs from the Transformer), the primary comparison is fundamentally asymmetric. Host IDs in security data often act as high-cardinality proxies for 'known bad' actors or specific compromised machines. If the Transformer learns that IP X is malicious, it can achieve a perfect low-FPR score regardless of the packet sequence. The baseline is forced to learn generalizable patterns, while the Transformer is allowed to memorize identities.",
+        "evidence_test": "Compare the baseline's performance when it is also given the same host identifiers. If the baseline matches or exceeds the Transformer, the 'sequence modeling' advantage is an artifact of identity-based memorization.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 24-hour labeling window reflects realistic detection latency and prevents contamination.",
+        "failure_mechanism": "The PoC labels a session as malicious if linked to an event occurring *within 24 hours of the session start*. This creates a look-ahead bias. If a session starts at T=0 and a malicious event is confirmed at T=20 hours, the session is labeled malicious. However, in a real-time deployment, the model must predict the label at T=0 without knowing what happens at T=20. The model is effectively being trained to predict 'will this session be associated with an alert in the next 24 hours' rather than 'is this session currently exhibiting malicious behavior'.",
+        "evidence_test": "Change the labeling logic to only label sessions as malicious if the confirmation event occurred *before* the session started, or use a strict 'event-first' causality chain.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The use of a fixed sequence length (100 packets) is sufficient for detecting APTs.",
+        "failure_mechanism": "Advanced Persistent Threats (APTs) often utilize 'low and slow' communication patterns where the signal is spread across thousands of packets or very long durations. Truncating to 100 packets may discard the very sequence patterns (e.g., long-term beaconing) that the Transformer is hypothesized to capture, potentially biasing the results toward short-lived, noisy attacks rather than APTs.",
+        "evidence_test": "Perform a sensitivity analysis on sequence length (e.g., 100 vs 1000 vs 5000) and correlate performance gains with the average session length of the confirmed APT incidents.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains critical methodology flaws, most notably a fatal data leakage in the preprocessing pipeline and an asymmetric feature set that favors the Transformer. Additionally, the labeling window introduces a look-ahead bias that invalidates the 'real-time' detection claim.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "For F1, the critic's challenge mischaracterizes the design: the global preprocessing is a deliberate, frozen transformation applied identically to all data, not a leakage of future patterns. The design explicitly controls for this, so I maintain REBUT-DESIGN with a strengthened justification. For F2, the critic is partially correct: the primary comparison is asymmetric, but the design includes a control (Transformer without IDs) that directly tests the failure mechanism. However, this control only mitigates the concern; it does not fully eliminate the question of fairness. Since the primary conclusion (does sequence modeling help?) could still be valid even if the asymmetry exists, I switch to DEFER, specifying the settling experiment. For F3, the critic's challenge is a scope misalignment: the hypothesis explicitly targets next-day confirmation, and the labeling logic is consistent with that target. The design does not claim to predict real-time causality, so I maintain REBUT-SCOPE. F4 was ACCEPTed, so I maintain the position.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge conflates data leakage with a deliberate, frozen preprocessing strategy designed to isolate the modeling question. The methodology explicitly states: 'Preprocessing transformers... are parameterized once using the retained 18-month telemetry corpus and then frozen before model fitting.' This means the transformation function is fixed before any model sees any data. It uses global statistics to create a stable feature space, but it does not provide the model with information about future labels, attack patterns, or the 'scale of future anomalies' in a way that benefits one model over another. Both models receive identically preprocessed features. The transformation is akin to using a domain-standard normalization (e.g., converting timestamps to UTC) \u2014 it does not leak temporal signal because it is a deterministic, time-invariant mapping applied to all chronological windows. The critic's proposed test (re-running with training-only stats) would measure the impact of feature stabilization, not data leakage. The design control (freezing the transformer) directly prevents the failure mechanism of the model fitting process being contaminated by future data.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design includes a partial control (Transformer without IDs) to test if an advantage is driven by identity leakage. However, as the critic notes, this does not fully address the fairness of the primary comparison, which remains asymmetric. This is a genuine ambiguity: is the sequence modeling advantage real, or is it an artifact of the baseline being handicapped? The design has a mitigating control but cannot fully eliminate the concern through argument alone. Therefore, I defer to empirical evidence. The settling experiment is: **train the Gradient-Boosted baseline with the same host identifiers included and compare its performance to the Transformer (with IDs) on the test set.** A result vindicating the design would be: the Transformer (with IDs) still significantly outperforms the boosted baseline with IDs, indicating the sequence architecture provides value beyond identity memorization. A result validating the critique would be: the boosted baseline with IDs matches or exceeds the Transformer's performance, indicating the primary advantage was due to feature asymmetry, not sequence modeling. The primary conclusion (does sequence modeling help?) can remain valid even if the critique is correct, because the control experiment (Transformer without IDs) already tests for reliance on IDs. If the Transformer without IDs still beats the baseline without IDs, the sequence modeling advantage is genuine regardless of the primary comparison's asymmetry. The flaw (asymmetry) does not inherently invalidate the primary metric; it merely adds a layer of interpretation that the settling experiment resolves.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic's challenge attempts to reframe the hypothesis. The methodology's scope is explicitly defined: 'The hypothesis asserts that a transformer-based model... will detect advanced persistent threats more accurately... evaluated at low false-positive rates on **next-day confirmed incidents**.' The 24-hour labeling window is the operationalization of 'next-day confirmed.' The model's task is to predict, at session start, whether this session will be linked to a confirmed incident within the next 24 hours. This is a valid and clearly scoped prediction target common in security operations where alerts are investigated post-facto. The critic's failure mechanism describes a different problem (real-time causality) that is outside the stated experiment scope. The design does not claim to predict 'currently exhibiting malicious behavior'; it claims to predict 'will be confirmed malicious.' There is no look-ahead bias because the label is defined using information available only after the 24-hour window closes, and all labeling is done retrospectively. The model is not using 'future-dated signals'; it is using session-start features to predict a future outcome, which is the intended task.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTed the R1 rebuttal. The fixed sequence length is an engineering trade-off that applies equally to both models, so the relative comparison remains valid. The concern about capturing long-term APT patterns is an optimization question, not a methodological flaw that biases the hypothesis test.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One finding (F2) has been deferred to a settling experiment, indicating a genuine ambiguity in the design that requires empirical resolution. The other findings have been successfully rebutted or are immaterial, with no FATAL or MATERIAL findings conceded at a severity above 3."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

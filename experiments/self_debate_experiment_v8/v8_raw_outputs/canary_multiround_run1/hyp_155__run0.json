@@ -1,0 +1,352 @@
+{
+  "case_id": "hyp_155",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The sender reputation score is computed at message-time, not post-hoc, preventing future information leakage.",
+        "failure_mechanism": "If the reputation score is queried from a third-party database at inference time (current date) rather than using a historical snapshot frozen to the message date, the model will have access to data that did not exist at the time of the message. This is a classic temporal leakage that inflates performance by using 'future' reputation data to predict 'past' messages.",
+        "evidence_test": "Inspect the code or data pipeline to verify that reputation scores for test messages are retrieved from a database snapshot dated T0+15m (or earlier), not the current live database.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model will function effectively on the 'most recent threat landscape', including new attackers.",
+        "failure_mechanism": "The graph features (in-degree, PageRank, etc.) are computed from the training window. New senders in the test set will have zero or undefined graph features. If the model is not explicitly designed to handle this 'cold start' (e.g., via imputation or a fallback to text-only), it may default to predicting benign (assuming zero features = normal), causing a silent failure on new attackers.",
+        "evidence_test": "Evaluate performance specifically on the subset of test messages from senders not present in the training set. Report the recall for this 'cold start' cohort.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Labels are reliable indicators of maliciousness for the training and test sets.",
+        "failure_mechanism": "Excluding messages labeled >30 days after the message date biases the dataset against 'sleeper' attacks (subtle spear-phishing discovered late). The model learns to detect 'easy' phishing (caught quickly) rather than the full spectrum of spear-phishing, inflating performance on the test set which shares this bias.",
+        "evidence_test": "Analyze the distribution of attack vectors and detection latency in the excluded (>30 days) messages compared to the included messages.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The text-only transformer baseline isolates the contribution of graph features.",
+        "failure_mechanism": "The baseline excludes sender identity entirely. A text model with a sender ID embedding (or one-hot sender) would likely perform similarly to the graph model if the graph signal is primarily 'sender reputation'. Without this baseline, the 'graph' contribution is conflated with 'sender history' contribution.",
+        "evidence_test": "Train a baseline model that includes text features plus a sender ID embedding. Compare its performance to the graph-augmented model.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision at a fixed recall of 80% is the primary metric.",
+        "failure_mechanism": "If the model cannot reach 80% recall, the metric pivots to 'recall at fixed FPR 2%'. This introduces ambiguity in the primary claim and allows cherry-picking the metric that shows better results if the primary is unattainable.",
+        "evidence_test": "Verify if 80% recall is attainable on the test set. If not, the primary claim is invalid.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC contains a potential FATAL signal leakage risk regarding reputation score timing, and MATERIAL flaws regarding cold-start graph handling and label bias. The baseline comparison is also insufficient to isolate graph contributions from sender identity.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "## Analysis of Each Finding\n\n**F1 (FATAL, sev 8): Sender reputation temporal leakage**\nThe critic claims that 'computed at message-time' could mean querying a live reputation service at inference time rather than using a historical snapshot. The methodology explicitly states in Confound Control that 'Sender reputation is computed at message-time only, preventing post-label information from inflating performance.' However, the implementation detail of whether the reputation database is frozen at training time vs. queried live is ambiguous in the text. The design intent is clearly to avoid leakage, but the critic identifies a plausible implementation failure mode. This requires empirical verification of the data pipeline.\n\n**F2 (MATERIAL, sev 6): Cold start for new senders**\nThe critic correctly notes that graph features (in-degree, PageRank, etc.) are computed from the training window only. New senders in validation/test will have undefined graph features. The methodology acknowledges in Scope that generalization to new attackers is not established. However, the critic's concern is about new senders within the same organization during test period - this is a legitimate operational concern not explicitly addressed. The model needs to handle missing graph features for new senders.\n\n**F3 (MATERIAL, sev 6): Label bias from 30-day exclusion**\nThe methodology excludes messages labeled >30 days after the message date to ensure 'label quality and temporal consistency.' The critic argues this biases against 'sleeper' attacks. However, the test set uses the same 30-day rule, so train/test distribution is consistent. This is a deliberate operational design choice: you cannot train on labels that wouldn't be available in real-time. The concern is valid for threat modeling but outside the experiment's stated scope.\n\n**F4 (MATERIAL, sev 4): Missing sender ID baseline**\nThe critic argues the text-only baseline excludes sender identity entirely, confounding 'graph' with 'sender history' contribution. The design explicitly states the baseline receives 'only text features (body and headers)' to isolate graph contribution. This is a deliberate design choice - the experiment tests graph vs. text-only, not sender ID vs. graph. The critic's suggested baseline would be a different hypothesis.\n\n**F5 (MATERIAL, sev 3): Metric ambiguity**\nThe methodology pivots to 'recall at fixed FPR 2%' if 80% recall is unattainable. The critic concerns about cherry-picking, but the pivot is predetermined (not post-hoc), and both models are evaluated under the same metric, preserving fairness. This is a reasonable operational fallback.\n\n## Summary\n- F1: Design intent is sound but implementation ambiguous - needs empirical verification\n- F2: Real concern about new senders, but acknowledged as out of scope\n- F3: Valid concern but deliberate design choice for operational realism\n- F4: Deliberate baseline design to isolate graph contribution\n- F5: Predefined fallback that preserves fairness",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology explicitly states 'preventing post-label information from inflating performance' in Confound Control, showing clear design intent to avoid leakage. However, the implementation detail of whether the reputation database is frozen at training time vs. queried live at inference is ambiguous in the text. The critic identifies a plausible implementation failure mode that cannot be resolved by argument alone - it requires inspecting the actual data pipeline to verify whether test messages use a historical snapshot (T0+15m or earlier) or current live database."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly states in Scope that 'This experiment establishes whether the graph model outperforms text-only classification on this organization's data during the test period. It does not establish whether the graph model is robust to distribution shift across different organizations or long-term drift beyond 18 months.' Handling new senders (cold start) falls under this acknowledged limitation. The experiment tests within-period performance, not cold-start robustness. The design choice is deliberate and justified for the stated hypothesis."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The 30-day label exclusion is explicitly designed to ensure 'label quality and temporal consistency' and avoid training on labels that 'would not have informed a real-time detector.' This is a deliberate operational design choice - you cannot train on labels that wouldn't be available in real-time deployment. The test set uses the same 30-day rule, so train/test distribution is consistent. The critic's concern about 'sleeper' attacks is valid for threat modeling but outside the stated experiment scope, which tests detection of attacks that get labeled within typical operational timeframes."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The baseline is explicitly designed to receive 'only text features (body and headers)' to isolate the contribution of graph features. The methodology states: 'This design isolates the contribution of graph and historical context signals. Any performance gap can be attributed to the information source difference.' Adding sender ID to the baseline would test a different hypothesis (sender identity value vs. graph structure value). The design choice is deliberate and justified for testing the stated hypothesis."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The metric pivot is predetermined ('If 80% recall is unattainable by either model, we pivot to recall at fixed false-positive rate of 2%'), not cherry-picked after seeing results. Both the hypothesis model and baseline would be evaluated under the same fallback metric, preserving fairness in comparison. The concern about metric ambiguity does not affect the validity of the relative performance comparison between models."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 (DEFER) has adjusted severity 8, representing a genuine ambiguity about implementation that requires empirical verification of the data pipeline. The remaining findings (F2-F5) are either deliberately scoped (F2, F3), intentionally designed (F4), or immaterial (F5), with adjusted severities all \u2264 3. Since F1 cannot be resolved by argument alone and requires inspection of the actual implementation, empirical_test_agreed is the appropriate verdict."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The DEFER rebuttal acknowledges the implementation detail requires code inspection but does not resolve the concern. The methodology text states 'sender reputation is computed at message-time only' but does not specify whether this means a historical snapshot frozen at training time or live queries at inference. This is a critical temporal leakage concern that remains unresolved without pipeline verification. The severity remains FATAL-level since this could completely invalidate the experiment if live reputation data is used."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The scope limitation about 'different organizations' and 'long-term drift beyond 18 months' does not address the specific failure mechanism of new senders within the same organization during the test period. The test set (T0+15m to T0+18m) is still within the same organization, just later in time. New senders appearing in the test window but not in training will have zero graph features, and the methodology does not specify how the model handles this cold start scenario. The rebuttal conflates cross-organization generalization with within-organization temporal cold start."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal correctly addresses the operational rationale for the 30-day exclusion rule and acknowledges train/test consistency. However, it does not fully resolve whether the performance claim is valid for detecting all spear-phishing types. If sleeper attacks are systematically excluded from both train and test, the model may never learn to detect them, meaning the reported performance is inflated on 'easy' attacks but potentially fails on sleeper attacks. The bias concern about what types of attacks are detected remains partially unresolved."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal argues the design is deliberate for testing the stated hypothesis but does not address the specific failure mechanism: whether the graph contribution is actually being isolated from sender identity. If graph features primarily capture sender reputation/history, then the baseline excluding sender identity entirely means the performance gap could be attributed to sender identity rather than graph structure. The methodology claims to isolate 'graph and historical context signals' but the baseline design doesn't allow disentangling these contributions."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly identifies that the metric pivot is predetermined in the methodology and applies equally to both models. This addresses the cherry-picking concern since neither model can selectively use the fallback metric. The comparison remains valid regardless of whether 80% recall is attainable. The ambiguity in the primary claim is acknowledged but does not affect the validity of the relative performance comparison between models."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Three findings were CHALLENGED (F1, F2, F4) and one PARTIALLY accepted (F3). For F1, the implementation ambiguity requires code inspection - DEFER is correct. For F2, the critic correctly identifies that new senders within the same organization (not cross-org) is a distinct concern from the stated scope limitations; this requires empirical testing. For F4, the baseline design limitation cannot be resolved by argument alone - we need an additional baseline to disentangle graph from sender identity. F3 is partially valid but the design is deliberate; I strengthen the scope rebuttal. F5 was accepted. The verdict is empirical_test_agreed due to multiple DEFER findings on material concerns.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology states 'sender reputation is computed at message-time only, preventing post-label information from inflating performance' but does not specify whether this uses a historical snapshot frozen at training boundary or live database queries at inference. This is a critical implementation detail that cannot be resolved by textual argument alone. The design intent is clear, but verification requires inspecting the actual data pipeline to confirm test messages use a snapshot dated T0+15m or earlier, not current live data. This is a genuine ambiguity where empirical verification is the only resolution.",
+        "r2_challenge_response": "DEFER"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly identifies that my R1 scope rebuttal conflated cross-organization generalization with within-organization temporal cold start. The methodology states graph features are 'frozen at the training boundary' and 'senders are evaluated using only the pre-computed historical statistics from the training window.' For new senders in the test set, these statistics would be zero or undefined. The design does not specify how the model handles this cold start scenario - this is a legitimate gap. Whether this materially affects the primary evaluation metric requires empirical testing: we need to measure what fraction of test messages come from unseen senders and evaluate recall specifically on this cohort. Both parties make valid points; only an experiment can settle whether this is a fatal flaw.",
+        "r2_challenge_response": "DEFER"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic PARTIALLY accepts this finding - acknowledging the operational rationale is sound and train/test consistency is maintained. I strengthen this scope rebuttal: the 30-day exclusion is a deliberate operational design choice because you cannot train on labels that wouldn't be available in real-time deployment. The concern about 'sleeper' attacks is valid for threat modeling but represents a different hypothesis (detecting late-discovered attacks) than what this experiment tests (detecting attacks labeled within typical operational timeframes). The test set shares the same 30-day rule, so there's no train/test distribution mismatch. The performance claim is explicitly scoped to attacks detectable within operational timeframes, not all possible spear-phishing.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly identifies that the baseline design does not allow disentangling whether the performance gap comes from graph structure or sender identity. The methodology claims to isolate 'graph and historical context signals' but the baseline excludes sender identity entirely, meaning any improvement could be attributed to sender history rather than graph topology. This is a legitimate methodological limitation. Resolving this requires training an additional baseline with text features plus sender ID embedding to isolate the sender identity contribution from graph structure. Both parties make valid points; only an empirical comparison can settle whether the graph signal is truly distinct from sender identity.",
+        "r2_challenge_response": "DEFER"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTED this rebuttal. The metric pivot is predetermined in the methodology ('If 80% recall is unattainable by either model, we pivot to recall at fixed false-positive rate of 2%'), not cherry-picked after seeing results. Both models are evaluated under the same fallback metric, preserving fairness in comparison. The ambiguity in the primary claim does not affect the validity of the relative performance comparison between hypothesis model and baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Multiple findings (F1, F2, F4) require empirical verification rather than textual resolution - F1 needs code inspection to verify reputation data is frozen, F2 needs evaluation on cold-start senders to assess impact, and F4 needs an additional baseline to disentangle graph from sender identity. These are genuine ambiguities where both parties make valid points and only experiment can settle the concerns. This is the correct outcome for legitimately contested methodological questions."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The sender reputation score is computed at message-time, not post-hoc, preventing future information leakage.",
+        "failure_mechanism": "If the reputation score is queried from a third-party database at inference time (current date) rather than using a historical snapshot frozen to the message date, the model will have access to data that did not exist at the time of the message. This is a classic temporal leakage that inflates performance by using 'future' reputation data to predict 'past' messages.",
+        "evidence_test": "Inspect the code or data pipeline to verify that reputation scores for test messages are retrieved from a database snapshot dated T0+15m (or earlier), not the current live database.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model will function effectively on the 'most recent threat landscape', including new attackers.",
+        "failure_mechanism": "The graph features (in-degree, PageRank, etc.) are computed from the training window. New senders in the test set will have zero or undefined graph features. If the model is not explicitly designed to handle this 'cold start' (e.g., via imputation or a fallback to text-only), it may default to predicting benign (assuming zero features = normal), causing a silent failure on new attackers.",
+        "evidence_test": "Evaluate performance specifically on the subset of test messages from senders not present in the training set. Report the recall for this 'cold start' cohort.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Labels are reliable indicators of maliciousness for the training and test sets.",
+        "failure_mechanism": "Excluding messages labeled >30 days after the message date biases the dataset against 'sleeper' attacks (subtle spear-phishing discovered late). The model learns to detect 'easy' phishing (caught quickly) rather than the full spectrum of spear-phishing, inflating performance on the test set which shares this bias.",
+        "evidence_test": "Analyze the distribution of attack vectors and detection latency in the excluded (>30 days) messages compared to the included messages.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The text-only transformer baseline isolates the contribution of graph features.",
+        "failure_mechanism": "The baseline excludes sender identity entirely. A text model with a sender ID embedding (or one-hot sender) would likely perform similarly to the graph model if the graph signal is primarily 'sender reputation'. Without this baseline, the 'graph' contribution is conflated with 'sender history' contribution.",
+        "evidence_test": "Train a baseline model that includes text features plus a sender ID embedding. Compare its performance to the graph-augmented model.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision at a fixed recall of 80% is the primary metric.",
+        "failure_mechanism": "If the model cannot reach 80% recall, the metric pivots to 'recall at fixed FPR 2%'. This introduces ambiguity in the primary claim and allows cherry-picking the metric that shows better results if the primary is unattainable.",
+        "evidence_test": "Verify if 80% recall is attainable on the test set. If not, the primary claim is invalid.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC contains a potential FATAL signal leakage risk regarding reputation score timing, and MATERIAL flaws regarding cold-start graph handling and label bias. The baseline comparison is also insufficient to isolate graph contributions from sender identity.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Three findings were CHALLENGED (F1, F2, F4) and one PARTIALLY accepted (F3). For F1, the implementation ambiguity requires code inspection - DEFER is correct. For F2, the critic correctly identifies that new senders within the same organization (not cross-org) is a distinct concern from the stated scope limitations; this requires empirical testing. For F4, the baseline design limitation cannot be resolved by argument alone - we need an additional baseline to disentangle graph from sender identity. F3 is partially valid but the design is deliberate; I strengthen the scope rebuttal. F5 was accepted. The verdict is empirical_test_agreed due to multiple DEFER findings on material concerns.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology states 'sender reputation is computed at message-time only, preventing post-label information from inflating performance' but does not specify whether this uses a historical snapshot frozen at training boundary or live database queries at inference. This is a critical implementation detail that cannot be resolved by textual argument alone. The design intent is clear, but verification requires inspecting the actual data pipeline to confirm test messages use a snapshot dated T0+15m or earlier, not current live data. This is a genuine ambiguity where empirical verification is the only resolution.",
+        "r2_challenge_response": "DEFER"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly identifies that my R1 scope rebuttal conflated cross-organization generalization with within-organization temporal cold start. The methodology states graph features are 'frozen at the training boundary' and 'senders are evaluated using only the pre-computed historical statistics from the training window.' For new senders in the test set, these statistics would be zero or undefined. The design does not specify how the model handles this cold start scenario - this is a legitimate gap. Whether this materially affects the primary evaluation metric requires empirical testing: we need to measure what fraction of test messages come from unseen senders and evaluate recall specifically on this cohort. Both parties make valid points; only an experiment can settle whether this is a fatal flaw.",
+        "r2_challenge_response": "DEFER"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic PARTIALLY accepts this finding - acknowledging the operational rationale is sound and train/test consistency is maintained. I strengthen this scope rebuttal: the 30-day exclusion is a deliberate operational design choice because you cannot train on labels that wouldn't be available in real-time deployment. The concern about 'sleeper' attacks is valid for threat modeling but represents a different hypothesis (detecting late-discovered attacks) than what this experiment tests (detecting attacks labeled within typical operational timeframes). The test set shares the same 30-day rule, so there's no train/test distribution mismatch. The performance claim is explicitly scoped to attacks detectable within operational timeframes, not all possible spear-phishing.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly identifies that the baseline design does not allow disentangling whether the performance gap comes from graph structure or sender identity. The methodology claims to isolate 'graph and historical context signals' but the baseline excludes sender identity entirely, meaning any improvement could be attributed to sender history rather than graph topology. This is a legitimate methodological limitation. Resolving this requires training an additional baseline with text features plus sender ID embedding to isolate the sender identity contribution from graph structure. Both parties make valid points; only an empirical comparison can settle whether the graph signal is truly distinct from sender identity.",
+        "r2_challenge_response": "DEFER"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTED this rebuttal. The metric pivot is predetermined in the methodology ('If 80% recall is unattainable by either model, we pivot to recall at fixed false-positive rate of 2%'), not cherry-picked after seeing results. Both models are evaluated under the same fallback metric, preserving fairness in comparison. The ambiguity in the primary claim does not affect the validity of the relative performance comparison between hypothesis model and baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Multiple findings (F1, F2, F4) require empirical verification rather than textual resolution - F1 needs code inspection to verify reputation data is frozen, F2 needs evaluation on cold-start senders to assess impact, and F4 needs an additional baseline to disentangle graph from sender identity. These are genuine ambiguities where both parties make valid points and only experiment can settle the concerns. This is the correct outcome for legitimately contested methodological questions."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

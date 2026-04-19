@@ -1,0 +1,293 @@
+{
+  "case_id": "hyp_003_regular",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between the GBM and Logistic Regression isolates the effect of the survival formulation and richer features.",
+        "failure_mechanism": "The experiment introduces a massive confounding variable by giving the GBM a vastly superior feature set (longitudinal trends, sentiment, billing velocity, 12-month history) while restricting the baseline to a tiny subset of static, last-month aggregates. If the GBM wins, it is impossible to determine if the success is due to the survival model architecture (Cox loss) or simply because it has access to the actual predictive signals (trends/billing) that the baseline is forbidden from seeing. The 'survival formulation' is not being tested; the 'feature engineering' is.",
+        "evidence_test": "Run a Logistic Regression model using the exact same feature set as the GBM. If the LR with rich features matches the GBM's performance, the survival formulation is irrelevant. If the GBM still wins, the architecture is the driver.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression) is tuned using the concordance index to ensure a fair comparison.",
+        "failure_mechanism": "Logistic Regression outputs a probability $P(y=1)$, whereas a Cox-based GBM outputs a hazard ratio or risk score. While both can be ranked, Logistic Regression is mathematically designed to optimize log-loss (cross-entropy) for a binary outcome at a fixed window. Forcing a binary classifier to be tuned via a ranking metric (C-index) without a proper probability calibration step may lead to suboptimal baseline performance, artificially inflating the GBM's relative gain.",
+        "evidence_test": "Compare the GBM against a baseline that is optimized for its native objective (log-loss) and then evaluated via C-index, versus one tuned specifically for C-index, to see if the baseline is being 'handicapped' by the tuning objective.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (Months 1-24 train, 25-30 val, 31-36 test) prevents label leakage.",
+        "failure_mechanism": "The PoC uses a 90-day follow-up horizon for the outcome. If a snapshot is taken on the last day of the training set (Month 24), the label (churn within 90 days) depends on events occurring in Months 25, 26, and 27. These months overlap with the validation set. This creates a 'label bleed' where the training labels are determined by the state of the world during the validation period, potentially leaking future trends into the training phase.",
+        "evidence_test": "Implement a 'gap period' (buffer) of 90 days between the training snapshots and the start of the validation snapshots to ensure no overlap between training labels and validation features.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The Brier score penalizes miscalibration and prediction error over time.",
+        "failure_mechanism": "The Brier score for survival data (Integrated Brier Score) requires a specific calculation for censored observations. The PoC does not specify how it handles the Brier score for right-censored accounts in the test set. If a standard binary Brier score is used, it will treat censored accounts as 'non-churners', leading to a biased and misleading calibration metric.",
+        "evidence_test": "Verify if the implementation uses the Integrated Brier Score (IBS) specifically designed for survival analysis (e.g., via Inverse Probability of Censoring Weighting).",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC suffers from a critical confounding flaw where the primary model is given significantly more information than the baseline, making it impossible to attribute success to the survival model architecture. Additionally, the temporal split lacks a buffer, introducing potential label leakage from the validation period into the training set.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL 8): The critique claims the experiment conflates feature richness with model architecture, making it impossible to isolate the survival formulation's contribution. The methodology (Section 4) explicitly restricts the baseline to limited features to isolate the 'effect of richer features and the survival formulation'. However, Section 8 (Controls) explicitly acknowledges this confound and plans a sensitivity analysis ('GBM variant trained on only baseline features') to isolate the feature contribution. The primary objective is to validate the *proposed solution* (GBM + Features) against the *legacy baseline* (LR + Limited Features) for deployment readiness, not to scientifically isolate the formulation in a vacuum. The sensitivity analysis handles the scientific isolation. This is a scope/definition issue, not a fatal flaw in the solution validation.\n\nF2 (FATAL 7): The critique claims tuning LR for C-index is suboptimal compared to log-loss. The methodology (Section 5) explicitly states the baseline is tuned using the same primary metric (C-index) to ensure a 'fair comparison'. This is a deliberate design choice to align hyperparameter selection with the deployment metric (ranking quality). While log-loss is the native objective, tuning hyperparameters based on the evaluation metric is standard practice to maximize performance on that metric. This is a justified design choice.\n\nF3 (MATERIAL 5): The critique identifies label leakage: Training snapshots at Month 24 have 90-day follow-ups extending into Months 25-27, which overlap with the Validation set (Months 25-30). The methodology (Section 3) defines the split as Train (M1-24), Val (M25-30), Test (M31-36). With a 90-day follow-up, Train labels depend on Val period data. This is a genuine methodological flaw that invalidates the temporal validation assumption (no future info in train). The methodology does not mention a gap period or truncation to prevent this. This is a valid flaw that requires concession.\n\nF4 (MINOR 2): The critique notes the Brier score calculation for censored data is unspecified. The methodology (Section 7) lists Brier score as a secondary metric. While the Integrated Brier Score (IBS) is the correct metric for survival data, the primary metric is C-index. The flaw is real but below significance for the experiment's primary conclusions. This is an immaterial finding.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The experiment scope is solution validation (New System vs. Legacy System), not component isolation. Section 8 explicitly plans a sensitivity analysis to isolate feature contribution. The primary comparison validates the business value of the proposed deployment package, which is the stated objective."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Tuning the baseline on the evaluation metric (C-index) is a deliberate design choice to ensure fair comparison against the primary model. This aligns hyperparameter selection with the deployment objective (ranking quality), as stated in Section 5."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The temporal split (Train M1-24, Val M25-30) with a 90-day follow-up horizon creates label leakage where training labels depend on validation period outcomes. The methodology does not specify a gap period or truncation to prevent this, constituting a genuine flaw in the validation design."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The Brier score is a secondary metric. While the calculation method for censored data should be specified (e.g., IBS), this does not impact the primary success criterion (C-index) or the validity of the main conclusion."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Finding F3 (MATERIAL) was CONCEDED with an adjusted severity of 5, which remains above the threshold of 3. This label leakage flaw invalidates the temporal validation design and requires a methodology change."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender uses a REBUT-SCOPE argument, claiming the goal is 'solution validation' rather than 'component isolation'. However, the hypothesis explicitly states the goal is to test whether a 'gradient-boosted survival model... outperforms a static logistic regression baseline'. By giving the GBM a vastly superior feature set, the experiment fails to test the hypothesis; it tests a bundle of features + architecture. The mentioned sensitivity analysis (GBM with baseline features) only isolates the features, it does not isolate the survival formulation (the Cox loss) from the GBM architecture. To resolve this, a baseline with the rich feature set is required. The severity remains FATAL because the primary claim of the experiment is fundamentally confounded."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal is generic and fails to address the mathematical failure mechanism. The defender argues that tuning on the C-index is a 'deliberate design choice' for fairness, but this ignores the fact that Logistic Regression is not designed to optimize ranking directly. Tuning a binary classifier's hyperparameters via a ranking metric without addressing the underlying probability calibration can lead to a baseline that is poorly optimized for its own objective, thereby artificially inflating the GBM's lead. The rebuttal explains *why* they did it, but not *how* it avoids the identified flaw."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender conceded the finding."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender argues the metric is secondary and doesn't impact the primary conclusion. While true that it doesn't break the C-index, the Brier score is explicitly listed as a secondary metric for 'miscalibration'. If the calculation for censored data is wrong, the metric is not just 'secondary'\u2014it is incorrect and misleading. The severity is reduced slightly because it is not the primary success criterion, but the lack of specification remains a technical flaw."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am DEFERRING F1 due to genuine ambiguity between testing the 'solution system' vs. the 'model architecture' in the hypothesis statement, requiring empirical isolation. I am STRENGTHENING F2 by clarifying that tuning for the primary ranking metric (C-index) is valid for a ranking objective, countering the calibration concern. I am MAINTAINING CONCEDE on F3 as the label bleed is a confirmed design flaw. I am MAINTAINING REBUT-IMMATERIAL on F4 as the secondary metric flaw does not impact the primary success criterion.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The hypothesis text ('test whether a gradient-boosted survival model... outperforms') is ambiguous: it could mean testing the *architecture* (requiring feature parity) or the *solution system* (where features are part of the value proposition). The design validates the system (Section 1, Section 8 sensitivity analysis), but does not isolate the Cox loss from the feature set. Since both interpretations are textually supported and only an experiment with a rich-feature LR baseline can resolve this attribution, I defer to empirical testing rather than concede a design flaw or falsely claim isolation.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern about probability calibration is irrelevant to the stated objective. Section 7 defines the primary metric as C-index (ranking quality), not probability calibration. Tuning the baseline's hyperparameters (e.g., regularization strength) to maximize the C-index is the correct procedure for a ranking task, ensuring the baseline is optimized for the deployment objective (prioritization). The GBM's lead on C-index therefore reflects superior ranking capability, not a handicap on the baseline.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The 90-day follow-up horizon for training snapshots in Month 24 creates label bleed into the Validation set (Months 25-30). The methodology does not specify a gap period or truncation to prevent this leakage. This is a confirmed design flaw that invalidates the temporal split's integrity for the training labels.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "While the Integrated Brier Score (IBS) is the correct metric for censored data, the Brier score is explicitly a secondary metric. The primary success criterion is the Concordance Index. An error in the secondary calibration metric does not invalidate the primary ranking result or the conclusion of the study, keeping this a minor issue.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "The critique wins because Finding F3 (MATERIAL) is CONCEDEd and remains above severity 3, representing a confirmed design flaw (label bleed) that impacts validity. Additionally, Finding F1 (FATAL) is DEFERRED, indicating a genuine ambiguity requiring further empirical resolution."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The comparison between the GBM and Logistic Regression isolates the effect of the survival formulation and richer features.",
+        "failure_mechanism": "The experiment introduces a massive confounding variable by giving the GBM a vastly superior feature set (longitudinal trends, sentiment, billing velocity, 12-month history) while restricting the baseline to a tiny subset of static, last-month aggregates. If the GBM wins, it is impossible to determine if the success is due to the survival model architecture (Cox loss) or simply because it has access to the actual predictive signals (trends/billing) that the baseline is forbidden from seeing. The 'survival formulation' is not being tested; the 'feature engineering' is.",
+        "evidence_test": "Run a Logistic Regression model using the exact same feature set as the GBM. If the LR with rich features matches the GBM's performance, the survival formulation is irrelevant. If the GBM still wins, the architecture is the driver.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression) is tuned using the concordance index to ensure a fair comparison.",
+        "failure_mechanism": "Logistic Regression outputs a probability $P(y=1)$, whereas a Cox-based GBM outputs a hazard ratio or risk score. While both can be ranked, Logistic Regression is mathematically designed to optimize log-loss (cross-entropy) for a binary outcome at a fixed window. Forcing a binary classifier to be tuned via a ranking metric (C-index) without a proper probability calibration step may lead to suboptimal baseline performance, artificially inflating the GBM's relative gain.",
+        "evidence_test": "Compare the GBM against a baseline that is optimized for its native objective (log-loss) and then evaluated via C-index, versus one tuned specifically for C-index, to see if the baseline is being 'handicapped' by the tuning objective.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (Months 1-24 train, 25-30 val, 31-36 test) prevents label leakage.",
+        "failure_mechanism": "The PoC uses a 90-day follow-up horizon for the outcome. If a snapshot is taken on the last day of the training set (Month 24), the label (churn within 90 days) depends on events occurring in Months 25, 26, and 27. These months overlap with the validation set. This creates a 'label bleed' where the training labels are determined by the state of the world during the validation period, potentially leaking future trends into the training phase.",
+        "evidence_test": "Implement a 'gap period' (buffer) of 90 days between the training snapshots and the start of the validation snapshots to ensure no overlap between training labels and validation features.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The Brier score penalizes miscalibration and prediction error over time.",
+        "failure_mechanism": "The Brier score for survival data (Integrated Brier Score) requires a specific calculation for censored observations. The PoC does not specify how it handles the Brier score for right-censored accounts in the test set. If a standard binary Brier score is used, it will treat censored accounts as 'non-churners', leading to a biased and misleading calibration metric.",
+        "evidence_test": "Verify if the implementation uses the Integrated Brier Score (IBS) specifically designed for survival analysis (e.g., via Inverse Probability of Censoring Weighting).",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC suffers from a critical confounding flaw where the primary model is given significantly more information than the baseline, making it impossible to attribute success to the survival model architecture. Additionally, the temporal split lacks a buffer, introducing potential label leakage from the validation period into the training set.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am DEFERRING F1 due to genuine ambiguity between testing the 'solution system' vs. the 'model architecture' in the hypothesis statement, requiring empirical isolation. I am STRENGTHENING F2 by clarifying that tuning for the primary ranking metric (C-index) is valid for a ranking objective, countering the calibration concern. I am MAINTAINING CONCEDE on F3 as the label bleed is a confirmed design flaw. I am MAINTAINING REBUT-IMMATERIAL on F4 as the secondary metric flaw does not impact the primary success criterion.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The hypothesis text ('test whether a gradient-boosted survival model... outperforms') is ambiguous: it could mean testing the *architecture* (requiring feature parity) or the *solution system* (where features are part of the value proposition). The design validates the system (Section 1, Section 8 sensitivity analysis), but does not isolate the Cox loss from the feature set. Since both interpretations are textually supported and only an experiment with a rich-feature LR baseline can resolve this attribution, I defer to empirical testing rather than concede a design flaw or falsely claim isolation.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern about probability calibration is irrelevant to the stated objective. Section 7 defines the primary metric as C-index (ranking quality), not probability calibration. Tuning the baseline's hyperparameters (e.g., regularization strength) to maximize the C-index is the correct procedure for a ranking task, ensuring the baseline is optimized for the deployment objective (prioritization). The GBM's lead on C-index therefore reflects superior ranking capability, not a handicap on the baseline.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The 90-day follow-up horizon for training snapshots in Month 24 creates label bleed into the Validation set (Months 25-30). The methodology does not specify a gap period or truncation to prevent this leakage. This is a confirmed design flaw that invalidates the temporal split's integrity for the training labels.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "While the Integrated Brier Score (IBS) is the correct metric for censored data, the Brier score is explicitly a secondary metric. The primary success criterion is the Concordance Index. An error in the secondary calibration metric does not invalidate the primary ranking result or the conclusion of the study, keeping this a minor issue.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "The critique wins because Finding F3 (MATERIAL) is CONCEDEd and remains above severity 3, representing a confirmed design flaw (label bleed) that impacts validity. Additionally, Finding F1 (FATAL) is DEFERRED, indicating a genuine ambiguity requiring further empirical resolution."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=5, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_848",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day grace period for label finalization ensures high-quality labels without conflating label quality with model performance.",
+        "failure_mechanism": "The 30-day grace period may introduce a systematic bias where delayed detections (e.g., post-user compromise) are excluded from the primary train/validation/test sets. This exclusion could disproportionately affect phishing emails that are harder to detect early, artificially inflating model performance by removing the hardest cases from evaluation. The robustness check on unresolved emails does not compensate for this, as it is a separate cohort and not part of the primary evaluation.",
+        "evidence_test": "Compare model performance on emails with labels finalized within 7 days vs. those finalized between 7\u201330 days. If performance is significantly worse on the latter group, the exclusion of unresolved emails biases the results. Additionally, evaluate the model on the unresolved email cohort directly to quantify the impact of excluding these cases.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) ensures generalization to future, unseen campaigns.",
+        "failure_mechanism": "The temporal split does not account for potential seasonal or periodic patterns in phishing campaigns (e.g., increased activity during holidays or tax seasons). If such patterns exist, the test set (months 16\u201318) may not fully capture the worst-case deployment scenario. Additionally, the split does not explicitly guard against data leakage from recurring campaigns or near-duplicate emails across the train/validation/test boundaries, despite the near-duplicate removal step. The removal of near-duplicates is applied only to the test set, not the training or validation sets, which could still allow template memorization.",
+        "evidence_test": "Evaluate model performance on a held-out set of emails from a future period (e.g., months 19\u201324) to test generalization beyond the initial 18-month window. Additionally, perform a sensitivity analysis by varying the temporal split points (e.g., train on months 1\u201310, validate on 11\u201312, test on 13\u201318) to assess robustness to temporal distribution shift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer model's uplift over the baseline is due to genuine semantic understanding rather than template memorization.",
+        "failure_mechanism": "The near-duplicate removal step (same sender, recipient, subject within 7 days) may not fully eliminate template memorization, as attackers often reuse templates with minor variations (e.g., slight changes to URLs or subject lines). The campaign novelty stratification (training vs. test campaigns) is a good start but does not account for the reuse of templates across campaigns. The transformer model, being a deep learning model, is particularly prone to memorizing such patterns.",
+        "evidence_test": "Perform an ablation study where the transformer model is trained and evaluated on a subset of emails with unique templates (e.g., using a template hashing algorithm to identify unique templates). If the transformer's uplift persists on this subset, it suggests genuine semantic improvement. Alternatively, evaluate the model on adversarial examples with minor template variations to test robustness to memorization.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline model (logistic regression on header/URL features) is a fair and strong comparison for the transformer model.",
+        "failure_mechanism": "The baseline model may not be sufficiently tuned or expressive to capture the complexity of header/URL features. Logistic regression is a linear model and may underperform compared to more expressive models (e.g., gradient-boosted trees or shallow neural networks). This could inflate the apparent uplift of the transformer model, as the baseline may not be competitive.",
+        "evidence_test": "Compare the baseline model to a more expressive model (e.g., XGBoost or a shallow neural network) trained on the same header/URL features. If the transformer's uplift is significantly reduced or eliminated, the baseline may not be a fair comparison.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision-Recall AUC (PR-AUC) is the appropriate primary metric for evaluating phishing detection performance.",
+        "failure_mechanism": "PR-AUC is sensitive to the positive class prevalence, which may vary significantly across temporal splits or campaigns. If the positive class prevalence in the test set (months 16\u201318) is lower than in the training set, PR-AUC may overestimate performance. Additionally, PR-AUC does not directly reflect the operational trade-off between precision and recall at specific operating points (e.g., 95% recall), which are critical for SOC prioritization.",
+        "evidence_test": "Evaluate the model using a utility-based metric that reflects the operational trade-off (e.g., a weighted combination of precision and recall at the target operating point). Compare the rankings of models under PR-AUC and the utility-based metric to assess whether PR-AUC aligns with operational priorities.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer model's sender-history features are identical to the baseline's, isolating the effect of text modeling.",
+        "failure_mechanism": "The sender-history features may interact with the text features in non-linear ways, and the transformer model may implicitly learn to leverage these interactions. The claim that the uplift is due solely to text modeling may not hold if the transformer model is implicitly using sender-history features in a way that the baseline cannot.",
+        "evidence_test": "Perform an ablation study where the transformer model is trained without sender-history features. If the uplift persists, it suggests that the text modeling is the primary driver of performance. Alternatively, train the baseline model with sender-history features concatenated to the header/URL features to assess the interaction effect.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has several critical flaws that invalidate its core claims: label exclusion based on a 30-day grace period may bias results, temporal split does not fully guard against distribution shift or data leakage, and template memorization is not adequately controlled. Additionally, the baseline may not be competitive, and PR-AUC may not reflect operational priorities. These issues require redesign before the hypothesis can be meaningfully tested.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic claims the 30-day grace period biases the dataset by removing 'hard' cases (those only discovered late). However, the design explicitly states that labels are finalized *after* 30 days to *include* these delayed detections. The emails excluded are those that remain 'unresolved' (no label found) after 30 days. These are not 'hard-to-detect' phishing emails; they are emails where the ground truth is unknown. Including them in the primary set would introduce label noise (false negatives), which is a more severe flaw than excluding ambiguous cases. The robustness check on these unresolved emails specifically addresses the impact of this exclusion.\n\nF2: The critic raises concerns about seasonality and leakage. Seasonality is a general risk in any temporal split, but the 18-month window is a standard PoC duration; extending it to 24 months is a scaling issue, not a design flaw. Regarding leakage, the chronological split (1-12, 13-15, 16-18) by construction prevents future-to-past leakage. The critic's point about near-duplicates in train/val is valid, but the goal of the PoC is to test if the transformer *can* outperform the baseline. The 'Confound Controls' section (7a) specifically reports performance on the test set after removing near-duplicates to ensure the final recommendation isn't based on memorization.\n\nF3: The critic argues that near-duplicate removal is insufficient to stop template memorization. However, the design includes 'campaign novelty stratification' (7b), which explicitly separates campaigns seen in training from those seen in testing. This is the gold standard for detecting template memorization in phishing: if the model performs well on campaigns it has never seen before, it is generalizing semantically, not memorizing templates. This directly resolves the failure mechanism.\n\nF4: The critic suggests Logistic Regression is too weak as a baseline. In phishing detection, header/URL features are often highly linearly separable (e.g., SPF fail + new domain = phishing). While XGBoost is stronger, the hypothesis is specifically about the uplift of *text modeling* over *header/URL modeling*. The baseline is a fair representation of the current industry standard for non-textual filters. However, since the critic's point is about the 'strength' of the baseline, this is a matter of degree of confidence, not a flaw in the experimental logic.\n\nF5: The critic claims PR-AUC is sensitive to prevalence and doesn't reflect operational trade-offs. PR-AUC is the standard for imbalanced classes. The design explicitly includes secondary metrics (precision at 95% recall, recall at 99% specificity) to address the exact operational trade-offs the critic mentions. The primary metric is for model selection; the secondary metrics are for operational validation.\n\nF6: The critic suggests non-linear interactions between sender-history and text features in the transformer. This is actually the *intent* of the design\u2014to see if a transformer can better integrate these signals. The baseline also receives sender-history features. If the transformer wins, it is either because of the text features themselves or the better integration of those features. Both support the hypothesis that the transformer-based approach is superior.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic misunderstands the grace period. The period is used to *capture* delayed detections, not exclude them. Only emails that remain unlabeled (unknown ground truth) after 30 days are excluded. Including unlabeled data in the primary set would introduce label noise, which is a more significant flaw. The impact of this exclusion is explicitly measured via the 'separate cohort of label-uncertain emails' (Section 7c)."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "Seasonality is a known limitation of any fixed-window temporal split, but 18 months is sufficient for a PoC to establish a performance delta. The chronological split (1-12, 13-15, 16-18) eliminates the primary leakage mechanism (future-to-past). The concern regarding near-duplicates is addressed by the test-set deduplication in Section 7a."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly controls for template memorization via 'campaign novelty stratification' (Section 7b). By evaluating performance on campaigns that appear for the first time in the test period, the design directly measures generalization to novel templates, eliminating the memorization mechanism the critic describes."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "While Logistic Regression is a standard baseline for these features, the critic is correct that a non-linear model (e.g., XGBoost) would provide a more rigorous 'ceiling' for header-based detection. 1. Settling experiment: Train an XGBoost model on the same header/URL features. 2. Vindication: If the transformer still outperforms XGBoost, the uplift is definitively due to text. 3. Validation: If XGBoost matches the transformer, the uplift was due to non-linear header patterns, not text. 4. Primary conclusion remains valid if the transformer beats the strongest possible header-based model."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design already includes the requested operational trade-offs as secondary metrics: 'precision at 95% recall' and 'recall at 99% specificity' (Section 6). PR-AUC is used for model selection (ranking), while these specific points are used for operational assessment."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The hypothesis is that a transformer-based classifier (which naturally handles non-linear interactions) outperforms a header-based baseline. The fact that the transformer can better integrate sender-history with text is a feature of the proposed architecture, not a confound. Both models receive the same history features, ensuring the baseline is not deprived of the signal."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were rebutted by existing design controls (campaign novelty stratification, secondary operational metrics). However, the point regarding the baseline's expressiveness (F4) is a valid concern that cannot be resolved by argument and requires a simple empirical test (XGBoost baseline) to ensure the uplift is truly semantic."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "The defender correctly clarifies that the 30-day grace period is used to *finalize* labels (including delayed detections) and only excludes truly unlabeled emails. This directly addresses the failure mechanism by ensuring that hard-to-detect cases are not systematically excluded from the primary evaluation. The robustness check on unresolved emails is a valid mitigation for the residual concern."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal dismisses seasonality as a 'known limitation' and claims the chronological split 'eliminates the primary leakage mechanism.' However, the finding specifically highlights that seasonal patterns (e.g., holiday spikes) could still lead to distribution shift between train/validation/test splits, and the near-duplicate removal is only applied to the test set. The defender does not address how these issues are mitigated in the training/validation sets or provide evidence that seasonal patterns are not present. The severity adjustment is also disproportionate: a FATAL finding reduced to adj_sev=4 requires a mechanistic rebuttal, which is not provided."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender explicitly addresses the failure mechanism by pointing to the 'campaign novelty stratification' (Section 7b), which evaluates performance on campaigns first seen in the test period. This directly tests generalization to novel templates and undermines the memorization concern. The severity adjustment is proportionate."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender correctly defers to a future experiment (XGBoost baseline) to rigorously test the uplift mechanism. No counter is needed."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender addresses the failure mechanism by noting that operational trade-offs are already included as secondary metrics ('precision at 95% recall' and 'recall at 99% specificity'). PR-AUC is used for model selection, which is appropriate. The severity adjustment is proportionate."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender argues that the transformer's ability to integrate sender-history features is a feature, not a confound, and that both models receive the same features. While this is true, the finding's concern is that the transformer may implicitly leverage sender-history features in ways the baseline cannot, leading to an unfair comparison. The rebuttal does not address whether the transformer's non-linear interactions with sender-history could inflate its performance relative to the baseline. A residual concern remains about the fairness of the comparison."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining positions on F1, F3, and F5 as they were accepted. For F2, I am switching to DEFER because while the chronological split prevents leakage, the critic is correct that it does not eliminate seasonal distribution shift, and this requires empirical validation. For F4, I maintain the DEFER as the critic's challenge was essentially an acknowledgment of the path forward. For F6, I am switching to DEFER because while the transformer's non-linear integration is a 'feature', it does create an asymmetric advantage over a linear baseline that can only be quantified via ablation.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The 30-day grace period is a mechanism to ensure labels are finalized, not to exclude hard cases. Only emails that remain unlabeled after 30 days are excluded to prevent label noise. The impact of this exclusion is explicitly measured via the robustness check on the label-uncertain cohort (Section 7c).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that a fixed temporal split cannot mechanistically eliminate seasonal distribution shift. 1. Settling experiment: Perform a 'sliding window' temporal validation where the train/test split is shifted by 3-month increments across the 18-month period. 2. Vindication: If the performance delta between transformer and baseline remains stable across windows, the result is robust to seasonality. 3. Validation: If the delta vanishes during specific months (e.g., tax season), the uplift is seasonally dependent. 4. Primary conclusion remains valid: Yes, because seasonal shifts in phishing volume or templates typically affect both the header-based and text-based models, leaving the relative uplift of semantic understanding intact.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly controls for template memorization via 'campaign novelty stratification' (Section 7b). By evaluating performance on campaigns that appear for the first time in the test period, the design directly measures generalization to novel templates, eliminating the memorization mechanism.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "As agreed in R1, a non-linear baseline (XGBoost) will be used to establish a rigorous ceiling for header-based detection. 1. Settling experiment: Train XGBoost on header/URL features. 2. Vindication: Transformer beats XGBoost. 3. Validation: XGBoost matches Transformer. 4. Primary conclusion remains valid: Yes, as the goal is to determine if text adds value beyond the best possible use of headers.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design uses PR-AUC for model selection but includes operational trade-offs (precision at 95% recall and recall at 99% specificity) as secondary metrics in Section 6 to ensure the model meets SOC requirements.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that the transformer's ability to model non-linear interactions between sender-history and text creates an asymmetric advantage over a linear baseline. 1. Settling experiment: Train the transformer model without sender-history features (ablation). 2. Vindication: The transformer still significantly outperforms the baseline. 3. Validation: The uplift disappears, meaning the 'text' gain was actually a 'history-interaction' gain. 4. Primary conclusion remains valid: Yes, because the hypothesis is whether a transformer-based classifier (as a whole) outperforms the baseline; however, the ablation will clarify if the driver is semantic text or feature interaction.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several findings (F2, F4, F6) have been moved to DEFER, as the design provides partial controls but requires specific empirical tests (sliding windows, non-linear baselines, and feature ablations) to fully resolve the mechanisms of distribution shift and feature interaction."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day grace period for label finalization ensures high-quality labels without conflating label quality with model performance.",
+        "failure_mechanism": "The 30-day grace period may introduce a systematic bias where delayed detections (e.g., post-user compromise) are excluded from the primary train/validation/test sets. This exclusion could disproportionately affect phishing emails that are harder to detect early, artificially inflating model performance by removing the hardest cases from evaluation. The robustness check on unresolved emails does not compensate for this, as it is a separate cohort and not part of the primary evaluation.",
+        "evidence_test": "Compare model performance on emails with labels finalized within 7 days vs. those finalized between 7\u201330 days. If performance is significantly worse on the latter group, the exclusion of unresolved emails biases the results. Additionally, evaluate the model on the unresolved email cohort directly to quantify the impact of excluding these cases.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) ensures generalization to future, unseen campaigns.",
+        "failure_mechanism": "The temporal split does not account for potential seasonal or periodic patterns in phishing campaigns (e.g., increased activity during holidays or tax seasons). If such patterns exist, the test set (months 16\u201318) may not fully capture the worst-case deployment scenario. Additionally, the split does not explicitly guard against data leakage from recurring campaigns or near-duplicate emails across the train/validation/test boundaries, despite the near-duplicate removal step. The removal of near-duplicates is applied only to the test set, not the training or validation sets, which could still allow template memorization.",
+        "evidence_test": "Evaluate model performance on a held-out set of emails from a future period (e.g., months 19\u201324) to test generalization beyond the initial 18-month window. Additionally, perform a sensitivity analysis by varying the temporal split points (e.g., train on months 1\u201310, validate on 11\u201312, test on 13\u201318) to assess robustness to temporal distribution shift.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer model's uplift over the baseline is due to genuine semantic understanding rather than template memorization.",
+        "failure_mechanism": "The near-duplicate removal step (same sender, recipient, subject within 7 days) may not fully eliminate template memorization, as attackers often reuse templates with minor variations (e.g., slight changes to URLs or subject lines). The campaign novelty stratification (training vs. test campaigns) is a good start but does not account for the reuse of templates across campaigns. The transformer model, being a deep learning model, is particularly prone to memorizing such patterns.",
+        "evidence_test": "Perform an ablation study where the transformer model is trained and evaluated on a subset of emails with unique templates (e.g., using a template hashing algorithm to identify unique templates). If the transformer's uplift persists on this subset, it suggests genuine semantic improvement. Alternatively, evaluate the model on adversarial examples with minor template variations to test robustness to memorization.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline model (logistic regression on header/URL features) is a fair and strong comparison for the transformer model.",
+        "failure_mechanism": "The baseline model may not be sufficiently tuned or expressive to capture the complexity of header/URL features. Logistic regression is a linear model and may underperform compared to more expressive models (e.g., gradient-boosted trees or shallow neural networks). This could inflate the apparent uplift of the transformer model, as the baseline may not be competitive.",
+        "evidence_test": "Compare the baseline model to a more expressive model (e.g., XGBoost or a shallow neural network) trained on the same header/URL features. If the transformer's uplift is significantly reduced or eliminated, the baseline may not be a fair comparison.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision-Recall AUC (PR-AUC) is the appropriate primary metric for evaluating phishing detection performance.",
+        "failure_mechanism": "PR-AUC is sensitive to the positive class prevalence, which may vary significantly across temporal splits or campaigns. If the positive class prevalence in the test set (months 16\u201318) is lower than in the training set, PR-AUC may overestimate performance. Additionally, PR-AUC does not directly reflect the operational trade-off between precision and recall at specific operating points (e.g., 95% recall), which are critical for SOC prioritization.",
+        "evidence_test": "Evaluate the model using a utility-based metric that reflects the operational trade-off (e.g., a weighted combination of precision and recall at the target operating point). Compare the rankings of models under PR-AUC and the utility-based metric to assess whether PR-AUC aligns with operational priorities.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer model's sender-history features are identical to the baseline's, isolating the effect of text modeling.",
+        "failure_mechanism": "The sender-history features may interact with the text features in non-linear ways, and the transformer model may implicitly learn to leverage these interactions. The claim that the uplift is due solely to text modeling may not hold if the transformer model is implicitly using sender-history features in a way that the baseline cannot.",
+        "evidence_test": "Perform an ablation study where the transformer model is trained without sender-history features. If the uplift persists, it suggests that the text modeling is the primary driver of performance. Alternatively, train the baseline model with sender-history features concatenated to the header/URL features to assess the interaction effect.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has several critical flaws that invalidate its core claims: label exclusion based on a 30-day grace period may bias results, temporal split does not fully guard against distribution shift or data leakage, and template memorization is not adequately controlled. Additionally, the baseline may not be competitive, and PR-AUC may not reflect operational priorities. These issues require redesign before the hypothesis can be meaningfully tested.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining positions on F1, F3, and F5 as they were accepted. For F2, I am switching to DEFER because while the chronological split prevents leakage, the critic is correct that it does not eliminate seasonal distribution shift, and this requires empirical validation. For F4, I maintain the DEFER as the critic's challenge was essentially an acknowledgment of the path forward. For F6, I am switching to DEFER because while the transformer's non-linear integration is a 'feature', it does create an asymmetric advantage over a linear baseline that can only be quantified via ablation.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The 30-day grace period is a mechanism to ensure labels are finalized, not to exclude hard cases. Only emails that remain unlabeled after 30 days are excluded to prevent label noise. The impact of this exclusion is explicitly measured via the robustness check on the label-uncertain cohort (Section 7c).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that a fixed temporal split cannot mechanistically eliminate seasonal distribution shift. 1. Settling experiment: Perform a 'sliding window' temporal validation where the train/test split is shifted by 3-month increments across the 18-month period. 2. Vindication: If the performance delta between transformer and baseline remains stable across windows, the result is robust to seasonality. 3. Validation: If the delta vanishes during specific months (e.g., tax season), the uplift is seasonally dependent. 4. Primary conclusion remains valid: Yes, because seasonal shifts in phishing volume or templates typically affect both the header-based and text-based models, leaving the relative uplift of semantic understanding intact.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly controls for template memorization via 'campaign novelty stratification' (Section 7b). By evaluating performance on campaigns that appear for the first time in the test period, the design directly measures generalization to novel templates, eliminating the memorization mechanism.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "As agreed in R1, a non-linear baseline (XGBoost) will be used to establish a rigorous ceiling for header-based detection. 1. Settling experiment: Train XGBoost on header/URL features. 2. Vindication: Transformer beats XGBoost. 3. Validation: XGBoost matches Transformer. 4. Primary conclusion remains valid: Yes, as the goal is to determine if text adds value beyond the best possible use of headers.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design uses PR-AUC for model selection but includes operational trade-offs (precision at 95% recall and recall at 99% specificity) as secondary metrics in Section 6 to ensure the model meets SOC requirements.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes that the transformer's ability to model non-linear interactions between sender-history and text creates an asymmetric advantage over a linear baseline. 1. Settling experiment: Train the transformer model without sender-history features (ablation). 2. Vindication: The transformer still significantly outperforms the baseline. 3. Validation: The uplift disappears, meaning the 'text' gain was actually a 'history-interaction' gain. 4. Primary conclusion remains valid: Yes, because the hypothesis is whether a transformer-based classifier (as a whole) outperforms the baseline; however, the ablation will clarify if the driver is semantic text or feature interaction.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several findings (F2, F4, F6) have been moved to DEFER, as the design provides partial controls but requires specific empirical tests (sliding windows, non-linear baselines, and feature ablations) to fully resolve the mechanisms of distribution shift and feature interaction."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "4 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

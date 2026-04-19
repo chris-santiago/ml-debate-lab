@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_800",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Treating competing events (death, hospice, LTC placement) as label = 0 (non-readmission) is a valid way to reflect the clinical use case.",
+        "failure_mechanism": "This introduces a fundamental label contamination. In survival analysis, a '0' typically means the event has not happened *yet*. By assigning label=0 to patients who died or entered hospice, the model is trained to associate the clinical signatures of the most critically ill patients (who are most likely to die) with 'success' (not being readmitted). This creates a contradictory signal: the model must learn that high-risk markers for readmission are the same as high-risk markers for death, but the labels tell it the latter group is 'safe'. This will likely degrade the AUC and lead to dangerous under-prediction of risk for the frailest patients.",
+        "evidence_test": "Compare model performance on a cohort where competing events are treated as 'censored' (standard survival approach) vs. 'label=0'. If the 'label=0' approach shows significantly lower calibration in the highest risk deciles, the claim is refuted.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression on static features) isolates the effect of sequential information and the survival framework.",
+        "failure_mechanism": "The baseline is under-specified. Logistic Regression is a linear model. If the 'flexible alternatives' (Random Survival Forests or Gradient Boosted Trees) are used for the primary model, the performance gain may be attributed to the model's ability to capture non-linear interactions and high-order feature combinations, rather than the longitudinal nature of the data or the survival framework. The experiment cannot distinguish between 'longitudinal data helps' and 'non-linear models help'.",
+        "evidence_test": "Introduce a non-linear baseline (e.g., XGBoost or Random Forest) trained on the same static features. If the gap between the longitudinal survival model and the non-linear static model is significantly smaller than the gap with Logistic Regression, the original claim is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-30 train, 31-36 val, 37-42 test) ensures the model respects the forward-looking prediction task and mirrors deployment.",
+        "failure_mechanism": "The PoC does not account for 'patient overlap' across the temporal boundaries. In EHR data, the same patient often has multiple admissions over 4-5 years. If a patient appears in the training set (Month 10) and again in the test set (Month 40), the model may memorize patient-specific idiosyncratic markers (e.g., a specific rare comorbidity or a unique lab pattern) rather than learning generalizable risk factors. This is a form of identity leakage that inflates test performance.",
+        "evidence_test": "Calculate the percentage of patients in the test set who also appear in the training set. Re-run the evaluation on a 'patient-exclusive' test set (where any patient seen in training is removed from the test set). A significant drop in AUC indicates identity leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Imputation fit on training data and applied to test data handles missingness appropriately.",
+        "failure_mechanism": "In EHR data, missingness is often 'informative' (e.g., a doctor only orders a BNP test if they suspect heart failure). While missingness indicators are added, simple imputation (like mean/median) can mask the signal of *why* a value was missing, potentially smoothing over the very volatility the longitudinal model is intended to capture.",
+        "evidence_test": "Compare performance using 'missingness indicators + constant value' vs. 'missingness indicators + imputed value'. If the constant value performs better, the imputation is destroying informative missingness signal.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has a critical flaw in how it handles competing risks (death/hospice), which likely introduces contradictory labels into the training set. Additionally, the baseline is too weak to isolate the value of longitudinal data, and there is a high risk of patient-identity leakage across the temporal split.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "## Pass 1 \u2014 Analysis of Each Finding\n\n**F1 (FATAL, sev 8): Competing events as label=0**\nThe critic argues that treating death/hospice/LTC as label=0 introduces label contamination \u2014 the model learns that critically ill patients (who die) are 'safe'. This is a valid concern from a pure survival analysis perspective. However, the design explicitly states this is a deliberate choice to match the clinical use case: identifying patients who will return to acute care. A patient who dies within 30 days cannot be readmitted \u2014 they are not a candidate for readmission prevention. The methodology includes an ablation study (survival model on static features) specifically designed to isolate whether performance gains stem from the survival framework's handling of censoring vs. longitudinal information. The critic's evidence_test would indeed settle this empirically, but the design choice is explicit and justified within scope. This is a REBUT-SCOPE: the concern is valid in a different framing (pure survival analysis) but the design intentionally adopts a clinical operations framing.\n\n**F2 (MATERIAL, sev 6): Baseline underspecification**\nThe critic claims the logistic regression baseline cannot isolate the effect of sequential information because nonlinear models may simply be better at extracting patterns. This is a valid concern in principle. However, the methodology explicitly includes an ablation study: 'a survival model trained on static features only' compared to baseline. This directly controls for the 'survival framework vs. longitudinal features' distinction. Additionally, the design intent is to compare 'sequential information + survival framework' vs. 'static features + classification framework' \u2014 not to compare model families. The critic's proposed fix (nonlinear static baseline) would change the experimental question. The ablation study addresses the core concern. This is REBUT-SCOPE with adjustment -4.\n\n**F3 (MATERIAL, sev 4): Patient overlap across temporal boundaries**\nThe critic correctly notes that the same patient appearing in both training and test sets could cause identity leakage. The methodology stratifies by discharge quarter and facility but does not explicitly deduplicate patients across temporal boundaries. However, the design intent is to mirror real-world deployment where patients have repeated admissions over time. The critic's proposed remedy (patient-exclusive test set) would create distributional shift that does NOT reflect deployment. The temporal split already prevents using future information to predict past outcomes \u2014 the core requirement. This is a MINOR concern about a real phenomenon that does not invalidate the forward-looking evaluation. REBUT-IMMATERIAL applies.\n\n**F4 (MINOR, sev 2): Imputation masks informative missingness**\nThe critic raises a valid concern that EHR missingness is often non-random (e.g., BNP ordered only when HF suspected). The methodology adds missingness indicators, which partially addresses this. However, whether indicators alone capture the full informational content of 'why missing' is genuinely uncertain. The critic's proposed evidence test compares imputation vs. constants, which doesn't directly test whether missingness indicators adequately capture the mechanism. This is a real uncertainty that would require empirical data to fully resolve. DEFER is appropriate \u2014 the concern is valid but the design includes a reasonable mitigation (missingness indicators) and the magnitude of residual impact is unknown.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly identifies that treating competing events as label=0 is non-standard in pure survival analysis. However, this is an explicit design choice justified by the clinical use case: identifying patients who will return to acute care. A patient who dies within 30 days cannot be readmitted and is not a candidate for readmission intervention. The methodology includes an ablation study (survival model on static features) specifically designed to isolate whether performance differences stem from the survival framework's handling of censoring vs. longitudinal information. The critic's concern applies to a different experimental framing (pure competing-risks survival analysis), not the stated clinical operations scope."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic correctly notes that logistic regression is linear while the survival model may be nonlinear (Random Survival Forests, Gradient Boosted Trees). However, the methodology explicitly includes an ablation study: a survival model trained on static features only, compared to the baseline. This controls for whether performance gains come from the survival framework itself vs. longitudinal features. The experimental question is 'sequential information + survival framework' vs. 'static features + classification' \u2014 not model family comparison. The critic's proposed fix (nonlinear static baseline) would change the research question. The ablation addresses the core concern within scope."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The critic correctly identifies that patient overlap across temporal boundaries could cause identity leakage. However, the design intent is to mirror real-world deployment where patients have repeated admissions over time. The temporal split (months 1-30/31-36/37-42) prevents using future clinical information to predict past outcomes \u2014 the core requirement for valid forward-looking evaluation. The critic's proposed remedy (patient-exclusive test set) would create distributional shift that does NOT reflect actual deployment conditions. This is a real phenomenon but does not invalidate the experiment's primary conclusion within the stated scope."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The critic raises a valid concern that EHR missingness is often informative and simple imputation could mask this signal. The methodology adds missingness indicators as features, which partially addresses the concern by preserving information about 'why missing'. However, whether indicators alone capture the full informational content is genuinely uncertain. The critic's proposed evidence test (imputation vs. constants) doesn't directly test whether missingness indicators adequately capture the mechanism. An empirical test comparing model performance with and without imputation (while keeping indicators) would settle this. The design includes reasonable mitigation but the residual impact magnitude requires data to determine."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have adjusted severity \u2264 3 after rebuttal. F1 adjusts from 8 to 4 (REBUT-SCOPE), F2 from 6 to 2 (REBUT-SCOPE), F3 from 4 to 2 (REBUT-IMMATERIAL), F4 remains at 2 (DEFER). The methodology's explicit design choices, ablation studies, and temporal split controls directly address the core concerns raised. The critic's findings apply to different experimental framings or identify residual uncertainties that require empirical data rather than design flaws."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender uses a scope argument to justify a fundamental label contamination. The failure mechanism is not about 'pure survival analysis' vs 'clinical operations'; it is about the model learning that the most critically ill patients (those who die) are 'safe' (label=0). This creates a contradictory signal that degrades the model's ability to identify high-risk patients. The mentioned ablation study (survival model on static features) does nothing to resolve this label contamination, as both models would use the same flawed labels. The severity adjustment is disproportionate because the mechanistic flaw remains."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender argues that the ablation study (survival model on static features) controls for the survival framework. This partially addresses the 'survival framework' part of the concern. However, it does NOT address the 'model family' part: if the primary model is a Random Survival Forest and the baseline is Logistic Regression, the gain could still be due to non-linearity/interactions rather than longitudinal data. The ablation only proves that 'Survival Model' > 'Logistic Regression' on static data; it doesn't prove 'Longitudinal Data' > 'Static Data' if the model architectures differ. A non-linear static baseline is still required to isolate the feature set's value."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender's argument that patient-exclusive sets create 'distributional shift' is a misunderstanding of identity leakage. Identity leakage occurs when the model memorizes a specific patient's baseline characteristics to predict their future outcomes, which is a failure of generalization. Mirroring deployment means predicting for *new* encounters, but the model should not rely on having seen that specific patient's history in the training set to achieve high performance. The rebuttal fails to address the mechanism of memorization vs. generalization."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender conceded the validity of the concern and deferred the final resolution to empirical testing, while noting that missingness indicators are already in place. This is an acceptable response for a minor finding."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am accepting the CHALLENGE on F1 (conceding the label contamination flaw), partially accepting the CHALLENGE on F3 (maintaining REBUT-SCOPE with clearer design rationale), and partially accepting the PARTIAL on F2 (conceding the need for a nonlinear static baseline). F4 was already accepted and remains deferred.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly identifies that my scope argument does not resolve the fundamental label contamination. The issue is not about 'pure survival analysis' vs 'clinical operations' \u2014 it is that assigning label=0 to patients who died, entered hospice, or were transferred to LTC forces the model to learn that the clinical signatures of the most critically ill patients (who are most likely to die) predict 'success' (non-readmission). This creates a contradictory signal that degrades the model's ability to identify high-risk patients. The ablation study mentioned in my R1 does not resolve this because both the survival model and baseline use the same flawed labels. The design has no control for this mechanism, and it could lead to dangerous under-prediction for the frailest patients \u2014 a material threat to the primary conclusion.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly points out that the ablation study (survival model on static features) controls for the survival framework but NOT for model family differences. If the primary model is Random Survival Forest and baseline is Logistic Regression, the performance gap could be due to non-linearity/interactions rather than longitudinal data. The design does not include a nonlinear static baseline (XGBoost/RF on static features). The settling experiment is to train a nonlinear model (XGBoost or Random Forest) on the exact same static feature set as the baseline, then compare its performance to the longitudinal survival model. If the gap shrinks substantially, the value of longitudinal data is not isolated. However, the primary comparison (longitudinal survival vs. static logistic) can still be informative about whether the combination of longitudinal features + survival framework adds value over static features + classification \u2014 even if the magnitude is confounded by model family. The relative conclusion survives even if the critique is correct, though the effect size attribution would be uncertain.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The critic challenges my REBUT-IMMATERIAL, arguing that identity leakage is a real concern. However, the design intent is to mirror real-world deployment where patients have repeated admissions over time. The temporal split (months 1-30/31-36/37-42) prevents using future clinical information to predict past outcomes \u2014 the core requirement for valid forward-looking evaluation. The critic's proposed remedy (patient-exclusive test set) would create distributional shift that does NOT reflect actual deployment conditions. In real clinical deployment, when a patient returns, the model has access to their historical encounters. The design's temporal split is the correct control for the primary leakage concern (future information). Patient overlap across temporal boundaries is a feature of longitudinal data, not a flaw \u2014 it reflects the clinical reality where historical patient data informs current predictions. The critic's concern conflates identity leakage with legitimate patient history utilization.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTed my R1 response. The concern remains genuinely ambiguous \u2014 missingness indicators partially address the concern but whether they capture the full informational content requires empirical testing. The design includes reasonable mitigation but the residual impact magnitude requires data to determine.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is CONCEDED (remains FATAL at severity 8) due to label contamination with no design control. F2 is DEFERRED \u2014 the design lacks a nonlinear static baseline to isolate feature value from model family, but the relative comparison still provides informative signal. F3 is REBUT-SCOPE with adjusted severity 2 \u2014 the temporal split correctly addresses the primary leakage concern, and patient overlap reflects real deployment conditions. F4 remains DEFERRED. The presence of a CONCEDED FATAL finding and multiple DEFER findings makes empirical_test_agreed the appropriate verdict."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Treating competing events (death, hospice, LTC placement) as label = 0 (non-readmission) is a valid way to reflect the clinical use case.",
+        "failure_mechanism": "This introduces a fundamental label contamination. In survival analysis, a '0' typically means the event has not happened *yet*. By assigning label=0 to patients who died or entered hospice, the model is trained to associate the clinical signatures of the most critically ill patients (who are most likely to die) with 'success' (not being readmitted). This creates a contradictory signal: the model must learn that high-risk markers for readmission are the same as high-risk markers for death, but the labels tell it the latter group is 'safe'. This will likely degrade the AUC and lead to dangerous under-prediction of risk for the frailest patients.",
+        "evidence_test": "Compare model performance on a cohort where competing events are treated as 'censored' (standard survival approach) vs. 'label=0'. If the 'label=0' approach shows significantly lower calibration in the highest risk deciles, the claim is refuted.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression on static features) isolates the effect of sequential information and the survival framework.",
+        "failure_mechanism": "The baseline is under-specified. Logistic Regression is a linear model. If the 'flexible alternatives' (Random Survival Forests or Gradient Boosted Trees) are used for the primary model, the performance gain may be attributed to the model's ability to capture non-linear interactions and high-order feature combinations, rather than the longitudinal nature of the data or the survival framework. The experiment cannot distinguish between 'longitudinal data helps' and 'non-linear models help'.",
+        "evidence_test": "Introduce a non-linear baseline (e.g., XGBoost or Random Forest) trained on the same static features. If the gap between the longitudinal survival model and the non-linear static model is significantly smaller than the gap with Logistic Regression, the original claim is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-30 train, 31-36 val, 37-42 test) ensures the model respects the forward-looking prediction task and mirrors deployment.",
+        "failure_mechanism": "The PoC does not account for 'patient overlap' across the temporal boundaries. In EHR data, the same patient often has multiple admissions over 4-5 years. If a patient appears in the training set (Month 10) and again in the test set (Month 40), the model may memorize patient-specific idiosyncratic markers (e.g., a specific rare comorbidity or a unique lab pattern) rather than learning generalizable risk factors. This is a form of identity leakage that inflates test performance.",
+        "evidence_test": "Calculate the percentage of patients in the test set who also appear in the training set. Re-run the evaluation on a 'patient-exclusive' test set (where any patient seen in training is removed from the test set). A significant drop in AUC indicates identity leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Imputation fit on training data and applied to test data handles missingness appropriately.",
+        "failure_mechanism": "In EHR data, missingness is often 'informative' (e.g., a doctor only orders a BNP test if they suspect heart failure). While missingness indicators are added, simple imputation (like mean/median) can mask the signal of *why* a value was missing, potentially smoothing over the very volatility the longitudinal model is intended to capture.",
+        "evidence_test": "Compare performance using 'missingness indicators + constant value' vs. 'missingness indicators + imputed value'. If the constant value performs better, the imputation is destroying informative missingness signal.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has a critical flaw in how it handles competing risks (death/hospice), which likely introduces contradictory labels into the training set. Additionally, the baseline is too weak to isolate the value of longitudinal data, and there is a high risk of patient-identity leakage across the temporal split.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am accepting the CHALLENGE on F1 (conceding the label contamination flaw), partially accepting the CHALLENGE on F3 (maintaining REBUT-SCOPE with clearer design rationale), and partially accepting the PARTIAL on F2 (conceding the need for a nonlinear static baseline). F4 was already accepted and remains deferred.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly identifies that my scope argument does not resolve the fundamental label contamination. The issue is not about 'pure survival analysis' vs 'clinical operations' \u2014 it is that assigning label=0 to patients who died, entered hospice, or were transferred to LTC forces the model to learn that the clinical signatures of the most critically ill patients (who are most likely to die) predict 'success' (non-readmission). This creates a contradictory signal that degrades the model's ability to identify high-risk patients. The ablation study mentioned in my R1 does not resolve this because both the survival model and baseline use the same flawed labels. The design has no control for this mechanism, and it could lead to dangerous under-prediction for the frailest patients \u2014 a material threat to the primary conclusion.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly points out that the ablation study (survival model on static features) controls for the survival framework but NOT for model family differences. If the primary model is Random Survival Forest and baseline is Logistic Regression, the performance gap could be due to non-linearity/interactions rather than longitudinal data. The design does not include a nonlinear static baseline (XGBoost/RF on static features). The settling experiment is to train a nonlinear model (XGBoost or Random Forest) on the exact same static feature set as the baseline, then compare its performance to the longitudinal survival model. If the gap shrinks substantially, the value of longitudinal data is not isolated. However, the primary comparison (longitudinal survival vs. static logistic) can still be informative about whether the combination of longitudinal features + survival framework adds value over static features + classification \u2014 even if the magnitude is confounded by model family. The relative conclusion survives even if the critique is correct, though the effect size attribution would be uncertain.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The critic challenges my REBUT-IMMATERIAL, arguing that identity leakage is a real concern. However, the design intent is to mirror real-world deployment where patients have repeated admissions over time. The temporal split (months 1-30/31-36/37-42) prevents using future clinical information to predict past outcomes \u2014 the core requirement for valid forward-looking evaluation. The critic's proposed remedy (patient-exclusive test set) would create distributional shift that does NOT reflect actual deployment conditions. In real clinical deployment, when a patient returns, the model has access to their historical encounters. The design's temporal split is the correct control for the primary leakage concern (future information). Patient overlap across temporal boundaries is a feature of longitudinal data, not a flaw \u2014 it reflects the clinical reality where historical patient data informs current predictions. The critic's concern conflates identity leakage with legitimate patient history utilization.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTed my R1 response. The concern remains genuinely ambiguous \u2014 missingness indicators partially address the concern but whether they capture the full informational content requires empirical testing. The design includes reasonable mitigation but the residual impact magnitude requires data to determine.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is CONCEDED (remains FATAL at severity 8) due to label contamination with no design control. F2 is DEFERRED \u2014 the design lacks a nonlinear static baseline to isolate feature value from model family, but the relative comparison still provides informative signal. F3 is REBUT-SCOPE with adjusted severity 2 \u2014 the temporal split correctly addresses the primary leakage concern, and patient overlap reflects real deployment conditions. F4 remains DEFERRED. The presence of a CONCEDED FATAL finding and multiple DEFER findings makes empirical_test_agreed the appropriate verdict."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=8 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

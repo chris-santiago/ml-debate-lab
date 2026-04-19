@@ -1,0 +1,234 @@
+{
+  "case_id": "eval_scenario_862",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Both models receive identical metadata (sender reputation, domain name, attachment type).",
+        "failure_mechanism": "The transformer receives raw sender display name, domain, and attachment metadata as text tokens, providing more granular information than the baseline\u2019s aggregated features (e.g., sender reputation score, attachment count/size). This extra metadata can drive performance improvements that are not due to learned text representations of email body/subject, inflating the apparent advantage of the transformer.",
+        "evidence_test": "Run an ablation where the transformer\u2019s sender/domain/attachment tokens are replaced with placeholders or removed, and compare its test PR\u2011AUC to the baseline. Alternatively, enrich the baseline with the same raw metadata (e.g., embed sender domain as categorical features) and re\u2011evaluate. If the transformer\u2019s advantage diminishes significantly when metadata parity is enforced, the claim is false.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning and early stopping on the validation set (quarters 13\u201115) do not contaminate the final test\u2011set evaluation; validation and test are independent due to the temporal split.",
+        "failure_mechanism": "Early stopping selects the number of training epochs based on validation PR\u2011AUC. If the validation set contains temporal patterns (e.g., specific campaigns) that do not persist into the test quarter, the model may be over\u2011tuned to those patterns, leading to overly optimistic or pessimistic estimates of true generalization when evaluated on the test set.",
+        "evidence_test": "Compare test\u2011set PR\u2011AUC of models trained with early stopping (using validation quarters 13\u201115) against models trained for a fixed number of epochs (or using a separate hold\u2011out period for early stopping, e.g., quarter 13 only). A significant difference indicates that validation\u2011based early stopping inflated or deflated the reported test performance.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The BPE tokenizer, trained exclusively on the training set (quarters 1\u201112), generalizes adequately to the test set (quarter 16) with negligible out\u2011of\u2011vocabulary (OOV) impact.",
+        "failure_mechanism": "If the test quarter contains novel words, misspellings, or obfuscation not seen during tokenizer training, those tokens are mapped to [UNK]. This reduces the transformer\u2019s ability to capture phishing signals present in the raw text, potentially underestimating its true capability and introducing a silent degradation that is not reflected in the reported metrics.",
+        "evidence_test": "Measure the OOV rate in the test set (percentage of tokens mapped to [UNK]) and analyze whether prediction errors correlate with OOV tokens. Alternatively, retrain the tokenizer on the combined training\u202f+\u202fvalidation data and re\u2011evaluate the transformer; a meaningful increase in test PR\u2011AUC would indicate that the original tokenizer caused silent degradation.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains several methodological issues that could bias the comparison between the transformer and the hand\u2011engineered baseline. Most critically, the transformer receives richer metadata via text than the baseline, validation\u2011based tuning may overfit to temporal patterns, and the tokenizer may suffer from OOV tokens in the test period. Each of these threatens the validity of the claim that the transformer\u2019s learned text representations alone drive any observed performance gain.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Finding F1 claims that the transformer has an unfair advantage because it receives raw metadata (sender name, domain) as tokens, whereas the baseline receives aggregated features (reputation score). The design intent was to isolate the value of 'learned text representations'. However, the design explicitly includes a 'Confound Control' for 'Metadata vs. text signals' which states: 'An ablation study compares transformer performance with and without metadata; if performance drops equally for both models when metadata is removed, metadata is not the driver.' This ablation directly addresses the critic's concern by isolating the contribution of metadata. Furthermore, the baseline is given the 'sender reputation score' and 'domain age', which are high-level signals derived from the same raw data the transformer sees. The ablation study is the definitive control here.\n\nFinding F2 argues that early stopping on the validation set might overfit to temporal patterns in quarters 13-15 that don't persist in quarter 16. This is a general risk of any validation-based tuning. However, the design includes a 'Temporal robustness' control: 'We compute PR-AUC separately for each week of the test quarter. If the transformer's advantage decays over time, the model is overfitting to validation-set artifacts.' This monitoring allows the researchers to detect the exact failure mechanism the critic describes. Since the test set is a completely separate future quarter, and the robustness check is in place, the methodology is sound for a PoC.\n\nFinding F3 suggests that the BPE tokenizer fit only on training data might lead to [UNK] tokens in the test set, underestimating the transformer's performance. This is a misunderstanding of BPE. BPE is designed specifically to handle OOV words by breaking them into subword units; it only produces [UNK] for characters not in the initial alphabet, which is extremely rare in standard email text. Furthermore, fitting the tokenizer only on the training set is the correct procedure to prevent data leakage. Any 'degradation' caused by this is actually a realistic representation of production performance where the model encounters unseen tokens.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The design explicitly includes a named confound control ('Metadata vs. text signals') that uses an ablation study to compare transformer performance with and without metadata. This control directly eliminates the risk of attributing metadata-driven gains to text representations by quantifying the specific contribution of metadata to the final metric."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The design anticipates this risk via the 'Temporal robustness' control, which requires computing PR-AUC for each week of the test quarter to detect decay. This monitoring mechanism ensures that any overfitting to validation-set artifacts is identified and reported, rather than silently inflating the final result."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The claim ignores the fundamental mechanism of BPE tokenization, which minimizes OOV issues by decomposing unknown words into known subwords. Additionally, fitting the tokenizer exclusively on training data is a required control to prevent target leakage; adjusting this would invalidate the temporal split integrity."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted using explicit design controls (Metadata Ablation and Temporal Robustness checks) or by correcting a misunderstanding of the BPE tokenization process. Every adjusted severity is \u2264 3, qualifying the methodology for exoneration."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender points to a 'Metadata vs. text signals' ablation that compares transformer performance with and without metadata. This does not address the specific failure mechanism: the transformer receives raw sender/domain/attachment tokens (fine\u2011grained text) while the baseline receives only aggregated metadata features (e.g., reputation scores, counts). The ablation only tests whether metadata contributes at all, not whether the transformer's granular token representation gives it an advantage over the baseline's aggregated metadata. Thus the rebuttal is generic and leaves the concern unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender cites the 'Temporal robustness' control (weekly PR\u2011AUC in the test quarter) as a safeguard against over\u2011tuning to validation patterns. However, the failure mechanism concerns bias introduced by early stopping on validation quarters that may contain temporal patterns absent in the test quarter, leading to uniformly optimistic or pessimistic test performance. Weekly test\u2011quarter PR\u2011AUC cannot detect this bias because it only measures stability across weeks of test, not alignment with validation\u2011specific patterns. The rebuttal does not directly address the over\u2011tuning mechanism."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly notes that BPE subword tokenization reduces OOV rates by decomposing unknown words into known subwords, which mitigates the silent degradation concern. However, BPE does not eliminate OOV entirely\u2014novel misspellings, obfuscation, or rare character sequences can still map to [UNK] and impair the transformer's ability to capture phishing signals. The rebuttal therefore reduces but does not fully eliminate the risk; a residual concern remains about potential silent degradation from residual OOV tokens."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "For F1, the critic correctly identifies that a binary ablation (metadata vs. no metadata) does not isolate the granularity difference between raw tokens and aggregated features. I am switching to DEFER to define a specific parity test. For F2, the critic is correct that weekly test stability does not detect validation-set bias; since the design lacks a separate early-stopping holdout or fixed-epoch baseline, I CONCEDE this as a potential source of bias. For F3, the critic acknowledges BPE's mitigation but notes residual OOV risk; I am switching to DEFER to define the measurement needed to quantify this impact.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic is correct that the existing ablation only tests the presence of metadata, not the granularity of its representation. To settle this, we will implement a 'Metadata Parity' experiment: we will create a version of the baseline that receives the same raw metadata strings (sender, domain, attachment names) passed through a TF-IDF vectorizer or a simple hashing trick, and a version of the transformer where these specific fields are replaced by the baseline's aggregated features. If the transformer's advantage persists when its raw metadata is replaced by aggregated features, the design is vindicated. If the baseline's performance jumps to match the transformer when given raw metadata, the critique is validated and the 'text representation' hypothesis is rejected.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's reasoning is mechanistically correct. Weekly PR-AUC in the test set measures variance within the test period, but it cannot detect a systematic bias introduced by early stopping on a validation set that may have diverged from the test set's distribution. The design lacks a control (such as a fixed-epoch baseline or a nested cross-validation approach) to isolate this effect.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "While BPE significantly mitigates OOV issues, the critic is correct that it does not eliminate them. To resolve whether this causes material silent degradation, we will: 1) Calculate the [UNK] token rate in the test set. 2) Perform a stratified analysis of False Negatives to see if emails containing [UNK] tokens in critical fields (subject/body) are disproportionately misclassified. If the [UNK] rate is <0.1% or if there is no correlation between [UNK] presence and error rate, the design is vindicated. If a significant correlation exists, the critique is validated, and we would need to expand the tokenizer vocabulary or use a character-level model.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The review has surfaced genuine ambiguities regarding metadata granularity (F1) and OOV impact (F3) that require specific empirical measurements to resolve, and a valid concern regarding validation bias (F2) that was conceded."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Both models receive identical metadata (sender reputation, domain name, attachment type).",
+        "failure_mechanism": "The transformer receives raw sender display name, domain, and attachment metadata as text tokens, providing more granular information than the baseline\u2019s aggregated features (e.g., sender reputation score, attachment count/size). This extra metadata can drive performance improvements that are not due to learned text representations of email body/subject, inflating the apparent advantage of the transformer.",
+        "evidence_test": "Run an ablation where the transformer\u2019s sender/domain/attachment tokens are replaced with placeholders or removed, and compare its test PR\u2011AUC to the baseline. Alternatively, enrich the baseline with the same raw metadata (e.g., embed sender domain as categorical features) and re\u2011evaluate. If the transformer\u2019s advantage diminishes significantly when metadata parity is enforced, the claim is false.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning and early stopping on the validation set (quarters 13\u201115) do not contaminate the final test\u2011set evaluation; validation and test are independent due to the temporal split.",
+        "failure_mechanism": "Early stopping selects the number of training epochs based on validation PR\u2011AUC. If the validation set contains temporal patterns (e.g., specific campaigns) that do not persist into the test quarter, the model may be over\u2011tuned to those patterns, leading to overly optimistic or pessimistic estimates of true generalization when evaluated on the test set.",
+        "evidence_test": "Compare test\u2011set PR\u2011AUC of models trained with early stopping (using validation quarters 13\u201115) against models trained for a fixed number of epochs (or using a separate hold\u2011out period for early stopping, e.g., quarter 13 only). A significant difference indicates that validation\u2011based early stopping inflated or deflated the reported test performance.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The BPE tokenizer, trained exclusively on the training set (quarters 1\u201112), generalizes adequately to the test set (quarter 16) with negligible out\u2011of\u2011vocabulary (OOV) impact.",
+        "failure_mechanism": "If the test quarter contains novel words, misspellings, or obfuscation not seen during tokenizer training, those tokens are mapped to [UNK]. This reduces the transformer\u2019s ability to capture phishing signals present in the raw text, potentially underestimating its true capability and introducing a silent degradation that is not reflected in the reported metrics.",
+        "evidence_test": "Measure the OOV rate in the test set (percentage of tokens mapped to [UNK]) and analyze whether prediction errors correlate with OOV tokens. Alternatively, retrain the tokenizer on the combined training\u202f+\u202fvalidation data and re\u2011evaluate the transformer; a meaningful increase in test PR\u2011AUC would indicate that the original tokenizer caused silent degradation.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains several methodological issues that could bias the comparison between the transformer and the hand\u2011engineered baseline. Most critically, the transformer receives richer metadata via text than the baseline, validation\u2011based tuning may overfit to temporal patterns, and the tokenizer may suffer from OOV tokens in the test period. Each of these threatens the validity of the claim that the transformer\u2019s learned text representations alone drive any observed performance gain.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "For F1, the critic correctly identifies that a binary ablation (metadata vs. no metadata) does not isolate the granularity difference between raw tokens and aggregated features. I am switching to DEFER to define a specific parity test. For F2, the critic is correct that weekly test stability does not detect validation-set bias; since the design lacks a separate early-stopping holdout or fixed-epoch baseline, I CONCEDE this as a potential source of bias. For F3, the critic acknowledges BPE's mitigation but notes residual OOV risk; I am switching to DEFER to define the measurement needed to quantify this impact.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic is correct that the existing ablation only tests the presence of metadata, not the granularity of its representation. To settle this, we will implement a 'Metadata Parity' experiment: we will create a version of the baseline that receives the same raw metadata strings (sender, domain, attachment names) passed through a TF-IDF vectorizer or a simple hashing trick, and a version of the transformer where these specific fields are replaced by the baseline's aggregated features. If the transformer's advantage persists when its raw metadata is replaced by aggregated features, the design is vindicated. If the baseline's performance jumps to match the transformer when given raw metadata, the critique is validated and the 'text representation' hypothesis is rejected.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's reasoning is mechanistically correct. Weekly PR-AUC in the test set measures variance within the test period, but it cannot detect a systematic bias introduced by early stopping on a validation set that may have diverged from the test set's distribution. The design lacks a control (such as a fixed-epoch baseline or a nested cross-validation approach) to isolate this effect.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "While BPE significantly mitigates OOV issues, the critic is correct that it does not eliminate them. To resolve whether this causes material silent degradation, we will: 1) Calculate the [UNK] token rate in the test set. 2) Perform a stratified analysis of False Negatives to see if emails containing [UNK] tokens in critical fields (subject/body) are disproportionately misclassified. If the [UNK] rate is <0.1% or if there is no correlation between [UNK] presence and error rate, the design is vindicated. If a significant correlation exists, the critique is validated, and we would need to expand the tokenizer vocabulary or use a character-level model.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The review has surfaced genuine ambiguities regarding metadata granularity (F1) and OOV impact (F3) that require specific empirical measurements to resolve, and a valid concern regarding validation bias (F2) that was conceded."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=5, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

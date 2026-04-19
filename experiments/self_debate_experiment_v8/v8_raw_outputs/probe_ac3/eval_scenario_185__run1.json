@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_185",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model will generalize to all incoming SOC alerts because the training data represents the production distribution.",
+        "failure_mechanism": "The experiment explicitly excludes alerts with no disposition within 30 days. This creates a 'survivorship bias' where the model is trained only on 'resolved quickly' alerts. In production, the model must rank *all* alerts, including those that take weeks to resolve or are never resolved. The model will likely rank these unresolved alerts as low-relevance (since it never learned they are high-relevance), potentially suppressing critical threats that require longer investigation times. This is a fundamental distribution shift between training (resolved) and deployment (all).",
+        "evidence_test": "Evaluate model performance on a held-out set of alerts that were excluded from training due to lack of 30-day disposition. If the model ranks these significantly lower than resolved alerts, the hypothesis fails for the full alert stream.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "95% confidence intervals calculated via bootstrap over test-set samples accurately quantify uncertainty.",
+        "failure_mechanism": "Time-series data is autocorrelated and not IID. Standard bootstrap resampling assumes independence between samples. Resampling from a temporal test set violates this assumption, leading to underestimated variance and overly narrow confidence intervals. This gives a false sense of statistical significance.",
+        "evidence_test": "Compare bootstrap CIs with block-bootstrap or time-series cross-validation CIs. If the standard bootstrap intervals are significantly narrower and fail to capture the true variance in a rolling evaluation, the claim is invalid.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A text-only baseline is sufficient to demonstrate the value of multimodal features (graph + ticket history).",
+        "failure_mechanism": "In SOC contexts, metadata (IP reputation, host criticality, rule ID) is often the strongest predictor of relevance, frequently outperforming alert text. A text-only baseline is likely weak. If the multimodal model beats text-only, it may simply be leveraging metadata features (which are included in the graph/ticket features) rather than proving the *multimodal* architecture adds value over standard metadata-based ranking. A 'Metadata-only' baseline is missing.",
+        "evidence_test": "Run a baseline model using only metadata features (IP, Host, Rule ID) without text. If this baseline outperforms the text-only baseline and is comparable to the multimodal model, the claim that 'multimodal ranking' is the key driver is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Feature engineering is free of label leakage, verified by an 'audit'.",
+        "failure_mechanism": "The document claims features are 'audit-checked' but provides no evidence of the audit mechanism. Specifically, 'ticket history' features (count of tickets linked to host in prior 14 days) could inadvertently include the ticket associated with the current alert if the data pipeline links the alert to the ticket before feature extraction. If the ticket creation time is within the 14-day window relative to the alert, the feature might correlate directly with the label (linked within 24 hours), creating a leakage loop.",
+        "evidence_test": "Inspect the feature construction code to verify that the 'ticket history' count excludes tickets created *after* the alert timestamp. Check if the current alert's ticket ID is included in the feature set.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratification by quarter within each chronological fold ensures representative coverage.",
+        "failure_mechanism": "Chronological splits (1-14, 15-17, 18-24) define fixed time windows. 'Stratification by quarter within each fold' is methodologically contradictory unless sampling is performed within the time window, which risks leakage if not strictly bounded. If no sampling is performed, stratification is impossible as quarters are fixed by time. This suggests confusion in the experimental design regarding temporal integrity.",
+        "evidence_test": "Verify if the split involves random sampling within time blocks. If so, check for any overlap between training and validation/test time ranges that could leak future information.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Validation set size is 25% of the data.",
+        "failure_mechanism": "The document states 'months 15\u201317 (validation, 25%)'. Months 15-17 is 3 months out of 24, which is 12.5%, not 25%. This calculation error suggests the design document is not rigorously verified, casting doubt on other statistical claims (like the bootstrap CIs).",
+        "evidence_test": "Recalculate the split percentages based on the month ranges provided. If the actual split is 12.5% for validation, the hyperparameter tuning set is smaller than claimed, increasing the risk of overfitting to the validation period.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC contains a FATAL flaw regarding label exclusion bias, which invalidates the generalization claim for the full alert stream. Additionally, the use of standard bootstrap for time-series data and the lack of a metadata-only baseline materially weaken the statistical and comparative validity of the results.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL sev9): Critic claims survivorship bias from excluding alerts without 30-day disposition, arguing train/test only on 'quickly resolved' alerts while production ranks all alerts (including slow/never-resolved), leading to model suppressing critical slow-burn threats. Evidence: eval on held-out unresolved alerts. Design intent: labels constructed only for alerts with documented disposition to reflect 'analyst-actionable truth' and avoid speculative bias; exclusions acknowledged as 'partial feedback inevitable'; test set applies same exclusion, so train/val/test share identical label availability distribution (resolved alerts only). Scope explicitly ties hypothesis to improving ranking 'on future SOC alerts' but evaluation is on labeled subset (resolved within policy), with no claim of ground-truth labels for unresolved alerts (impossible without disposition). No distribution shift within evaluated population; concern valid for full unlabeled stream but outside experiment scope, which tests triage efficacy on labelable alerts (the ones with causal analyst actions). Design control: label construction and exclusion policy matches across splits. Remains uncertain: impact on unlabeled alerts, but not required for PoC hypothesis (nDCG@10 on future resolved alerts). F2 (MATERIAL sev6): Critic claims standard bootstrap CIs invalid for autocorrelated time-series test set (months 18-24), underestimating variance. Evidence: compare to block-bootstrap. Design uses bootstrap over test-set samples with 95% CIs, plus quarterly stratification for temporal confounds and temporal distance control. No explicit time-series bootstrap variant (e.g., block-bootstrap); assumes samples approx IID within test period. Valid concern: SOC alerts likely autocorrelated (e.g., campaigns), standard bootstrap ignores. Controls mitigate (stratification detects drift) but do not eliminate (no block-resampling). Uncertain: magnitude of CI understatement\u2014requires empirical comparison. F3 (MATERIAL sev5): Critic argues text-only baseline too weak (metadata like IP/host/rule often strongest), multimodal win may reflect metadata in graph/ticket rather than 'multimodal architecture'. Evidence: metadata-only baseline. Design baseline explicitly 'text-only using same embedding and ranking loss' to 'isolate contribution of entity graph and ticket-history features'; graph includes entity metadata (host/IP/rule relationships), ticket adds history\u2014multimodal deliberately combines text+metadata+history vs text-alone. Ablation drops ticket-history to confirm entity graph signal. Hypothesis tests multimodal (all three) vs text-only; no claim metadata-alone insufficient or arch-specific. Baseline appropriate per design intent; metadata-only would test different hypothesis (e.g., text vs metadata). No flaw. F4 (MINOR sev3): Critic claims ticket-history (prior 14 days on host/user/IP) may leak if pipeline includes current alert's ticket (linked within 24h label window). Evidence: code inspection. Design: 'prior 14 days' explicitly historical; 'only pre-alert information'; 'feature timing audit' verifies no future info/tickets; preprocessing fit on train only. Stated controls directly eliminate mechanism (pre-alert cutoff excludes current ticket). No evidence audit details, but PoC asserts it\u2014valid per design. F5 (MINOR sev2): Critic claims 'stratification by quarter within each fold' contradicts fixed chrono splits (no sampling possible without leakage). Evidence: check sampling. Design: chrono blocks fixed (1-14 train, etc.), stratification ensures 'representative coverage of seasonal patterns'\u2014refers to evaluation/reporting (nDCG@10 stratified by quarter/category), not train sampling (which would leak). Secondary metrics include quarterly stratification for confound detection. No sampling/leakage; fixed splits preserve temporal integrity. Misreads as sampling. F6 (MINOR sev2): Critic notes val set months 15-17 is 3/24=12.5%, not 25% claimed. Evidence: recalc. Typo: percentages approximate (train 14/24=58.3%, val~12.5%, test 7/24=29.2%\u2014doc says test 25%, close); actual sizes defined by months, not %\u2014no impact on split integrity or overfitting risk (val still temporally separated). Minor doc error, no validity effect.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "Experiment scope limits evaluation to resolved alerts (with 30-day disposition) across train/val/test, matching distributions exactly; hypothesis tests improved ranking on future labelable SOC alerts (those with analyst truth), not unlabeled/undisposed alerts where no ground truth exists. Exclusion policy is deliberate to avoid bias, acknowledged as SOC reality\u2014no shift within scoped population."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "Standard bootstrap may underestimate variance in autocorrelated test set; quarterly stratification and temporal controls mitigate but do not fully resolve. Settling experiment: compute block-bootstrap (e.g., 1-week blocks) CIs on test set nDCG@10\u2014if standard CIs are 20%+ narrower and exclude block-based mean, critique validated (tighten via blocks); if comparable, design vindicated (autocorrelation negligible for metric)."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Text-only baseline deliberately isolates gains from adding entity graph (incl. metadata relationships) + ticket history to text, per section 4; ablation dropping ticket-history confirms graph signal independent. Metadata strength expected and intended in multimodal\u2014baseline tests exact hypothesis, not text-vs-metadata."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "Ticket-history explicitly 'prior 14 days' pre-alert (section 3), verified by 'feature timing audit' ensuring no future info like current ticket (section 6)\u2014directly eliminates leakage loop by construction."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Stratification by quarter is for evaluation/secondary metrics (nDCG stratified by quarter/category, section 4/6) within fixed chrono blocks\u2014no sampling or overlap; preserves temporal integrity while detecting seasonal confounds."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Approximate % error (actual 12.5% val by months) but splits precisely defined by month ranges\u2014does not alter temporal separation, sizes, or overfitting risk."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "DEFER on F2 (adj sev6) requires empirical block-bootstrap check; F1 partially rebutted to adj4 but no CONCEDE >=7. All other findings rebutted to <=1, no material flaws conceded."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender's REBUT-SCOPE argument limits the experiment's evaluation to 'resolved' alerts, but the finding addresses the operational deployment risk. SOC triage systems must rank *all* incoming alerts, including those without immediate disposition. The distribution shift between training (resolved) and deployment (all) remains a fundamental failure mechanism regardless of the experiment's internal scope. Reducing severity from FATAL to 4 based on a scope disclaimer is disproportionate as it ignores the actual production context."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 6,
+        "reasoning": "The defender used a DEFER rebuttal, acknowledging the limitation of standard bootstrap on autocorrelated time-series data and proposing a specific validation (block-bootstrap CIs). This is a valid acknowledgment of the open question. The severity remains 6 as the issue is not yet resolved, but the plan to address it is sound."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender's REBUT-DESIGN argument admits that the multimodal model relies on metadata (graph/ticket features) but fails to address the finding's core concern: without a 'Metadata-only' baseline, the experiment cannot distinguish whether improvements come from the *text* modality or simply from standard metadata features that a simpler model could use. The text-only baseline is insufficient to prove the *multimodal* architecture adds value over standard SOC ranking practices. The severity reduction to 1 is disproportionate."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's REBUT-DESIGN argument specifically addresses the leakage mechanism by citing the 'prior 14 days' constraint and the 'feature timing audit' described in the methodology. This directly resolves the concern that current tickets could be included in the history features. The severity reduction to 0 is appropriate as the design explicitly guards against this failure mode."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's REBUT-DESIGN argument clarifies that 'stratification by quarter' refers to evaluation metrics (Section 4/6) rather than data splitting (Section 2). This resolves the methodological contradiction regarding sampling and leakage. The severity reduction to 0 is appropriate as the temporal integrity is preserved."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's REBUT-IMMATERIAL argument correctly identifies that the percentage calculation is a documentation error, while the actual split is defined by precise month ranges. The methodological integrity (temporal separation) is not compromised by the label error. The severity reduction to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Accepted critic ACCEPTs on F2 (DEFER maintained), F4, F5, F6 (resolutions maintained). Contested CHALLENGES on F1 and F3 by strengthening REBUT-SCOPE/DESIGN: F1 scoped to evaluable resolved alerts matching train/deploy distributions for labelable cases (no GT shift possible); F3 baseline directly tests hypothesis of text+context gains (graph/ticket incl. metadata) vs text-only, with ablation dissecting contributions\u2014no metadata-only needed as claim isn't vs 'standard SOC'.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "Critic mischaracterizes as deployment shift, but experiment hypothesis (section 6) explicitly scopes to 'future SOC alerts' with analyst truth (resolved within 30 days across all splits)\u2014matching train/val/test distributions exactly, no survivorship bias within scoped population. Unresolved alerts lack ground truth by design acknowledgment ('partial feedback inevitable'), so cannot be evaluated without speculative labels introducing worse bias; operational ranking on them is out-of-scope, as no 'high-relevance' GT exists to train/test against.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "Standard bootstrap may underestimate variance in autocorrelated test set; quarterly stratification and temporal controls mitigate but do not fully resolve. Settling experiment: compute block-bootstrap (e.g., 1-week blocks) CIs on test set nDCG@10\u2014if standard CIs are 20%+ narrower and exclude block-based mean, critique validated (tighten via blocks); if comparable, design vindicated (autocorrelation negligible for metric).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Baseline deliberately text-only to isolate gains from adding entity graph (relationships incl. metadata like host/IP/rule) + ticket history to text (section 4), directly testing multimodal hypothesis; ablation dropping ticket-history confirms graph independent signal (section 6). No metadata-only baseline needed, as claim isn't superiority over 'standard SOC metadata ranking' but value of multimodal (text+context) over text-only\u2014metadata strength expected/intended in multimodal, not a confound.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "Ticket-history explicitly 'prior 14 days' pre-alert (section 3), verified by 'feature timing audit' ensuring no future info like current ticket (section 6)\u2014directly eliminates leakage loop by construction.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Stratification by quarter is for evaluation/secondary metrics (nDCG stratified by quarter/category, section 4/6) within fixed chrono blocks\u2014no sampling or overlap; preserves temporal integrity while detecting seasonal confounds.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Approximate % error (actual 12.5% val by months) but splits precisely defined by month ranges\u2014does not alter temporal separation, sizes, or overfitting risk.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 (FATAL) rebutted to 4 via scope control and F2 DEFERed to empirical block-bootstrap check, surfacing resolvable ambiguities; all others <=1 with no CONCEDEd high-severity flaws, affirming design soundness pending targeted validation."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model will generalize to all incoming SOC alerts because the training data represents the production distribution.",
+        "failure_mechanism": "The experiment explicitly excludes alerts with no disposition within 30 days. This creates a 'survivorship bias' where the model is trained only on 'resolved quickly' alerts. In production, the model must rank *all* alerts, including those that take weeks to resolve or are never resolved. The model will likely rank these unresolved alerts as low-relevance (since it never learned they are high-relevance), potentially suppressing critical threats that require longer investigation times. This is a fundamental distribution shift between training (resolved) and deployment (all).",
+        "evidence_test": "Evaluate model performance on a held-out set of alerts that were excluded from training due to lack of 30-day disposition. If the model ranks these significantly lower than resolved alerts, the hypothesis fails for the full alert stream.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "95% confidence intervals calculated via bootstrap over test-set samples accurately quantify uncertainty.",
+        "failure_mechanism": "Time-series data is autocorrelated and not IID. Standard bootstrap resampling assumes independence between samples. Resampling from a temporal test set violates this assumption, leading to underestimated variance and overly narrow confidence intervals. This gives a false sense of statistical significance.",
+        "evidence_test": "Compare bootstrap CIs with block-bootstrap or time-series cross-validation CIs. If the standard bootstrap intervals are significantly narrower and fail to capture the true variance in a rolling evaluation, the claim is invalid.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A text-only baseline is sufficient to demonstrate the value of multimodal features (graph + ticket history).",
+        "failure_mechanism": "In SOC contexts, metadata (IP reputation, host criticality, rule ID) is often the strongest predictor of relevance, frequently outperforming alert text. A text-only baseline is likely weak. If the multimodal model beats text-only, it may simply be leveraging metadata features (which are included in the graph/ticket features) rather than proving the *multimodal* architecture adds value over standard metadata-based ranking. A 'Metadata-only' baseline is missing.",
+        "evidence_test": "Run a baseline model using only metadata features (IP, Host, Rule ID) without text. If this baseline outperforms the text-only baseline and is comparable to the multimodal model, the claim that 'multimodal ranking' is the key driver is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Feature engineering is free of label leakage, verified by an 'audit'.",
+        "failure_mechanism": "The document claims features are 'audit-checked' but provides no evidence of the audit mechanism. Specifically, 'ticket history' features (count of tickets linked to host in prior 14 days) could inadvertently include the ticket associated with the current alert if the data pipeline links the alert to the ticket before feature extraction. If the ticket creation time is within the 14-day window relative to the alert, the feature might correlate directly with the label (linked within 24 hours), creating a leakage loop.",
+        "evidence_test": "Inspect the feature construction code to verify that the 'ticket history' count excludes tickets created *after* the alert timestamp. Check if the current alert's ticket ID is included in the feature set.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratification by quarter within each chronological fold ensures representative coverage.",
+        "failure_mechanism": "Chronological splits (1-14, 15-17, 18-24) define fixed time windows. 'Stratification by quarter within each fold' is methodologically contradictory unless sampling is performed within the time window, which risks leakage if not strictly bounded. If no sampling is performed, stratification is impossible as quarters are fixed by time. This suggests confusion in the experimental design regarding temporal integrity.",
+        "evidence_test": "Verify if the split involves random sampling within time blocks. If so, check for any overlap between training and validation/test time ranges that could leak future information.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Validation set size is 25% of the data.",
+        "failure_mechanism": "The document states 'months 15\u201317 (validation, 25%)'. Months 15-17 is 3 months out of 24, which is 12.5%, not 25%. This calculation error suggests the design document is not rigorously verified, casting doubt on other statistical claims (like the bootstrap CIs).",
+        "evidence_test": "Recalculate the split percentages based on the month ranges provided. If the actual split is 12.5% for validation, the hyperparameter tuning set is smaller than claimed, increasing the risk of overfitting to the validation period.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC contains a FATAL flaw regarding label exclusion bias, which invalidates the generalization claim for the full alert stream. Additionally, the use of standard bootstrap for time-series data and the lack of a metadata-only baseline materially weaken the statistical and comparative validity of the results.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Accepted critic ACCEPTs on F2 (DEFER maintained), F4, F5, F6 (resolutions maintained). Contested CHALLENGES on F1 and F3 by strengthening REBUT-SCOPE/DESIGN: F1 scoped to evaluable resolved alerts matching train/deploy distributions for labelable cases (no GT shift possible); F3 baseline directly tests hypothesis of text+context gains (graph/ticket incl. metadata) vs text-only, with ablation dissecting contributions\u2014no metadata-only needed as claim isn't vs 'standard SOC'.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "Critic mischaracterizes as deployment shift, but experiment hypothesis (section 6) explicitly scopes to 'future SOC alerts' with analyst truth (resolved within 30 days across all splits)\u2014matching train/val/test distributions exactly, no survivorship bias within scoped population. Unresolved alerts lack ground truth by design acknowledgment ('partial feedback inevitable'), so cannot be evaluated without speculative labels introducing worse bias; operational ranking on them is out-of-scope, as no 'high-relevance' GT exists to train/test against.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "Standard bootstrap may underestimate variance in autocorrelated test set; quarterly stratification and temporal controls mitigate but do not fully resolve. Settling experiment: compute block-bootstrap (e.g., 1-week blocks) CIs on test set nDCG@10\u2014if standard CIs are 20%+ narrower and exclude block-based mean, critique validated (tighten via blocks); if comparable, design vindicated (autocorrelation negligible for metric).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Baseline deliberately text-only to isolate gains from adding entity graph (relationships incl. metadata like host/IP/rule) + ticket history to text (section 4), directly testing multimodal hypothesis; ablation dropping ticket-history confirms graph independent signal (section 6). No metadata-only baseline needed, as claim isn't superiority over 'standard SOC metadata ranking' but value of multimodal (text+context) over text-only\u2014metadata strength expected/intended in multimodal, not a confound.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "Ticket-history explicitly 'prior 14 days' pre-alert (section 3), verified by 'feature timing audit' ensuring no future info like current ticket (section 6)\u2014directly eliminates leakage loop by construction.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Stratification by quarter is for evaluation/secondary metrics (nDCG stratified by quarter/category, section 4/6) within fixed chrono blocks\u2014no sampling or overlap; preserves temporal integrity while detecting seasonal confounds.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Approximate % error (actual 12.5% val by months) but splits precisely defined by month ranges\u2014does not alter temporal separation, sizes, or overfitting risk.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 (FATAL) rebutted to 4 via scope control and F2 DEFERed to empirical block-bootstrap check, surfacing resolvable ambiguities; all others <=1 with no CONCEDEd high-severity flaws, affirming design soundness pending targeted validation."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-SCOPE \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

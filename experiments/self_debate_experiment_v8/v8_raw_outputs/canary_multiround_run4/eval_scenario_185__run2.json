@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_185",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The relevance labels (high-relevance = escalated/linked to incident within 24h; low-relevance = closed as false positive within 10 business days) accurately reflect analyst-actionable truth and are temporally causal.",
+        "failure_mechanism": "The label construction assumes that analyst escalation or incident linkage within 24 hours is a reliable proxy for true alert relevance. However, SOC analysts may escalate alerts based on heuristics, biases, or incomplete information, leading to false positives in the high-relevance label. Conversely, some true high-relevance alerts may not be escalated within 24 hours due to analyst workload or oversight, resulting in false negatives. The 10-day window for low-relevance labels may also include alerts that are initially dismissed but later escalated, introducing label noise. The temporal causality is violated if the label definition itself depends on analyst actions that are influenced by the same features used by the model (e.g., alert text or entity history), creating a feedback loop.",
+        "evidence_test": "Compare the model's predicted rankings against a gold-standard human audit of a held-out set of alerts, where analysts label relevance independently of escalation actions. Measure the agreement between the constructed labels and the human audit using Cohen's kappa or similar. If agreement is low (e.g., <0.7), the labels are unreliable. Additionally, perform a sensitivity analysis by varying the label definition (e.g., 48-hour escalation window or 5-day false positive window) and observe whether model performance changes significantly.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The entity graph features (host\u2013user\u2013IP\u2013rule relationships from the prior 30 days) and ticket-history features (prior 14 days) are constructed using only pre-alert information and do not leak future information.",
+        "failure_mechanism": "The entity graph and ticket-history features are derived from historical data, but the definition of 'prior' is ambiguous. For example, if an alert is generated at time T, the entity graph includes relationships from T-30 days to T, but the ticket-history features include tickets linked to the same entities in the prior 14 days (T-14 to T). If a ticket is created at time T-1 and resolved at time T+1, it would be included in the ticket-history features for the alert at time T, even though the resolution outcome (a future event) is not directly encoded. However, the ticket's existence at time T may correlate with the alert's relevance, creating a subtle form of leakage. More critically, the ticket-history features include summary statistics like 'mean resolution time,' which implicitly depend on future outcomes (resolution times of tickets created after the alert time T). This violates the temporal causality assumption.",
+        "evidence_test": "Audit the feature construction pipeline to ensure that no feature value at time T depends on events occurring after time T. For ticket-history features, replace summary statistics like 'mean resolution time' with pre-T statistics (e.g., count of open tickets at time T, severity distribution of tickets created before T). Re-train the model and compare performance. If performance drops significantly, the original features were leaking future information. Additionally, perform a temporal holdout test: train the model on data up to time T and evaluate on alerts at time T+1, ensuring no feature values at T+1 are used.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201314 train, 15\u201317 validation, 18\u201324 test) ensures that the model generalizes to future, unseen alerts and measures true deployment performance.",
+        "failure_mechanism": "The temporal split assumes that the distribution of alerts and relevance labels is stationary within each split, but SOC environments are highly non-stationary due to evolving attacker tactics, infrastructure changes, and analyst workflows. The validation and test sets (months 15\u201324) may not represent the true future distribution if the SOC undergoes significant changes (e.g., new alert rules, tooling updates, or organizational shifts) during this period. The 30-day exclusion of unlabeled alerts may also introduce bias if the exclusion rate varies over time (e.g., higher during busy periods). The stratification by quarter mitigates some of this, but it does not guarantee that the test set is representative of future deployment conditions.",
+        "evidence_test": "Perform a distributional shift analysis by comparing the feature distributions and label rates between the training and test sets. Use statistical tests (e.g., Kolmogorov-Smirnov for continuous features, chi-square for categorical) to detect significant differences. If shifts are detected, re-split the data to ensure the test set is drawn from a distribution representative of the intended deployment environment. Alternatively, use a rolling window approach where the test set is drawn from a recent, fixed period (e.g., the last 3 months) to better reflect current conditions.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "nDCG@10 is an appropriate primary metric because SOC analysts review alerts in priority order with limited capacity (~10 alerts per shift), and it aligns with the operational objective.",
+        "failure_mechanism": "nDCG@10 assumes that the top-10 alerts are the only ones analysts will review, but in practice, analysts may review more alerts if the top-10 are ambiguous or if they are following up on previous work. The metric also assumes that the relevance of alerts is binary (high/low), but in reality, relevance may be graded (e.g., critical, high, medium, low). Additionally, nDCG@10 does not account for the cost of false positives (e.g., analyst time wasted reviewing low-relevance alerts) or false negatives (e.g., missed true alerts). The metric may also be sensitive to the choice of k=10; if analysts typically review 15 alerts, nDCG@10 may not reflect the full picture.",
+        "evidence_test": "Complement nDCG@10 with a cost-sensitive metric that incorporates the operational cost of false positives and false negatives (e.g., expected analyst time saved or expected reduction in missed incidents). Additionally, evaluate nDCG@15 or nDCG@20 to check if the model's performance degrades beyond the top-10 window. If the model performs well at k=15 but poorly at k=10, it suggests that the top-10 window is not representative of analyst behavior.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ablation study (dropping ticket-history features) confirms that the entity graph contributes independent signal.",
+        "failure_mechanism": "The ablation study assumes that the contribution of the entity graph features is independent of the ticket-history features, but in reality, the two feature groups may interact. For example, the entity graph may capture relationships between entities, while the ticket-history features capture historical risk associated with those entities. Dropping the ticket-history features may reduce the model's ability to interpret the entity graph features, leading to an underestimation of the entity graph's contribution. The ablation study also does not account for potential redundancy between the two feature groups (e.g., if the entity graph already captures some of the signal in the ticket-history features).",
+        "evidence_test": "Perform a more comprehensive ablation study that includes: (1) a model with only text features, (2) a model with text + entity graph features, (3) a model with text + ticket-history features, and (4) the full model (text + entity graph + ticket-history). Compare the performance of each variant to isolate the contribution of each feature group and their interactions. If the entity graph's contribution is significantly reduced in the absence of ticket-history features, the ablation study's conclusion is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model's performance is consistent across alert categories and quarters, indicating generalization.",
+        "failure_mechanism": "The stratified evaluation by alert category and quarter assumes that the model's performance is uniform across these strata, but in reality, performance may vary due to differences in alert distributions, feature distributions, or label noise. For example, some alert categories may have higher label noise (e.g., due to inconsistent analyst escalation), leading to lower performance. The stratified evaluation does not test whether the model's performance is statistically different across strata, only whether it is above a baseline. Without statistical testing, apparent consistency may be due to chance.",
+        "evidence_test": "Perform a statistical test (e.g., paired t-test or McNemar's test) to compare the model's performance across strata (e.g., alert categories or quarters). If performance differences are statistically significant, investigate the cause (e.g., label noise, feature distribution shifts) and report the results. Additionally, compute confidence intervals for each stratum to quantify uncertainty.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has critical flaws in label construction and feature leakage that invalidate its core claims. The relevance labels are not temporally causal, and the entity graph/ticket-history features may leak future information. These issues are FATAL and must be addressed before the experiment can produce interpretable results. Additional MATERIAL flaws include metric limitations, incomplete ablation studies, and untested distributional assumptions.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims the labels are unreliable proxies and potentially create a feedback loop. However, the design explicitly defines relevance based on 'analyst-actionable truth' (escalation/incident linkage), which is the operational goal of a triage ranker. The feedback loop concern is addressed by the temporal split; the model is trained on past analyst behavior to predict future analyst behavior. The 'gold standard' audit suggested by the critic is outside the scope of a PoC intended to automate existing triage workflows.\n\nF2 claims 'mean resolution time' in ticket history leaks future information. This is a valid point if the resolution time of a ticket created *before* the alert is calculated using the resolution date *after* the alert. However, the design states features are 'audit-checked to ensure no future information... leaks'. If the 'mean resolution time' is calculated based on tickets that were already resolved by time T, there is no leakage. If it includes tickets resolved after T, it is a flaw. I must check if the design provides a specific control. It mentions a 'Feature timing audit' and 'Metadata leakage check'. This is a mitigation, not a total elimination, because the specific calculation of 'mean resolution time' isn't detailed. This warrants a DEFER to clarify the calculation method.\n\nF3 argues that temporal splits don't guarantee generalization due to non-stationarity. This is the exact reason the temporal split was chosen over a random split. The critic's suggestion of a rolling window is a valid alternative for production, but for a PoC, a fixed temporal holdout is the standard rigorous approach. The 'stratified evaluation' by quarter is the design's explicit control for this.\n\nF4 critiques nDCG@10 for assuming a hard cutoff and binary relevance. The design explicitly justifies nDCG@10 based on analyst capacity (~10 alerts/shift). The operational objective is triage efficiency, not perfect global ranking. The secondary metrics (Precision@1/5/10, nDCG@50) address the critic's concerns about the window size and broader quality.\n\nF5 argues the ablation study is too simple. The design uses an ablation to confirm the entity graph contributes 'independent signal' relative to the baseline. While a full 2x2 matrix of features is more comprehensive, the current ablation (Full vs. No-Ticket-History) is sufficient to prove that ticket history adds value. The claim that it 'underestimates' the graph is theoretical and doesn't invalidate the finding that the multimodal model is better than the baseline.\n\nF6 claims stratified evaluation lacks statistical significance tests. The design uses 95% confidence intervals (bootstrap) for the primary results. Applying these to strata is a standard extension. The critic is asking for p-values between strata, which is a refinement, not a material flaw in the PoC's ability to detect major generalization failures.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The goal of the ranker is to support the triage decision point by predicting what analysts will escalate. Using analyst actions as labels is the intended design to mirror operational truth. A 'gold standard' human audit is a different experiment (evaluating ground truth vs. analyst behavior) and is outside the scope of this PoC."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly identifies that 'mean resolution time' could leak future data if the resolution date is after the alert time T. While the design mentions a 'Feature timing audit', it does not specify if the mean is calculated only over already-resolved tickets. To settle this: 1. Audit the SQL/code for the 'mean resolution time' feature. 2. If it uses resolution dates > T, the design is flawed; if it uses only dates <= T, it is sound. 3. The primary conclusion remains valid if the feature is replaced with 'count of resolved tickets' without significant performance loss."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The temporal split is specifically designed to address non-stationarity. The design further controls for this via 'Stratified evaluation' by quarter and 'Temporal distance' (months 1-14 vs 18-24), which directly addresses the critic's concern about distributional shifts."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "nDCG@10 is justified by the operational constraint of analyst capacity (~10 alerts/shift). The design mitigates the 'hard cutoff' concern by including secondary metrics: Precision@1/5/10 and nDCG@50, providing a comprehensive view of the ranking quality."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The ablation study's purpose is to confirm that the added features provide signal over the baseline. While a full combinatorial ablation is more detailed, the current approach is sufficient to validate the hypothesis that multimodal features improve ranking."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The design already employs 95% confidence intervals via bootstrapping. While explicit hypothesis testing between strata (e.g., t-tests) would be a rigorous addition, the current stratified reporting is sufficient for a PoC to detect material performance drops."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were rebutted as design choices or immaterial, but F2 identifies a potential temporal leakage in the 'mean resolution time' feature that cannot be resolved by argument alone and requires a code audit."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal argues that the goal is to predict analyst escalation, not ground truth, and thus labels based on analyst actions are appropriate. While this is a valid operational goal, it does not address the core failure mechanism: the labels may still be noisy or biased due to analyst heuristics, workload, or incomplete information. The rebuttal does not provide any mechanism to mitigate this noise (e.g., auditing label consistency, measuring agreement with a gold standard, or sensitivity analysis). The scope disclaimer ('outside the scope of this PoC') is insufficient because the finding is within scope\u2014the label construction is central to the experiment's validity. The severity adjustment is disproportionate; a FATAL finding reduced to 4 without addressing the mechanism is not justified."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender correctly identifies that the finding hinges on whether 'mean resolution time' is calculated only over resolved tickets with dates <= T. The open question is whether the current implementation meets this criterion. No counter is needed until the audit is completed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal directly addresses the failure mechanism by pointing to the stratified evaluation by quarter and the temporal distance between training and test sets. These design choices are specifically intended to mitigate non-stationarity and distributional shifts. The severity adjustment is proportionate given the mechanistic rebuttal."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal partially addresses the concern by noting the inclusion of secondary metrics (Precision@1/5/10, nDCG@50), which mitigate the 'hard cutoff' issue of nDCG@10. However, it does not address the core failure mechanism: the metric assumes binary relevance and does not account for operational costs (e.g., false positives/negatives) or graded relevance. The rebuttal does not justify why nDCG@10 is sufficient despite these limitations. The severity adjustment is somewhat proportionate but leaves residual concerns about metric validity."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal argues that the ablation study's purpose is to confirm added signal, not to isolate feature contributions, and thus a full combinatorial ablation is unnecessary. However, this does not address the failure mechanism: the ablation study may underestimate the entity graph's contribution due to interactions with ticket-history features or redundancy. The rebuttal does not provide evidence that the current ablation controls for these interactions (e.g., by showing that the entity graph's contribution is robust across different feature combinations). The severity adjustment is disproportionate; a MATERIAL finding reduced to 3 without addressing the mechanism is not justified."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal partially addresses the concern by noting the use of 95% confidence intervals via bootstrapping, which provides some quantification of uncertainty. However, it does not address the core failure mechanism: the lack of statistical testing to compare performance across strata (e.g., alert categories or quarters). The rebuttal acknowledges that explicit hypothesis testing would be rigorous but argues it is unnecessary for a PoC. While this may be true, it leaves residual concerns about whether apparent consistency is due to chance. The severity adjustment is somewhat proportionate but does not fully resolve the concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my position on F3. For F1, I am switching to DEFER because while the design targets analyst behavior, the noise mechanism is an empirical uncertainty. For F2, I maintain the DEFER status as the audit is the only resolution. For F4, I am strengthening the REBUT-DESIGN by linking the binary relevance to the specific label construction logic. For F5, I am switching to DEFER as the interaction effect is a valid empirical question. For F6, I am strengthening the REBUT-IMMATERIAL position based on the bootstrap confidence intervals already in the design.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that predicting analyst behavior is not the same as predicting ground truth, and that analyst noise (heuristics/workload) is a real mechanism. The design includes a 'Label quality audit' to check analyst-disposition consistency, but this only detects inconsistency, not systematic bias. To settle this: 1. Perform a human audit on a random sample of 500 alerts where senior analysts label relevance independently of the original triage action. 2. Calculate Cohen's Kappa between the audit and the constructed labels. 3. If Kappa < 0.6, the labels are noisy; if > 0.6, they are a reliable proxy. 4. The primary conclusion (whether multimodal features improve ranking) remains valid because the noise in analyst labels is expected to affect both the baseline (text-only) and the proposed model equally, preserving the relative performance gain.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The challenge confirms that the resolution depends on the implementation of the 'mean resolution time' feature. As argued in R1, the settling experiment is a code audit of the feature pipeline. If the audit shows resolution dates > T are used, the feature will be replaced with 'count of resolved tickets' (pre-T). The primary conclusion survives because the 'Feature timing audit' is a named control in the design intended to catch this; if one feature is found leaking, it is removed, and the relative gain of the remaining multimodal features is still measurable.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly includes 'Stratified evaluation' by quarter and a 'Temporal distance' control (months 1-14 vs 18-24). These are not generic claims but specific methodology steps designed to detect and measure the impact of the non-stationarity the critic describes.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern about binary relevance is addressed by the label construction logic in Section 1: the labels are explicitly defined by a binary operational outcome (escalated vs. closed as FP). In the context of SOC triage, the primary goal is a binary decision: 'Does this need immediate attention?' Graded relevance is a different operational problem. The 'hard cutoff' is mitigated by the secondary metrics (Precision@1/5/10 and nDCG@50) which provide the requested broader view of the ranking quality.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly identifies that a simple ablation (dropping one group) does not isolate interaction effects or redundancy. To settle this: 1. Implement the four-way combinatorial ablation study suggested by the critic (Text, Text+Graph, Text+Ticket, Text+Graph+Ticket). 2. Compare nDCG@10 across all four. 3. If Text+Graph performs similarly to Text+Graph+Ticket, redundancy is confirmed. 4. The primary conclusion remains valid because the hypothesis is that multimodal ranking *improves* over text-only; whether that improvement is driven by the graph, the tickets, or their interaction does not invalidate the fact that the improvement occurred.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The design specifies 95% confidence intervals via bootstrapping for the test set. In a PoC, overlapping or non-overlapping confidence intervals across strata serve as a practical proxy for statistical significance. While a t-test is more formal, the bootstrap CIs provide the necessary quantification of uncertainty to determine if performance drops are material.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several FATAL and MATERIAL findings (F1, F2, F5) have been moved to DEFER, as the design provides partial controls but requires empirical audits or expanded ablation studies to fully resolve the mechanisms. The remaining findings are either rebutted by design or immaterial."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The relevance labels (high-relevance = escalated/linked to incident within 24h; low-relevance = closed as false positive within 10 business days) accurately reflect analyst-actionable truth and are temporally causal.",
+        "failure_mechanism": "The label construction assumes that analyst escalation or incident linkage within 24 hours is a reliable proxy for true alert relevance. However, SOC analysts may escalate alerts based on heuristics, biases, or incomplete information, leading to false positives in the high-relevance label. Conversely, some true high-relevance alerts may not be escalated within 24 hours due to analyst workload or oversight, resulting in false negatives. The 10-day window for low-relevance labels may also include alerts that are initially dismissed but later escalated, introducing label noise. The temporal causality is violated if the label definition itself depends on analyst actions that are influenced by the same features used by the model (e.g., alert text or entity history), creating a feedback loop.",
+        "evidence_test": "Compare the model's predicted rankings against a gold-standard human audit of a held-out set of alerts, where analysts label relevance independently of escalation actions. Measure the agreement between the constructed labels and the human audit using Cohen's kappa or similar. If agreement is low (e.g., <0.7), the labels are unreliable. Additionally, perform a sensitivity analysis by varying the label definition (e.g., 48-hour escalation window or 5-day false positive window) and observe whether model performance changes significantly.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The entity graph features (host\u2013user\u2013IP\u2013rule relationships from the prior 30 days) and ticket-history features (prior 14 days) are constructed using only pre-alert information and do not leak future information.",
+        "failure_mechanism": "The entity graph and ticket-history features are derived from historical data, but the definition of 'prior' is ambiguous. For example, if an alert is generated at time T, the entity graph includes relationships from T-30 days to T, but the ticket-history features include tickets linked to the same entities in the prior 14 days (T-14 to T). If a ticket is created at time T-1 and resolved at time T+1, it would be included in the ticket-history features for the alert at time T, even though the resolution outcome (a future event) is not directly encoded. However, the ticket's existence at time T may correlate with the alert's relevance, creating a subtle form of leakage. More critically, the ticket-history features include summary statistics like 'mean resolution time,' which implicitly depend on future outcomes (resolution times of tickets created after the alert time T). This violates the temporal causality assumption.",
+        "evidence_test": "Audit the feature construction pipeline to ensure that no feature value at time T depends on events occurring after time T. For ticket-history features, replace summary statistics like 'mean resolution time' with pre-T statistics (e.g., count of open tickets at time T, severity distribution of tickets created before T). Re-train the model and compare performance. If performance drops significantly, the original features were leaking future information. Additionally, perform a temporal holdout test: train the model on data up to time T and evaluate on alerts at time T+1, ensuring no feature values at T+1 are used.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201314 train, 15\u201317 validation, 18\u201324 test) ensures that the model generalizes to future, unseen alerts and measures true deployment performance.",
+        "failure_mechanism": "The temporal split assumes that the distribution of alerts and relevance labels is stationary within each split, but SOC environments are highly non-stationary due to evolving attacker tactics, infrastructure changes, and analyst workflows. The validation and test sets (months 15\u201324) may not represent the true future distribution if the SOC undergoes significant changes (e.g., new alert rules, tooling updates, or organizational shifts) during this period. The 30-day exclusion of unlabeled alerts may also introduce bias if the exclusion rate varies over time (e.g., higher during busy periods). The stratification by quarter mitigates some of this, but it does not guarantee that the test set is representative of future deployment conditions.",
+        "evidence_test": "Perform a distributional shift analysis by comparing the feature distributions and label rates between the training and test sets. Use statistical tests (e.g., Kolmogorov-Smirnov for continuous features, chi-square for categorical) to detect significant differences. If shifts are detected, re-split the data to ensure the test set is drawn from a distribution representative of the intended deployment environment. Alternatively, use a rolling window approach where the test set is drawn from a recent, fixed period (e.g., the last 3 months) to better reflect current conditions.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "nDCG@10 is an appropriate primary metric because SOC analysts review alerts in priority order with limited capacity (~10 alerts per shift), and it aligns with the operational objective.",
+        "failure_mechanism": "nDCG@10 assumes that the top-10 alerts are the only ones analysts will review, but in practice, analysts may review more alerts if the top-10 are ambiguous or if they are following up on previous work. The metric also assumes that the relevance of alerts is binary (high/low), but in reality, relevance may be graded (e.g., critical, high, medium, low). Additionally, nDCG@10 does not account for the cost of false positives (e.g., analyst time wasted reviewing low-relevance alerts) or false negatives (e.g., missed true alerts). The metric may also be sensitive to the choice of k=10; if analysts typically review 15 alerts, nDCG@10 may not reflect the full picture.",
+        "evidence_test": "Complement nDCG@10 with a cost-sensitive metric that incorporates the operational cost of false positives and false negatives (e.g., expected analyst time saved or expected reduction in missed incidents). Additionally, evaluate nDCG@15 or nDCG@20 to check if the model's performance degrades beyond the top-10 window. If the model performs well at k=15 but poorly at k=10, it suggests that the top-10 window is not representative of analyst behavior.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ablation study (dropping ticket-history features) confirms that the entity graph contributes independent signal.",
+        "failure_mechanism": "The ablation study assumes that the contribution of the entity graph features is independent of the ticket-history features, but in reality, the two feature groups may interact. For example, the entity graph may capture relationships between entities, while the ticket-history features capture historical risk associated with those entities. Dropping the ticket-history features may reduce the model's ability to interpret the entity graph features, leading to an underestimation of the entity graph's contribution. The ablation study also does not account for potential redundancy between the two feature groups (e.g., if the entity graph already captures some of the signal in the ticket-history features).",
+        "evidence_test": "Perform a more comprehensive ablation study that includes: (1) a model with only text features, (2) a model with text + entity graph features, (3) a model with text + ticket-history features, and (4) the full model (text + entity graph + ticket-history). Compare the performance of each variant to isolate the contribution of each feature group and their interactions. If the entity graph's contribution is significantly reduced in the absence of ticket-history features, the ablation study's conclusion is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model's performance is consistent across alert categories and quarters, indicating generalization.",
+        "failure_mechanism": "The stratified evaluation by alert category and quarter assumes that the model's performance is uniform across these strata, but in reality, performance may vary due to differences in alert distributions, feature distributions, or label noise. For example, some alert categories may have higher label noise (e.g., due to inconsistent analyst escalation), leading to lower performance. The stratified evaluation does not test whether the model's performance is statistically different across strata, only whether it is above a baseline. Without statistical testing, apparent consistency may be due to chance.",
+        "evidence_test": "Perform a statistical test (e.g., paired t-test or McNemar's test) to compare the model's performance across strata (e.g., alert categories or quarters). If performance differences are statistically significant, investigate the cause (e.g., label noise, feature distribution shifts) and report the results. Additionally, compute confidence intervals for each stratum to quantify uncertainty.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has critical flaws in label construction and feature leakage that invalidate its core claims. The relevance labels are not temporally causal, and the entity graph/ticket-history features may leak future information. These issues are FATAL and must be addressed before the experiment can produce interpretable results. Additional MATERIAL flaws include metric limitations, incomplete ablation studies, and untested distributional assumptions.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my position on F3. For F1, I am switching to DEFER because while the design targets analyst behavior, the noise mechanism is an empirical uncertainty. For F2, I maintain the DEFER status as the audit is the only resolution. For F4, I am strengthening the REBUT-DESIGN by linking the binary relevance to the specific label construction logic. For F5, I am switching to DEFER as the interaction effect is a valid empirical question. For F6, I am strengthening the REBUT-IMMATERIAL position based on the bootstrap confidence intervals already in the design.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct that predicting analyst behavior is not the same as predicting ground truth, and that analyst noise (heuristics/workload) is a real mechanism. The design includes a 'Label quality audit' to check analyst-disposition consistency, but this only detects inconsistency, not systematic bias. To settle this: 1. Perform a human audit on a random sample of 500 alerts where senior analysts label relevance independently of the original triage action. 2. Calculate Cohen's Kappa between the audit and the constructed labels. 3. If Kappa < 0.6, the labels are noisy; if > 0.6, they are a reliable proxy. 4. The primary conclusion (whether multimodal features improve ranking) remains valid because the noise in analyst labels is expected to affect both the baseline (text-only) and the proposed model equally, preserving the relative performance gain.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The challenge confirms that the resolution depends on the implementation of the 'mean resolution time' feature. As argued in R1, the settling experiment is a code audit of the feature pipeline. If the audit shows resolution dates > T are used, the feature will be replaced with 'count of resolved tickets' (pre-T). The primary conclusion survives because the 'Feature timing audit' is a named control in the design intended to catch this; if one feature is found leaking, it is removed, and the relative gain of the remaining multimodal features is still measurable.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly includes 'Stratified evaluation' by quarter and a 'Temporal distance' control (months 1-14 vs 18-24). These are not generic claims but specific methodology steps designed to detect and measure the impact of the non-stationarity the critic describes.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern about binary relevance is addressed by the label construction logic in Section 1: the labels are explicitly defined by a binary operational outcome (escalated vs. closed as FP). In the context of SOC triage, the primary goal is a binary decision: 'Does this need immediate attention?' Graded relevance is a different operational problem. The 'hard cutoff' is mitigated by the secondary metrics (Precision@1/5/10 and nDCG@50) which provide the requested broader view of the ranking quality.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly identifies that a simple ablation (dropping one group) does not isolate interaction effects or redundancy. To settle this: 1. Implement the four-way combinatorial ablation study suggested by the critic (Text, Text+Graph, Text+Ticket, Text+Graph+Ticket). 2. Compare nDCG@10 across all four. 3. If Text+Graph performs similarly to Text+Graph+Ticket, redundancy is confirmed. 4. The primary conclusion remains valid because the hypothesis is that multimodal ranking *improves* over text-only; whether that improvement is driven by the graph, the tickets, or their interaction does not invalidate the fact that the improvement occurred.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The design specifies 95% confidence intervals via bootstrapping for the test set. In a PoC, overlapping or non-overlapping confidence intervals across strata serve as a practical proxy for statistical significance. While a t-test is more formal, the bootstrap CIs provide the necessary quantification of uncertainty to determine if performance drops are material.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several FATAL and MATERIAL findings (F1, F2, F5) have been moved to DEFER, as the design provides partial controls but requires empirical audits or expanded ablation studies to fully resolve the mechanisms. The remaining findings are either rebutted by design or immaterial."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=9, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

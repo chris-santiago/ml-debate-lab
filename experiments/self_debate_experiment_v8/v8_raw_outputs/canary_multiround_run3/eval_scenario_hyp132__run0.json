@@ -1,0 +1,588 @@
+{
+  "case_id": "eval_scenario_hyp132",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The post-hoc audit scanning for response phrases prevents temporal leakage from agent responses into text features.",
+        "failure_mechanism": "The audit is performed AFTER feature extraction and model training. If response phrases have contaminated the ticket body (e.g., agent notes added to the initial description field, or auto-responses concatenated), the model has already learned from this contaminated data. The audit can only detect contamination post-hoc\u2014it cannot prevent it. This is reactive detection, not proactive prevention.",
+        "evidence_test": "Examine the raw ticket body field schema in the source system: Is there a clear separation between customer-initial input and agent-added content? Does the data pipeline enforce extraction at creation timestamp? The audit should be replaced with schema-level guarantees or timestamp filtering, not post-hoc scanning.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Any performance difference between enhanced model and baseline is attributable to text features.",
+        "failure_mechanism": "The baseline uses logistic regression (linear model) while the enhanced model uses a transformer encoder with attention pooling. The architectural difference confounds the comparison\u2014the enhanced model has vastly greater capacity and inductive bias. Performance gains could stem from: (1) text features, (2) non-linear feature interactions enabled by the transformer architecture, (3) better handling of structured metadata through attention, or (4) any combination. Without an ablation that uses the same transformer architecture on metadata-only features, the contribution of text cannot be isolated.",
+        "evidence_test": "Train the transformer architecture on structured metadata features alone (replacing text embeddings with zeros or learned metadata embeddings) and compare to both the baseline and full enhanced model. This three-way comparison isolates text feature contribution from architecture effects.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Customer tier is used as a feature while also being the determinant of SLA target (4h Premium vs 24h Standard).",
+        "failure_mechanism": "The SLA breach label is directly computed from customer tier (Premium \u2192 4h threshold, Standard \u2192 24h threshold). Including customer tier as a feature creates a direct shortcut: the model can learn 'if customer tier = Premium, predict breach' because Premium tickets have stricter SLAs and thus higher breach rates. This inflates baseline performance and dilutes the signal from text features. The text model may learn the same shortcut, masking any value from semantic understanding.",
+        "evidence_test": "Remove customer tier from both baseline and enhanced model features. Re-run the experiment. If baseline PR-AUC drops substantially, tier was carrying the prediction. If enhanced model retains relative gain, text features are providing independent value.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "TF-IDF features (top 500) combined with BERT embeddings (768-dim) provide complementary text representations.",
+        "failure_mechanism": "Using both TF-IDF and BERT in the same model creates feature redundancy and potential overfitting. TF-IDF captures exact word/phrase patterns while BERT captures semantic meaning. If TF-IDF alone achieves similar performance to the full model, the BERT embeddings are not adding value\u2014the experiment conflates 'text features' with 'transformer architecture.' This is particularly problematic because the hypothesis claims to test 'transformer-enhanced' prediction, but TF-IDF is a non-deep-learning baseline that could dominate the signal.",
+        "evidence_test": "Run ablations: (1) BERT embeddings only, (2) TF-IDF only, (3) BERT + TF-IDF. Compare PR-AUC across these conditions. If TF-IDF alone approaches full model performance, the transformer (BERT) component is not providing the claimed enhancement.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 6-month test window (months 31-36) provides a realistic evaluation of deployment performance.",
+        "failure_mechanism": "The experiment uses a single 6-month test window without any analysis of temporal drift. Support ticket patterns, customer behavior, and SLA policies can change over time (product launches, policy changes, seasonal effects). A single contiguous test period cannot distinguish between: (1) model generalizes well, (2) test period happened to be easy, or (3) test period has similar distribution to training. The experiment has no mechanism to detect if performance would degrade over a longer deployment horizon.",
+        "evidence_test": "Split the test window into two 3-month periods (months 31-33 and 34-36). Compare PR-AUC between periods. A significant drop indicates temporal drift. Alternatively, use a rolling evaluation across the test window.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Agent seniority level at assignment is a valid predictive feature.",
+        "failure_mechanism": "Agent assignment is not random\u2014it is a downstream decision that correlates with ticket severity, customer tier, and time of day. If senior agents are systematically assigned to high-risk tickets (either manually or via routing rules), then agent seniority is partially a proxy for 'ticket was flagged as high-priority'\u2014information that may not be available at prediction time. Using this feature assumes the model will have agent assignment at ticket creation, but in production, the model would likely run BEFORE assignment to inform assignment decisions.",
+        "evidence_test": "Analyze the correlation between agent seniority and: (1) ticket severity indicators, (2) customer tier, (3) time of day. Test model performance when agent seniority is excluded. If performance drops significantly, the feature is carrying information that wouldn't be available at inference time in a real deployment.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratified splits within temporal windows ensure minority segments are not lost.",
+        "failure_mechanism": "Stratification by customer tier and channel within each temporal window is good practice, but it does not guarantee that the relationship between features and outcome is stable across time. For example, Free-tier API tickets might have a 5% breach rate in training but 15% in test due to a policy change. Stratification preserves sample sizes but not conditional distributions P(Y|X).",
+        "evidence_test": "Report stratified breach rates (P(Y=1|X)) for each segment across train/val/test. Significant shifts indicate distribution drift that stratification alone does not address.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "BERT embeddings (768 dimensions) with truncation to 512 tokens capture sufficient ticket information.",
+        "failure_mechanism": "Support tickets can contain technical details, error messages, or lengthy descriptions. Truncating to 512 tokens may drop critical information from longer tickets. Additionally, standard BERT is not trained on support ticket data\u2014it may not tokenize domain-specific terms (product names, error codes) effectively. The experiment acknowledges 'domain-pretrained variant' as an option but does not commit to it.",
+        "evidence_test": "Analyze ticket length distribution. Report percentage of tickets truncated. Compare performance with longer context windows (if feasible) or domain-specific tokenizer. A significant portion of truncated tickets (>20%) suggests information loss.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment excludes auto-closed or never-responded tickets to focus on first-response SLA prediction.",
+        "failure_mechanism": "Excluding tickets that never received a response creates a selection bias: the model is trained only on tickets that DID receive a response. In production, the model might be applied to all incoming tickets, including those that will never be responded to. If never-responded tickets have different characteristics (e.g., low-priority, duplicate, customer abandoned), the model's deployment performance may differ from evaluation.",
+        "evidence_test": "Report the exclusion rate and characteristics of excluded tickets. If excluded tickets are systematically different (e.g., high proportion of Free-tier, specific product areas), consider whether the model should predict 'likelihood of receiving any response' as a preliminary filter.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws: (1) post-hoc audit does not prevent temporal leakage from agent responses into text features, (2) architectural confounding prevents attribution of gains to text vs. transformer capacity, and (3) customer tier directly determines SLA thresholds, creating a shortcut that inflates baseline and masks text feature value. These must be addressed before the experiment can produce interpretable results.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Analyzing each finding against the design intent, sections, and controls:\n\nF1 (FATAL 8, signal_leakage): Critic claims post-hoc audit doesn't prevent leakage since it's after extraction/training. Design intent in Feature Engineering: 'all text features are extracted strictly at ticket creation time, before any agent response or internal notes are added.' This is proactive prevention via timestamp-based extraction of the initial customer description field. The audit is a verification step on the curated dataset, not the sole control. Schema separation is implied by 'ticket body (initial customer description)' in Data Curation. No evidence of contamination mechanism surviving timestamp extraction; audit confirms dataset integrity. Fully resolved by design control\u2014no uncertainty.\n\nF2 (FATAL 8, missing_baselines): Critic argues architecture capacity confounds text attribution. Design objective: test if 'transformer model that ingests ticket body text and customer history outperforms a baseline trained on structured metadata alone.' Baseline deliberately Logistic Regression as simple, operational comparator (easy to deploy without text processing). Confound Controls explicitly state 'any gain ... due to text features' under 'equivalent tuning effort' and 'identical preprocessing.' Hypothesis tests full enhancement package (transformer+text) vs status-quo metadata model, not causal decomposition. Ablation nice for interpretability (out-of-scope per Scope section), but not required for primary claim of outperformance. Deliberate choice justified; no flaw.\n\nF3 (FATAL 7, signal_leakage): Critic claims tier as feature shortcuts to label since tier determines SLA threshold/breach rate. Tier is legitimate covariate available at creation (customer metadata), correctly capturing stricter SLAs for Premium (valid signal, not leakage). Model should learn tier-based risk adjustment. No future info used; predicts higher breach probability for Premium legitimately. Confound Controls cover metadata validity implicitly; stratified metrics check segment robustness. Evidence test (remove tier) would hurt both models equally if true signal, preserving relative gains. Resolved by design.\n\nF4 (MATERIAL 6, eval_inflation): Critic notes TF-IDF+BERT redundancy/overfitting, confounding transformer value. Design uses both as complementary (sparse bag-of-words + semantic) in 'enhanced features' for full text signal. Hypothesis tests transformer ingesting text (via BERT/TF-IDF) vs metadata-only; doesn't isolate components. Ablation out-of-scope (Scope: predictive performance only). No evidence TF-IDF dominates (uncertain, but immaterial to primary comparison). Design choice deliberate.\n\nF5 (MATERIAL 5, distribution_shift): Critic wants internal test split for drift. Design uses 6-month chronological test to simulate deployment (Confound Controls: 'Operational drift: ... chronologically separate, reflecting realistic deployment'). Standard PoC practice; single window sufficient for hypothesis (temporal splits prevent leakage). Stratified metrics detect segment drift. Internal split enhancement, not required\u2014magnitude uncertain but below threshold for primary PR-AUC claim.\n\nF6 (MATERIAL 4, unverified_prereqs): Critic notes agent seniority post-assignment, potentially unavailable at prediction, proxy for priority. Design includes as historical feature from 'agent assignment history'; assumes available in retrospective eval (common for lifecycle prediction). But inference timing implicit: at creation for prioritization (first-response breach). No explicit timing control. Correlations exist but legitimate if assignment rapid vs SLA (hours). Genuinely uncertain without data: settling experiment is compute creation-to-assignment time delta distribution vs SLA thresholds. Vindicate if median delta/SLA <0.1 (feature ~available early, symmetric impact); validate critique if >0.3 (majority unavailable, asymmetric if routing uses similar signals); primary conclusion intact if delta small (relative gains preserved). DEFER appropriate.\n\nF7 (MINOR 3, distribution_shift): Stratification preserves margins/sample sizes; doesn't guarantee P(Y|X) stability (true). But design reports 'stratified PR-AUC and recall by ... tier and channel' to surface shifts. Minor, as temporal split primary drift control; reporting mitigates.\n\nF8 (MINOR 2, unverified_prereqs): 512-token truncation standard for BERT; domain variant optional. Ticket lengths likely fit (support desc short); % truncated reportable. Minor edge case, not affecting core hypothesis.\n\nF9 (MINOR 1, synthetic_data_assump): Scope explicitly 'first-response SLA breaches' on responded tickets (Data Curation exclusion). Production may apply broader, but experiment scoped to label availability. Exclusion rate/characteristics reportable; minor bias for focused claim.\n\nOverall: No undeniable flaws; F1-F5,F7-F9 rebutted by design/scope; F6 defers on magnitude (partial control via historical use, but timing unverified). All adjustable to <=3 except potential DEFER; sound methodology holds.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Extraction strictly at ticket creation time (Feature Engineering) eliminates contamination mechanism by construction, using only initial customer description before agent notes; post-hoc audit verifies dataset integrity as secondary check. Timestamp filtering provides schema-level guarantee."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Logistic regression baseline deliberately chosen as simple operational comparator for structured metadata (no text processing needed); Confound Controls justify attribution to text under identical preprocessing/tuning. Hypothesis tests full transformer+text enhancement vs status quo, not architecture isolation (ablation out-of-scope)."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Customer tier is valid creation-time covariate legitimately informing stricter SLA expectations/higher breach rates (not leakage of future info); both models use it symmetrically, preserving relative text gains. Stratified metrics validate segment robustness."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "TF-IDF (sparse patterns) + BERT (semantics) deliberately complementary for robust text representation; hypothesis tests full enhanced text ingestion, not component isolation (Scope: predictive performance only)."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "6-month chronological test simulates realistic deployment (Confound Controls: Operational drift); standard PoC holdout sufficient, with stratified metrics surfacing shifts. Internal split is enhancement, not required."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Timing of agent assignment vs prediction (creation) uncertain; settling experiment: compute creation-to-assignment delta distribution vs tier-specific SLA. Vindicate if median delta/SLA <0.1 (feature available early, symmetric); validate if >0.3 (unavailable, hurts forward validity). Relative conclusion intact if symmetric across models (no text confound)."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Stratification + stratified reporting (metrics section) addresses minority representation/shifts adequately for PoC; P(Y|X) drift minor given temporal controls."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "512-token standard for efficiency; truncation % minor (tickets typically short), domain variant optional\u2014below impact threshold."
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Explicit scope to first-response prediction on responded tickets (Data Curation); exclusion bias immaterial to claim, reportable."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "All findings rebutted to adjusted severity <=4; F6 DEFER requires empirical timing analysis to resolve residual uncertainty, but no CONCEDE on high-severity issues and methodology sound overall."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender reframes the design as having proactive prevention via timestamp filtering at extraction time ('strictly at ticket creation time'), not relying on post-hoc detection. This directly addresses the failure mechanism - if text is extracted at creation time before any agent response exists, there's no contamination to detect. The methodology explicitly states this design."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal is scope-based ('ablation out-of-scope') but doesn't address that the methodology explicitly claims 'any performance difference is attributable to text features' in Confound Controls. The architectural confounding mechanism (gains could come from transformer capacity, not text) remains unresolved. The defender acknowledges the confound exists butdefers to scope rather than addressing it."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender claims tier is 'legitimate' because it's available at creation time, but this doesn't address the shortcut mechanism: tier directly determines the SLA threshold used to compute the breach label. The model can learn 'Premium \u2192 stricter SLA \u2192 higher breach' without text understanding. Symmetry across models doesn't fix the baseline inflation problem that masks text value."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal is scope-based ('not component isolation') but doesn't address the eval_inflation mechanism: the experiment cannot distinguish whether gains come from BERT or TF-IDF. If TF-IDF alone achieves similar performance, the transformer (BERT) component isn't providing the claimed 'transformer-enhanced' value. The mechanism remains unresolved."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender claims the 6-month window is 'sufficient' for PoC but doesn't provide a mechanism to detect temporal drift. The distribution_shift mechanism (cannot distinguish generalization from favorable test period) remains unaddressed. Claiming sufficiency doesn't address the lack of drift detection capability."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "DEFER is appropriate here. The defender acknowledges timing uncertainty and proposes analysis (compute creation-to-assignment delta distribution) to resolve the finding. This is a valid deferral pending empirical validation."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal partially addresses the concern - stratified reporting does help surface segment shifts. However, it doesn't provide a mechanism to detect P(Y|X) drift beyond reporting. The claim that drift is 'minor' is asserted without evidence. Some residual concern remains about conditional distribution stability."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 2,
+        "reasoning": "The defender claims truncation is 'minor (tickets typically short)' but provides no evidence or analysis. This is an unsupported assertion. Without data on ticket length distribution and truncation percentage, the information loss mechanism remains unaddressed."
+      },
+      {
+        "finding_id": "F9",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly identifies this as an explicit scope choice - the experiment scope is 'first-response prediction on responded tickets.' The exclusion is by design in Data Curation, not an oversight. This is a valid scope defense."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Maintained positions on ACCEPTed findings (F1, F6, F9). For CHALLENGED F2, F3, F5: switched to DEFER as methodology provides partial symmetric controls (Confound Controls assert attribution under identical tuning; tier symmetric; chronological split) but lacks full elimination/isolation\u2014empirical ablations/splits needed to settle attribution, shortcut independence, drift magnitude. Strengthened F4 to REBUT-SCOPE (complementary reps in scope), F7 to REBUT-DESIGN (stratified metrics detect shifts), F8 REBUT-IMMATERIAL (domain-standard truncation immaterial). Contesting critic where design mechanistically resolves or scopes out.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Extraction strictly at ticket creation time (Feature Engineering) eliminates contamination mechanism by construction, using only initial customer-submitted description before agent notes; post-hoc audit verifies dataset integrity as secondary check. Timestamp filtering provides schema-level guarantee.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Confound Controls assert text attribution under identical preprocessing/tuning, providing partial symmetric control (both tuned equivalently on val PR-AUC), but architecture capacity unisolated. Settling experiment: ablation training transformer architecture on metadata-only (text embs zeroed/masked). Vindicate design: trans-meta PR-AUC \u2248 LR baseline (arch no gain), full >> both (text drives). Validate critique: trans-meta >> LR and \u2248 full (arch confounds attribution). Primary conclusion (full outperformance vs baseline) remains valid if critique correct: relative PR-AUC delta intact as measures full enhancement package vs operational status quo.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "Tier available at creation (legitimate covariate for SLA expectations), symmetric across models (both use identically), partially mitigates inflation asymmetry, but shortcut unremoved. Settling experiment: remove tier from both models, re-eval test PR-AUC delta. Vindicate: relative gain preserved (text independent value). Validate: baseline drops >> enhanced (tier dominated baseline signal). Primary intact if critique correct: symmetric inflation mechanism leaves relative text contribution unchanged.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "TF-IDF (sparse patterns) + BERT ([CLS] semantics) deliberately complementary for robust text ingestion (Enhanced features); hypothesis/Scope tests full text-enhanced transformer vs metadata baseline predictive performance, not internal text component isolation (ablation out-of-scope). Redundancy/overfitting mitigated by train-fit preprocessing + val tuning; no mechanism for TF-IDF dominance invalidating transformer-text claim.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Chronological 6mo test + stratification (Temporal Split, Confound Controls: Operational drift) partially controls via realistic deployment simulation, but lacks explicit detection. Settling experiment: bisect test (mo31-33 vs 34-36), compare PR-AUC w/ bootstrap. Vindicate: stable perf (generalizes over horizon). Validate: significant drop (drift inflates single-window). Primary intact if critique correct: symmetric drift (both models trained same historical) preserves relative delta via equal degradation.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Timing of agent assignment vs prediction (creation) uncertain; settling experiment: compute creation-to-assignment delta distribution vs tier-specific SLA. Vindicate if median delta/SLA <0.1 (feature available early, symmetric); validate if >0.3 (unavailable, hurts forward validity). Relative conclusion intact if symmetric across models (no text confound).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "Stratified splits + secondary stratified PR-AUC/recall by tier/channel (Evaluation Metrics) directly detect/surface P(Y|X) shifts across time (conditional perf per segment); addresses mechanism beyond sample balance, residual minor for PoC temporal controls.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "512-token truncation standard/efficient for PoC transformer (explicit design); support tickets domain-typically short initial descriptions (customer body text), minor % affected (<20% expected), immaterial info loss vs full context models.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Explicit scope to first-response prediction on responded tickets (Data Curation); exclusion bias immaterial to claim, reportable.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "DEFERs on multiple FATAL/MATERIAL findings (F2, F3, F5, F6) reflect valid design partial mitigations (symmetric confounds, chronological controls) but surface empirical uncertainties on attribution/leakage/drift best resolved by targeted ablations/splits. No CONCEDES; remaining rebuttals reduce other concerns to minor/immaterial."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The post-hoc audit scanning for response phrases prevents temporal leakage from agent responses into text features.",
+        "failure_mechanism": "The audit is performed AFTER feature extraction and model training. If response phrases have contaminated the ticket body (e.g., agent notes added to the initial description field, or auto-responses concatenated), the model has already learned from this contaminated data. The audit can only detect contamination post-hoc\u2014it cannot prevent it. This is reactive detection, not proactive prevention.",
+        "evidence_test": "Examine the raw ticket body field schema in the source system: Is there a clear separation between customer-initial input and agent-added content? Does the data pipeline enforce extraction at creation timestamp? The audit should be replaced with schema-level guarantees or timestamp filtering, not post-hoc scanning.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Any performance difference between enhanced model and baseline is attributable to text features.",
+        "failure_mechanism": "The baseline uses logistic regression (linear model) while the enhanced model uses a transformer encoder with attention pooling. The architectural difference confounds the comparison\u2014the enhanced model has vastly greater capacity and inductive bias. Performance gains could stem from: (1) text features, (2) non-linear feature interactions enabled by the transformer architecture, (3) better handling of structured metadata through attention, or (4) any combination. Without an ablation that uses the same transformer architecture on metadata-only features, the contribution of text cannot be isolated.",
+        "evidence_test": "Train the transformer architecture on structured metadata features alone (replacing text embeddings with zeros or learned metadata embeddings) and compare to both the baseline and full enhanced model. This three-way comparison isolates text feature contribution from architecture effects.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Customer tier is used as a feature while also being the determinant of SLA target (4h Premium vs 24h Standard).",
+        "failure_mechanism": "The SLA breach label is directly computed from customer tier (Premium \u2192 4h threshold, Standard \u2192 24h threshold). Including customer tier as a feature creates a direct shortcut: the model can learn 'if customer tier = Premium, predict breach' because Premium tickets have stricter SLAs and thus higher breach rates. This inflates baseline performance and dilutes the signal from text features. The text model may learn the same shortcut, masking any value from semantic understanding.",
+        "evidence_test": "Remove customer tier from both baseline and enhanced model features. Re-run the experiment. If baseline PR-AUC drops substantially, tier was carrying the prediction. If enhanced model retains relative gain, text features are providing independent value.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "TF-IDF features (top 500) combined with BERT embeddings (768-dim) provide complementary text representations.",
+        "failure_mechanism": "Using both TF-IDF and BERT in the same model creates feature redundancy and potential overfitting. TF-IDF captures exact word/phrase patterns while BERT captures semantic meaning. If TF-IDF alone achieves similar performance to the full model, the BERT embeddings are not adding value\u2014the experiment conflates 'text features' with 'transformer architecture.' This is particularly problematic because the hypothesis claims to test 'transformer-enhanced' prediction, but TF-IDF is a non-deep-learning baseline that could dominate the signal.",
+        "evidence_test": "Run ablations: (1) BERT embeddings only, (2) TF-IDF only, (3) BERT + TF-IDF. Compare PR-AUC across these conditions. If TF-IDF alone approaches full model performance, the transformer (BERT) component is not providing the claimed enhancement.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 6-month test window (months 31-36) provides a realistic evaluation of deployment performance.",
+        "failure_mechanism": "The experiment uses a single 6-month test window without any analysis of temporal drift. Support ticket patterns, customer behavior, and SLA policies can change over time (product launches, policy changes, seasonal effects). A single contiguous test period cannot distinguish between: (1) model generalizes well, (2) test period happened to be easy, or (3) test period has similar distribution to training. The experiment has no mechanism to detect if performance would degrade over a longer deployment horizon.",
+        "evidence_test": "Split the test window into two 3-month periods (months 31-33 and 34-36). Compare PR-AUC between periods. A significant drop indicates temporal drift. Alternatively, use a rolling evaluation across the test window.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Agent seniority level at assignment is a valid predictive feature.",
+        "failure_mechanism": "Agent assignment is not random\u2014it is a downstream decision that correlates with ticket severity, customer tier, and time of day. If senior agents are systematically assigned to high-risk tickets (either manually or via routing rules), then agent seniority is partially a proxy for 'ticket was flagged as high-priority'\u2014information that may not be available at prediction time. Using this feature assumes the model will have agent assignment at ticket creation, but in production, the model would likely run BEFORE assignment to inform assignment decisions.",
+        "evidence_test": "Analyze the correlation between agent seniority and: (1) ticket severity indicators, (2) customer tier, (3) time of day. Test model performance when agent seniority is excluded. If performance drops significantly, the feature is carrying information that wouldn't be available at inference time in a real deployment.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratified splits within temporal windows ensure minority segments are not lost.",
+        "failure_mechanism": "Stratification by customer tier and channel within each temporal window is good practice, but it does not guarantee that the relationship between features and outcome is stable across time. For example, Free-tier API tickets might have a 5% breach rate in training but 15% in test due to a policy change. Stratification preserves sample sizes but not conditional distributions P(Y|X).",
+        "evidence_test": "Report stratified breach rates (P(Y=1|X)) for each segment across train/val/test. Significant shifts indicate distribution drift that stratification alone does not address.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "BERT embeddings (768 dimensions) with truncation to 512 tokens capture sufficient ticket information.",
+        "failure_mechanism": "Support tickets can contain technical details, error messages, or lengthy descriptions. Truncating to 512 tokens may drop critical information from longer tickets. Additionally, standard BERT is not trained on support ticket data\u2014it may not tokenize domain-specific terms (product names, error codes) effectively. The experiment acknowledges 'domain-pretrained variant' as an option but does not commit to it.",
+        "evidence_test": "Analyze ticket length distribution. Report percentage of tickets truncated. Compare performance with longer context windows (if feasible) or domain-specific tokenizer. A significant portion of truncated tickets (>20%) suggests information loss.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment excludes auto-closed or never-responded tickets to focus on first-response SLA prediction.",
+        "failure_mechanism": "Excluding tickets that never received a response creates a selection bias: the model is trained only on tickets that DID receive a response. In production, the model might be applied to all incoming tickets, including those that will never be responded to. If never-responded tickets have different characteristics (e.g., low-priority, duplicate, customer abandoned), the model's deployment performance may differ from evaluation.",
+        "evidence_test": "Report the exclusion rate and characteristics of excluded tickets. If excluded tickets are systematically different (e.g., high proportion of Free-tier, specific product areas), consider whether the model should predict 'likelihood of receiving any response' as a preliminary filter.",
+        "flaw_category": "synthetic_data_assump"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws: (1) post-hoc audit does not prevent temporal leakage from agent responses into text features, (2) architectural confounding prevents attribution of gains to text vs. transformer capacity, and (3) customer tier directly determines SLA thresholds, creating a shortcut that inflates baseline and masks text feature value. These must be addressed before the experiment can produce interpretable results.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Maintained positions on ACCEPTed findings (F1, F6, F9). For CHALLENGED F2, F3, F5: switched to DEFER as methodology provides partial symmetric controls (Confound Controls assert attribution under identical tuning; tier symmetric; chronological split) but lacks full elimination/isolation\u2014empirical ablations/splits needed to settle attribution, shortcut independence, drift magnitude. Strengthened F4 to REBUT-SCOPE (complementary reps in scope), F7 to REBUT-DESIGN (stratified metrics detect shifts), F8 REBUT-IMMATERIAL (domain-standard truncation immaterial). Contesting critic where design mechanistically resolves or scopes out.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Extraction strictly at ticket creation time (Feature Engineering) eliminates contamination mechanism by construction, using only initial customer-submitted description before agent notes; post-hoc audit verifies dataset integrity as secondary check. Timestamp filtering provides schema-level guarantee.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "Confound Controls assert text attribution under identical preprocessing/tuning, providing partial symmetric control (both tuned equivalently on val PR-AUC), but architecture capacity unisolated. Settling experiment: ablation training transformer architecture on metadata-only (text embs zeroed/masked). Vindicate design: trans-meta PR-AUC \u2248 LR baseline (arch no gain), full >> both (text drives). Validate critique: trans-meta >> LR and \u2248 full (arch confounds attribution). Primary conclusion (full outperformance vs baseline) remains valid if critique correct: relative PR-AUC delta intact as measures full enhancement package vs operational status quo.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "Tier available at creation (legitimate covariate for SLA expectations), symmetric across models (both use identically), partially mitigates inflation asymmetry, but shortcut unremoved. Settling experiment: remove tier from both models, re-eval test PR-AUC delta. Vindicate: relative gain preserved (text independent value). Validate: baseline drops >> enhanced (tier dominated baseline signal). Primary intact if critique correct: symmetric inflation mechanism leaves relative text contribution unchanged.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "TF-IDF (sparse patterns) + BERT ([CLS] semantics) deliberately complementary for robust text ingestion (Enhanced features); hypothesis/Scope tests full text-enhanced transformer vs metadata baseline predictive performance, not internal text component isolation (ablation out-of-scope). Redundancy/overfitting mitigated by train-fit preprocessing + val tuning; no mechanism for TF-IDF dominance invalidating transformer-text claim.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Chronological 6mo test + stratification (Temporal Split, Confound Controls: Operational drift) partially controls via realistic deployment simulation, but lacks explicit detection. Settling experiment: bisect test (mo31-33 vs 34-36), compare PR-AUC w/ bootstrap. Vindicate: stable perf (generalizes over horizon). Validate: significant drop (drift inflates single-window). Primary intact if critique correct: symmetric drift (both models trained same historical) preserves relative delta via equal degradation.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Timing of agent assignment vs prediction (creation) uncertain; settling experiment: compute creation-to-assignment delta distribution vs tier-specific SLA. Vindicate if median delta/SLA <0.1 (feature available early, symmetric); validate if >0.3 (unavailable, hurts forward validity). Relative conclusion intact if symmetric across models (no text confound).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "Stratified splits + secondary stratified PR-AUC/recall by tier/channel (Evaluation Metrics) directly detect/surface P(Y|X) shifts across time (conditional perf per segment); addresses mechanism beyond sample balance, residual minor for PoC temporal controls.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "512-token truncation standard/efficient for PoC transformer (explicit design); support tickets domain-typically short initial descriptions (customer body text), minor % affected (<20% expected), immaterial info loss vs full context models.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Explicit scope to first-response prediction on responded tickets (Data Curation); exclusion bias immaterial to claim, reportable.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "DEFERs on multiple FATAL/MATERIAL findings (F2, F3, F5, F6) reflect valid design partial mitigations (symmetric confounds, chronological controls) but surface empirical uncertainties on attribution/leakage/drift best resolved by targeted ablations/splits. No CONCEDES; remaining rebuttals reduce other concerns to minor/immaterial."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=8 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F9",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

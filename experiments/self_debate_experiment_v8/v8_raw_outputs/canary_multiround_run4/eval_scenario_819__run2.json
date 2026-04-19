@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_819",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "nvidia/nemotron-3-super-120b-a12b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The use of a frozen pre-trained biomedical language model (BioBERT/Clinical-BERT) prevents overfitting to the domain and ensures the text signal is purely semantic.",
+        "failure_mechanism": "Clinical-BERT and BioBERT were trained on EHR data (MIMIC-III, etc.) that contains disposition-related language. If the 'frozen' embeddings capture patterns that correlate with the *outcome* of a visit (e.g., specific phrasing used by nurses when they already suspect a patient needs admission) rather than the *clinical state* of the patient, the model may be picking up on 'clinician intuition' or 'implicit labeling' rather than additive clinical signal. More critically, if the pre-training corpus contains data from the same health system or similar institutional templates, the embeddings may encode site-specific shortcuts that act as proxies for admission probability, bypassing the intended clinical reasoning.",
+        "evidence_test": "Perform a 'shuffled text' baseline: replace the triage notes with random notes from the same dataset (preserving note length) and see if the multimodal model still outperforms the baseline. If it does, the model is leveraging metadata/embeddings of the 'style' of admission-prone notes rather than the content.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label is sourced from clinical disposition records independent of the narrative triage note content, preventing the note text from appearing in the label definition.",
+        "failure_mechanism": "This prevents direct target leakage (the label isn't *in* the note), but it does not prevent 'process leakage.' In many ED workflows, triage notes are updated or appended as the patient moves through the system. If the 'triage note' used in the dataset includes any updates made *after* the initial assessment but *before* the final disposition timestamp, the note will contain information that was generated based on the knowledge that the patient is being admitted (e.g., 'Patient awaiting bed in ICU'). The PoC claims notes 'originate at check-in,' but does not specify a mechanism to truncate the note to the exact timestamp of the initial triage event.",
+        "evidence_test": "Compare the timestamp of the last character written in the triage note with the timestamp of the admission decision. Any note with a 'last modified' time after the admission decision must be excluded or truncated. If the AUROC drops significantly after truncation, the original results were driven by leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The multimodal model's performance gain is attributable to the text information, not to differences in model class or tuning.",
+        "failure_mechanism": "The multimodal model is provided with a significantly higher-dimensional feature space (embeddings are typically 768D) compared to the baseline (approx. 30-50 structured features). Gradient Boosted Trees (XGBoost/LightGBM) can behave very differently when the feature count increases by an order of magnitude. The same 'identical search budget' for hyperparameters may be insufficient for the multimodal model, or conversely, the increased dimensionality may allow the model to find spurious correlations (overfitting) that the baseline cannot, which might not generalize despite the temporal split.",
+        "evidence_test": "Run a baseline using a 'random noise' vector of the same dimensionality as the embeddings. If the model with random noise + structured features outperforms the structured-only baseline, the gain is due to model capacity/dimensionality, not text signal.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUROC is a robust metric for identifying high-risk admissions for bed planning.",
+        "failure_mechanism": "AUROC treats all parts of the ROC curve equally. For bed planning, the 'high-sensitivity' region (the left side of the ROC curve) is the only part that matters. A model could have a higher overall AUROC but perform worse at the specific sensitivity threshold required to ensure no high-risk patients are missed, making the primary metric a poor proxy for the operational goal.",
+        "evidence_test": "Compare the models using Partial AUC (pAUC) restricted to a specificity range of 0.8\u20131.0.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC has a strong temporal split strategy, but it is highly vulnerable to 'process leakage' (notes updated after the decision) and 'proxy leakage' (embeddings capturing clinician intuition rather than clinical data). Additionally, the dimensionality mismatch between the baseline and multimodal models may inflate the perceived value of the text signal.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique raises four concerns. F1 questions whether frozen BioBERT/Clinical-BERT embeddings might encode disposition\u2011related language from their pretraining corpora, potentially leaking clinician intuition rather than pure clinical signal. The methodology states the embeddings are frozen and trained on external data, but does not provide a direct control to verify that the embeddings are free of such leakage. F2 alleges process leakage if triage notes are updated after initial assessment but before disposition; the methodology\u2019s Confound Controls explicitly note that triage notes are validated to originate at check\u2011in, before disposition decisions, which directly addresses this mechanism. F3 argues that the high\u2011dimensional embedding space may give the multimodal model an unfair capacity advantage, allowing overfitting or spurious correlations despite identical hyperparameter search budgets. The methodology uses the same model class and validation\u2011set tuning for both models, but does not include a control that isolates the effect of dimensionality. F4 (MINOR) contends that AUROC is a poor proxy for the operational goal of bed planning because it weights all ROC regions equally; the methodology supplements AUROC with secondary metrics such as sensitivity at fixed specificity levels and AUPRC, which directly address the high\u2011sensitivity region of interest.\n\nIn Pass\u202f1 we assess each claim against the design: F2 is mitigated by a stated validation control; F4 is partially addressed by secondary metrics but remains a minor concern about the primary metric; F1 and F3 lack explicit controls and would require empirical tests to rule out the hypothesized leakage or capacity effects.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic\u2019s claim that frozen embeddings may capture disposition\u2011related language from pretraining data is an empirical hypothesis not resolved by the current design. To settle it, a shuffled\u2011text baseline (replacing triage notes with random notes from the same distribution while preserving length) should be run; if the multimodal advantage disappears, the gain is likely due to leakage, otherwise it supports a genuine semantic signal."
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The methodology\u2019s Confound Controls state: \u2018Triage notes are validated to originate at check\u2011in, before disposition decisions, preventing post\u2011hoc leakage.\u2019 This validation directly eliminates the failure mechanism of notes being updated after triage but before disposition, thus addressing the critic\u2019s process\u2011leakage concern."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern that the high\u2011dimensional embedding space confers an unfair capacity advantage, potentially leading to overfitting despite identical hyperparameter search budgets, is not settled by design. An empirical test using a random\u2011noise vector of the same dimensionality as the embeddings (added to the structured features) would reveal whether the observed performance gain stems from the text signal or merely from increased model capacity."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "While AUROC weights all thresholds equally, the study supplements it with secondary metrics (sensitivity at fixed specificity levels, AUPRC, calibration error) that directly evaluate the high\u2011sensitivity region relevant for bed planning. The critic\u2019s point is therefore a minor limitation of the primary metric that does not undermine the overall comparative conclusions."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F3) remain unresolved and require empirical tests (shuffled\u2011text and random\u2011noise baselines) to determine whether the observed multimodal advantage is genuine. No conceded finding has adjusted severity \u22657, and the remaining concerns are either addressed by design or immaterial, warranting agreement to pursue the suggested empirical verification."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 8,
+        "reasoning": "The defender has deferred the finding and accepted the proposed evidence test. No counter-argument was made, so the finding remains as is."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal is generic. The defender cites the claim that notes are 'validated to originate at check-in,' but fails to explain the *mechanism* of this validation. As noted in the original finding, 'originating at check-in' does not preclude subsequent updates or appends to the same note object before the final disposition. Without a specific technical mechanism (e.g., timestamp truncation or versioning control), the process leakage failure mode remains unresolved. The severity reduction from 7 to 3 is disproportionate given the lack of mechanistic detail."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender has deferred the finding and accepted the proposed evidence test. No counter-argument was made, so the finding remains as is."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal is valid. The defender correctly points out that while AUROC is the primary metric, the inclusion of sensitivity at fixed specificity levels as a secondary metric directly addresses the operational requirement for bed planning. This mitigates the risk of the primary metric being a poor proxy for the goal."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted the DEFER positions for F1 and F3, challenged the REBUT-DESIGN claim for F2 (finding the justification insufficiently specific), and accepted the REBUT-IMMATERIAL rebuttal for F4. For F2, the methodology only states that notes are 'validated to originate at check\u2011in' without detailing how this validation prevents post\u2011triage updates, so the design does not fully eliminate the process\u2011leakage mechanism. Consequently, the appropriate response is to concede the flaw rather than overstate a design control.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic\u2019s concern that frozen biomedical embeddings may encode outcome\u2011related or site\u2011specific language from their pre\u2011training corpora is an empirical question not settled by the current design. A shuffled\u2011text control (replacing each triage note with a random note from the same distribution while preserving length) would test whether the multimodal advantage relies on genuine semantic content. If the advantage disappears, the gain is likely due to leakage; if it persists, it supports a true semantic signal.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The methodology asserts that triage notes are 'validated to originate at check\u2011in, before disposition decisions,' but it does not specify a concrete mechanism (e.g., timestamp\u2011based truncation or version control) that guarantees no later modifications are present. Without such detail, the design does not eliminate the process\u2011leakage failure mode; it only mitigates it. Because the flaw could asymmetrically inflate the model\u2019s performance and thus jeopardize the primary AUROC conclusion, the concern must be conceded.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern that the high\u2011dimensional embedding space confers an unfair capacity advantage, potentially leading to overfitting despite identical hyperparameter search budgets, remains an empirical issue. A control experiment that adds a random noise vector of the same dimensionality as the embeddings to the structured\u2011only baseline would reveal whether any observed improvement stems from the text signal or merely from increased model capacity.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "While AUROC treats all thresholds equally, the study supplements it with secondary metrics\u2014sensitivity at fixed specificity levels, AUPRC, and calibration error\u2014that directly evaluate the high\u2011sensitivity region relevant for bed planning. Thus the critic\u2019s point is a minor limitation of the primary metric that does not undermine the overall comparative conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F3) remain as DEFER, indicating genuine uncertainties that require empirical resolution; no finding is fully defended enough to claim victory, and the conceded F2 shows a material flaw that could affect the primary metric."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The use of a frozen pre-trained biomedical language model (BioBERT/Clinical-BERT) prevents overfitting to the domain and ensures the text signal is purely semantic.",
+        "failure_mechanism": "Clinical-BERT and BioBERT were trained on EHR data (MIMIC-III, etc.) that contains disposition-related language. If the 'frozen' embeddings capture patterns that correlate with the *outcome* of a visit (e.g., specific phrasing used by nurses when they already suspect a patient needs admission) rather than the *clinical state* of the patient, the model may be picking up on 'clinician intuition' or 'implicit labeling' rather than additive clinical signal. More critically, if the pre-training corpus contains data from the same health system or similar institutional templates, the embeddings may encode site-specific shortcuts that act as proxies for admission probability, bypassing the intended clinical reasoning.",
+        "evidence_test": "Perform a 'shuffled text' baseline: replace the triage notes with random notes from the same dataset (preserving note length) and see if the multimodal model still outperforms the baseline. If it does, the model is leveraging metadata/embeddings of the 'style' of admission-prone notes rather than the content.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label is sourced from clinical disposition records independent of the narrative triage note content, preventing the note text from appearing in the label definition.",
+        "failure_mechanism": "This prevents direct target leakage (the label isn't *in* the note), but it does not prevent 'process leakage.' In many ED workflows, triage notes are updated or appended as the patient moves through the system. If the 'triage note' used in the dataset includes any updates made *after* the initial assessment but *before* the final disposition timestamp, the note will contain information that was generated based on the knowledge that the patient is being admitted (e.g., 'Patient awaiting bed in ICU'). The PoC claims notes 'originate at check-in,' but does not specify a mechanism to truncate the note to the exact timestamp of the initial triage event.",
+        "evidence_test": "Compare the timestamp of the last character written in the triage note with the timestamp of the admission decision. Any note with a 'last modified' time after the admission decision must be excluded or truncated. If the AUROC drops significantly after truncation, the original results were driven by leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The multimodal model's performance gain is attributable to the text information, not to differences in model class or tuning.",
+        "failure_mechanism": "The multimodal model is provided with a significantly higher-dimensional feature space (embeddings are typically 768D) compared to the baseline (approx. 30-50 structured features). Gradient Boosted Trees (XGBoost/LightGBM) can behave very differently when the feature count increases by an order of magnitude. The same 'identical search budget' for hyperparameters may be insufficient for the multimodal model, or conversely, the increased dimensionality may allow the model to find spurious correlations (overfitting) that the baseline cannot, which might not generalize despite the temporal split.",
+        "evidence_test": "Run a baseline using a 'random noise' vector of the same dimensionality as the embeddings. If the model with random noise + structured features outperforms the structured-only baseline, the gain is due to model capacity/dimensionality, not text signal.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUROC is a robust metric for identifying high-risk admissions for bed planning.",
+        "failure_mechanism": "AUROC treats all parts of the ROC curve equally. For bed planning, the 'high-sensitivity' region (the left side of the ROC curve) is the only part that matters. A model could have a higher overall AUROC but perform worse at the specific sensitivity threshold required to ensure no high-risk patients are missed, making the primary metric a poor proxy for the operational goal.",
+        "evidence_test": "Compare the models using Partial AUC (pAUC) restricted to a specificity range of 0.8\u20131.0.",
+        "flaw_category": "metric_limitations"
+      }
+    ],
+    "summary": "The PoC has a strong temporal split strategy, but it is highly vulnerable to 'process leakage' (notes updated after the decision) and 'proxy leakage' (embeddings capturing clinician intuition rather than clinical data). Additionally, the dimensionality mismatch between the baseline and multimodal models may inflate the perceived value of the text signal.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted the DEFER positions for F1 and F3, challenged the REBUT-DESIGN claim for F2 (finding the justification insufficiently specific), and accepted the REBUT-IMMATERIAL rebuttal for F4. For F2, the methodology only states that notes are 'validated to originate at check\u2011in' without detailing how this validation prevents post\u2011triage updates, so the design does not fully eliminate the process\u2011leakage mechanism. Consequently, the appropriate response is to concede the flaw rather than overstate a design control.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic\u2019s concern that frozen biomedical embeddings may encode outcome\u2011related or site\u2011specific language from their pre\u2011training corpora is an empirical question not settled by the current design. A shuffled\u2011text control (replacing each triage note with a random note from the same distribution while preserving length) would test whether the multimodal advantage relies on genuine semantic content. If the advantage disappears, the gain is likely due to leakage; if it persists, it supports a true semantic signal.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The methodology asserts that triage notes are 'validated to originate at check\u2011in, before disposition decisions,' but it does not specify a concrete mechanism (e.g., timestamp\u2011based truncation or version control) that guarantees no later modifications are present. Without such detail, the design does not eliminate the process\u2011leakage failure mode; it only mitigates it. Because the flaw could asymmetrically inflate the model\u2019s performance and thus jeopardize the primary AUROC conclusion, the concern must be conceded.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern that the high\u2011dimensional embedding space confers an unfair capacity advantage, potentially leading to overfitting despite identical hyperparameter search budgets, remains an empirical issue. A control experiment that adds a random noise vector of the same dimensionality as the embeddings to the structured\u2011only baseline would reveal whether any observed improvement stems from the text signal or merely from increased model capacity.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "While AUROC treats all thresholds equally, the study supplements it with secondary metrics\u2014sensitivity at fixed specificity levels, AUPRC, and calibration error\u2014that directly evaluate the high\u2011sensitivity region relevant for bed planning. Thus the critic\u2019s point is a minor limitation of the primary metric that does not undermine the overall comparative conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F3) remain as DEFER, indicating genuine uncertainties that require empirical resolution; no finding is fully defended enough to claim victory, and the conceded F2 shows a material flaw that could affect the primary metric."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=7 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

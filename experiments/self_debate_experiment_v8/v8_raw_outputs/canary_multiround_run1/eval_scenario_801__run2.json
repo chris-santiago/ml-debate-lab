@@ -1,0 +1,527 @@
+{
+  "case_id": "eval_scenario_801",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "nvidia/nemotron-3-super-120b-a12b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Students with at least one prior term of enrollment history comprise the full population for evaluation.",
+        "failure_mechanism": "First-term students (no prior enrollment) are entirely excluded from the experiment population. If first-term students have different risk profiles, failure patterns, or feature distributions than continuing students, the model is being evaluated on a selected subset. The hypothesis claims to predict 'student failure' but the population excludes a meaningful and potentially higher-risk subgroup.",
+        "evidence_test": "Compare failure rates and feature distributions between first-term and continuing students. Report what fraction of the total student population is first-term and what their failure rate is. If first-term students represent a non-trivial fraction (>10%) with materially different failure rates, the experiment's conclusions do not apply to the full student population.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Stratified split at student-course instance level prevents train-test contamination.",
+        "failure_mechanism": "The split operates at the student-course instance level, not the student level. A single student can appear in training with one course and in test with a different course. Since both the baseline features (prior GPA, total course enrollments) and transformer features (student metadata embeddings) include student identity information encoded through prior academic history, the model can learn student-specific patterns that leak across the split. A student in test whose prior courses appeared in training has their historical patterns partially memorized.",
+        "evidence_test": "Check for student overlap between splits. Report the fraction of test students who have any courses in training. Evaluate whether model performance differs between students with vs without prior courses in the training set. If performance is substantially higher for students with prior courses in training, leakage is occurring.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Course difficulty is inferred from prior-term failure rate for the same course, computed before splitting.",
+        "failure_mechanism": "Course difficulty is computed from the full corpus before split and then used as a feature. When the same course appears in both training and test splits (which is guaranteed since stratification is by course ID), the 'prior-term failure rate' feature for that course includes failure information from the training portion of that course's history. This creates subtle leakage: the course difficulty feature for test courses embeds information from training-term outcomes of those same courses.",
+        "evidence_test": "For each course in the test set, compute the course difficulty feature using only data prior to the test term (i.e., exclude the training-term data for that course). Retrain and re-evaluate. If performance changes materially, the original feature construction was contaminated.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The outcome label 'withdraw before course completion within 14 days of the course end date' represents academic failure.",
+        "failure_mechanism": "Late withdrawals can occur for legitimate non-academic reasons (medical withdrawals, family emergencies, financial issues, transfer to another institution) that are structurally different from academic underperformance. Grouping these with grade-based failures conflates distinct outcome mechanisms. A model trained on this combined label may learn to predict withdrawal for non-academic reasons using different signals than academic failure, and the transformer's sequence advantage may come from modeling a heterogeneous outcome rather than academic performance per se.",
+        "evidence_test": "Separate the label into three categories: (1) grade-based failure, (2) early withdrawal (before last 14 days), (3) late withdrawal. Evaluate transformer vs baseline performance on each subgroup. If transformer advantage is driven entirely by late withdrawals, the claim of improving 'failure prediction' is overstated.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer uses student metadata (prior GPA, enrollment history) as concatenated features alongside sequence output.",
+        "failure_mechanism": "The transformer has access to the same aggregated student-level features as the baseline (prior GPA, total course enrollments), plus the sequence. This means the transformer could achieve similar performance to the baseline on the metadata features alone, with the sequence providing marginal improvement. The claimed advantage of 'sequence modeling' is not isolated from the student metadata that the baseline also uses. The comparison is not strictly transformer vs aggregated features \u2014 it's transformer + student metadata vs baseline + student metadata.",
+        "evidence_test": "Run an ablation: baseline with student metadata vs transformer without student metadata (sequence only). If transformer without metadata outperforms baseline with metadata, then sequence provides genuine value. Otherwise, the improvement may be from having more expressive encoding of metadata rather than from sequence structure.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Performance evaluation separately by course ID and prior enrollment size checks generalization.",
+        "evidence_test": "For each reported subgroup, compute confidence intervals via bootstrap. If any subgroup has fewer than 30 positive cases, flag the estimate as unreliable and exclude from generalization claims.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratification by course ID, term, and failure label preserves course-level failure rates across splits.",
+        "failure_mechanism": "Stratification ensures failure rate preservation but does not account for within-course variation over time. If a course's failure rate drifted substantially across terms (e.g., curriculum changes, different instructors), the stratified split may hold out a term that is systematically different from training terms. The model trained on earlier-term data may not generalize to the drift.",
+        "evidence_test": "Plot failure rate by term for each course. Identify courses with >10% failure rate change between adjacent terms. Evaluate whether model performance is degraded specifically on those terms.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The vocabulary and preprocessing are established from the complete corpus before model fitting.",
+        "failure_mechanism": "Establishing preprocessing from the full corpus before splitting means that rare event tokens observed only in test set are still represented in the vocabulary, but their statistics (e.g., frequency-based smoothing) are derived with knowledge of test data. This is a minor form of leakage \u2014 the preprocessing isn't cheating by seeing labels, but it sees the test distribution's support.",
+        "evidence_test": "Establish vocabulary and preprocessing from training set only. Compare token coverage rates on test set between the two approaches. If the difference is material (>5% unseen tokens), the original approach inflated performance on rare events.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "This PoC has three FATAL flaws: (1) excludes first-term students entirely, biasing the evaluated population; (2) splits at student-course level allowing the same student across train/test splits, enabling identity-based leakage; (3) computes course difficulty from prior-term data that includes training-term information for courses appearing in both splits. Additionally, the outcome label conflates late withdrawals (often non-academic) with grade-based failure, and the transformer baseline comparison is confounded by the transformer also having access to student metadata.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 critiques the exclusion of first\u2011term students, but the methodology explicitly limits the population to students with at least one prior term to ensure sufficient context for baseline and sequence features; this is a deliberate scope choice, not an oversight. F2 argues that splitting at the student\u2011course instance level leaks student\u2011specific patterns, yet the split is intended to balance course\u2011level composition, and the static student metadata used (prior GPA, enrollment history) are not label information; the design does not claim to prevent student\u2011level overlap, so the concern misstates the experiment\u2019s assumptions. F3 claims course\u2011difficulty leakage because the feature is computed from the full corpus before splitting, but the feature is defined as a prior\u2011term failure rate, which by construction excludes the current term; the methodology\u2019s wording makes this intentional, so the critique misunderstands the feature definition. F4 objects to counting late withdrawals as academic failure, but the outcome definition explicitly includes withdrawals within 14 days of course end as part of the failure label; the experiment\u2019s scope is to predict this composite outcome, not pure academic performance, so the critique applies to a different construct. F5 notes that the transformer receives the same student metadata as the baseline, making it impossible to attribute gains solely to sequence without an ablation; the methodology does not include such a control, leaving the question of whether the sequence adds unique value unresolved by argument alone. F6 points out that subgroup performance reports lack confidence intervals and may be unreliable for small samples; the methodology only uses these breakdowns as descriptive checks of generalization, not as statistically rigorous claims, so the critique concerns a stricter evidentiary standard than the study adopts. F7 asserts that stratification by course, term, and label does not guard against within\u2011course term\u2011level failure\u2011rate drift, but stratifying by term ensures each split receives a similar mix of terms for each course, directly addressing temporal variation; the criticism misinterprets the stratification scheme. F8 highlights that building the vocabulary and preprocessing from the full corpus leaks test\u2011set support into the model; the methodology openly adopts this approach to ensure consistent token coverage and feature scaling, accepting the minor trade\u2011off for simplicity, and the critic\u2019s concern is about a known, negligible form of leakage that does not affect labels.\n\nOverall, most criticisms either mischaracterize the design, concern matters outside the stated scope, or describe minor trade\u2011offs already acknowledged. Only F5 raises a genuine unresolved empirical question about whether the transformer\u2019s advantage stems from sequence structure or from richer modeling of the shared metadata, which requires an ablation test to settle.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly limits the population to students with at least one prior term to ensure sufficient context for baseline and sequence features (see \u2018Data and Labeling\u2019 section). This is a deliberate scope choice, not an omission, so the critique applies to a different population than the study evaluates."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The split at the student\u2011course instance level is intended to balance course\u2011level failure rates, term composition, and course ID across splits (see \u2018Split Strategy\u2019). It does not claim to prevent student\u2011level overlap, and the static student metadata used (prior GPA, enrollment history) are not label information, so no leakage of outcome occurs."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Course difficulty is defined as the prior\u2011term failure rate for the same course, which by construction excludes the current term (see \u2018Feature Construction and Preprocessing\u2019). Thus the feature cannot embed test\u2011term outcomes, and the design intentionally avoids this leakage."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The outcome label is defined to include both grade\u2011based failure and withdrawals within 14 days of course end (see \u2018Data and Labeling\u2019). The study\u2019s goal is to predict this composite early\u2011warning outcome, not to isolate purely academic failure, so the critique concerns a different construct than the one evaluated."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Both models receive the same static student metadata (prior GPA, enrollment history). The methodology does not include an ablation that removes metadata from the transformer to isolate the sequence\u2019s contribution, so whether the observed gain stems from sequence structure or from richer metadata modeling remains an open empirical question."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "Subgroup performance breakdowns by course ID and prior enrollment size are presented as descriptive checks of generalization (see \u2018Confound Controls and Scope\u2019). The study does not claim these estimates are statistically reliable or require confidence\u2011interval validation, so the critique applies to a stricter evidentiary standard than the study adopts."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Stratification is defined jointly by course ID, term, and failure label to preserve course\u2011level failure rates and academic\u2011term composition across splits (see \u2018Split Strategy\u2019). This explicitly accounts for term\u2011level variation in failure rates, directly addressing the concern about within\u2011course drift over time."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "Building the vocabulary and preprocessing from the complete corpus ensures consistent token coverage and feature scaling across splits, a standard practice that introduces only a negligible, label\u2011independent form of leakage. The methodology openly adopts this approach (see \u2018Feature Construction and Preprocessing\u2019), and the critic\u2019s claim of material impact is unsupported."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "All findings except F5 have been rebutted to adjusted severity \u2264 3. F5 remains unresolved because the methodology lacks an ablation to isolate the sequence\u2019s contribution from the shared metadata, necessitating an empirical test to settle the question."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The scope justification is valid - the methodology explicitly limits the population to ensure sufficient context for features. However, the claim 'student failure' without qualification is potentially misleading. The finding remains valid: if first-term students represent a non-trivial fraction (>10%) with materially different failure rates, the conclusions don't generalize to the full student population. The scope is reasonable but should be clearly communicated as a limitation rather than implied as universal."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly identifies that prior GPA and enrollment history are not outcome labels - they're historical features that would be legitimately available at prediction time in deployment. Learning student-level patterns from historical academic data is not leakage in the traditional sense. The split ensures course-level composition is balanced, and the student metadata doesn't contain information about the current-term outcome. The concern about 'memorization' conflates learning legitimate student-level risk factors with outcome leakage."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly explains that 'prior-term failure rate' by definition uses the immediately preceding term's data, not the current term. For a course appearing in test in Fall 2023, the course difficulty feature would be based on the prior term's data (e.g., Spring 2023 or Fall 2022), not on Fall 2023 data. This construction intentionally excludes current-term outcomes, so there is no leakage from training-term outcomes into test-term course difficulty features."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The scope justification is valid - the study explicitly aims to predict a composite early-warning outcome (any failure/withdrawal), not purely academic failure. However, the finding still raises a valid concern: if the transformer's advantage comes entirely from modeling late withdrawals (which may have different predictors than academic failure), the claim of improving 'failure prediction' is partially overstated. The defender hasn't addressed whether the sequence provides value specifically for academic failure vs. the composite outcome."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "DEFER is appropriate. The defender correctly acknowledges this is an open empirical question not addressed by the methodology. No challenge needed."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The scope justification is partially valid - the study presents these as descriptive checks, not statistically rigorous estimates. However, the finding's specific concern (flagging estimates with <30 positive cases as unreliable) remains valid. If the study makes any generalization claims based on subgroups with small sample sizes, those claims are unreliable regardless of the study's intent. The defender's scope rebuttal doesn't resolve the reliability issue for small subgroups."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly explains that stratification by term explicitly ensures proportional representation of each term across splits. However, this addresses representation, not temporal drift. The concern was about within-course drift over time (curriculum changes, different instructors) - stratification ensures each term appears proportionally but doesn't prevent the model from being trained on earlier terms and tested on later terms where conditions may have changed. The design addresses balance but not generalization to drifted distributions."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly identifies this as standard practice with negligible impact. Building vocabulary from the full corpus support (without using labels) is a common preprocessing approach that ensures consistent token coverage across splits. The impact is indeed minimal - this is a minor, label-independent form of preprocessing that doesn't materially affect performance comparisons."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "We maintain most of our original rebuttals, strengthening scope arguments where the critic's challenge was partial but the design already addresses the concern. For F4 and F6 we keep scope rebuttals, clarifying that our claims are limited to the defined composite outcome and descriptive subgroup checks, respectively. For F7 we switch to DEFER because temporal drift generalization cannot be resolved by argument alone. F5 remains DEFER as the question of isolated sequence value is empirically open. No findings are conceded.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The study explicitly limits to students with \u22651 prior term to ensure sufficient context for baseline and sequence features. This is a deliberate scope choice; we will clearly state that results apply to continuing students, so the critique about missing first-term students does not invalidate the hypothesis within the defined population.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The split at student-course instance level balances course-level failure rates and term composition. Student metadata (prior GPA, enrollment history) are pre-outcome features available at prediction time; learning patterns from them is not leakage. The critic's concern about memorization conflates legitimate student-level risk factors with outcome leakage, which does not occur.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Course difficulty uses the prior-term failure rate, which by definition excludes the current term. For a test term course, the feature is based on the immediately preceding term, not on any training-term outcomes of that course. Thus there is no leakage from training outcomes into the test course difficulty feature.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The outcome label is a composite early-warning indicator (grade-based failure or withdrawal within 14 days of course end). The study's goal is to predict this composite, not to isolate purely academic failure. Any transformer improvement in predicting this composite is valid; we will clarify in the text that 'failure prediction' refers to the defined composite outcome.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Both models receive identical static student metadata. The methodology does not include an ablation that removes metadata from the transformer to isolate the sequence's contribution, so whether the observed gain stems from sequence structure or richer metadata modeling remains an open empirical question requiring further experiment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "Subgroup performance breakdowns by course ID and prior enrollment size are presented as descriptive checks of generalization, not as statistically rigorous estimates requiring confidence intervals. We do not make generalization claims based on these subgroups, so the concern about small sample sizes does not affect the study's stated aims.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "Stratification by term ensures proportional representation of each term across splits but does not guarantee generalization to drifted distributions (e.g., curriculum changes, instructor turnover). Whether the model generalizes despite such drift is an empirical question that can only be settled by testing on data with known temporal shifts.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "Building vocabulary and preprocessing from the complete corpus ensures consistent token coverage and feature scaling across splits. This is a standard, label-independent practice with negligible impact; the critic's claim of material inflation is unsupported.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "At least one finding (F5, F7) is DEFERred, indicating genuine ambiguity that requires empirical resolution; no finding remains with adjusted severity >3 after rebuttals except the DEFERred ones, which is consistent with an empirical_test_agreed outcome."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Students with at least one prior term of enrollment history comprise the full population for evaluation.",
+        "failure_mechanism": "First-term students (no prior enrollment) are entirely excluded from the experiment population. If first-term students have different risk profiles, failure patterns, or feature distributions than continuing students, the model is being evaluated on a selected subset. The hypothesis claims to predict 'student failure' but the population excludes a meaningful and potentially higher-risk subgroup.",
+        "evidence_test": "Compare failure rates and feature distributions between first-term and continuing students. Report what fraction of the total student population is first-term and what their failure rate is. If first-term students represent a non-trivial fraction (>10%) with materially different failure rates, the experiment's conclusions do not apply to the full student population.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Stratified split at student-course instance level prevents train-test contamination.",
+        "failure_mechanism": "The split operates at the student-course instance level, not the student level. A single student can appear in training with one course and in test with a different course. Since both the baseline features (prior GPA, total course enrollments) and transformer features (student metadata embeddings) include student identity information encoded through prior academic history, the model can learn student-specific patterns that leak across the split. A student in test whose prior courses appeared in training has their historical patterns partially memorized.",
+        "evidence_test": "Check for student overlap between splits. Report the fraction of test students who have any courses in training. Evaluate whether model performance differs between students with vs without prior courses in the training set. If performance is substantially higher for students with prior courses in training, leakage is occurring.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Course difficulty is inferred from prior-term failure rate for the same course, computed before splitting.",
+        "failure_mechanism": "Course difficulty is computed from the full corpus before split and then used as a feature. When the same course appears in both training and test splits (which is guaranteed since stratification is by course ID), the 'prior-term failure rate' feature for that course includes failure information from the training portion of that course's history. This creates subtle leakage: the course difficulty feature for test courses embeds information from training-term outcomes of those same courses.",
+        "evidence_test": "For each course in the test set, compute the course difficulty feature using only data prior to the test term (i.e., exclude the training-term data for that course). Retrain and re-evaluate. If performance changes materially, the original feature construction was contaminated.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The outcome label 'withdraw before course completion within 14 days of the course end date' represents academic failure.",
+        "failure_mechanism": "Late withdrawals can occur for legitimate non-academic reasons (medical withdrawals, family emergencies, financial issues, transfer to another institution) that are structurally different from academic underperformance. Grouping these with grade-based failures conflates distinct outcome mechanisms. A model trained on this combined label may learn to predict withdrawal for non-academic reasons using different signals than academic failure, and the transformer's sequence advantage may come from modeling a heterogeneous outcome rather than academic performance per se.",
+        "evidence_test": "Separate the label into three categories: (1) grade-based failure, (2) early withdrawal (before last 14 days), (3) late withdrawal. Evaluate transformer vs baseline performance on each subgroup. If transformer advantage is driven entirely by late withdrawals, the claim of improving 'failure prediction' is overstated.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer uses student metadata (prior GPA, enrollment history) as concatenated features alongside sequence output.",
+        "failure_mechanism": "The transformer has access to the same aggregated student-level features as the baseline (prior GPA, total course enrollments), plus the sequence. This means the transformer could achieve similar performance to the baseline on the metadata features alone, with the sequence providing marginal improvement. The claimed advantage of 'sequence modeling' is not isolated from the student metadata that the baseline also uses. The comparison is not strictly transformer vs aggregated features \u2014 it's transformer + student metadata vs baseline + student metadata.",
+        "evidence_test": "Run an ablation: baseline with student metadata vs transformer without student metadata (sequence only). If transformer without metadata outperforms baseline with metadata, then sequence provides genuine value. Otherwise, the improvement may be from having more expressive encoding of metadata rather than from sequence structure.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Performance evaluation separately by course ID and prior enrollment size checks generalization.",
+        "evidence_test": "For each reported subgroup, compute confidence intervals via bootstrap. If any subgroup has fewer than 30 positive cases, flag the estimate as unreliable and exclude from generalization claims.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Stratification by course ID, term, and failure label preserves course-level failure rates across splits.",
+        "failure_mechanism": "Stratification ensures failure rate preservation but does not account for within-course variation over time. If a course's failure rate drifted substantially across terms (e.g., curriculum changes, different instructors), the stratified split may hold out a term that is systematically different from training terms. The model trained on earlier-term data may not generalize to the drift.",
+        "evidence_test": "Plot failure rate by term for each course. Identify courses with >10% failure rate change between adjacent terms. Evaluate whether model performance is degraded specifically on those terms.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The vocabulary and preprocessing are established from the complete corpus before model fitting.",
+        "failure_mechanism": "Establishing preprocessing from the full corpus before splitting means that rare event tokens observed only in test set are still represented in the vocabulary, but their statistics (e.g., frequency-based smoothing) are derived with knowledge of test data. This is a minor form of leakage \u2014 the preprocessing isn't cheating by seeing labels, but it sees the test distribution's support.",
+        "evidence_test": "Establish vocabulary and preprocessing from training set only. Compare token coverage rates on test set between the two approaches. If the difference is material (>5% unseen tokens), the original approach inflated performance on rare events.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "This PoC has three FATAL flaws: (1) excludes first-term students entirely, biasing the evaluated population; (2) splits at student-course level allowing the same student across train/test splits, enabling identity-based leakage; (3) computes course difficulty from prior-term data that includes training-term information for courses appearing in both splits. Additionally, the outcome label conflates late withdrawals (often non-academic) with grade-based failure, and the transformer baseline comparison is confounded by the transformer also having access to student metadata.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "We maintain most of our original rebuttals, strengthening scope arguments where the critic's challenge was partial but the design already addresses the concern. For F4 and F6 we keep scope rebuttals, clarifying that our claims are limited to the defined composite outcome and descriptive subgroup checks, respectively. For F7 we switch to DEFER because temporal drift generalization cannot be resolved by argument alone. F5 remains DEFER as the question of isolated sequence value is empirically open. No findings are conceded.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The study explicitly limits to students with \u22651 prior term to ensure sufficient context for baseline and sequence features. This is a deliberate scope choice; we will clearly state that results apply to continuing students, so the critique about missing first-term students does not invalidate the hypothesis within the defined population.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The split at student-course instance level balances course-level failure rates and term composition. Student metadata (prior GPA, enrollment history) are pre-outcome features available at prediction time; learning patterns from them is not leakage. The critic's concern about memorization conflates legitimate student-level risk factors with outcome leakage, which does not occur.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Course difficulty uses the prior-term failure rate, which by definition excludes the current term. For a test term course, the feature is based on the immediately preceding term, not on any training-term outcomes of that course. Thus there is no leakage from training outcomes into the test course difficulty feature.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The outcome label is a composite early-warning indicator (grade-based failure or withdrawal within 14 days of course end). The study's goal is to predict this composite, not to isolate purely academic failure. Any transformer improvement in predicting this composite is valid; we will clarify in the text that 'failure prediction' refers to the defined composite outcome.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Both models receive identical static student metadata. The methodology does not include an ablation that removes metadata from the transformer to isolate the sequence's contribution, so whether the observed gain stems from sequence structure or richer metadata modeling remains an open empirical question requiring further experiment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "Subgroup performance breakdowns by course ID and prior enrollment size are presented as descriptive checks of generalization, not as statistically rigorous estimates requiring confidence intervals. We do not make generalization claims based on these subgroups, so the concern about small sample sizes does not affect the study's stated aims.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "Stratification by term ensures proportional representation of each term across splits but does not guarantee generalization to drifted distributions (e.g., curriculum changes, instructor turnover). Whether the model generalizes despite such drift is an empirical question that can only be settled by testing on data with known temporal shifts.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "Building vocabulary and preprocessing from the complete corpus ensures consistent token coverage and feature scaling across splits. This is a standard, label-independent practice with negligible impact; the critic's claim of material inflation is unsupported.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "At least one finding (F5, F7) is DEFERred, indicating genuine ambiguity that requires empirical resolution; no finding remains with adjusted severity >3 after rebuttals except the DEFERred ones, which is consistent with an empirical_test_agreed outcome."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

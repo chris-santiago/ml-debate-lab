@@ -1,0 +1,352 @@
+{
+  "case_id": "eval_scenario_862",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Training labels are finalized before the end of the training period (Q12).",
+        "failure_mechanism": "Labels are applied with a 1-7 day review lag. Emails arriving in late Q12 will have labels finalized in early Q13. Since the training pipeline runs after data collection, it will access these 'future' labels, allowing the model to learn from information that would not be available at inference time (e.g., analyst confirmation of a campaign that started in Q13).",
+        "evidence_test": "Check the distribution of label finalization timestamps relative to email arrival timestamps for the training set. If any Q12 emails have labels finalized in Q13, the leakage is confirmed.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding uncertain or disputed cases does not affect production performance.",
+        "failure_mechanism": "Production environments contain ambiguous emails that are not filtered out. Training exclusively on 'clean' labels creates a distribution shift where the model is not calibrated to handle uncertainty, potentially leading to overconfidence or poor performance on edge cases in deployment.",
+        "evidence_test": "Evaluate model performance on a held-out set of 'uncertain' cases that were excluded from training. Compare calibration and precision metrics against the 'clean' test set.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Static BPE vocabulary does not hinder novel attack detection.",
+        "failure_mechanism": "A vocabulary fit exclusively on training data will treat new phishing keywords in Q16 as `<unk>`. While subword tokenization mitigates this, significant lexical shifts in attack language will degrade the transformer's ability to learn new patterns compared to a dynamic vocabulary.",
+        "evidence_test": "Measure the Out-of-Vocabulary (OOV) rate of Q16 email text against the training vocabulary. Correlate OOV rate with model performance degradation on new attack vectors.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Bootstrap confidence intervals are valid for temporal data.",
+        "failure_mechanism": "Standard bootstrap assumes independent and identically distributed (IID) samples. Temporal data exhibits autocorrelation (e.g., campaigns persist over weeks). Resampling individual emails breaks this structure, leading to invalid confidence intervals that likely underestimate uncertainty.",
+        "evidence_test": "Compare the width and coverage of the reported bootstrap CIs against a block bootstrap or time-series cross-validation approach.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "1 month of data is sufficient for stable PR-AUC estimation.",
+        "failure_mechanism": "With a 0.1-5% prevalence rate, 1 month of traffic may contain too few positive samples to reliably estimate PR-AUC, especially if the test quarter lacks major campaigns. This leads to high variance in the reported metric.",
+        "evidence_test": "Count the number of positive samples in Q16. If fewer than 1,000, the PR-AUC estimate is statistically unstable.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The experiment design contains a fatal signal leakage issue due to label finalization lag, which invalidates the temporal generalization claim. Additional material concerns regarding evaluation validity and distribution shifts further weaken the conclusions.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "## Pass 1 Analysis\n\n### F1 (FATAL, sev 9): Label Leakage via Review Lag\n**Critic's claim:** Training labels are finalized after the training period ends. Emails arriving in Q12 with labels finalized in Q13 would leak future information into training.\n\n**Analysis:** The methodology states labels have a \"1-7 day review lag\" and splits are chronological (Q1-12 for training). However, there is NO explicit control stating that training data is filtered to emails where BOTH the email arrived in Q1-Q12 AND the label was finalized before the end of Q12. The temporal split is defined by quarter boundaries, but label access is not explicitly bounded by those same boundaries. This is a genuine design gap - the critic correctly identifies that without explicit temporal filtering on label finalization timestamps, the training pipeline could access labels that were finalized after the training period ended.\n\n### F2 (MATERIAL, sev 4): Distribution Shift from Excluding Uncertain Cases\n**Critic's claim:** Excluding uncertain/disputed cases creates distribution shift vs. production where such cases exist.\n\n**Analysis:** The methodology explicitly excludes uncertain cases \"to minimize label noise.\" The critic is correct that this creates a distribution difference from production. However, the experiment's scope is explicitly limited to comparing transformer vs. baseline under controlled conditions. Both models receive identical data, so the comparative conclusion is valid. The \"What this experiment does not establish\" section explicitly excludes deployment considerations. This is a valid production concern but outside the experiment's scope.\n\n### F3 (MINOR, sev 2): Static BPE Vocabulary\n**Critic's claim:** Static vocabulary fitted on training data will OOV novel phishing keywords in test data.\n\n**Analysis:** This is a known limitation of static vocabularies. Subword tokenization mitigates this (novel words split into known subwords). The baseline has no text input at all, so both models don't face identical vocabulary constraints - the transformer has this additional challenge. However, the impact is likely minor for the comparative conclusion.\n\n### F4 (MATERIAL, sev 5): Bootstrap Validity for Temporal Data\n**Critic's claim:** Standard bootstrap assumes IID; temporal data has autocorrelation. Stratified bootstrap by campaign/day may not fully capture this.\n\n**Analysis:** The methodology explicitly uses \"stratified bootstrap... stratifying by campaign or day to respect temporal autocorrelation.\" This is a named control that directly addresses the critic's concern. The critic is correct that block bootstrap would be more robust, but the stratification does partially mitigate the temporal dependence. This is a partial rebuttal - the control exists but may not fully resolve the concern.\n\n### F5 (MATERIAL, sev 5): Insufficient Test Data for Stable PR-AUC\n**Critic's claim:** 1 month of test data at 0.1-5% prevalence may have too few positives for stable PR-AUC.\n\n**Analysis:** This is a valid statistical concern. Without knowing actual email volumes, I cannot verify whether Q16 has sufficient positives. The methodology doesn't specify data volume, so this concern cannot be resolved by argument alone - it requires empirical verification. The critic's evidence_test (count positives in Q16) is the appropriate settling experiment.\n\n## Pass 2: Rebuttal Assignment\n\nF1: CONCEDE - No explicit temporal control on label finalization timestamps.\nF2: REBUT-SCOPE - Valid concern but outside stated experiment scope.\nF3: REBUT-IMMATERIAL - Real but below significance for comparative conclusion.\nF4: REBUT-DESIGN - Named control (stratified bootstrap) partially addresses concern.\nF5: DEFER - Requires empirical verification of positive sample count.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The methodology does not explicitly control for label finalization timestamps. The temporal split is defined by quarter boundaries (Q1-12 for training), but there is no explicit statement that training data is filtered to emails where labels were finalized before the end of Q12. The critic correctly identifies that emails arriving in late Q12 with labels finalized in early Q13 would leak future information into training. This is a genuine signal leakage flaw that would affect the primary evaluation metric if true."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The concern is valid for production deployment but falls outside the experiment's stated scope. The experiment explicitly tests whether transformer text encoding improves over baseline with identical data. Both models train on the same filtered data, so the comparative conclusion is valid. The methodology's 'What this experiment does not establish' section explicitly excludes deployment robustness: 'performance on other email security vendors' data' and 'optimal threshold selection for production deployment' - this concern falls into the same category."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The OOV concern is real but does not materially affect the experiment's comparative conclusion. Subword tokenization mitigates OOV issues by splitting novel words into known subwords. The baseline receives no raw text at all, so both models do not face identical constraints - the transformer has this additional challenge while the baseline has the advantage of explicit feature engineering. The relative comparison remains valid."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly uses 'stratified bootstrap over 1000 resamples, stratifying by campaign or day to respect temporal autocorrelation.' This is a named control that directly addresses the critic's concern about temporal autocorrelation. While block bootstrap would be more robust, the stratification partially mitigates the IID assumption violation. The adjusted severity reflects that the control exists and addresses the concern, though not perfectly."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern is valid in principle but cannot be resolved by argument alone. The evidence_test requires counting positive samples in Q16 to determine if PR-AUC estimation is stable. Without knowing actual email volumes in the test quarter, this question is empirically unresolvable. The settling experiment is to count positives in Q16 - if fewer than ~1000 positives, the concern is valid; if more, the concern is mitigated. The design does not control for test set size, so this remains a genuine empirical uncertainty."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Finding F1 (label leakage via review lag) was CONCEDED and remains at adjusted severity 9, which is above the threshold of 3. This is a FATAL finding that materially affects the primary evaluation metric. Per the calibration rules, when a FATAL finding is CONCEDED and remains above adjusted severity 3, the verdict is critique_wins."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "The defender explicitly conceded the signal leakage flaw, acknowledging that the methodology does not filter by label finalization timestamp. This is a valid resolution of the adversarial process for this finding (the finding stands). The severity remains FATAL as the leakage would invalidate the evaluation if unaddressed."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The scope argument protects the *comparative* validity but not the *absolute* validity of the performance claims. The finding highlights a distribution shift (clean vs. uncertain) that impacts the model's utility in production (where uncertainty exists). Reducing severity to 0 ignores the risk of deploying a model trained on 'clean' data to 'messy' production. The finding is within scope as it questions the generalizability of the 'Phishing Detection' claim, which is central to the hypothesis."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "Subword tokenization is a standard and effective mitigation for OOV issues in BPE vocabularies. The defender correctly identifies that the relative comparison remains valid despite the transformer's additional challenge. The severity reduction is proportional to the residual risk."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "Stratification by campaign/day mitigates autocorrelation but does not fully resolve the IID assumption violation. Resampling emails within strata still ignores temporal dependencies within campaigns/days. The severity reduction to 2 is disproportionate; the risk remains MATERIAL."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender correctly identifies that empirical verification is required to resolve this uncertainty. The finding remains valid as an open risk pending data volume confirmation. Severity remains unchanged."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I accept the critic's challenges on F2 and F4. For F2, I maintain REBUT-SCOPE but acknowledge the production concern is legitimate - the comparative experiment remains valid. For F4, I recognize stratification is a partial mitigation that doesn't fully resolve temporal autocorrelation, so I switch to DEFER with the block bootstrap as the settling experiment. F1, F3, and F5 are maintained as originally argued.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The methodology does not filter training data by label finalization timestamp. Emails arriving in late Q12 with labels finalized in early Q13 would leak future information into training. This is a genuine signal leakage flaw that would invalidate the evaluation if unaddressed. No design control exists in the methodology to prevent this.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The experiment explicitly compares transformer vs. baseline on identical filtered data - the comparative conclusion is valid within this scope. The critic correctly notes production concerns about uncertain cases, but this falls under 'what the experiment does not establish' alongside other deployment factors. The experiment tests whether learned text representations improve over hand-engineered features, not whether either model handles ambiguous cases in production. The comparative validity holds.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "Subword tokenization effectively mitigates OOV issues by splitting novel words into known subwords. The baseline receives no raw text, so the transformer has this additional challenge while the baseline has explicit feature engineering advantages. The relative comparison remains valid.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Stratification by campaign/day partially mitigates temporal autocorrelation but does not fully resolve the IID assumption violation - resampling emails within strata still breaks temporal dependencies. The settling experiment is block bootstrap or time-series cross-validation: if block bootstrap CIs are substantially wider, the current CIs underestimate uncertainty. However, the primary comparative conclusion (PR-AUC ranking) survives because both models face identical CI inflation - the relative comparison remains valid even if absolute uncertainty is underestimated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern is valid in principle but empirically unresolvable by argument alone. The settling experiment is counting positive samples in Q16 - if fewer than ~1000, PR-AUC estimation is unstable; if more, the concern is mitigated. The design does not control for test set size.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 remains FATAL (conceded signal leakage). F4 is DEFERRED - the design has partial mitigation (stratification) but cannot fully resolve temporal autocorrelation without block bootstrap. F5 is DEFERRED pending positive sample count. These deferrals represent genuine empirical uncertainties that the experiment should test. The comparative experiment design is sound for F2/F3, but F1 is a conceded fatal flaw requiring methodology revision."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Training labels are finalized before the end of the training period (Q12).",
+        "failure_mechanism": "Labels are applied with a 1-7 day review lag. Emails arriving in late Q12 will have labels finalized in early Q13. Since the training pipeline runs after data collection, it will access these 'future' labels, allowing the model to learn from information that would not be available at inference time (e.g., analyst confirmation of a campaign that started in Q13).",
+        "evidence_test": "Check the distribution of label finalization timestamps relative to email arrival timestamps for the training set. If any Q12 emails have labels finalized in Q13, the leakage is confirmed.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Excluding uncertain or disputed cases does not affect production performance.",
+        "failure_mechanism": "Production environments contain ambiguous emails that are not filtered out. Training exclusively on 'clean' labels creates a distribution shift where the model is not calibrated to handle uncertainty, potentially leading to overconfidence or poor performance on edge cases in deployment.",
+        "evidence_test": "Evaluate model performance on a held-out set of 'uncertain' cases that were excluded from training. Compare calibration and precision metrics against the 'clean' test set.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Static BPE vocabulary does not hinder novel attack detection.",
+        "failure_mechanism": "A vocabulary fit exclusively on training data will treat new phishing keywords in Q16 as `<unk>`. While subword tokenization mitigates this, significant lexical shifts in attack language will degrade the transformer's ability to learn new patterns compared to a dynamic vocabulary.",
+        "evidence_test": "Measure the Out-of-Vocabulary (OOV) rate of Q16 email text against the training vocabulary. Correlate OOV rate with model performance degradation on new attack vectors.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Bootstrap confidence intervals are valid for temporal data.",
+        "failure_mechanism": "Standard bootstrap assumes independent and identically distributed (IID) samples. Temporal data exhibits autocorrelation (e.g., campaigns persist over weeks). Resampling individual emails breaks this structure, leading to invalid confidence intervals that likely underestimate uncertainty.",
+        "evidence_test": "Compare the width and coverage of the reported bootstrap CIs against a block bootstrap or time-series cross-validation approach.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "1 month of data is sufficient for stable PR-AUC estimation.",
+        "failure_mechanism": "With a 0.1-5% prevalence rate, 1 month of traffic may contain too few positive samples to reliably estimate PR-AUC, especially if the test quarter lacks major campaigns. This leads to high variance in the reported metric.",
+        "evidence_test": "Count the number of positive samples in Q16. If fewer than 1,000, the PR-AUC estimate is statistically unstable.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The experiment design contains a fatal signal leakage issue due to label finalization lag, which invalidates the temporal generalization claim. Additional material concerns regarding evaluation validity and distribution shifts further weaken the conclusions.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I accept the critic's challenges on F2 and F4. For F2, I maintain REBUT-SCOPE but acknowledge the production concern is legitimate - the comparative experiment remains valid. For F4, I recognize stratification is a partial mitigation that doesn't fully resolve temporal autocorrelation, so I switch to DEFER with the block bootstrap as the settling experiment. F1, F3, and F5 are maintained as originally argued.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The methodology does not filter training data by label finalization timestamp. Emails arriving in late Q12 with labels finalized in early Q13 would leak future information into training. This is a genuine signal leakage flaw that would invalidate the evaluation if unaddressed. No design control exists in the methodology to prevent this.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The experiment explicitly compares transformer vs. baseline on identical filtered data - the comparative conclusion is valid within this scope. The critic correctly notes production concerns about uncertain cases, but this falls under 'what the experiment does not establish' alongside other deployment factors. The experiment tests whether learned text representations improve over hand-engineered features, not whether either model handles ambiguous cases in production. The comparative validity holds.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "Subword tokenization effectively mitigates OOV issues by splitting novel words into known subwords. The baseline receives no raw text, so the transformer has this additional challenge while the baseline has explicit feature engineering advantages. The relative comparison remains valid.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "Stratification by campaign/day partially mitigates temporal autocorrelation but does not fully resolve the IID assumption violation - resampling emails within strata still breaks temporal dependencies. The settling experiment is block bootstrap or time-series cross-validation: if block bootstrap CIs are substantially wider, the current CIs underestimate uncertainty. However, the primary comparative conclusion (PR-AUC ranking) survives because both models face identical CI inflation - the relative comparison remains valid even if absolute uncertainty is underestimated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The concern is valid in principle but empirically unresolvable by argument alone. The settling experiment is counting positive samples in Q16 - if fewer than ~1000, PR-AUC estimation is unstable; if more, the concern is mitigated. The design does not control for test set size.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 remains FATAL (conceded signal leakage). F4 is DEFERRED - the design has partial mitigation (stratification) but cannot fully resolve temporal autocorrelation without block bootstrap. F5 is DEFERRED pending positive sample count. These deferrals represent genuine empirical uncertainties that the experiment should test. The comparative experiment design is sound for F2/F3, but F1 is a conceded fatal flaw requiring methodology revision."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

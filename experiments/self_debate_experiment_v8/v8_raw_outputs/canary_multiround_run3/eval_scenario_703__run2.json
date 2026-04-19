@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_703",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Free-text is screened to exclude outcome-predictive language (e.g., 'poor prognosis', 'comfort care') to prevent leakage.",
+        "failure_mechanism": "The PoC relies on a keyword-based or manual screening process to remove 'outcome-predictive language'. In clinical notes, prognosis is often encoded implicitly through linguistic shifts, specific medication orders (e.g., 'morphine drip for comfort'), or changes in the frequency and tone of nursing notes. A simple screen for phrases like 'poor prognosis' will fail to capture the vast majority of 'leakage' signals where the clinician has already effectively decided the patient is terminal, which the transformer model will easily pick up as a high-weight feature for mortality.",
+        "evidence_test": "Perform a feature importance analysis (e.g., SHAP or Integrated Gradients) on the note embeddings. If the model's highest-weighted tokens are related to palliative care, end-of-life discussions, or 'comfort measures' that bypassed the screen, the model is predicting the clinician's decision to stop treatment rather than the patient's physiological risk of mortality.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts 30-day in-hospital mortality while respecting censoring at discharge.",
+        "failure_mechanism": "There is a fundamental misalignment between the target (30-day mortality) and the censoring mechanism (discharge). If a patient is discharged on day 5 and dies on day 15, they are 'censored' at day 5 in a standard survival model. However, the hypothesis claims to predict '30-day mortality'. By censoring at discharge, the model is actually predicting 'mortality while in the ICU', not '30-day mortality'. Patients who are 'too sick to discharge' stay in the ICU and are more likely to die, while those who are 'stable enough to discharge' are censored. This creates a selection bias where the model learns to distinguish between 'dischargeable' and 'non-dischargeable' patients rather than 'survivors' and 'non-survivors'.",
+        "evidence_test": "Compare the model's C-index on a dataset where the outcome is strictly binary (died within 30 days vs. survived 30 days, regardless of discharge) versus the current survival-censored approach. If the performance drops significantly or the calibration shifts, the model is leveraging discharge status as a proxy for mortality.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Note embeddings are pooled (e.g., mean pooling across all notes) to create a single representation.",
+        "failure_mechanism": "Mean pooling across 72 hours of notes washes out the temporal trajectory of the patient. In ICU settings, the *change* in clinical status (e.g., a patient deteriorating from 'stable' to 'critical' over 48 hours) is the primary signal for mortality. Mean pooling treats a patient who improved as equivalent to a patient who declined if their average state was the same. This ignores the prerequisite that the model must capture the 'trend' of the patient's condition to provide value over static structured features.",
+        "evidence_test": "Compare the mean-pooled model against a model that uses a Recurrent Neural Network (RNN) or Transformer to process notes in chronological order. If the sequential model significantly outperforms the pooled model, the pooling strategy is suppressing the primary signal the hypothesis intends to capture.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Z-score normalization is fit on the training set only and applied to validation and test.",
+        "failure_mechanism": "While the process is correct, z-score normalization is highly sensitive to outliers, which are common in ICU lab data (e.g., extreme lactate levels). A few extreme outliers in the training set can squash the variance of the majority of the data, reducing the signal-to-noise ratio for the gradient-boosted model, although XGBoost is generally robust to this.",
+        "evidence_test": "Compare z-score normalization against robust scaling (using medians and IQRs). If the C-index improves, the current normalization is distorting the feature distribution.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC suffers from two fatal flaws: significant potential for signal leakage via implicit clinical prognosis in notes and a misalignment between the 30-day mortality objective and the discharge-based censoring mechanism. Additionally, the use of mean pooling likely destroys the temporal signal critical for ICU mortality prediction.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL 8): The critique claims the screening for outcome-predictive language is insufficient and that the model will predict clinician decisions (e.g., 'comfort care') rather than physiological risk, constituting leakage. However, the methodology defines the target as '30-day in-hospital mortality' using notes as a clinical record. 'Comfort care' decisions documented in the first 72 hours are valid clinical features available at prediction time, not leakage of the future outcome (death). The critique conflates 'clinical decision' with 'outcome leakage.' The screening removes explicit outcome mentions (e.g., 'patient died'), not clinical decisions. This is a factual error in the critique's premise regarding what constitutes leakage in this context.\n\nF2 (FATAL 7): The critique claims the model predicts '30-day mortality' but uses censoring at discharge, creating bias. The methodology explicitly defines the outcome as '30-day in-hospital mortality.' If a patient is discharged, they are no longer 'in-hospital,' so censoring at discharge is the correct handling for this specific outcome definition. The critique misstates the target variable defined in the methodology, making its claim about misalignment factually incorrect.\n\nF3 (MATERIAL 5): The critique argues mean pooling washes out temporal trajectory and a sequential model is needed. The PoC scope is to establish whether note embeddings add value over structured data, not to optimize the NLP architecture. Mean pooling is a valid simplification for this hypothesis test. The critique's suggestion for an RNN/Transformer is valid for an architecture study but outside the scope of the current experiment.\n\nF4 (MINOR 2): The critique claims z-score normalization is sensitive to outliers and robust scaling might be better. This is a standard feature engineering choice. XGBoost is robust to scaling, and this is unlikely to affect the primary conclusion about note value. It is a minor implementation detail below the significance threshold for the experiment's conclusions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critique claims 'comfort care' text is leakage of the outcome. This is factually incorrect; clinical decisions documented in the 72h window are valid features, not leakage of the future outcome (death). The screening removes explicit outcome mentions, not clinical decisions. The critique misidentifies the nature of the signal."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critique claims the hypothesis targets '30-day mortality'. The methodology explicitly defines the outcome as '30-day in-hospital mortality'. Censoring at discharge is correct for this definition, as patients discharged are no longer 'in-hospital'. The critique misstates the target variable."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critique argues for sequential modeling. This is valid for an architecture optimization study, but the PoC scope is to establish if note embeddings add value over structured data, not to optimize the NLP architecture. Mean pooling is a valid simplification for this hypothesis test."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "While z-score is sensitive to outliers, XGBoost is robust to scaling. This is unlikely to affect the primary conclusion about note value. It is a minor implementation detail below the significance threshold for the experiment's conclusions."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have adjusted severity \u2264 3 after rebuttal (F1: 3, F2: 2, F3: 1, F4: 0), satisfying the EXONERATE condition for defense_wins. The critique's claims are either factually incorrect regarding the methodology or outside the experiment's scope."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender's rebuttal fundamentally misunderstands the concept of target leakage in clinical prediction. While a 'clinical decision' is a real-world event, if that decision (e.g., transitioning to comfort care) is a direct proxy for the clinician's certainty that the patient will die, the model is no longer predicting mortality based on physiological risk, but is instead predicting the clinician's prognosis. This is the definition of leakage in this context. The argument that it is a 'valid feature' does not resolve the mechanism: the model will likely achieve high performance by simply detecting 'comfort care' signals, thereby masking whether the note embeddings provide any actual predictive value regarding the patient's condition."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender relies on a semantic distinction ('in-hospital') to dismiss a structural flaw in the survival analysis. The failure mechanism is that 'discharge' is not an independent censoring event; it is strongly correlated with the outcome. Patients who are discharged are systematically healthier than those who remain. By censoring at discharge, the model is trained on a biased sample of 'non-dischargeable' patients. The rebuttal fails to address how the model avoids learning 'probability of being too sick to leave the hospital' as a proxy for 'probability of death', which is the core of the original finding."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender is correct that a PoC does not need the most optimized architecture. However, the finding was not about 'optimization' but about 'signal erasure'. If the primary value of notes is the temporal trajectory (deterioration), mean pooling may destroy the very signal the experiment is trying to prove exists. While I accept that a simple baseline is appropriate for a PoC, the risk of a False Negative (concluding notes aren't useful because the pooling was too aggressive) remains. I reduce severity but maintain a residual concern."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender is correct; XGBoost is invariant to monotonic transformations of features, and z-score normalization is unlikely to impact the results of a GBDT-based model. The concern is immaterial."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 and F3 are deferred to empirical resolution due to genuine uncertainty regarding screening efficacy against implicit signals and potential signal erasure from mean pooling. F2 is strengthened to REBUT-SCOPE based on explicit methodology text defining the outcome as 'in-hospital mortality', which validates the censoring strategy for that specific scope. F4 is maintained as the critic accepted the R1 argument regarding XGBoost robustness.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The screening mechanism's efficacy against implicit 'comfort care' signals is uncertain; keyword screens may not capture linguistic shifts. 1) Settling Experiment: Feature importance analysis (SHAP/IG) on note embeddings to identify highest-weighted tokens. 2) Vindication: If tokens are physiological (e.g., 'hypotension', 'tachycardia'), the design is sound. 3) Validation: If tokens are palliative (e.g., 'comfort measures', 'morphine'), the model predicts clinician decision. 4) Conclusion Survival: The primary conclusion (Notes > Structured) survives regardless of signal source, as structured data lacks text entirely; the comparison remains valid even if the *interpretation* of the signal shifts from physiology to decision-making.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly scopes the claim to 'in-hospital mortality' (Section 8: 'Performance claims are scoped to the 30-day window, in-hospital mortality outcome'). Censoring at discharge is methodologically correct for this specific scope, as patients discharged are no longer at risk of 'in-hospital' death. The critique assumes a general '30-day mortality' scope, which contradicts the stated methodology. The design eliminates the concern by strictly adhering to the 'in-hospital' definition.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Mean pooling may erase the temporal trajectory signal (deterioration) which is critical for mortality prediction. 1) Settling Experiment: Compare mean-pooled model against a sequential model (RNN/Transformer) processing notes chronologically. 2) Vindication: Sequential model significantly outperforms mean-pooled, confirming temporal signal importance. 3) Validation: Mean-pooled performs similarly, confirming static content suffices. 4) Conclusion Survival: The primary conclusion (Notes > Structured) likely survives even if temporal signal is lost, as static narrative content (diagnosis, severity mentions) may still add value over structured data alone.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the R1 argument that XGBoost is invariant to monotonic transformations. Z-score normalization is unlikely to impact the results of a GBDT-based model. The concern is immaterial to the primary conclusion.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1, F3) are deferred to empirical resolution, indicating genuine uncertainty regarding signal leakage and temporal modeling that requires experimental validation. The remaining findings are resolved below the material threshold."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Free-text is screened to exclude outcome-predictive language (e.g., 'poor prognosis', 'comfort care') to prevent leakage.",
+        "failure_mechanism": "The PoC relies on a keyword-based or manual screening process to remove 'outcome-predictive language'. In clinical notes, prognosis is often encoded implicitly through linguistic shifts, specific medication orders (e.g., 'morphine drip for comfort'), or changes in the frequency and tone of nursing notes. A simple screen for phrases like 'poor prognosis' will fail to capture the vast majority of 'leakage' signals where the clinician has already effectively decided the patient is terminal, which the transformer model will easily pick up as a high-weight feature for mortality.",
+        "evidence_test": "Perform a feature importance analysis (e.g., SHAP or Integrated Gradients) on the note embeddings. If the model's highest-weighted tokens are related to palliative care, end-of-life discussions, or 'comfort measures' that bypassed the screen, the model is predicting the clinician's decision to stop treatment rather than the patient's physiological risk of mortality.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts 30-day in-hospital mortality while respecting censoring at discharge.",
+        "failure_mechanism": "There is a fundamental misalignment between the target (30-day mortality) and the censoring mechanism (discharge). If a patient is discharged on day 5 and dies on day 15, they are 'censored' at day 5 in a standard survival model. However, the hypothesis claims to predict '30-day mortality'. By censoring at discharge, the model is actually predicting 'mortality while in the ICU', not '30-day mortality'. Patients who are 'too sick to discharge' stay in the ICU and are more likely to die, while those who are 'stable enough to discharge' are censored. This creates a selection bias where the model learns to distinguish between 'dischargeable' and 'non-dischargeable' patients rather than 'survivors' and 'non-survivors'.",
+        "evidence_test": "Compare the model's C-index on a dataset where the outcome is strictly binary (died within 30 days vs. survived 30 days, regardless of discharge) versus the current survival-censored approach. If the performance drops significantly or the calibration shifts, the model is leveraging discharge status as a proxy for mortality.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Note embeddings are pooled (e.g., mean pooling across all notes) to create a single representation.",
+        "failure_mechanism": "Mean pooling across 72 hours of notes washes out the temporal trajectory of the patient. In ICU settings, the *change* in clinical status (e.g., a patient deteriorating from 'stable' to 'critical' over 48 hours) is the primary signal for mortality. Mean pooling treats a patient who improved as equivalent to a patient who declined if their average state was the same. This ignores the prerequisite that the model must capture the 'trend' of the patient's condition to provide value over static structured features.",
+        "evidence_test": "Compare the mean-pooled model against a model that uses a Recurrent Neural Network (RNN) or Transformer to process notes in chronological order. If the sequential model significantly outperforms the pooled model, the pooling strategy is suppressing the primary signal the hypothesis intends to capture.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Z-score normalization is fit on the training set only and applied to validation and test.",
+        "failure_mechanism": "While the process is correct, z-score normalization is highly sensitive to outliers, which are common in ICU lab data (e.g., extreme lactate levels). A few extreme outliers in the training set can squash the variance of the majority of the data, reducing the signal-to-noise ratio for the gradient-boosted model, although XGBoost is generally robust to this.",
+        "evidence_test": "Compare z-score normalization against robust scaling (using medians and IQRs). If the C-index improves, the current normalization is distorting the feature distribution.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC suffers from two fatal flaws: significant potential for signal leakage via implicit clinical prognosis in notes and a misalignment between the 30-day mortality objective and the discharge-based censoring mechanism. Additionally, the use of mean pooling likely destroys the temporal signal critical for ICU mortality prediction.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 and F3 are deferred to empirical resolution due to genuine uncertainty regarding screening efficacy against implicit signals and potential signal erasure from mean pooling. F2 is strengthened to REBUT-SCOPE based on explicit methodology text defining the outcome as 'in-hospital mortality', which validates the censoring strategy for that specific scope. F4 is maintained as the critic accepted the R1 argument regarding XGBoost robustness.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The screening mechanism's efficacy against implicit 'comfort care' signals is uncertain; keyword screens may not capture linguistic shifts. 1) Settling Experiment: Feature importance analysis (SHAP/IG) on note embeddings to identify highest-weighted tokens. 2) Vindication: If tokens are physiological (e.g., 'hypotension', 'tachycardia'), the design is sound. 3) Validation: If tokens are palliative (e.g., 'comfort measures', 'morphine'), the model predicts clinician decision. 4) Conclusion Survival: The primary conclusion (Notes > Structured) survives regardless of signal source, as structured data lacks text entirely; the comparison remains valid even if the *interpretation* of the signal shifts from physiology to decision-making.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly scopes the claim to 'in-hospital mortality' (Section 8: 'Performance claims are scoped to the 30-day window, in-hospital mortality outcome'). Censoring at discharge is methodologically correct for this specific scope, as patients discharged are no longer at risk of 'in-hospital' death. The critique assumes a general '30-day mortality' scope, which contradicts the stated methodology. The design eliminates the concern by strictly adhering to the 'in-hospital' definition.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Mean pooling may erase the temporal trajectory signal (deterioration) which is critical for mortality prediction. 1) Settling Experiment: Compare mean-pooled model against a sequential model (RNN/Transformer) processing notes chronologically. 2) Vindication: Sequential model significantly outperforms mean-pooled, confirming temporal signal importance. 3) Validation: Mean-pooled performs similarly, confirming static content suffices. 4) Conclusion Survival: The primary conclusion (Notes > Structured) likely survives even if temporal signal is lost, as static narrative content (diagnosis, severity mentions) may still add value over structured data alone.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the R1 argument that XGBoost is invariant to monotonic transformations. Z-score normalization is unlikely to impact the results of a GBDT-based model. The concern is immaterial to the primary conclusion.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1, F3) are deferred to empirical resolution, indicating genuine uncertainty regarding signal leakage and temporal modeling that requires experimental validation. The remaining findings are resolved below the material threshold."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=8 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

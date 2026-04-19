@@ -1,0 +1,234 @@
+{
+  "case_id": "eval_scenario_800",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Treating competing events (death, hospice, LTC placement) as censoring (label = 0) correctly reflects the clinical use case of predicting acute-care readmission.",
+        "failure_mechanism": "In survival analysis, censoring assumes that the event of interest (readmission) could still happen in the future, but we just stopped observing the patient. However, death is a 'competing risk'\u2014it makes the event of readmission impossible. By treating death as censoring (or label 0), the model is forced to treat a patient who died on day 2 as a 'success' (not readmitted). This biases the hazard function and inflates the probability of 'survival' (non-readmission) in a way that does not reflect clinical risk, potentially masking the highest-risk patients who are most likely to either die or be readmitted.",
+        "evidence_test": "Compare the ROC-AUC and Calibration of the current model against a Fine-Gray sub-distribution hazard model (specifically designed for competing risks). If the current model significantly overestimates the probability of non-readmission for the highest-risk deciles compared to the Fine-Gray model, the censoring assumption is invalid.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression on static features) is a sufficient comparison to isolate the value of longitudinal sequences.",
+        "failure_mechanism": "The PoC compares a complex survival model (potentially Random Survival Forests or Gradient Boosted Trees) against a linear Logistic Regression. If the survival model outperforms the baseline, it is impossible to determine if the gain comes from the *longitudinal features* or simply from the *non-linear capacity* of the model architecture. A linear model cannot capture the interactions inherent in EHR data that a tree-based model can, regardless of whether the features are static or longitudinal.",
+        "evidence_test": "Introduce a non-linear baseline (e.g., XGBoost or Random Forest) trained on the same static features used by the Logistic Regression. If the non-linear static model performs similarly to the longitudinal survival model, the claim that longitudinal data provides the primary lift is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-30 train, 31-36 val, 37-42 test) ensures the model is robust to deployment conditions.",
+        "failure_mechanism": "Clinical practice patterns (coding standards, discharge protocols, and heart failure guidelines) often shift abruptly due to policy changes or new drug approvals (e.g., the rollout of SGLT2 inhibitors). A 6-month test window may be too short to capture seasonal variance or the long-term stability of the model's performance across different clinical eras, leading to an overestimation of stability.",
+        "evidence_test": "Perform a 'sliding window' validation where the model is trained on 30 months and tested on the subsequent 6 months, repeated across the entire 42-month span. High variance in AUC across these windows would indicate that the single temporal split was an optimistic snapshot.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC has a critical flaw in its handling of competing risks (death/hospice), which invalidates the survival analysis logic by treating death as a non-event. Additionally, the baseline is too weak to isolate the effect of longitudinal data from the effect of model complexity.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Finding F1 concerns treating death/hospice/LTC as censoring (label=0) rather than proper competing risks handling. The methodology explicitly provides a clinical rationale: 'we seek to identify patients who will return to acute care, not to compete with mortality prediction.' This is a deliberate design choice reflecting the stated use case. However, no sensitivity analysis (e.g., Fine-Gray model) is included to validate this choice. Finding F2 concerns the baseline comparison confounding model capacity with feature value. The methodology explicitly states this is controlled: 'This isolates the effect of sequential information and the survival framework, not differences in model architecture or data access.' This is a direct design control anticipating the critic's concern. Finding F3 concerns insufficient test window for temporal robustness. The methodology explicitly scopes claims: 'does not validate prospective deployment performance' and includes facility-level AUC variability as a domain-shift check. The concern is valid for prospective deployment but outside the stated retrospective scope.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly addresses this concern with a stated clinical rationale: treating death/hospice/LTC as non-readmission 'reflects the clinical use case (we seek to identify patients who will return to acute care, not to compete with mortality prediction).' This is a deliberate design choice. While Fine-Gray sensitivity analysis would strengthen the design, the stated rationale directly addresses why the current approach was chosen for this specific use case."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly anticipates this confound: 'This isolates the effect of sequential information and the survival framework, not differences in model architecture or data access.' The baseline is designed to hold model architecture constant while varying only features. The critic's proposed test (adding non-linear static baseline) is methodologically sound but would confirm an already-controlled design element."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The concern about short test windows is valid for prospective deployment, but the methodology explicitly scopes the claim to retrospective cohort evaluation (Section 7): 'does not validate prospective deployment performance' and acknowledges 'A pilot prospective validation would be required before clinical implementation.' Additionally, facility-level AUC variability is tracked as a domain-shift check. The concern applies to a different context than the stated experiment scope."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All three findings have adjusted severity \u2264 3 after applying design and scope rebuttals. F1 is rebutted by explicit clinical rationale in the design, F2 by explicit architecture-control in the baseline design, and F3 by explicit scope limitation to retrospective performance. EXONERATE applies."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender's rebuttal is a circular argument. They state that the design choice 'reflects the clinical use case,' but they do not address the mathematical failure mechanism: treating a competing risk (death) as censoring (label 0) violates the fundamental assumption of survival analysis (independent censoring). This creates a biased hazard function where the most fragile patients are incorrectly labeled as 'successes' (non-readmissions). A clinical goal does not override the statistical requirement for valid censoring; if the goal is to predict acute-care return, the model must still correctly handle the fact that death prevents that return. The severity remains FATAL because the resulting risk scores will be fundamentally biased."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender claims the design 'isolates the effect of sequential information' but provides no evidence of how a Logistic Regression (linear) baseline isolates this when the primary model is a Random Survival Forest or Gradient Boosted Tree (non-linear). The cited text is a statement of intent, not a mechanism. To actually isolate the effect of longitudinal features, the baseline must have equivalent non-linear capacity. The rebuttal fails to explain how a linear model controls for architecture, which is the core of the failure mechanism."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender is correct that prospective deployment is out of scope. However, the finding was about the *stability* of the retrospective results. Even in a retrospective study, a single 6-month window can be an optimistic snapshot if it coincides with a period of stability, whereas a sliding window would reveal volatility. While the scope disclaimer reduces the severity, it doesn't fully resolve the risk of reporting an over-optimistic AUC based on a narrow temporal slice. I accept the scope argument but maintain a low severity for the lack of temporal robustness checks."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am accepting the challenge on F1 (conceding the competing risk flaw), maintaining a strengthened rebuttal on F2 (explaining how the ablation study design controls for architecture effects), and maintaining REBUT-SCOPE on F3 (the scope limitation is valid and facility-level checks address temporal stability). The critic correctly identified that my R1 justification for F1 was circular - the clinical use case rationale does not override the statistical validity requirement. For F2, I need to strengthen by explaining the mechanism of the ablation study design.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly identifies that my R1 rebuttal was circular - stating the design 'reflects the clinical use case' does not address the mathematical violation of survival analysis assumptions. Treating death (a competing risk that makes readmission impossible) as label=0 (non-readmission) violates the independent censoring assumption. The methodology provides no control for this mechanism - there is no Fine-Gray sub-distribution hazard model or competing risks analysis. This flaw biases the hazard function and affects the primary metric (ROC-AUC) by incorrectly treating deceased patients as 'successes'. The design choice is a genuine statistical flaw, not just a design trade-off.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The methodology includes an explicit ablation study that controls for architecture effects: (1) Baseline: Logistic Regression on static features; (2) Ablation: Survival model on static features; (3) Primary: Survival model on longitudinal features. By comparing Ablation vs Baseline, we isolate the effect of the survival framework (architecture). By comparing Primary vs Ablation, we isolate the effect of longitudinal features while holding architecture constant. The design also allows Cox PH (linear) as the survival model option, which would perfectly match the baseline's linear capacity. The critic's proposed test (non-linear static baseline) would be an alternative approach, but the ablation study design is a valid methodological control that addresses the concern. The methodology text 'isolates the effect of sequential information and the survival framework' is operationalized through this ablation structure.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic's PARTIAL verdict correctly accepts the scope argument - prospective deployment is explicitly out of scope (Section 7: 'does not validate prospective deployment performance'). The concern about temporal stability applies to a different context than the stated experiment scope. Additionally, the methodology includes facility-level AUC variability as a domain-shift check, which partially addresses the temporal robustness concern within the retrospective evaluation scope. The 6-month test window is a known limitation acknowledged in the scope section, and the experiment explicitly requires 'pilot prospective validation' before clinical implementation.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 (severity 8) is CONCEDED - the competing risk handling is a fundamental statistical flaw with no design control, and the bias affects the primary evaluation metric. While F2 and F3 are successfully rebutted to low severity (2 and 1), the FATAL finding on F1 remains above the threshold, resulting in critique_wins."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Treating competing events (death, hospice, LTC placement) as censoring (label = 0) correctly reflects the clinical use case of predicting acute-care readmission.",
+        "failure_mechanism": "In survival analysis, censoring assumes that the event of interest (readmission) could still happen in the future, but we just stopped observing the patient. However, death is a 'competing risk'\u2014it makes the event of readmission impossible. By treating death as censoring (or label 0), the model is forced to treat a patient who died on day 2 as a 'success' (not readmitted). This biases the hazard function and inflates the probability of 'survival' (non-readmission) in a way that does not reflect clinical risk, potentially masking the highest-risk patients who are most likely to either die or be readmitted.",
+        "evidence_test": "Compare the ROC-AUC and Calibration of the current model against a Fine-Gray sub-distribution hazard model (specifically designed for competing risks). If the current model significantly overestimates the probability of non-readmission for the highest-risk deciles compared to the Fine-Gray model, the censoring assumption is invalid.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (Logistic Regression on static features) is a sufficient comparison to isolate the value of longitudinal sequences.",
+        "failure_mechanism": "The PoC compares a complex survival model (potentially Random Survival Forests or Gradient Boosted Trees) against a linear Logistic Regression. If the survival model outperforms the baseline, it is impossible to determine if the gain comes from the *longitudinal features* or simply from the *non-linear capacity* of the model architecture. A linear model cannot capture the interactions inherent in EHR data that a tree-based model can, regardless of whether the features are static or longitudinal.",
+        "evidence_test": "Introduce a non-linear baseline (e.g., XGBoost or Random Forest) trained on the same static features used by the Logistic Regression. If the non-linear static model performs similarly to the longitudinal survival model, the claim that longitudinal data provides the primary lift is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-30 train, 31-36 val, 37-42 test) ensures the model is robust to deployment conditions.",
+        "failure_mechanism": "Clinical practice patterns (coding standards, discharge protocols, and heart failure guidelines) often shift abruptly due to policy changes or new drug approvals (e.g., the rollout of SGLT2 inhibitors). A 6-month test window may be too short to capture seasonal variance or the long-term stability of the model's performance across different clinical eras, leading to an overestimation of stability.",
+        "evidence_test": "Perform a 'sliding window' validation where the model is trained on 30 months and tested on the subsequent 6 months, repeated across the entire 42-month span. High variance in AUC across these windows would indicate that the single temporal split was an optimistic snapshot.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC has a critical flaw in its handling of competing risks (death/hospice), which invalidates the survival analysis logic by treating death as a non-event. Additionally, the baseline is too weak to isolate the effect of longitudinal data from the effect of model complexity.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am accepting the challenge on F1 (conceding the competing risk flaw), maintaining a strengthened rebuttal on F2 (explaining how the ablation study design controls for architecture effects), and maintaining REBUT-SCOPE on F3 (the scope limitation is valid and facility-level checks address temporal stability). The critic correctly identified that my R1 justification for F1 was circular - the clinical use case rationale does not override the statistical validity requirement. For F2, I need to strengthen by explaining the mechanism of the ablation study design.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly identifies that my R1 rebuttal was circular - stating the design 'reflects the clinical use case' does not address the mathematical violation of survival analysis assumptions. Treating death (a competing risk that makes readmission impossible) as label=0 (non-readmission) violates the independent censoring assumption. The methodology provides no control for this mechanism - there is no Fine-Gray sub-distribution hazard model or competing risks analysis. This flaw biases the hazard function and affects the primary metric (ROC-AUC) by incorrectly treating deceased patients as 'successes'. The design choice is a genuine statistical flaw, not just a design trade-off.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The methodology includes an explicit ablation study that controls for architecture effects: (1) Baseline: Logistic Regression on static features; (2) Ablation: Survival model on static features; (3) Primary: Survival model on longitudinal features. By comparing Ablation vs Baseline, we isolate the effect of the survival framework (architecture). By comparing Primary vs Ablation, we isolate the effect of longitudinal features while holding architecture constant. The design also allows Cox PH (linear) as the survival model option, which would perfectly match the baseline's linear capacity. The critic's proposed test (non-linear static baseline) would be an alternative approach, but the ablation study design is a valid methodological control that addresses the concern. The methodology text 'isolates the effect of sequential information and the survival framework' is operationalized through this ablation structure.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic's PARTIAL verdict correctly accepts the scope argument - prospective deployment is explicitly out of scope (Section 7: 'does not validate prospective deployment performance'). The concern about temporal stability applies to a different context than the stated experiment scope. Additionally, the methodology includes facility-level AUC variability as a domain-shift check, which partially addresses the temporal robustness concern within the retrospective evaluation scope. The 6-month test window is a known limitation acknowledged in the scope section, and the experiment explicitly requires 'pilot prospective validation' before clinical implementation.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 (severity 8) is CONCEDED - the competing risk handling is a fundamental statistical flaw with no design control, and the bias affects the primary evaluation metric. While F2 and F3 are successfully rebutted to low severity (2 and 1), the FATAL finding on F1 remains above the threshold, resulting in critique_wins."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=8 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_766",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Within each temporal split, churn rates are stratified to ensure class distribution is balanced across splits",
+        "failure_mechanism": "Temporal stratification is mathematically incompatible with temporal splits. To stratify by churn rate across splits, you must sample users from different time periods into each split. This violates the fundamental requirement that temporal splits use contiguous time windows. Users with similar churn rates from different months would be mixed across training/validation/test, creating signal leakage where future temporal patterns influence training data.",
+        "evidence_test": "Verify that no user appears in multiple splits AND verify that each split contains only users from its designated time period. If stratification was performed, check whether users from Month 1 appear in Validation (Months 13-15) or Test (Months 16-18).",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The comparison isolates the value of event-level granularity and temporal structure, not modeling framework",
+        "failure_mechanism": "The treatment uses gradient boosting (XGBoost/LightGBM) while the baseline uses logistic regression. These models have fundamentally different capacities. Any performance gap could be attributed to model architecture rather than feature granularity. The claim that event-level features are superior is confounded by the model complexity difference.",
+        "evidence_test": "Run XGBoost with aggregate features and logistic regression with event-level features. If XGBoost with aggregate features outperforms logistic regression with event-level features, the feature claim is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "At a validation-selected threshold, precision \u226580% is enforced, and the corresponding recall is recorded",
+        "failure_mechanism": "Threshold selection on validation data and then reporting test performance at that threshold creates a form of validation leakage. The threshold is optimized on validation, which means the test set evaluation is not truly independent. Additionally, enforcing precision \u226580% on validation and measuring recall on test without verifying the test achieves 80% precision at that threshold could produce misleading operational metrics.",
+        "evidence_test": "Check whether the test set precision at the validation-selected threshold actually meets 80%. If test precision drops below 80% at the validation threshold, the operational constraint is violated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Three robustness checks detect and bound promotional and seasonal confounding",
+        "failure_mechanism": "Post-hoc confound checks do not prevent the model from learning spurious correlations during training. If promotional periods or seasonal patterns are present in the training data, the model will learn to predict based on these confounds rather than genuine churn signals. The checks only detect the problem after the model is already trained on confounded data.",
+        "evidence_test": "Examine whether confounding variables (promotion flags, seasonal indicators) are excluded from training features, or if they are only checked post-hoc. If included in training, the model may be learning confounds rather than causal signals.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "a user is labeled as churned (1) if their subscription is cancelled within exactly 30 days after the observation window",
+        "failure_mechanism": "The phrase 'exactly 30 days' is ambiguous. It could mean 'within 30 days' or 'at exactly day 30'. This ambiguity affects label definition and could lead to inconsistent labeling if not precisely specified in the implementation.",
+        "evidence_test": "Review the actual label generation code to verify whether the condition is '\u226430 days' or '==30 days'. Check for edge cases where cancellation occurs on day 29 vs day 30.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "All preprocessing (standardization, categorical encoding, missing value imputation via median or mode) is fit exclusively on the training set",
+        "failure_mechanism": "While this is stated, the document does not specify whether the imputation strategy (median/mode) is robust to distribution shifts between training and test periods. If the test period has significantly different missingness patterns, the training-fitted imputation could silently degrade performance.",
+        "evidence_test": "Compare missingness patterns between training and test sets. If test missingness differs significantly, verify that the imputation strategy handles this gracefully.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The temporal stratification claim is fundamentally incompatible with temporal splits and constitutes a fatal signal leakage issue that invalidates the experiment's core methodology. Additional material concerns include conflated model-feature comparisons, threshold selection leakage on validation data, and post-hoc confound detection that does not prevent training on confounded data.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic claims temporal stratification is incompatible with temporal splits and would cause leakage. However, the methodology explicitly states 'all observation windows for a single user are kept within one split; a user does not appear in both training and validation.' This group-based temporal split is the core design control preventing leakage. The phrase 'stratified to ensure class distribution is balanced across splits' is ambiguous - it could mean stratified sampling WITHIN each temporal window (which is valid) rather than balancing churn rates ACROSS splits by mixing time periods (which would be invalid). Given the explicit user-level split constraint, the design is sound. F2: The critic argues the comparison is confounded because treatment uses gradient boosting while baseline uses logistic regression. The methodology explicitly states the baseline represents 'the current state-of-practice' - a valid comparison target. The scope tests whether upgrading both features AND model together provides value over the status quo. The critic's suggested comparison (XGBoost on aggregates vs logistic regression on events) tests a different hypothesis outside the stated scope. F3: The critic claims threshold selection on validation and applying to test creates leakage. However, both treatment and baseline undergo identical threshold selection - this is standard ML practice. The methodology explicitly acknowledges the threshold is 'validation-selected.' The operational constraint (precision \u226580%) is a target, not a guarantee - reporting recall at that threshold is still informative for comparison. F4: The critic correctly notes that post-hoc confound checks don't prevent learning confounds. However, the methodology explicitly states these are 'robustness checks' to 'detect and bound' confounds, and 'If confounds are detected, the performance gap is reported with clear caveats.' This is a deliberate design choice - the experiment scope is predictive performance comparison, not causal inference. F5: Minor wording ambiguity in 'exactly 30 days' - implementation would clarify. F6: Valid concern about imputation robustness to distribution shift, but this is a known limitation that doesn't invalidate the comparative evaluation.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The methodology explicitly states 'all observation windows for a single user are kept within one split; a user does not appear in both training and validation.' This group-based temporal split is the core design control preventing temporal leakage. The phrase about stratification is ambiguous but the explicit user-level split constraint ensures no future data leaks into training. The design choice is deliberate and justified."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The experiment compares the full treatment (event-level features + gradient boosting) against the status quo (aggregate features + logistic regression). The methodology explicitly states this 'ensures the comparison isolates the value of event-level granularity and temporal structure, not modeling framework' in the sense of testing the full upgrade path. The critic's suggested comparison (XGBoost on aggregates vs logistic regression on events) tests a different hypothesis outside the stated scope of comparing to current production practice."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "Threshold selection on validation and applying to test is standard ML practice. Both treatment and baseline undergo identical threshold selection process, ensuring fair comparison. The methodology explicitly acknowledges the threshold is 'validation-selected.' The precision constraint is an operational target - reporting recall at that threshold remains informative for relative model comparison."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly describes these as 'robustness checks' to 'detect and bound' confounds, with explicit caveats if detected. The design scope is predictive performance comparison, not causal inference. Post-hoc confound detection is a deliberate design choice - the experiment cannot prevent all confounds but can measure and report them. This is standard practice for observational studies."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "Minor wording ambiguity in 'exactly 30 days' - the implementation would clarify whether this means 'within 30 days' (standard interpretation) or 'exactly at day 30'. This does not affect the experiment's validity - the label definition is clear in intent."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "Valid concern about imputation robustness to distribution shift, but this is a known limitation of the approach that doesn't invalidate the comparative evaluation. Both models use identical preprocessing, so relative comparison remains valid."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have adjusted severity \u2264 3 after rebuttal. F1 is rebutted via explicit design controls (user-level temporal split). F2 is rebutted via scope (comparing to status quo, not isolating features). F3-F6 are minor concerns that don't affect the validity of the comparative evaluation. The methodology is sound."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "The defender's rebuttal directly addresses the failure mechanism (temporal leakage) by citing the 'group-based temporal split' constraint that prevents users from appearing in multiple splits. While the methodology text regarding stratification is acknowledged as ambiguous, the core FATAL risk of signal leakage is mitigated by the explicit user-level split design. The severity reduction from 9 to 4 is proportionate, reflecting the removal of the leakage risk while retaining the documentation ambiguity as a MATERIAL concern."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender's rebuttal relies on a scope statement ('testing the full upgrade path') rather than addressing the confounding mechanism identified in the finding. The finding correctly identifies that comparing XGBoost (event-level) vs Logistic Regression (aggregate) confounds feature granularity with model architecture. Redefining the goal as a 'full upgrade path' does not validate the methodology's claim that the comparison 'isolates the value of event-level granularity'. The confounding remains scientifically invalid for the specific claim made, so the severity should not be reduced."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly identifies that threshold selection on validation data is standard ML practice and does not constitute leakage if the test set is held out. The rebuttal addresses the 'eval_inflation' mechanism by confirming that both models undergo identical threshold selection, ensuring fair comparison. The severity reduction from 5 to 3 is justified as the 'leakage' concern is mitigated by standard practice, though the operational constraint risk (precision drop on test) remains a minor concern."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender's rebuttal clarifies the design scope (predictive performance vs. causal inference) and acknowledges that post-hoc checks detect rather than prevent confounds. This directly addresses the 'unverified_prereqs' concern by confirming that the experiment does not claim to prevent learning spurious correlations, only to detect them with caveats. The severity reduction from 4 to 1 is proportionate given the explicit caveats and scope alignment."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender acknowledges the wording ambiguity but clarifies that implementation would resolve it. This is a minor documentation issue that does not impact the core validity of the label definition. The severity reduction from 2 to 1 is appropriate for a low-risk ambiguity."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly notes that while imputation robustness to distribution shift is a limitation, it affects both models equally, preserving the validity of the comparative evaluation. This addresses the 'silent_misconfig' concern by confirming the relative comparison remains valid. The severity reduction from 2 to 1 is justified."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic ACCEPTed rebuttals for F1, F3, F4, F5, and F6 - I maintain those positions. For F2, the critic CHALLENGED my scope-based rebuttal, correctly identifying that the methodology's claim to 'isolate the value of event-level granularity' is not actually controlled by the design. However, this is a genuine ambiguity: the experiment validly compares full upgrade paths (a legitimate business comparison), but cannot definitively isolate feature value from model architecture without additional controls. I am switching F2 to DEFER, as there is a clear empirical test (swap model architectures) that would settle this, and the primary conclusion (full treatment outperforms baseline) would survive even if the critique is correct.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly states 'all observation windows for a single user are kept within one split; a user does not appear in both training and validation.' This group-based temporal split is the core design control preventing temporal leakage. The stratification language is ambiguous but the explicit user-level split constraint ensures no future data leaks into training.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly challenges that the methodology's claim to 'isolate the value of event-level granularity' is not actually controlled by the design - comparing XGBoost (event-level) vs Logistic Regression (aggregate) confounds features with model architecture. However, this is a genuine ambiguity: the experiment validly compares the full upgrade path (event-level features + gradient boosting) against current production practice (aggregate features + logistic regression), which is a legitimate business comparison. The settling experiment is clear: run XGBoost on aggregate features and logistic regression on event-level features. If XGBoost on aggregates outperforms logistic regression on events, the feature claim is invalid. The primary conclusion (full treatment outperforms baseline) would survive even if the critique is correct - the improvement may come from the model, but the business outcome (upgrade path works) remains valid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The critic ACCEPTed this rebuttal. Threshold selection on validation data is standard ML practice. Both treatment and baseline undergo identical threshold selection, ensuring fair comparison. The methodology explicitly acknowledges the threshold is 'validation-selected.' The precision constraint is an operational target - reporting recall at that threshold remains informative for relative model comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly describes these as 'robustness checks' to 'detect and bound' confounds, with explicit caveats if detected. The design scope is predictive performance comparison, not causal inference. Post-hoc confound detection is a deliberate design choice - the experiment cannot prevent all confounds but can measure and report them. This is standard practice for observational studies.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. Minor wording ambiguity in 'exactly 30 days' - the implementation would clarify whether this means 'within 30 days' (standard interpretation) or 'exactly at day 30'. This does not affect the experiment's validity - the label definition is clear in intent.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. Valid concern about imputation robustness to distribution shift, but this is a known limitation that doesn't invalidate the comparative evaluation. Both models use identical preprocessing, so relative comparison remains valid.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F2 is deferred to empirical test - the critic correctly identifies that the design cannot isolate feature granularity from model architecture, but the experiment validly compares full upgrade paths. A swapping experiment (XGBoost on aggregates vs logistic regression on events) would resolve this. All other findings are successfully rebutted to severity \u22644, with no conceded findings."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Within each temporal split, churn rates are stratified to ensure class distribution is balanced across splits",
+        "failure_mechanism": "Temporal stratification is mathematically incompatible with temporal splits. To stratify by churn rate across splits, you must sample users from different time periods into each split. This violates the fundamental requirement that temporal splits use contiguous time windows. Users with similar churn rates from different months would be mixed across training/validation/test, creating signal leakage where future temporal patterns influence training data.",
+        "evidence_test": "Verify that no user appears in multiple splits AND verify that each split contains only users from its designated time period. If stratification was performed, check whether users from Month 1 appear in Validation (Months 13-15) or Test (Months 16-18).",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The comparison isolates the value of event-level granularity and temporal structure, not modeling framework",
+        "failure_mechanism": "The treatment uses gradient boosting (XGBoost/LightGBM) while the baseline uses logistic regression. These models have fundamentally different capacities. Any performance gap could be attributed to model architecture rather than feature granularity. The claim that event-level features are superior is confounded by the model complexity difference.",
+        "evidence_test": "Run XGBoost with aggregate features and logistic regression with event-level features. If XGBoost with aggregate features outperforms logistic regression with event-level features, the feature claim is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "At a validation-selected threshold, precision \u226580% is enforced, and the corresponding recall is recorded",
+        "failure_mechanism": "Threshold selection on validation data and then reporting test performance at that threshold creates a form of validation leakage. The threshold is optimized on validation, which means the test set evaluation is not truly independent. Additionally, enforcing precision \u226580% on validation and measuring recall on test without verifying the test achieves 80% precision at that threshold could produce misleading operational metrics.",
+        "evidence_test": "Check whether the test set precision at the validation-selected threshold actually meets 80%. If test precision drops below 80% at the validation threshold, the operational constraint is violated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Three robustness checks detect and bound promotional and seasonal confounding",
+        "failure_mechanism": "Post-hoc confound checks do not prevent the model from learning spurious correlations during training. If promotional periods or seasonal patterns are present in the training data, the model will learn to predict based on these confounds rather than genuine churn signals. The checks only detect the problem after the model is already trained on confounded data.",
+        "evidence_test": "Examine whether confounding variables (promotion flags, seasonal indicators) are excluded from training features, or if they are only checked post-hoc. If included in training, the model may be learning confounds rather than causal signals.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "a user is labeled as churned (1) if their subscription is cancelled within exactly 30 days after the observation window",
+        "failure_mechanism": "The phrase 'exactly 30 days' is ambiguous. It could mean 'within 30 days' or 'at exactly day 30'. This ambiguity affects label definition and could lead to inconsistent labeling if not precisely specified in the implementation.",
+        "evidence_test": "Review the actual label generation code to verify whether the condition is '\u226430 days' or '==30 days'. Check for edge cases where cancellation occurs on day 29 vs day 30.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "All preprocessing (standardization, categorical encoding, missing value imputation via median or mode) is fit exclusively on the training set",
+        "failure_mechanism": "While this is stated, the document does not specify whether the imputation strategy (median/mode) is robust to distribution shifts between training and test periods. If the test period has significantly different missingness patterns, the training-fitted imputation could silently degrade performance.",
+        "evidence_test": "Compare missingness patterns between training and test sets. If test missingness differs significantly, verify that the imputation strategy handles this gracefully.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The temporal stratification claim is fundamentally incompatible with temporal splits and constitutes a fatal signal leakage issue that invalidates the experiment's core methodology. Additional material concerns include conflated model-feature comparisons, threshold selection leakage on validation data, and post-hoc confound detection that does not prevent training on confounded data.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic ACCEPTed rebuttals for F1, F3, F4, F5, and F6 - I maintain those positions. For F2, the critic CHALLENGED my scope-based rebuttal, correctly identifying that the methodology's claim to 'isolate the value of event-level granularity' is not actually controlled by the design. However, this is a genuine ambiguity: the experiment validly compares full upgrade paths (a legitimate business comparison), but cannot definitively isolate feature value from model architecture without additional controls. I am switching F2 to DEFER, as there is a clear empirical test (swap model architectures) that would settle this, and the primary conclusion (full treatment outperforms baseline) would survive even if the critique is correct.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly states 'all observation windows for a single user are kept within one split; a user does not appear in both training and validation.' This group-based temporal split is the core design control preventing temporal leakage. The stratification language is ambiguous but the explicit user-level split constraint ensures no future data leaks into training.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly challenges that the methodology's claim to 'isolate the value of event-level granularity' is not actually controlled by the design - comparing XGBoost (event-level) vs Logistic Regression (aggregate) confounds features with model architecture. However, this is a genuine ambiguity: the experiment validly compares the full upgrade path (event-level features + gradient boosting) against current production practice (aggregate features + logistic regression), which is a legitimate business comparison. The settling experiment is clear: run XGBoost on aggregate features and logistic regression on event-level features. If XGBoost on aggregates outperforms logistic regression on events, the feature claim is invalid. The primary conclusion (full treatment outperforms baseline) would survive even if the critique is correct - the improvement may come from the model, but the business outcome (upgrade path works) remains valid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The critic ACCEPTed this rebuttal. Threshold selection on validation data is standard ML practice. Both treatment and baseline undergo identical threshold selection, ensuring fair comparison. The methodology explicitly acknowledges the threshold is 'validation-selected.' The precision constraint is an operational target - reporting recall at that threshold remains informative for relative model comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly describes these as 'robustness checks' to 'detect and bound' confounds, with explicit caveats if detected. The design scope is predictive performance comparison, not causal inference. Post-hoc confound detection is a deliberate design choice - the experiment cannot prevent all confounds but can measure and report them. This is standard practice for observational studies.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. Minor wording ambiguity in 'exactly 30 days' - the implementation would clarify whether this means 'within 30 days' (standard interpretation) or 'exactly at day 30'. This does not affect the experiment's validity - the label definition is clear in intent.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. Valid concern about imputation robustness to distribution shift, but this is a known limitation that doesn't invalidate the comparative evaluation. Both models use identical preprocessing, so relative comparison remains valid.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F2 is deferred to empirical test - the critic correctly identifies that the design cannot isolate feature granularity from model architecture, but the experiment validly compares full upgrade paths. A swapping experiment (XGBoost on aggregates vs logistic regression on events) would resolve this. All other findings are successfully rebutted to severity \u22644, with no conceded findings."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

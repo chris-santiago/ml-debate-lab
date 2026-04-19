@@ -1,0 +1,352 @@
+{
+  "case_id": "hyp_003_regular",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Both the gradient-boosted survival model and the logistic regression baseline use the same 90\u2011day lookback window and censoring logic.",
+        "failure_mechanism": "The baseline model receives only last\u2011month aggregate usage metrics (total logins, active users, seat count) and does not incorporate any historical information beyond the current month. Consequently, the baseline does not share the same feature\u2011window breadth as the primary model, so any performance difference may be attributable simply to the availability of longer\u2011lookback features rather than to the survival formulation or gradient\u2011boosting technique.",
+        "evidence_test": "Examine the baseline feature matrix: if it contains only the three last\u2011month aggregates (or any features that do not reflect the 90\u2011day lookback), the claim of window parity is false. Additionally, compare model performance when the baseline is augmented with the same 90\u2011day lookback features (e.g., a logistic regression trained on the full GBM feature set). If the performance gap narrows substantially, the original claim is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "finding_id": "F2",
+        "claim": "Using a gradient\u2011boosted tree with Cox partial likelihood loss is a theoretically sound approach for predicting 90\u2011day churn, and the concordance index appropriately measures its ranking quality.",
+        "failure_mechanism": "The Cox loss assumes proportional hazards and models the instantaneous hazard over continuous time, while the evaluation reduces the problem to a binary outcome (churn within 90 days) and treats right\u2011censored cases as simple negatives. This mismatch means the model is optimized for a different objective than the metric used to judge it; the learned hazard rankings may not translate into accurate 90\u2011day risk ordering, especially if hazards vary non\u2011proportionally over the 90\u2011day window.",
+        "evidence_test": "Calculate time\u2011dependent concordance (or AUC) at multiple horizons (e.g., 30, 60, 90 days) and compare them to the static 90\u2011day concordance reported. If the model\u2019s rankings deteriorate sharply before 90 days or show non\u2011proportional patterns, the Cox model is misspecified for the target horizon. Additionally, fit a standard logistic regression or a discrete\u2011time survival model on the same data and compare concordance; a significant gap would indicate the Cox formulation adds little value for the 90\u2011day target.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "finding_id": "F3",
+        "claim": "Defining churn as cancellation within 90 days and treating accounts active beyond 90 days as censored/non\u2011churn yields a clean binary label suitable for survival analysis.",
+        "failure_mechanism": "Accounts that cancel after more than 90 days are incorrectly labeled as non\u2011churn (churn=0). This introduces systematic label noise because the model is penalized for assigning high risk to accounts that will eventually churn, just outside the observation window. The noise attenuates the true signal and can bias estimated effects, yet the analysis does not quantify or correct for this mislabeling.",
+        "evidence_test": "Inspect the distribution of actual cancellation times relative to each snapshot. Compute the proportion of churn events that occur >90 days after the snapshot. If this proportion is non\u2011trivial (e.g., >10%), the label noise is substantial. As a robustness check, repeat the experiment with a longer horizon (e.g., 180 days) or treat post\u201190\u2011day churners as a separate censored category and observe whether model performance changes markedly.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "finding_id": "F4",
+        "claim": "The temporal split (train/validation/test by month) guarantees independence between samples, so standard statistical tests and confidence intervals are valid.",
+        "failure_mechanism": "Each account contributes multiple snapshots across months, creating within\u2011account correlation. Treating each snapshot as an independent observation ignores this clustering, leading to underestimated standard errors and overly narrow confidence intervals. Consequently, any claim of statistically significant improvement may be inflated.",
+        "evidence_test": "Re\u2011compute the concordance\u2011index difference confidence intervals using cluster\u2011robust (e.g., block bootstrap by account) or mixed\u2011effects models that account for repeated measures. If the clustered confidence intervals overlap zero while the original intervals do not, the original significance claim is refuted.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "finding_id": "F5",
+        "claim": "All data sources are reconciled and validated for completeness, ensuring that feature histories (e.g., 12\u2011month billing trends) are fully available for every snapshot.",
+        "failure_mechanism": "For snapshots occurring early in the observation window (e.g., month <12), the preceding 12\u2011month billing history is incomplete or missing. Although the PoC states data are complete, it does not describe how these early\u2011window cases are handled (e.g., imputation with zeros or means). This creates a distribution shift between early and later snapshots that the model may not accommodate, potentially degrading performance in a systematic way that is not examined.",
+        "evidence_test": "Split the test set into snapshots with <12 months of available history versus \u226512 months and compare calibration and discrimination metrics separately. A significant drop in performance for the early\u2011history subset would confirm the flaw. Additionally, examine the imputation values used for missing history features to see if they introduce bias.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC presents several methodological issues that weaken its central claims: the baseline does not use the same lookback window as the primary model, the survival model\u2019s objective is mismatched to the binary evaluation metric, label noise from the fixed\u2011window churn definition is ignored, within\u2011account correlation is overlooked, and early\u2011window feature incompleteness is unaddressed. While none of these flaws outright invalidate the possibility that the gradient\u2011boosted survival model could be useful, they collectively reduce confidence in the reported performance gains and the attributed causes.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Analyzing each finding in turn, grounded in the methodology sections (Objective, Data Strategy, Temporal Split, Feature Engineering, Model/Baseline, Model Selection, Evaluation Metrics, Controls and Confounds, Success Criteria).\n\nF1 (MATERIAL, sev=5): Critic claims no feature window parity because baseline uses only last-month aggregates, while primary uses 90-day event-level + 12-month billing. This attributes gains to features rather than survival/GBM. However, the design intent (Objective sec1) explicitly tests 'gradient-boosted survival model using event-level customer interactions and billing-history features' vs 'static logistic regression baseline' with deliberately constrained features ('only last-month aggregate usage metrics'). This isolates the joint effect of richer features + survival formulation + GBM. Critically, Controls sec8 point 3 states 'Sensitivity analysis: a GBM variant trained on only baseline features isolates the contribution of event-level features.' This ablation directly disentangles: (GBM-survival + simple feats) vs logistic-simple isolates GBM-survival value; full vs that isolates features. Feature parity claim in sec8.1 refers to outcome window/censoring parity ('same 90-day lookback window and censoring logic'), not input features\u2014critic misreads scope. No flaw; deliberate design with controls eliminates confound. Fully resolved by cited ablations.\n\nF2 (MATERIAL, sev=5): Critic argues Cox partial likelihood mismatch with binary 90-day eval, assuming PH and continuous hazard, potentially poor 90-day ranking. Design uses Cox-based GBM for survival analysis 'explicitly models time-to-event and handles right-censoring correctly' (sec5), standard for churn prediction. Primary metric is concordance index (sec7), the canonical metric for survival ranking quality, directly aligning with Cox optimization (hazard rankings). It handles censoring/time without binary reduction. Secondaries include time-dependent AUC@90days and Brier (calibration over time), addressing horizon-specificity. PH assumption common in practice for prediction (not estimation); violation affects inference more than ranking. Evidence test (time-dependent concordance) is covered by design's temporal stability (sec8.4, per-month in test) and secondaries. No empirical output given to contradict; theoretically sound per sec5. Resolved by metric/design alignment.\n\nF3 (MATERIAL, sev=4): Critic claims label noise from treating >90-day churners as non-churn/censored, biasing model. This misunderstands survival setup (Data sec2): churn=1 if event in 90 days, else right-censored (not 'non-churn=0' for survival model). Survival model does not penalize high risk for censored obs post-90 (learns lower hazard up to observed time); logistic baseline approximates binary. Horizon matches deployment ('90-day enterprise SaaS churn', Objective). Censoring alignment verified (sec8.6). This is standard fixed-horizon survival (e.g., IPCW for short-term risk). Proportion >90-day churns irrelevant\u2014censoring handles informative censoring. Evidence test (longer horizon) is sensitivity scope, but primary 90-day intact. No noise; correct by construction.\n\nF4 (MATERIAL, sev=4): Critic notes within-account correlation from multiple monthly snapshots/account, invalidating independence for CIs/sig tests. Methodology treats snapshots independently (implicit), with chrono splits (sec3), time-series CV (sec6, temporal folds), per-month reporting (sec8.4), stratification (sec8.5). No explicit cluster-robust variance (e.g., account-ID bootstrap) or mixed-effects. Bootstrap CIs (sec9) unspecified as clustered. Temporal controls mitigate time dependence, but within-account spatial correlation unaddressed. #snapshots/account limited (test:6 max), large N may approximate, but sig claims ('95% CIs not overlapping', sec9) vulnerable if clustering strong. No named control (scan Confounds sec8: no mention repeated measures/clustering). Magnitude uncertain without data\u2014genuine empirical question.\n\nF5 (MINOR, sev=3): Early snapshots lack full 12mo billing history. Data 36+mo complete (sec2), train months1-24 includes early (imputation/scaling fit on train, sec4). Test months31-36 has full prior history (>12mo available). Log-transform/imputation handles skewness/missing (sec4). No explicit split analysis, but minor as test unaffected; train learns imputation. Distribution shift possible but below threshold for conclusions (PoC scope). Evidence test reasonable but not outcome-determinative.\n\nUncertainties: F4 clustering impact unknown (depends on #snapshots/account, correlation strength)\u2014cannot resolve argumentally. Others fully addressed by design intent/controls/citations. No FATALs conceded; sound methodology with one deferral.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Deliberate baseline simplification isolates richer features + survival/GBM effect (Objective sec1, Features sec4); sensitivity ablation of GBM on baseline-only features fully disentangles contributions (Controls sec8.3), eliminating attribution confound. Parity claim (sec8.1) applies to outcome window/censoring, not inputs."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Cox GBM explicitly for time-to-event/censoring (sec5); concordance is aligned ranking metric handling censoring/time (sec7), with time-dependent AUC secondary. Temporal stability/per-month checks (sec8.4) cover horizon variation; standard for short-horizon churn."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Standard right-censoring at 90-day horizon for 90-day prediction (Data sec2); survival model correctly avoids penalizing future churners (unlike binary approx), verified censoring balance (sec8.6). No noise by construction."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "No explicit cluster control despite repeated snapshots/account; magnitude uncertain. Settling experiment: re-compute concordance difference CIs via account-ID clustered bootstrap on test set. Vindicate design: widened CIs still exclude overlap (sig holds). Validate critique: CIs overlap \u2192 sig claim invalid. Primary relative outperformance (point est gain) remains valid even if critique true, as clustering symmetrically affects both models' variance on same snapshots (difference unbiased), though sig threshold unmet \u2192 re-assess via secondaries/per-month."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Train includes early snapshots with imputation fit there (sec4); test (mo31-36) has full history. Minor shift below impact threshold for PoC conclusions, especially with preprocessing."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "All findings rebutted except F4 DEFER (adj sev=4), requiring empirical clustered CI verification; no CONCEDEd high-severity findings. F1-F3,F5 resolved to \u22641 by design controls."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender notes that the baseline simplification is deliberate and cites a sensitivity ablation of GBM on baseline-only features, which helps isolate the effect of event-level features for the GBM. However, this does not address whether the logistic regression baseline would perform similarly if given the same 90\u2011day lookback features; the attribution confound between feature set and modeling technique remains unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender argues that the concordance index is appropriate for survival models and cites temporal stability/per\u2011month checks, but does not directly evaluate the proportional\u2011hazards assumption or examine time\u2011dependent concordance at multiple horizons (e.g., 30, 60 days) to verify that hazard rankings translate to accurate 90\u2011day risk ordering. Thus the concern about non\u2011proportional hazards affecting the binary 90\u2011day evaluation is only partially mitigated."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender mischaracterizes the analysis as avoiding penalization of future churners, but the study actually labels any churn after 90 days as churn=0 (non\u2011churn), which introduces systematic label noise. The justification does not explain how the survival model\u2019s handling of censoring prevents this noise, leaving the failure mechanism unaddressed."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender acknowledges the lack of explicit clustering controls and proposes a clustered bootstrap check as a settling experiment. Until that analysis is performed, the concern about underestimated standard errors due to within\u2011account correlation remains open."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender points out that imputation is fitted on the training set and that the test set has full history, which mitigates distribution shift between train and test. However, they do not examine whether imputation introduces bias or whether model performance varies across early versus later snapshots within the training/validation periods, so the concern about unexamined distribution shift is only partially addressed."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Contesting all PARTIAL/CHALLENGE verdicts: F1/F2/F5 rebuttals strengthened to clarify deliberate design choices (bundled features+modeling, metric alignment, test-set completeness) eliminate mechanisms; F3 strengthened to correct critic's misreading of per-snapshot horizon labeling/censoring; F4 maintained as DEFER (no explicit cluster-robust control, but symmetric to primary relative metric).",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Design deliberately constrains baseline to last-month aggregates to isolate full effect of richer 90-day event-level/billing features + survival GBM vs simple logistic (sec1 Objective, sec4 Features); this directly tests hypothesis without attribution confound to goal. Sensitivity analysis (sec8.3: GBM on baseline-only features) disentangles event-level contribution atop GBM; feature parity claim (sec8.1) explicitly for outcome window/censoring logic, not inputs. Logistic-full-features baseline out-of-scope/not required to validate primary hypothesis.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Cox partial likelihood optimizes hazard rankings handling censoring/time directly (sec5), perfectly aligned to concordance index (sec7 primary metric: pair-wise ranking over observed times); PH assumption not fatal for short-horizon (90-day) churn rankings in practice (standard applied use). Time-dependent AUC secondary (sec7), per-month temporal stability (sec8.4) explicitly detect horizon/PH violations; no multi-horizon deterioration needed pre-hoc as design controls verify translation to 90-day ordering.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "No label noise: per-snapshot outcome is event=1 only if churn within next 90 days from that specific snapshot date, else censored at 90 days if active (sec2 Data: 'within 90 days of that snapshot'; standard fixed-horizon survival). Accounts churning >90 days later correctly non-event/low-risk for that horizon prediction (model not 'penalized' for future events irrelevant to 90-day task); survival uses observed time-to-censor/event properly, unlike naive binary. Censoring balance verified (sec8.6). Critic misreads as global labeling.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "No explicit cluster-robust variance estimator despite repeated per-account snapshots (temporal split preserves order but treats snapshots independent). Settling experiment: account-clustered bootstrap CIs on test-set concordance difference. Vindicate: widened CIs exclude baseline (sig holds). Validate: overlap zero \u2192 sig invalid, rely on point estimate/secondaries/per-month (sec8.4). Primary relative outperformance (GBM > baseline point est) survives critique (unbiased difference; symmetric clustering variance on shared snapshots), though sig claims reassessed.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Test set (months 31\u201336) from 36+ month data has full 12-month+ histories available by design (no missing); train (1\u201324) imputation fitted there handles early snapshots (sec4 Preprocessing: 'fit exclusively on training'). Stratification/sensitivity (sec8.5) covers shifts; immaterial for PoC eval as test unaffected, preprocessing stabilizes.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One DEFER (F4 adj=4) on clustering uncertainty warrants empirical clustered CIs check, but all others rebutted to \u22641; primary relative concordance gain robust even if critique valid (symmetric effect). Design sound overall, with targeted experiment to settle remainder."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Both the gradient-boosted survival model and the logistic regression baseline use the same 90\u2011day lookback window and censoring logic.",
+        "failure_mechanism": "The baseline model receives only last\u2011month aggregate usage metrics (total logins, active users, seat count) and does not incorporate any historical information beyond the current month. Consequently, the baseline does not share the same feature\u2011window breadth as the primary model, so any performance difference may be attributable simply to the availability of longer\u2011lookback features rather than to the survival formulation or gradient\u2011boosting technique.",
+        "evidence_test": "Examine the baseline feature matrix: if it contains only the three last\u2011month aggregates (or any features that do not reflect the 90\u2011day lookback), the claim of window parity is false. Additionally, compare model performance when the baseline is augmented with the same 90\u2011day lookback features (e.g., a logistic regression trained on the full GBM feature set). If the performance gap narrows substantially, the original claim is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "finding_id": "F2",
+        "claim": "Using a gradient\u2011boosted tree with Cox partial likelihood loss is a theoretically sound approach for predicting 90\u2011day churn, and the concordance index appropriately measures its ranking quality.",
+        "failure_mechanism": "The Cox loss assumes proportional hazards and models the instantaneous hazard over continuous time, while the evaluation reduces the problem to a binary outcome (churn within 90 days) and treats right\u2011censored cases as simple negatives. This mismatch means the model is optimized for a different objective than the metric used to judge it; the learned hazard rankings may not translate into accurate 90\u2011day risk ordering, especially if hazards vary non\u2011proportionally over the 90\u2011day window.",
+        "evidence_test": "Calculate time\u2011dependent concordance (or AUC) at multiple horizons (e.g., 30, 60, 90 days) and compare them to the static 90\u2011day concordance reported. If the model\u2019s rankings deteriorate sharply before 90 days or show non\u2011proportional patterns, the Cox model is misspecified for the target horizon. Additionally, fit a standard logistic regression or a discrete\u2011time survival model on the same data and compare concordance; a significant gap would indicate the Cox formulation adds little value for the 90\u2011day target.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "finding_id": "F3",
+        "claim": "Defining churn as cancellation within 90 days and treating accounts active beyond 90 days as censored/non\u2011churn yields a clean binary label suitable for survival analysis.",
+        "failure_mechanism": "Accounts that cancel after more than 90 days are incorrectly labeled as non\u2011churn (churn=0). This introduces systematic label noise because the model is penalized for assigning high risk to accounts that will eventually churn, just outside the observation window. The noise attenuates the true signal and can bias estimated effects, yet the analysis does not quantify or correct for this mislabeling.",
+        "evidence_test": "Inspect the distribution of actual cancellation times relative to each snapshot. Compute the proportion of churn events that occur >90 days after the snapshot. If this proportion is non\u2011trivial (e.g., >10%), the label noise is substantial. As a robustness check, repeat the experiment with a longer horizon (e.g., 180 days) or treat post\u201190\u2011day churners as a separate censored category and observe whether model performance changes markedly.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "finding_id": "F4",
+        "claim": "The temporal split (train/validation/test by month) guarantees independence between samples, so standard statistical tests and confidence intervals are valid.",
+        "failure_mechanism": "Each account contributes multiple snapshots across months, creating within\u2011account correlation. Treating each snapshot as an independent observation ignores this clustering, leading to underestimated standard errors and overly narrow confidence intervals. Consequently, any claim of statistically significant improvement may be inflated.",
+        "evidence_test": "Re\u2011compute the concordance\u2011index difference confidence intervals using cluster\u2011robust (e.g., block bootstrap by account) or mixed\u2011effects models that account for repeated measures. If the clustered confidence intervals overlap zero while the original intervals do not, the original significance claim is refuted.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "finding_id": "F5",
+        "claim": "All data sources are reconciled and validated for completeness, ensuring that feature histories (e.g., 12\u2011month billing trends) are fully available for every snapshot.",
+        "failure_mechanism": "For snapshots occurring early in the observation window (e.g., month <12), the preceding 12\u2011month billing history is incomplete or missing. Although the PoC states data are complete, it does not describe how these early\u2011window cases are handled (e.g., imputation with zeros or means). This creates a distribution shift between early and later snapshots that the model may not accommodate, potentially degrading performance in a systematic way that is not examined.",
+        "evidence_test": "Split the test set into snapshots with <12 months of available history versus \u226512 months and compare calibration and discrimination metrics separately. A significant drop in performance for the early\u2011history subset would confirm the flaw. Additionally, examine the imputation values used for missing history features to see if they introduce bias.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC presents several methodological issues that weaken its central claims: the baseline does not use the same lookback window as the primary model, the survival model\u2019s objective is mismatched to the binary evaluation metric, label noise from the fixed\u2011window churn definition is ignored, within\u2011account correlation is overlooked, and early\u2011window feature incompleteness is unaddressed. While none of these flaws outright invalidate the possibility that the gradient\u2011boosted survival model could be useful, they collectively reduce confidence in the reported performance gains and the attributed causes.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Contesting all PARTIAL/CHALLENGE verdicts: F1/F2/F5 rebuttals strengthened to clarify deliberate design choices (bundled features+modeling, metric alignment, test-set completeness) eliminate mechanisms; F3 strengthened to correct critic's misreading of per-snapshot horizon labeling/censoring; F4 maintained as DEFER (no explicit cluster-robust control, but symmetric to primary relative metric).",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Design deliberately constrains baseline to last-month aggregates to isolate full effect of richer 90-day event-level/billing features + survival GBM vs simple logistic (sec1 Objective, sec4 Features); this directly tests hypothesis without attribution confound to goal. Sensitivity analysis (sec8.3: GBM on baseline-only features) disentangles event-level contribution atop GBM; feature parity claim (sec8.1) explicitly for outcome window/censoring logic, not inputs. Logistic-full-features baseline out-of-scope/not required to validate primary hypothesis.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Cox partial likelihood optimizes hazard rankings handling censoring/time directly (sec5), perfectly aligned to concordance index (sec7 primary metric: pair-wise ranking over observed times); PH assumption not fatal for short-horizon (90-day) churn rankings in practice (standard applied use). Time-dependent AUC secondary (sec7), per-month temporal stability (sec8.4) explicitly detect horizon/PH violations; no multi-horizon deterioration needed pre-hoc as design controls verify translation to 90-day ordering.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "No label noise: per-snapshot outcome is event=1 only if churn within next 90 days from that specific snapshot date, else censored at 90 days if active (sec2 Data: 'within 90 days of that snapshot'; standard fixed-horizon survival). Accounts churning >90 days later correctly non-event/low-risk for that horizon prediction (model not 'penalized' for future events irrelevant to 90-day task); survival uses observed time-to-censor/event properly, unlike naive binary. Censoring balance verified (sec8.6). Critic misreads as global labeling.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "No explicit cluster-robust variance estimator despite repeated per-account snapshots (temporal split preserves order but treats snapshots independent). Settling experiment: account-clustered bootstrap CIs on test-set concordance difference. Vindicate: widened CIs exclude baseline (sig holds). Validate: overlap zero \u2192 sig invalid, rely on point estimate/secondaries/per-month (sec8.4). Primary relative outperformance (GBM > baseline point est) survives critique (unbiased difference; symmetric clustering variance on shared snapshots), though sig claims reassessed.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Test set (months 31\u201336) from 36+ month data has full 12-month+ histories available by design (no missing); train (1\u201324) imputation fitted there handles early snapshots (sec4 Preprocessing: 'fit exclusively on training'). Stratification/sensitivity (sec8.5) covers shifts; immaterial for PoC eval as test unaffected, preprocessing stabilizes.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "One DEFER (F4 adj=4) on clustering uncertainty warrants empirical clustered CIs check, but all others rebutted to \u22641; primary relative concordance gain robust even if critique valid (symmetric effect). Design sound overall, with targeted experiment to settle remainder."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

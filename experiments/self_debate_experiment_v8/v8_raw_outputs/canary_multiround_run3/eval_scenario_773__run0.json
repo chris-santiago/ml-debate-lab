@@ -1,0 +1,505 @@
+{
+  "case_id": "eval_scenario_773",
+  "stratum": "regular",
+  "flaw_category": "missing_baselines",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The one-hot encoding of the 10 most frequent ICD diagnosis codes is computed using the entire dataset (including validation and test), thereby leaking future information into the training process.",
+        "failure_mechanism": "If the frequency ranking is influenced by test set admissions, the encoding indirectly encodes test-set distribution, allowing the model to exploit spurious correlations that do not generalize to truly unseen data, inflating performance.",
+        "evidence_test": "Verify whether the ICD frequency list is derived solely from the training window; compare performance when encoding is recomputed on training only vs. full data. A significant drop in test precision when using training-only frequencies indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 5-fold stratified cross-validation used for hyperparameter selection treats each admission as independent, ignoring that multiple admissions may belong to the same patient, leading to leakage of patient-specific signals between training and validation folds.",
+        "failure_mechanism": "If the same patient appears in both a training fold and a validation fold, the model can learn patient-specific patterns (e.g., chronic comorbidities, historical utilization) from the training portion and directly evaluate on the validation portion, inflating cross-validation performance and resulting in hyperparameters that are overfitted to patient idiosyncrasies rather than generalizable patterns.",
+        "evidence_test": "Check for overlap of patient identifiers across CV folds; if any overlap exists, leakage is present. Additionally, compare hyperparameter-selected model performance under patient-grouped CV (e.g., leave-one-patient-out) versus admission-level CV; a substantial degradation indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning via random 5-fold CV within the training window assumes exchangeability of admissions over time, ignoring potential temporal autocorrelation (e.g., seasonality, evolving practices) and thus may select hyperparameters that perform well on past periods but fail on future validation/test periods.",
+        "failure_mechanism": "If there are temporal trends (e.g., changes in lab measurement protocols, seasonal disease prevalence) within the training window, random CV can inadvertently use future\u2011within\u2011training data to estimate performance on past\u2011within\u2011training folds, leading to overly optimistic validation scores and hyperparameters that are not robust to forward time shift.",
+        "evidence_test": "Compare hyperparameters selected by random CV versus those selected by a forward\u2011chaining (time\u2011series) CV scheme (e.g., train on earlier months, validate on later months within the training window). If the forward\u2011chosen hyperparameters yield significantly lower validation/test performance, the original CV is overly optimistic.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline model uses a fixed, clinically conservative hyperparameter configuration rather than performing a hyperparameter search, which may put the baseline at a disadvantage and inflate the apparent gain of the multimodal model.",
+        "failure_mechanism": "If the fixed hyperparameters are far from optimal for the baseline feature set, the baseline\u2019s performance will be sub\u2011optimally low, making the multimodal improvement look larger than it truly is. Conversely, if the fixed hyperparameters happen to be strong, the gain could be understated, but the risk of overstatement is more concerning for the hypothesis.",
+        "evidence_test": "Perform a hyperparameter search (e.g., same 5-fold CV used for the multimodal model) on the baseline feature set and compare its best\u2011achieved precision at 80% recall to that of the fixed\u2011hyperparameter baseline. A non\u2011trivial increase (>2\u202f% absolute) indicates that the fixed configuration is unnecessarily weak and thus inflates the multimodal claim.",
+        "finding_id": "F4",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision at 80% recall is an appropriate primary metric reflecting the clinical objective of high\u2011confidence flagging under limited case\u2011management capacity.",
+        "failure_mechanism": "If the event prevalence is low or the model\u2019s score distribution is such that achieving 80% recall requires selecting a very large fraction of the population, precision becomes highly sensitive to small changes in the threshold; minor noise in scores or calibration can cause large swings in the reported metric, making results unreliable and not reflective of true clinical utility.",
+        "evidence_test": "Examine the precision\u2011recall curve; compute the derivative (change in precision per unit change in recall) around 80% recall. If the slope is steep (e.g., >0.1 precision drop per 1% recall decrease) or if 80% recall lies beyond the model\u2019s maximum achievable recall, the metric is unstable. Additionally, report precision at multiple recall levels (e.g., 70%, 80%, 90%) to show sensitivity.",
+        "finding_id": "F5",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Including note length as a feature and performing feature importance analysis will reveal whether the embedding signal is independent of documentation verbosity.",
+        "failure_mechanism": "Note length is a crude proxy for verbosity; embeddings may correlate with other aspects of writing style (e.g., lexical diversity, use of boilerplate phrases) that also associate with readmission risk. If improvement is driven by these correlated linguistic factors rather than genuine semantic content, the hypothesis would be mistaken about the source of gain.",
+        "evidence_test": "Conduct a conditional permutation importance test: shuffle embeddings while holding length constant, and vice versa, to quantify the unique contribution of each. Alternatively, regress readmission on length alone, on embeddings alone, and on both; compare the incremental R\u00b2 or precision gain. If the embedding contribution drops to non\u2011significant when length is controlled, the gain is likely confounded.",
+        "finding_id": "F6",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The multimodal model\u2019s performance gain over the tabular baseline demonstrates that combining longitudinal time\u2011series features and discharge note embeddings provides operationally meaningful improvement.",
+        "failure_mechanism": "Without evaluating models that use only one of the two novel streams (longitudinal only or text only) alongside the baseline features, it is impossible to determine whether the observed gain stems from both modalities, from one modality alone, or from interaction effects. The hypothesis may overstate the necessity of multimodality.",
+        "evidence_test": "Train and evaluate three additional models: (i) baseline + longitudinal features, (ii) baseline + text embeddings, (iii) baseline + both (the full multimodal). Compare their precision at 80% recall. If either single\u2011modality model achieves a gain comparable to the full model, the multimodal claim is weakened; if both are needed for the full gain, the claim is strengthened.",
+        "finding_id": "F7",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Using a fixed pre\u2011trained clinical language model (PubMedBERT) to generate discharge summary embeddings will provide useful semantic features for predicting readmission.",
+        "failure_mechanism": "If the embedding space is not aligned with the readmission prediction task (e.g., dominated by topical information unrelated to clinical risk), the model may need to learn a complex transformation that gradient boosting may not capture efficiently, resulting in negligible or noisy contribution. Conversely, embeddings could inadvertently encode protected health information or biases that lead to spurious correlations.",
+        "evidence_test": "Probe the embeddings with a simple linear probe (e.g., logistic regression) trained on the training set to predict readmission; report its precision at 80% recall. If the probe performs near chance, the embeddings likely lack task\u2011relevant signal. Additionally, visualize embedding clusters by readmission status to assess separability.",
+        "finding_id": "F8",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains several serious methodological issues, most notably potential data leakage through global ICD frequency encoding and patient\u2011level cross\u2011validation, which could invalidate the claimed improvement. Additional concerns include temporal hyperparameter selection bias, baseline unfairness, metric instability, confounding by documentation length, missing modality ablations, and unverified embedding utility.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims that ICD frequency for one-hot encoding is computed on the full dataset. However, Section 3 (Preprocessing) explicitly states: 'All preprocessing transformers... are fit on the training set only and applied identically to validation and test sets.' This includes the selection of the top 10 ICD codes. The claim is a misunderstanding of the stated design. \n\nF2 identifies a lack of patient-level grouping in the 5-fold CV. The methodology specifies stratification by hospital and service line, but does not mention patient-level grouping. In EHR data, patients often have multiple admissions. If a patient appears in both training and validation folds, the model can overfit to patient-specific traits. This is a genuine flaw in the CV design that could inflate validation metrics.\n\nF3 argues that random CV within the training window ignores temporal autocorrelation. While the final evaluation is on a chronological test set, the hyperparameter selection uses random CV. If there are strong temporal trends within the training window, this could lead to suboptimal hyperparameter selection for the future test set. This is a valid concern, but the final test set is the ultimate arbiter of generalizability.\n\nF4 claims the fixed baseline hyperparameters inflate the gain. Section 4 states the baseline uses a 'fixed, clinically conservative hyperparameter configuration' to keep it 'interpretable' and 'avoid absorbing gains through extensive optimization of a deliberately simpler feature set.' This is a deliberate design choice to establish a stable, conservative reference point rather than a 'best-possible' tabular model, which is a valid approach for a PoC focused on the value of new modalities.\n\nF5 questions the stability of 'precision at 80% recall'. This is a standard clinical utility metric. While precision can be sensitive to thresholds, the use of a held-out test set and the reporting of PR curves (Section 6) provide the necessary context to assess stability. This is a general metric limitation, not a design flaw.\n\nF6 argues that note length is an insufficient control for verbosity/style. The design includes note length as a feature and uses feature importance (Section 7). While more complex controls (like permutation importance) exist, including length as a feature in a tree-based model allows the model to explicitly partition by length, and feature importance provides a first-order check. This is a reasonable PoC-level control.\n\nF7 suggests that without ablation studies (text-only vs. longitudinal-only), the source of gain is unknown. The hypothesis is whether 'multimodal features... yield operationally meaningful improvements'. The experiment is designed to test the *combined* effect. While ablations would provide more insight, they are not required to prove the primary hypothesis that the multimodal approach is better than the tabular baseline.\n\nF8 suggests PubMedBERT embeddings might not be aligned with the task. This is the core of the hypothesis being tested. The evidence test (linear probe) is a way to validate the embeddings, but the experiment itself (training the XGBoost model) is the ultimate test of whether these embeddings provide signal.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic claims leakage in ICD encoding, but Section 3 explicitly states that all preprocessing transformers are fit on the training set only and applied identically to validation and test sets. The frequency list is therefore derived solely from the training window."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology does not specify patient-level grouping for the 5-fold CV. In a longitudinal EHR dataset, this allows patient-specific signals to leak between folds, potentially inflating the validation metrics used for hyperparameter selection."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The concern regarding temporal autocorrelation during hyperparameter tuning is valid. To settle this, we would compare hyperparameters selected via random CV vs. forward-chaining CV. If the forward-chaining hyperparameters perform better on the test set, the random CV was overly optimistic. However, since the final evaluation is on a strictly chronological test set, the primary conclusion (whether the model works on future data) remains valid regardless of how hyperparameters were tuned."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The use of a fixed, conservative baseline is a deliberate design choice (Section 4) to provide a stable, interpretable reference point. The goal is to test the value of new modalities against a standard clinical-style tabular model, not to find the absolute theoretical maximum of a tabular-only approach."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The stability of the metric is addressed by reporting the full PR curve and calibration plots (Section 6), which allows for the assessment of sensitivity around the 80% recall threshold."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Including note length as a feature in a tree-based model allows the model to explicitly account for verbosity. Feature importance analysis (Section 7) provides a sufficient first-order check for a PoC to determine if embeddings provide signal independent of length."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The stated hypothesis is whether the combination of multimodal features improves performance over the baseline. Ablation studies to isolate the contribution of each stream are valuable for understanding 'why', but are outside the scope of proving 'whether' the multimodal approach is superior."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The utility of the embeddings is the central hypothesis of the experiment; the model's performance on the test set is the definitive test of this prerequisite."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "While many findings were rebutted, F2 identifies a fatal flaw in the cross-validation strategy (lack of patient-level grouping) that allows signal leakage, which remains conceded and above the severity threshold."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender argues that using a fixed, conservative baseline is a deliberate design choice to provide a stable reference, but this does not address the risk that the baseline may be suboptimally low, thereby inflating the apparent gain of the multimodal model. The justification does not mitigate the failure mechanism of an unfairly weak baseline."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender states they will report the full precision-recall curve and calibration plots to assess sensitivity around the 80% recall threshold. Merely reporting these diagnostics does not fix the underlying instability of the metric when the slope is steep; the failure mechanism of potentially unreliable precision at 80% recall remains unaddressed."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender notes that note length is included as a feature and that feature importance analysis can check whether embeddings add signal beyond length. This controls for verbosity length but does not address other writing\u2011style confounds (e.g., lexical diversity, boilerplate phrasing) that could still drive the embedding signal. Thus the concern is only partially mitigated."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender claims that ablation studies to isolate each modality are outside the scope of proving whether the multimodal combination improves over the baseline. This scope argument does not resolve the inability to attribute any observed performance gain to the multimodal combination versus a single modality, leaving the failure mechanism of ambiguous modality contribution unaddressed."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my positions on F1, F2, F3, and F8. For the challenged findings: F4 is shifted to DEFER because while the baseline is a design choice, the magnitude of the gap depends on the baseline's strength. F5 is shifted to DEFER as reporting curves identifies instability but doesn't eliminate it. F6 is maintained as REBUT-DESIGN because the current controls address the primary confound (verbosity) for a PoC. F7 is shifted to DEFER because while the 'whether' is the primary goal, the 'which' is necessary to validate the 'multimodal' claim.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "Section 3 explicitly states that all preprocessing transformers are fit on the training set only and applied identically to validation and test sets. This includes the frequency ranking for ICD codes.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology does not specify patient-level grouping for the 5-fold CV, allowing patient-specific signals to leak between folds.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "To settle this, we would compare hyperparameters selected via random CV vs. forward-chaining CV. If forward-chaining hyperparameters perform better on the test set, random CV was overly optimistic. The primary conclusion remains valid because the final evaluation is on a strictly chronological test set, which is the ultimate arbiter of temporal validity.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "1. Experiment: Perform a full hyperparameter search on the baseline model. 2. Vindication: If the optimized baseline's precision is within 2% of the fixed baseline, the original design was sufficient. 3. Validation: If the optimized baseline significantly closes the gap, the multimodal gain was inflated. 4. Primary conclusion survival: Yes; the relative gain may shrink, but the multimodal model's absolute performance on the test set remains a valid measure of its utility.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "1. Experiment: Compute precision at 70%, 80%, and 90% recall. 2. Vindication: If precision changes linearly or slowly across these thresholds, the 80% point is stable. 3. Validation: If precision drops precipitously (e.g., >10% per 5% recall), the metric is unstable. 4. Primary conclusion survival: Yes; the PR curve provides the full trade-off, and the 80% recall point is a clinical target, not the sole measure of model quality.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly includes note length as a feature and uses feature importance (Section 7). While this doesn't capture every linguistic nuance, it directly addresses the primary mechanism of 'verbosity' as a confound. For a proof-of-concept, this is the appropriate level of control; more granular linguistic analysis is a separate research question.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "1. Experiment: Train baseline+longitudinal and baseline+text models. 2. Vindication: If the full multimodal model outperforms both single-modality additions, the 'multimodal' claim is vindicated. 3. Validation: If one single-modality model matches the full model, the claim is that the other modality is redundant. 4. Primary conclusion survival: Yes; the primary goal is to see if the multimodal model beats the tabular baseline; the ablation only clarifies which component drove the win.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The utility of the embeddings is the central hypothesis; the test set performance is the definitive empirical test.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several material findings (F4, F5, F7) were moved to DEFER, as the design provides partial controls but requires empirical ablation or sensitivity analysis to fully resolve the critic's concerns. Additionally, F2 remains a conceded fatal flaw."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The one-hot encoding of the 10 most frequent ICD diagnosis codes is computed using the entire dataset (including validation and test), thereby leaking future information into the training process.",
+        "failure_mechanism": "If the frequency ranking is influenced by test set admissions, the encoding indirectly encodes test-set distribution, allowing the model to exploit spurious correlations that do not generalize to truly unseen data, inflating performance.",
+        "evidence_test": "Verify whether the ICD frequency list is derived solely from the training window; compare performance when encoding is recomputed on training only vs. full data. A significant drop in test precision when using training-only frequencies indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 5-fold stratified cross-validation used for hyperparameter selection treats each admission as independent, ignoring that multiple admissions may belong to the same patient, leading to leakage of patient-specific signals between training and validation folds.",
+        "failure_mechanism": "If the same patient appears in both a training fold and a validation fold, the model can learn patient-specific patterns (e.g., chronic comorbidities, historical utilization) from the training portion and directly evaluate on the validation portion, inflating cross-validation performance and resulting in hyperparameters that are overfitted to patient idiosyncrasies rather than generalizable patterns.",
+        "evidence_test": "Check for overlap of patient identifiers across CV folds; if any overlap exists, leakage is present. Additionally, compare hyperparameter-selected model performance under patient-grouped CV (e.g., leave-one-patient-out) versus admission-level CV; a substantial degradation indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning via random 5-fold CV within the training window assumes exchangeability of admissions over time, ignoring potential temporal autocorrelation (e.g., seasonality, evolving practices) and thus may select hyperparameters that perform well on past periods but fail on future validation/test periods.",
+        "failure_mechanism": "If there are temporal trends (e.g., changes in lab measurement protocols, seasonal disease prevalence) within the training window, random CV can inadvertently use future\u2011within\u2011training data to estimate performance on past\u2011within\u2011training folds, leading to overly optimistic validation scores and hyperparameters that are not robust to forward time shift.",
+        "evidence_test": "Compare hyperparameters selected by random CV versus those selected by a forward\u2011chaining (time\u2011series) CV scheme (e.g., train on earlier months, validate on later months within the training window). If the forward\u2011chosen hyperparameters yield significantly lower validation/test performance, the original CV is overly optimistic.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline model uses a fixed, clinically conservative hyperparameter configuration rather than performing a hyperparameter search, which may put the baseline at a disadvantage and inflate the apparent gain of the multimodal model.",
+        "failure_mechanism": "If the fixed hyperparameters are far from optimal for the baseline feature set, the baseline\u2019s performance will be sub\u2011optimally low, making the multimodal improvement look larger than it truly is. Conversely, if the fixed hyperparameters happen to be strong, the gain could be understated, but the risk of overstatement is more concerning for the hypothesis.",
+        "evidence_test": "Perform a hyperparameter search (e.g., same 5-fold CV used for the multimodal model) on the baseline feature set and compare its best\u2011achieved precision at 80% recall to that of the fixed\u2011hyperparameter baseline. A non\u2011trivial increase (>2\u202f% absolute) indicates that the fixed configuration is unnecessarily weak and thus inflates the multimodal claim.",
+        "finding_id": "F4",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Precision at 80% recall is an appropriate primary metric reflecting the clinical objective of high\u2011confidence flagging under limited case\u2011management capacity.",
+        "failure_mechanism": "If the event prevalence is low or the model\u2019s score distribution is such that achieving 80% recall requires selecting a very large fraction of the population, precision becomes highly sensitive to small changes in the threshold; minor noise in scores or calibration can cause large swings in the reported metric, making results unreliable and not reflective of true clinical utility.",
+        "evidence_test": "Examine the precision\u2011recall curve; compute the derivative (change in precision per unit change in recall) around 80% recall. If the slope is steep (e.g., >0.1 precision drop per 1% recall decrease) or if 80% recall lies beyond the model\u2019s maximum achievable recall, the metric is unstable. Additionally, report precision at multiple recall levels (e.g., 70%, 80%, 90%) to show sensitivity.",
+        "finding_id": "F5",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Including note length as a feature and performing feature importance analysis will reveal whether the embedding signal is independent of documentation verbosity.",
+        "failure_mechanism": "Note length is a crude proxy for verbosity; embeddings may correlate with other aspects of writing style (e.g., lexical diversity, use of boilerplate phrases) that also associate with readmission risk. If improvement is driven by these correlated linguistic factors rather than genuine semantic content, the hypothesis would be mistaken about the source of gain.",
+        "evidence_test": "Conduct a conditional permutation importance test: shuffle embeddings while holding length constant, and vice versa, to quantify the unique contribution of each. Alternatively, regress readmission on length alone, on embeddings alone, and on both; compare the incremental R\u00b2 or precision gain. If the embedding contribution drops to non\u2011significant when length is controlled, the gain is likely confounded.",
+        "finding_id": "F6",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The multimodal model\u2019s performance gain over the tabular baseline demonstrates that combining longitudinal time\u2011series features and discharge note embeddings provides operationally meaningful improvement.",
+        "failure_mechanism": "Without evaluating models that use only one of the two novel streams (longitudinal only or text only) alongside the baseline features, it is impossible to determine whether the observed gain stems from both modalities, from one modality alone, or from interaction effects. The hypothesis may overstate the necessity of multimodality.",
+        "evidence_test": "Train and evaluate three additional models: (i) baseline + longitudinal features, (ii) baseline + text embeddings, (iii) baseline + both (the full multimodal). Compare their precision at 80% recall. If either single\u2011modality model achieves a gain comparable to the full model, the multimodal claim is weakened; if both are needed for the full gain, the claim is strengthened.",
+        "finding_id": "F7",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Using a fixed pre\u2011trained clinical language model (PubMedBERT) to generate discharge summary embeddings will provide useful semantic features for predicting readmission.",
+        "failure_mechanism": "If the embedding space is not aligned with the readmission prediction task (e.g., dominated by topical information unrelated to clinical risk), the model may need to learn a complex transformation that gradient boosting may not capture efficiently, resulting in negligible or noisy contribution. Conversely, embeddings could inadvertently encode protected health information or biases that lead to spurious correlations.",
+        "evidence_test": "Probe the embeddings with a simple linear probe (e.g., logistic regression) trained on the training set to predict readmission; report its precision at 80% recall. If the probe performs near chance, the embeddings likely lack task\u2011relevant signal. Additionally, visualize embedding clusters by readmission status to assess separability.",
+        "finding_id": "F8",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains several serious methodological issues, most notably potential data leakage through global ICD frequency encoding and patient\u2011level cross\u2011validation, which could invalidate the claimed improvement. Additional concerns include temporal hyperparameter selection bias, baseline unfairness, metric instability, confounding by documentation length, missing modality ablations, and unverified embedding utility.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my positions on F1, F2, F3, and F8. For the challenged findings: F4 is shifted to DEFER because while the baseline is a design choice, the magnitude of the gap depends on the baseline's strength. F5 is shifted to DEFER as reporting curves identifies instability but doesn't eliminate it. F6 is maintained as REBUT-DESIGN because the current controls address the primary confound (verbosity) for a PoC. F7 is shifted to DEFER because while the 'whether' is the primary goal, the 'which' is necessary to validate the 'multimodal' claim.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "Section 3 explicitly states that all preprocessing transformers are fit on the training set only and applied identically to validation and test sets. This includes the frequency ranking for ICD codes.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The methodology does not specify patient-level grouping for the 5-fold CV, allowing patient-specific signals to leak between folds.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "To settle this, we would compare hyperparameters selected via random CV vs. forward-chaining CV. If forward-chaining hyperparameters perform better on the test set, random CV was overly optimistic. The primary conclusion remains valid because the final evaluation is on a strictly chronological test set, which is the ultimate arbiter of temporal validity.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "1. Experiment: Perform a full hyperparameter search on the baseline model. 2. Vindication: If the optimized baseline's precision is within 2% of the fixed baseline, the original design was sufficient. 3. Validation: If the optimized baseline significantly closes the gap, the multimodal gain was inflated. 4. Primary conclusion survival: Yes; the relative gain may shrink, but the multimodal model's absolute performance on the test set remains a valid measure of its utility.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "1. Experiment: Compute precision at 70%, 80%, and 90% recall. 2. Vindication: If precision changes linearly or slowly across these thresholds, the 80% point is stable. 3. Validation: If precision drops precipitously (e.g., >10% per 5% recall), the metric is unstable. 4. Primary conclusion survival: Yes; the PR curve provides the full trade-off, and the 80% recall point is a clinical target, not the sole measure of model quality.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly includes note length as a feature and uses feature importance (Section 7). While this doesn't capture every linguistic nuance, it directly addresses the primary mechanism of 'verbosity' as a confound. For a proof-of-concept, this is the appropriate level of control; more granular linguistic analysis is a separate research question.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "1. Experiment: Train baseline+longitudinal and baseline+text models. 2. Vindication: If the full multimodal model outperforms both single-modality additions, the 'multimodal' claim is vindicated. 3. Validation: If one single-modality model matches the full model, the claim is that the other modality is redundant. 4. Primary conclusion survival: Yes; the primary goal is to see if the multimodal model beats the tabular baseline; the ablation only clarifies which component drove the win.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The utility of the embeddings is the central hypothesis; the test set performance is the definitive empirical test.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several material findings (F4, F5, F7) were moved to DEFER, as the design provides partial controls but requires empirical ablation or sensitivity analysis to fully resolve the critic's concerns. Additionally, F2 remains a conceded fatal flaw."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=8 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

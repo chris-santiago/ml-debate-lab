@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_915",
+  "stratum": "mixed",
+  "flaw_category": "context_dependent",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "qwen/qwen3.5-35b-a3b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The graph model features ('network connection novelty', 'destination reputation buckets') are derived from raw signals without leaking test-time information.",
+        "failure_mechanism": "Features like 'novelty' and 'reputation' are often computed using global statistics or threat feeds that are updated retrospectively. If 'novelty' is defined as 'not seen in the entire 18-month dataset', the model sees the test set during feature construction. If 'reputation' is derived from the final incident labels (e.g., 'IPs involved in confirmed incidents'), the features directly encode the target label, creating a massive signal leakage that inflates performance to near-perfect levels on the test set.",
+        "evidence_test": "Verify the timestamp of the reputation data and the calculation window for 'novelty'. If 'novelty' is computed over the full 18 months or if 'reputation' is derived from the incident labels, the experiment is invalid. Compare feature distributions between train and test; identical distributions for 'novelty' features indicate leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Excluding 'host-days near unresolved investigations' does not bias the test set relative to the production environment the SOC faces.",
+        "failure_mechanism": "In production, the SOC must triage *all* host-days, including those that are part of ongoing, unresolved investigations. These cases are often the most ambiguous and difficult to detect. By excluding them from the evaluation set, the test set becomes artificially 'cleaner' and easier than the deployment environment. This leads to an inflated AUPRC that does not reflect the model's ability to handle the actual operational workload, where unresolved cases are a significant portion of the alert queue.",
+        "evidence_test": "Run the evaluation on the full dataset (including excluded host-days) and compare the AUPRC. If performance drops significantly on the excluded set, the original evaluation was inflated. Additionally, check if the exclusion criteria rely on information (e.g., ticket resolution time) that would not be available at inference time.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GBDT baseline is a fair comparison because it uses 'host-day aggregates' and 'rolling behavioral deltas' equivalent to the GNN's 7-day window.",
+        "failure_mechanism": "The hypothesis claims the GNN's gain is due to 'relational modeling'. However, if the GBDT baseline does not explicitly incorporate the same 7-day temporal context (e.g., if 'rolling deltas' are computed differently or if the GBDT only uses static aggregates), the comparison is unfair. The GNN's graph structure inherently captures temporal dependencies over the 7-day window. If the GBDT lacks this temporal depth, the performance gap may be attributed to temporal modeling rather than relational inductive bias, invalidating the core hypothesis.",
+        "evidence_test": "Inspect the GBDT feature engineering code to confirm that 'rolling behavioral deltas' are calculated over the exact same 7-day window as the GNN graph construction. If the GBDT uses a different window or no rolling window, the baseline is insufficient.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GNN can handle nodes (IPs, hosts) in the test set that were not present in the training set.",
+        "failure_mechanism": "The PoC states 'All preprocessing... fit on training only'. In a heterogeneous graph, if a new IP or host appears in the test set that was never seen in training, the model may lack an embedding for it. If the implementation silently drops these nodes or maps them to a generic 'UNK' token without verifying that this behavior is robust, the model's performance on 'campaign novelty' (a key hypothesis target) will be artificially degraded or undefined. This is a silent misconfiguration where the model appears to work on known nodes but fails on the specific cases (new campaigns) the hypothesis targets.",
+        "evidence_test": "Check the graph construction logic for OOV (Out-of-Vocabulary) node handling. Verify if the model is tested on a subset of the test set containing only known nodes vs. the full test set. If performance drops significantly when new nodes are included, the model is not robust to the intended distribution shift.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains two FATAL flaws: potential label leakage in graph features and test set bias from excluding unresolved investigations, both of which invalidate the reported performance. Two MATERIAL flaws regarding baseline fairness and OOV handling further weaken the conclusion that relational modeling is the primary driver of success.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic claims features like 'network connection novelty' and 'destination reputation buckets' may leak test-time information if computed over the full 18 months or derived from incident labels. However, the methodology explicitly states: 'All preprocessing, vocabularies, normalization statistics, and frequency cutoffs are fit on training only and then frozen.' This is a direct design control addressing the exact leakage mechanism the critic describes. The critic's concern is hypothetical \u2014 they propose an evidence test to verify the control was followed, but the design intent is unambiguous. This is a REBUT-DESIGN case.\n\nF2: The critic claims excluding host-days near unresolved investigations creates an artificially easier test set. However, the methodology explicitly states these are excluded 'because security labels are delayed and imperfect' \u2014 this is a label quality control, not an evaluation convenience hack. You cannot evaluate detection performance on cases without confirmed ground truth labels. Including unresolved cases would inject noise, not improve evaluation fidelity. The critic's suggestion to 'run on full dataset' assumes labels exist for unresolved cases, which contradicts the stated exclusion rationale. This is a REBUT-DESIGN case with direct citation of the stated rationale.\n\nF3: The critic claims the GBDT baseline may not use the same 7-day temporal context as the GNN, potentially attributing gains to temporal modeling rather than relational inductive bias. However, the methodology states both models use 'the same underlying event stream' and the GBDT uses 'rolling behavioral deltas' \u2014 described in the same paragraph as the GNN's 7-day window. The design intent is explicit equivalence. The critic's evidence test would verify implementation, but the design choice is clear. This is REBUT-DESIGN.\n\nF4: The critic claims the GNN may not handle out-of-vocabulary nodes (new IPs/hosts in test set) properly, degrading performance on campaign novelty. However, the methodology explicitly includes 'campaign novelty' as a control: 'Perform controls for host class, business unit, and campaign novelty.' This indicates the design explicitly anticipates and tests for this distribution shift. The critic's concern is about implementation details, but the design intent includes robustness to novel nodes as an explicit evaluation target. This is REBUT-DESIGN.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The methodology explicitly states 'All preprocessing, vocabularies, normalization statistics, and frequency cutoffs are fit on training only and then frozen.' This is a direct design control that eliminates the leakage mechanism the critic describes. The critic's concern is hypothetical (what *might* happen if the control is violated), not an identification of an actual design flaw. The evidence test the critic proposes would verify the control was implemented correctly \u2014 a valid empirical check, but the design intent is unambiguous and directly addresses the concern."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly states these host-days are excluded 'because security labels are delayed and imperfect' \u2014 this is a label quality control, not an evaluation inflation mechanism. You cannot evaluate detection performance on cases without confirmed malicious activity labels. Including unresolved investigations would inject noise (false labels) rather than improve evaluation fidelity. The critic's proposed evidence test (running on full dataset) assumes labels exist for unresolved cases, which contradicts the stated exclusion rationale. The design control is explicit and justified."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly states both models build from 'the same underlying event stream' and the GBDT uses 'host-day aggregates' with 'rolling behavioral deltas' \u2014 described in the same section as the GNN's 7-day window. The design intent is temporal equivalence. The critic's concern is about implementation verification (whether the rolling window is implemented identically), not a design flaw. The ablation that 'removes graph edges while preserving node features' provides additional isolation of relational vs. non-relational modeling."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly includes 'campaign novelty' as a control: 'Perform controls for host class, business unit, and campaign novelty.' This indicates the design explicitly anticipates and tests for distribution shift to novel nodes. The critic's concern is about OOV handling implementation details, but the design intent includes robustness to novel campaigns as an explicit evaluation target. The hypothesis is 'explicitly about future-time generalization to unseen campaigns,' so this is a first-class design concern that has been anticipated."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All four findings have been rebutted via REBUT-DESIGN with direct citation of explicit design controls: (1) 'fit on training only' for feature leakage, (2) label quality rationale for unresolved investigation exclusion, (3) matched temporal context via rolling deltas for baseline equivalence, and (4) campaign novelty as an explicit control for OOV robustness. Adjusted severities are 4, 3, 2, and 1 \u2014 all \u2264 3. The methodology is sound, and the critic's concerns are addressed by design rather than requiring empirical deferral."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender's rebuttal cites the design control 'All preprocessing... fit on training only'. While this addresses normalization and vocabulary fitting, it does not mechanistically address the specific failure mode of 'reputation derived from final incident labels'. Feature source (e.g., external feed vs. internal label aggregation) is distinct from preprocessing fitting. The rebuttal is generic ('design intent is unambiguous') and does not explain how the reputation feature avoids label leakage, leaving the FATAL risk partially unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly identifies that supervised evaluation requires confirmed labels. The exclusion of unresolved investigations is a necessary constraint for label quality, not an evaluation inflation mechanism. The failure mechanism (noise injection) is resolved by the design rationale that labels are 'delayed and imperfect'. The test set is valid for the defined task of detecting confirmed incidents."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The methodology text ('same underlying event stream', 'rolling behavioral deltas') supports the design claim of temporal equivalence. However, the finding specifically requests code verification to ensure implementation matches the design. Additionally, the defender's mention of the edge-ablation control isolates 'structure vs metadata', not 'temporal depth vs static'. The residual issue is whether the GBDT implementation truly matches the GNN's 7-day temporal window in practice."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The defender argues that 'campaign novelty' is a control, which indicates the hypothesis targets distribution shift. However, this does not address the specific failure mechanism of 'silent misconfiguration' (e.g., dropping OOV nodes or using generic UNK tokens). A model can test for novelty while still failing silently on OOV nodes. The rebuttal explains the evaluation target, not the robustness mechanism required to handle it."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted my F2 rebuttal (label quality control is valid). For F1, F3, and F4, the critic raises valid mechanistic points: F1 questions whether 'destination reputation' could be derived from incident labels (source not specified); F3 questions whether GBDT truly matches the 7-day temporal window; F4 questions whether the model robustly handles OOV nodes. All three involve partial design answers (temporal equivalence stated, campaign novelty controlled) but lack explicit mechanism specification for the specific failure mode. Rather than overstate what the design achieves, I should DEFER to empirical verification for these three findings. The design has anticipated these concerns but cannot eliminate them through design controls alone.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design control 'All preprocessing... fit on training only' addresses normalization and vocabulary fitting, but does not specify the source of 'destination reputation buckets'. The critic correctly identifies that reputation could come from an external threat feed (legitimate) or be derived from incident labels (leakage). The methodology does not explicitly control for this feature source. The settling experiment: inspect the reputation feature construction code to determine whether it aggregates internal incident labels or queries an external feed. If external, the design is sound; if derived from labels, the concern is valid. The primary conclusion (GNN relational inductive bias improves detection) would survive if the critique is correct only if the edge-ablation control shows the gain comes from structure rather than reputation features alone.",
+        "r2_challenge_response": "DEFERRED \u2014 design has partial answer (preprocessing fitting) but cannot eliminate the specific mechanism (reputation source) without empirical verification"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The critic ACCEPTs this rebuttal. The exclusion of unresolved investigations is a necessary label quality control \u2014 supervised evaluation requires confirmed labels. Including unresolved cases would inject noise (false labels) rather than improve evaluation fidelity. The design control is explicit and justified.",
+        "r2_challenge_response": "MAINTAINED \u2014 critic accepted the label quality rationale"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The methodology states temporal equivalence ('same underlying event stream', 'rolling behavioral deltas' in both models), but does not specify that the GBDT rolling window is explicitly implemented as a 7-day lookback matching the GNN graph construction window. The critic correctly notes the edge ablation isolates 'structure vs metadata', not 'temporal depth'. The settling experiment: inspect GBDT feature engineering code to verify the rolling window calculation matches the GNN's 7-day window. The primary conclusion would be invalidated if the GBDT lacks temporal depth \u2014 the performance gap would reflect temporal modeling rather than relational inductive bias.",
+        "r2_challenge_response": "DEFERRED \u2014 design states temporal equivalence but implementation verification needed; concern would invalidate hypothesis if true"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The design includes 'campaign novelty' as a control and targets 'future-time generalization to unseen campaigns', but does not specify the OOV node handling mechanism. The critic correctly notes that testing for novelty is distinct from robustly handling OOV nodes. The settling experiment: evaluate performance on test set subsets containing only known nodes vs. all nodes (including novel IPs/hosts). If performance drops significantly with novel nodes, the model fails silently on the distribution shift the hypothesis targets. The primary conclusion could survive if the critique is correct \u2014 the evaluation would be incomplete but the relational modeling mechanism could still be valid for known nodes.",
+        "r2_challenge_response": "DEFERRED \u2014 design anticipates novelty but doesn't specify OOV handling mechanism; empirical test needed to verify robustness"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Three findings (F1, F3, F4) are DEFERred to empirical verification \u2014 the design has partial answers (preprocessing fitting, temporal equivalence stated, campaign novelty controlled) but cannot eliminate the specific failure mechanisms without inspecting implementation or running targeted experiments. F2 is maintained as a valid design control. The presence of DEFER rebuttals triggers empirical_test_agreed, which is the correct outcome when reasonable mechanistic questions remain but the design has anticipated the concerns at the evaluation-target level."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The graph model features ('network connection novelty', 'destination reputation buckets') are derived from raw signals without leaking test-time information.",
+        "failure_mechanism": "Features like 'novelty' and 'reputation' are often computed using global statistics or threat feeds that are updated retrospectively. If 'novelty' is defined as 'not seen in the entire 18-month dataset', the model sees the test set during feature construction. If 'reputation' is derived from the final incident labels (e.g., 'IPs involved in confirmed incidents'), the features directly encode the target label, creating a massive signal leakage that inflates performance to near-perfect levels on the test set.",
+        "evidence_test": "Verify the timestamp of the reputation data and the calculation window for 'novelty'. If 'novelty' is computed over the full 18 months or if 'reputation' is derived from the incident labels, the experiment is invalid. Compare feature distributions between train and test; identical distributions for 'novelty' features indicate leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Excluding 'host-days near unresolved investigations' does not bias the test set relative to the production environment the SOC faces.",
+        "failure_mechanism": "In production, the SOC must triage *all* host-days, including those that are part of ongoing, unresolved investigations. These cases are often the most ambiguous and difficult to detect. By excluding them from the evaluation set, the test set becomes artificially 'cleaner' and easier than the deployment environment. This leads to an inflated AUPRC that does not reflect the model's ability to handle the actual operational workload, where unresolved cases are a significant portion of the alert queue.",
+        "evidence_test": "Run the evaluation on the full dataset (including excluded host-days) and compare the AUPRC. If performance drops significantly on the excluded set, the original evaluation was inflated. Additionally, check if the exclusion criteria rely on information (e.g., ticket resolution time) that would not be available at inference time.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GBDT baseline is a fair comparison because it uses 'host-day aggregates' and 'rolling behavioral deltas' equivalent to the GNN's 7-day window.",
+        "failure_mechanism": "The hypothesis claims the GNN's gain is due to 'relational modeling'. However, if the GBDT baseline does not explicitly incorporate the same 7-day temporal context (e.g., if 'rolling deltas' are computed differently or if the GBDT only uses static aggregates), the comparison is unfair. The GNN's graph structure inherently captures temporal dependencies over the 7-day window. If the GBDT lacks this temporal depth, the performance gap may be attributed to temporal modeling rather than relational inductive bias, invalidating the core hypothesis.",
+        "evidence_test": "Inspect the GBDT feature engineering code to confirm that 'rolling behavioral deltas' are calculated over the exact same 7-day window as the GNN graph construction. If the GBDT uses a different window or no rolling window, the baseline is insufficient.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GNN can handle nodes (IPs, hosts) in the test set that were not present in the training set.",
+        "failure_mechanism": "The PoC states 'All preprocessing... fit on training only'. In a heterogeneous graph, if a new IP or host appears in the test set that was never seen in training, the model may lack an embedding for it. If the implementation silently drops these nodes or maps them to a generic 'UNK' token without verifying that this behavior is robust, the model's performance on 'campaign novelty' (a key hypothesis target) will be artificially degraded or undefined. This is a silent misconfiguration where the model appears to work on known nodes but fails on the specific cases (new campaigns) the hypothesis targets.",
+        "evidence_test": "Check the graph construction logic for OOV (Out-of-Vocabulary) node handling. Verify if the model is tested on a subset of the test set containing only known nodes vs. the full test set. If performance drops significantly when new nodes are included, the model is not robust to the intended distribution shift.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains two FATAL flaws: potential label leakage in graph features and test set bias from excluding unresolved investigations, both of which invalidate the reported performance. Two MATERIAL flaws regarding baseline fairness and OOV handling further weaken the conclusion that relational modeling is the primary driver of success.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted my F2 rebuttal (label quality control is valid). For F1, F3, and F4, the critic raises valid mechanistic points: F1 questions whether 'destination reputation' could be derived from incident labels (source not specified); F3 questions whether GBDT truly matches the 7-day temporal window; F4 questions whether the model robustly handles OOV nodes. All three involve partial design answers (temporal equivalence stated, campaign novelty controlled) but lack explicit mechanism specification for the specific failure mode. Rather than overstate what the design achieves, I should DEFER to empirical verification for these three findings. The design has anticipated these concerns but cannot eliminate them through design controls alone.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design control 'All preprocessing... fit on training only' addresses normalization and vocabulary fitting, but does not specify the source of 'destination reputation buckets'. The critic correctly identifies that reputation could come from an external threat feed (legitimate) or be derived from incident labels (leakage). The methodology does not explicitly control for this feature source. The settling experiment: inspect the reputation feature construction code to determine whether it aggregates internal incident labels or queries an external feed. If external, the design is sound; if derived from labels, the concern is valid. The primary conclusion (GNN relational inductive bias improves detection) would survive if the critique is correct only if the edge-ablation control shows the gain comes from structure rather than reputation features alone.",
+        "r2_challenge_response": "DEFERRED \u2014 design has partial answer (preprocessing fitting) but cannot eliminate the specific mechanism (reputation source) without empirical verification"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The critic ACCEPTs this rebuttal. The exclusion of unresolved investigations is a necessary label quality control \u2014 supervised evaluation requires confirmed labels. Including unresolved cases would inject noise (false labels) rather than improve evaluation fidelity. The design control is explicit and justified.",
+        "r2_challenge_response": "MAINTAINED \u2014 critic accepted the label quality rationale"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The methodology states temporal equivalence ('same underlying event stream', 'rolling behavioral deltas' in both models), but does not specify that the GBDT rolling window is explicitly implemented as a 7-day lookback matching the GNN graph construction window. The critic correctly notes the edge ablation isolates 'structure vs metadata', not 'temporal depth'. The settling experiment: inspect GBDT feature engineering code to verify the rolling window calculation matches the GNN's 7-day window. The primary conclusion would be invalidated if the GBDT lacks temporal depth \u2014 the performance gap would reflect temporal modeling rather than relational inductive bias.",
+        "r2_challenge_response": "DEFERRED \u2014 design states temporal equivalence but implementation verification needed; concern would invalidate hypothesis if true"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The design includes 'campaign novelty' as a control and targets 'future-time generalization to unseen campaigns', but does not specify the OOV node handling mechanism. The critic correctly notes that testing for novelty is distinct from robustly handling OOV nodes. The settling experiment: evaluate performance on test set subsets containing only known nodes vs. all nodes (including novel IPs/hosts). If performance drops significantly with novel nodes, the model fails silently on the distribution shift the hypothesis targets. The primary conclusion could survive if the critique is correct \u2014 the evaluation would be incomplete but the relational modeling mechanism could still be valid for known nodes.",
+        "r2_challenge_response": "DEFERRED \u2014 design anticipates novelty but doesn't specify OOV handling mechanism; empirical test needed to verify robustness"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Three findings (F1, F3, F4) are DEFERred to empirical verification \u2014 the design has partial answers (preprocessing fitting, temporal equivalence stated, campaign novelty controlled) but cannot eliminate the specific failure mechanisms without inspecting implementation or running targeted experiments. F2 is maintained as a valid design control. The presence of DEFER rebuttals triggers empirical_test_agreed, which is the correct outcome when reasonable mechanistic questions remain but the design has anticipated the concerns at the evaluation-target level."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=9 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

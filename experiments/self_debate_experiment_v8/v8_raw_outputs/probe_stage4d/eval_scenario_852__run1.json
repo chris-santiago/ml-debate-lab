@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_852",
+  "stratum": "regular",
+  "flaw_category": "eval_inflation",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "x-ai/grok-4.1-fast",
+    "defender": "mistralai/mistral-small-2603",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Metrics reported on the second random half of the test set provide an unbiased estimate of true deployment performance after hyperparameter finalization on validation.",
+        "failure_mechanism": "Examining the first random half of the test set as a 'deployment-readiness confirmation pass' after tuning allows experimenters to peek at test distribution statistics, enabling selective reporting, adjusted confidence, or implicit decisions to proceed/abort based on test performance, inflating apparent reliability even without re-tuning.",
+        "evidence_test": "Pre-commit to a reporting protocol before seeing any test data; compare performance distributions between first and second halves across seeds (should be statistically identical); rerun experiment blinded to first-half results.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sender domain reputation feature (fraction malicious from training set) is correctly computed for all test emails without introducing systematic bias.",
+        "failure_mechanism": "No specification of handling for sender domains absent in training set (common for novel phishing campaigns); defaulting to 0, global mean, or NaN imputation would assign incorrect risk scores to new domains, producing plausible aggregate metrics while degrading performance precisely on novel threats the temporal split aims to test.",
+        "evidence_test": "Report % of test emails from train-unseen domains, their true malicious rate vs. seen domains, and subsetted model performance (PR-AUC) on unseen domains; verify imputation logic produces neutral prior matching empirical base rate.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The campaign leakage check using sender/recipient clusters and identical subject lines from same sender detects all significant train-test contamination.",
+        "failure_mechanism": "Definition is narrow (e.g., misses body-similar or slightly varied campaigns from new senders/infrastructure), allowing subtle temporal leakage where test emails resemble train campaigns in semantics/content but not metadata, enabling models to memorize rather than generalize.",
+        "evidence_test": "Compute embedding cosine similarity (e.g., BERT) between test and train emails; flag/report % of test emails >0.9 similarity to any train email; manually audit top model predictions/errors for train overlap beyond metadata.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Retrospective labels (analyst confirmation or validated user report within 7 days) reliably capture all malicious emails without significant false negatives.",
+        "failure_mechanism": "Slow-evolving threats (e.g., BEC simmering >7 days without reports) are systematically labeled benign, underestimating true malicious prevalence and model FNR; inter-rater kappa measures agreement/reliability but not label recall/validity against ground truth, masking under-labeling.",
+        "evidence_test": "For confirmed incidents, histogram time-to-detection; estimate label recall via external audit (e.g., sandbox detonation or threat intel overlap) on a held-out sample; subset performance by detection latency if available.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The design is thoughtful with strong controls for temporal drift, leakage, and baselines, but has material gaps in test set purity, OOD feature handling, leakage detection completeness, and label validity that could inflate relative transformer benefits or mask failures on novel threats.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic argues that using the first half of the test set as a 'deployment-readiness confirmation pass' introduces test peeking, inflating reliability. This is a valid concern in general, but the methodology explicitly states that the first half is used *only* for confirmation *before locking the training recipe*, and all reported metrics are computed on the second half. The design separates the confirmation pass from the final reporting, and the test set is not used for hyperparameter tuning or model selection. The evidence test proposed (comparing first/second halves) is already satisfied by the design: the first half is not used for any decision affecting the final model, only for sanity checking stability. Thus, the failure mechanism does not apply to this design.\n\nF2: The critic claims sender domain reputation features may be misconfigured for test emails from domains unseen in training. This is a valid concern: if unseen domains are imputed to 0 or mean, the model may misrank novel phishing campaigns. However, the methodology does *not* specify the imputation strategy for unseen domains, leaving a silent misconfig risk. The evidence test proposed (reporting % unseen domains, their malicious rate, and subset performance) is appropriate and should be added to the PoC report. The design does not explicitly address this, so the critique stands as a real but unmitigated flaw.\n\nF3: The critic argues the campaign leakage check is too narrow (e.g., misses semantic similarity beyond metadata). This is a valid concern: metadata-only cluster checks may miss content-level leakage. The methodology\u2019s current leakage control is incomplete; it should be augmented with embedding similarity checks as suggested. The design does not currently implement this, so the critique identifies a real gap.\n\nF4: The critic asserts retrospective labels (7-day analyst confirmation) may miss slow-evolving threats, underestimating malicious prevalence and inflating FNR. This is a valid concern: the label definition may exclude threats detected >7 days post-delivery, biasing the evaluation. The methodology acknowledges label noise but does not quantify or correct for recall bias. The evidence test (external audit, latency histogram) is appropriate and not currently implemented.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The design explicitly separates the 'deployment-readiness confirmation pass' from final reporting: the first half is used only for sanity checking stability *before* locking the training recipe, and all reported metrics are computed on the second half. No hyperparameter tuning or model selection occurs after seeing test data. The failure mechanism (test peeking) is thus eliminated by construction."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The methodology does not specify how sender domains absent in training are handled (e.g., imputation strategy). The critic\u2019s proposed evidence test (report % unseen domains, their malicious rate, and subset performance) is necessary to resolve whether the misconfiguration materially biases results. The design currently lacks this control, so the question is empirically unsettled."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The current leakage check (sender/recipient clusters, identical subject lines) may miss semantic/content-level leakage. The critic\u2019s proposed embedding similarity check is a valid addition to close this gap. The design does not currently implement this, so the magnitude of residual leakage is empirically uncertain."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The label definition (retrospective 7-day confirmation) may exclude slow-evolving threats, biasing FNR and prevalence. The critic\u2019s proposed evidence tests (latency histogram, external audit) are necessary to quantify this bias. The design acknowledges label noise but does not correct for recall bias, so the significance of the concern is empirically unsettled."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is rebutted by design (no test peeking), reducing it to a minor concern. F2, F3, and F4 identify real but unmitigated gaps; their significance requires empirical verification via the settling experiments proposed by the critic. No FATAL or MATERIAL finding remains unresolved above adjusted severity 3, but multiple concerns require data to settle."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal specifically addresses lack of re-tuning or model selection after seeing test data, which partially mitigates the concern. However, it generically claims the peeking mechanism is 'eliminated by construction' without mechanistically resolving experimenter bias from observing first-half test performance (e.g., selective seed reporting across 3 runs, adjusted confidence in deployment readiness, or implicit decisions to abort/rerun). No pre-commit protocol for handling sanity check outcomes is specified, leaving eval_inflation risk unresolved. Severity adjustment of -5 is disproportionate."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 6,
+        "reasoning": "DEFER rebuttal acknowledges the open question on unseen domain handling and agrees empirical evidence test is needed; concern remains unsettled as-is."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "DEFER rebuttal acknowledges the open question on semantic leakage detection and agrees critic's embedding similarity check is needed; residual leakage magnitude unsettled."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "DEFER rebuttal acknowledges the open question on label recall bias for slow threats and agrees critic's latency/audit tests are needed; bias significance unsettled."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic CHALLENGED F1, arguing that while the design prevents re-tuning after seeing test data, it does not eliminate experimenter bias from observing first-half test performance (e.g., selective seed reporting, confidence adjustment, or implicit decisions). The other findings (F2, F3, F4) were ACCEPTed, meaning the design lacks controls for those concerns and requires empirical resolution. For F1, the design does not fully eliminate eval_inflation risk; for the others, the design lacks specific controls entirely.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The design prevents hyperparameter tuning or model selection after seeing test data, which mitigates test peeking but does not eliminate experimenter bias from observing first-half test performance (e.g., selective reporting across seeds, confidence adjustment, or implicit deployment decisions). The critic's concern is mechanistically valid: the 'deployment-readiness confirmation pass' could still influence how results are presented or interpreted. The settling experiment is to pre-commit to a reporting protocol *before* seeing any test data, compare performance distributions between first and second halves across seeds (should be statistically identical), and rerun the experiment blinded to first-half results. If distributions differ or blinding changes conclusions, the eval_inflation risk is material.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The methodology does not specify how sender domains absent in training are handled (e.g., imputation strategy), leaving the critic's concern unresolved. The settling experiment is to report the percentage of test emails from train-unseen domains, their true malicious rate vs. seen domains, and subsetted model performance (PR-AUC) on unseen domains. This will reveal whether the misconfiguration biases results. The design currently lacks this control.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The current leakage check (sender/recipient clusters, identical subject lines) may miss semantic/content-level leakage. The settling experiment is to compute embedding cosine similarity (e.g., BERT) between test and train emails, flag and report the percentage of test emails with >0.9 similarity to any train email, and manually audit top model predictions/errors for train overlap beyond metadata. The design does not currently implement this, so the magnitude of residual leakage is empirically unsettled.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The label definition (retrospective 7-day confirmation) may exclude slow-evolving threats, biasing FNR and prevalence. The settling experiment is to compute a histogram of time-to-detection for confirmed incidents, estimate label recall via external audit (e.g., sandbox detonation or threat intel overlap) on a held-out sample, and subset performance by detection latency if available. The design acknowledges label noise but does not correct for recall bias, so the significance of the concern is empirically unsettled.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is DEFERred due to residual experimenter bias risk from observing first-half test performance, while F2, F3, and F4 remain unsettled as the design lacks specific controls. The empirical tests proposed are valid and necessary to resolve these concerns."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Metrics reported on the second random half of the test set provide an unbiased estimate of true deployment performance after hyperparameter finalization on validation.",
+        "failure_mechanism": "Examining the first random half of the test set as a 'deployment-readiness confirmation pass' after tuning allows experimenters to peek at test distribution statistics, enabling selective reporting, adjusted confidence, or implicit decisions to proceed/abort based on test performance, inflating apparent reliability even without re-tuning.",
+        "evidence_test": "Pre-commit to a reporting protocol before seeing any test data; compare performance distributions between first and second halves across seeds (should be statistically identical); rerun experiment blinded to first-half results.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Sender domain reputation feature (fraction malicious from training set) is correctly computed for all test emails without introducing systematic bias.",
+        "failure_mechanism": "No specification of handling for sender domains absent in training set (common for novel phishing campaigns); defaulting to 0, global mean, or NaN imputation would assign incorrect risk scores to new domains, producing plausible aggregate metrics while degrading performance precisely on novel threats the temporal split aims to test.",
+        "evidence_test": "Report % of test emails from train-unseen domains, their true malicious rate vs. seen domains, and subsetted model performance (PR-AUC) on unseen domains; verify imputation logic produces neutral prior matching empirical base rate.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The campaign leakage check using sender/recipient clusters and identical subject lines from same sender detects all significant train-test contamination.",
+        "failure_mechanism": "Definition is narrow (e.g., misses body-similar or slightly varied campaigns from new senders/infrastructure), allowing subtle temporal leakage where test emails resemble train campaigns in semantics/content but not metadata, enabling models to memorize rather than generalize.",
+        "evidence_test": "Compute embedding cosine similarity (e.g., BERT) between test and train emails; flag/report % of test emails >0.9 similarity to any train email; manually audit top model predictions/errors for train overlap beyond metadata.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Retrospective labels (analyst confirmation or validated user report within 7 days) reliably capture all malicious emails without significant false negatives.",
+        "failure_mechanism": "Slow-evolving threats (e.g., BEC simmering >7 days without reports) are systematically labeled benign, underestimating true malicious prevalence and model FNR; inter-rater kappa measures agreement/reliability but not label recall/validity against ground truth, masking under-labeling.",
+        "evidence_test": "For confirmed incidents, histogram time-to-detection; estimate label recall via external audit (e.g., sandbox detonation or threat intel overlap) on a held-out sample; subset performance by detection latency if available.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The design is thoughtful with strong controls for temporal drift, leakage, and baselines, but has material gaps in test set purity, OOD feature handling, leakage detection completeness, and label validity that could inflate relative transformer benefits or mask failures on novel threats.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic CHALLENGED F1, arguing that while the design prevents re-tuning after seeing test data, it does not eliminate experimenter bias from observing first-half test performance (e.g., selective seed reporting, confidence adjustment, or implicit decisions). The other findings (F2, F3, F4) were ACCEPTed, meaning the design lacks controls for those concerns and requires empirical resolution. For F1, the design does not fully eliminate eval_inflation risk; for the others, the design lacks specific controls entirely.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The design prevents hyperparameter tuning or model selection after seeing test data, which mitigates test peeking but does not eliminate experimenter bias from observing first-half test performance (e.g., selective reporting across seeds, confidence adjustment, or implicit deployment decisions). The critic's concern is mechanistically valid: the 'deployment-readiness confirmation pass' could still influence how results are presented or interpreted. The settling experiment is to pre-commit to a reporting protocol *before* seeing any test data, compare performance distributions between first and second halves across seeds (should be statistically identical), and rerun the experiment blinded to first-half results. If distributions differ or blinding changes conclusions, the eval_inflation risk is material.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The methodology does not specify how sender domains absent in training are handled (e.g., imputation strategy), leaving the critic's concern unresolved. The settling experiment is to report the percentage of test emails from train-unseen domains, their true malicious rate vs. seen domains, and subsetted model performance (PR-AUC) on unseen domains. This will reveal whether the misconfiguration biases results. The design currently lacks this control.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The current leakage check (sender/recipient clusters, identical subject lines) may miss semantic/content-level leakage. The settling experiment is to compute embedding cosine similarity (e.g., BERT) between test and train emails, flag and report the percentage of test emails with >0.9 similarity to any train email, and manually audit top model predictions/errors for train overlap beyond metadata. The design does not currently implement this, so the magnitude of residual leakage is empirically unsettled.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The label definition (retrospective 7-day confirmation) may exclude slow-evolving threats, biasing FNR and prevalence. The settling experiment is to compute a histogram of time-to-detection for confirmed incidents, estimate label recall via external audit (e.g., sandbox detonation or threat intel overlap) on a held-out sample, and subset performance by detection latency if available. The design acknowledges label noise but does not correct for recall bias, so the significance of the concern is empirically unsettled.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is DEFERred due to residual experimenter bias risk from observing first-half test performance, while F2, F3, and F4 remain unsettled as the design lacks specific controls. The empirical tests proposed are valid and necessary to resolve these concerns."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "4 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

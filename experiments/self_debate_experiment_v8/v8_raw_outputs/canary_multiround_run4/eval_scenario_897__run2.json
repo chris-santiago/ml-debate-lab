@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_897",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Upsampling confirmed incidents in the training set to ~5% of alerts does not introduce bias or distort the ranking objective.",
+        "failure_mechanism": "Upsampling duplicates entire incidents (including all their alerts) to reach the target ratio. This artificially inflates the representation of certain incident patterns in training, while validation and test sets retain the original sparse distribution. The ranking model may learn to prioritize patterns that are overrepresented due to duplication rather than genuinely predictive features. Since evaluation is at the incident level, the model could exploit this imbalance by ranking duplicated incidents higher, inflating Recall@10 without generalizing to real-world conditions where duplication does not occur.",
+        "evidence_test": "Train the ranking model and baseline on the original un-upsampled training data (with class reweighting or focal loss instead of duplication) and compare Recall@10 on the same test set. If performance drops significantly, the upsampling is biasing the results. Alternatively, evaluate on a test set where incidents are artificially duplicated in the same way as training and observe whether Recall@10 improves disproportionately.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split prevents information leakage and ensures realistic deployment generalization.",
+        "failure_mechanism": "While the temporal split is correctly implemented at the alert/incident level, the feature set includes 'incident-response history' features such as 'count of previous alerts from the same rule in past 30 days' and 'count of prior incidents involving the same asset in past 90 days'. These features implicitly encode future information relative to the alert's timestamp because they are computed using data from the entire training window (months 1\u201312), not just the past. For example, an alert in month 12 may have a high count of prior incidents from months 1\u201311, but in deployment, the model would only have access to incidents up to the current time. This creates a form of temporal leakage that inflates performance.",
+        "evidence_test": "Recompute all 'incident-response history' features using only data available up to the timestamp of each alert (i.e., rolling windows). Retrain and evaluate the model. If Recall@10 drops significantly, the leakage is confirmed. Alternatively, remove these features entirely and observe whether the ranking model still outperforms the baseline.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The incident-level evaluation (grouping alerts by incident ID) ensures the metric reflects realistic operator experience.",
+        "failure_mechanism": "The evaluation counts an incident as 'found' if *any* of its alerts rank in the top 10. This metric does not account for the fact that analysts may not see all alerts in the top 10 due to volume, UI constraints, or alert fatigue. If the top 10 contains multiple alerts from the same incident, the analyst may still miss the incident if they stop reviewing after a few alerts. The metric overestimates the practical utility of the ranking. Additionally, the metric does not penalize rankings that bury the most critical alert of an incident deep in the top 10.",
+        "evidence_test": "Introduce a secondary metric: 'Top-Alert Recall@10', defined as the fraction of incidents where the *highest-severity alert* in the incident ranks in the top 10. Compare this metric to the current 'Incident Recall@10'. If the two metrics diverge significantly, the current metric is overestimating practical utility. Alternatively, simulate analyst behavior by truncating the top 10 to the first 3\u20135 alerts and measure how often the incident is still captured.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (logistic regression) is a fair and sufficient comparator for the ranking model.",
+        "failure_mechanism": "The baseline is a binary classifier that outputs a probability score, which is then used to rank alerts. However, the ranking model is trained with a pairwise or listwise ranking loss, which directly optimizes for ranking quality (e.g., LambdaMART optimizes NDCG). The baseline's ranking is a post-hoc transformation of a classification objective, which may not be optimal for ranking. The comparison is not fair because the baseline is not trained to rank; it is trained to classify. The ranking model may appear to outperform simply because it is optimized for the evaluation metric.",
+        "evidence_test": "Implement a ranking-aware baseline, such as a logistic regression trained with a ranking loss (e.g., pairwise hinge loss) or a pointwise ranking baseline (e.g., LambdaRank with linear scoring). Compare its Recall@10 to the original baseline and the ranking model. If the original baseline performs similarly to the ranking-aware baseline, the ranking model's advantage may be due to the loss function rather than the model architecture.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratified analysis by asset criticality and alert family verifies generalization.",
+        "failure_mechanism": "Stratified analysis is useful for detecting subgroup performance disparities, but it does not guarantee generalization to unseen subgroups or deployment conditions. The test set may not include rare but critical asset tiers or alert families that could appear in production. Additionally, the analysis does not test for interaction effects (e.g., does the model perform poorly on high-criticality assets *and* certain alert families?). The claim assumes that the test set is representative of all possible subgroups, which is unverified.",
+        "evidence_test": "Perform a subgroup robustness test by simulating rare subgroups: create synthetic test sets where asset criticality or alert family distributions are shifted (e.g., 90% high-criticality assets). Measure Recall@10 on these shifted sets. If performance drops significantly, the model is not robust to subgroup shifts. Alternatively, use a domain adaptation technique (e.g., importance weighting) and observe whether performance degrades.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 72-hour window for labeling true incidents is sufficient to capture all analyst-confirmed incidents.",
+        "failure_mechanism": "The 72-hour window is arbitrary and may not reflect real-world analyst behavior or incident confirmation processes. Some incidents may take longer to confirm (e.g., complex multi-stage attacks requiring weeks of investigation). Conversely, some alerts may be incorrectly labeled as non-incidents if they are not linked to an incident ticket within 72 hours, even if they are part of a larger incident. The window may introduce both false negatives (missed incidents) and false positives (incorrectly labeled incidents).",
+        "evidence_test": "Sensitivity analysis: vary the confirmation window from 24 hours to 168 hours and retrain/evaluate the model. If Recall@10 varies significantly with the window size, the labeling window is a critical assumption. Alternatively, use analyst feedback logs (if available) to validate the window's realism.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains multiple FATAL flaws that invalidate its central claims: (1) upsampling incidents in training introduces bias, (2) 'incident-response history' features leak future information, and (3) the evaluation metric overestimates practical utility. These issues must be addressed before the hypothesis can be meaningfully tested.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic claims upsampling via duplication biases the model. However, the design explicitly states that evaluation is performed on the validation and test sets where 'no resampling is applied'. Since the model is evaluated on the original distribution, any bias introduced during training would manifest as poor generalization (lower Recall@10) on the test set, not as inflated metrics. The upsampling is a training technique to handle imbalance, not an evaluation flaw. This is a standard ML practice for sparse labels.\n\nF2: The critic claims 'incident-response history' features (e.g., counts in past 30/90 days) encode future information. This is a misunderstanding of the feature definition. 'Past 30 days' is a relative window anchored to the alert's timestamp, not a static window anchored to the end of the training set. The design describes these as 'history' features, which by definition are look-backs. There is no evidence in the text that these were computed as global aggregates.\n\nF3: The critic argues that counting an incident as 'found' if any alert is in the top 10 is too lenient. However, the design intent is to measure the 'operational goal' of whether a genuine incident is included in the review window. In a SOC, if any alert from a critical incident hits the top 10, the analyst opens the incident case and sees all associated alerts. The 'incident-level' unit of evaluation is a deliberate design choice to reflect how SOC analysts work (case-centric, not alert-centric). This is a valid design choice for the stated goal.\n\nF4: The critic claims the baseline (Logistic Regression) is unfair because it's a classifier. However, the design explicitly states the baseline is used to test 'whether ranking-specific inductive biases (vs. classification accuracy optimization) provide material benefit.' The goal is to compare the *approach* of ranking vs. classification. Using a ranking-aware LR would defeat the purpose of comparing these two different paradigms. The baseline is intentionally a classifier to establish the value-add of the ranking objective.\n\nF5: The critic claims stratified analysis doesn't guarantee generalization to unseen subgroups. This is a general critique of all offline evaluations. The design uses a temporal split (months 16-18) which is the gold standard for testing generalization to 'unseen' future data. Stratification is an additional check, not the primary generalization mechanism. The claim of 'unverified' subgroups is outside the scope of a PoC benchmarking two model types.\n\nF6: The critic claims the 72-hour labeling window is arbitrary. While the window is a heuristic, it is a standard operational definition for 'prompt confirmation' in SOC environments. The impact of this window affects both the ranking model and the baseline equally. Since the experiment is a relative comparison of two models on the same dataset, a consistent labeling bias does not invalidate the comparison of which model ranks better.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The upsampling is applied exclusively to the training set. The validation and test sets retain the original sparse distribution. Any bias introduced by upsampling would result in overfitting, which would be detected as a performance drop on the test set, not as metric inflation. The design correctly separates training distribution from evaluation distribution."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 2,
+        "justification": "The critic assumes features are computed over the entire training window. The design specifies these as 'history' features ('past 30 days', 'past 90 days'), which are rolling windows relative to each alert's timestamp. There is no evidence of global aggregation; the features are by definition retrospective."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly defines the unit of evaluation as the incident to reflect realistic operator experience, where analysts triage cases, not individual alerts. If any alert from an incident is ranked top-10, the incident is surfaced to the analyst. This is a deliberate design choice to align the metric with SOC operational reality."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The experiment's stated goal is to determine if ranking-specific inductive biases provide benefit over classification. Using a classification baseline is the only way to isolate the effect of the ranking objective itself. A ranking-aware baseline would change the hypothesis from 'Ranking vs Classification' to 'Model A vs Model B'."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The primary mechanism for testing generalization is the temporal split (months 16-18), not the stratified analysis. Testing for every possible synthetic distribution shift is outside the scope of a PoC intended to benchmark two model architectures on historical production data."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The 72-hour window is a consistent labeling convention applied to all data. Because the experiment is a relative comparison between a ranking model and a baseline on the same labels, any systematic labeling error affects both conditions equally and does not change the relative conclusion."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted. The most severe concerns (upsampling and leakage) were based on misunderstandings of standard ML practices and the specific feature definitions provided in the design. All adjusted severities are \u2264 3, justifying an exoneration."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal claims that overfitting from upsampling would be detected as a performance drop on the test set, but this does not address the core failure mechanism: the model may learn to prioritize patterns overrepresented due to duplication (entire incidents duplicated) rather than genuinely predictive features. The test set retains the original sparse distribution, so the model's ability to exploit duplicated patterns would not necessarily manifest as a performance drop on the test set\u2014it could still inflate Recall@10 by ranking duplicated incidents higher in training. The rebuttal does not explain how the design prevents the model from learning these spurious patterns or how the evaluation metric would detect this bias."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly identifies that the 'history' features are rolling windows relative to each alert's timestamp, not global aggregations. This directly addresses the failure mechanism of temporal leakage. The rebuttal is mechanistic and specific."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal explicitly states that the incident-level evaluation is a deliberate design choice to align with SOC operational reality, where analysts triage cases. This directly addresses the failure mechanism by justifying why the metric reflects realistic utility. The mechanism (how analysts interact with alerts) is addressed."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal argues that the goal is to isolate the effect of ranking-specific inductive biases, so a classification baseline is appropriate. While this is a valid point about the experimental hypothesis, it does not fully address the failure mechanism: the baseline's ranking is a post-hoc transformation of a classification objective, which may not be optimal for ranking. The rebuttal does not explain why the baseline's ranking performance is comparable to a ranking-aware baseline or how the comparison is fair despite the difference in optimization objectives. The residual issue is that the baseline may be disadvantaged by its training objective, but the rebuttal does not provide evidence to resolve this."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly notes that the temporal split is the primary mechanism for testing generalization, and that testing every possible synthetic distribution shift is outside the scope of a PoC. The scope disclaimer is appropriate here, as the finding was about unverified generalization claims beyond the experiment's goals."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal argues that the 72-hour window is a consistent labeling convention applied to all data, so any systematic labeling error affects both conditions equally. This directly addresses the failure mechanism, as the finding was about the window introducing bias that could differentially affect the comparison. The rebuttal is mechanistic and specific."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F3, F5, and F6 as they were accepted by the critic. For F1, the critic argues that upsampling could lead the model to learn spurious patterns that still generalize to the test set; since the design does not have a specific control to prevent this other than the test set itself, and the critic's point about pattern overrepresentation is mechanistically plausible, I am switching to DEFER. For F4, the critic's PARTIAL verdict notes that the baseline is disadvantaged by its objective; since this is a fundamental part of the 'Ranking vs Classification' hypothesis, I am strengthening the REBUT-DESIGN to clarify that the 'unfairness' is the object of study.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly notes that duplicating entire incidents in training might lead the model to over-index on specific incident patterns that are still present (though sparse) in the test set, potentially inflating Recall@10 without a corresponding drop in test performance. To settle this: 1) Retrain the model using class-weighting (cost-sensitive learning) instead of duplication. 2) If Recall@10 remains stable, the design is vindicated as the signal was predictive, not an artifact of duplication. 3) If Recall@10 drops significantly, the critique is validated, and the conclusion must be adjusted to account for upsampling bias. 4) The primary conclusion (Ranking vs Classification) can remain valid because the baseline is subject to the same upsampling process, meaning the relative improvement of the ranking model over the baseline is likely preserved even if absolute metrics are inflated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 2,
+        "justification": "The critic has accepted that the 'history' features are rolling windows relative to each alert's timestamp, eliminating the risk of temporal leakage.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The critic has accepted that incident-level evaluation is a deliberate design choice aligned with SOC operational reality.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern is that the baseline is disadvantaged by its training objective. However, this 'disadvantage' is the exact variable being tested. The hypothesis is whether a ranking-specific objective (LambdaMART) provides material benefit over a classification objective (Logistic Regression). If we used a ranking-aware baseline, we would be testing 'Model A vs Model B' rather than 'Ranking vs Classification'. The comparison is fair because both models have access to the same features and tuning effort; the difference in optimization objective is the intended independent variable.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic has accepted that the temporal split is the primary generalization mechanism and synthetic shift testing is outside the PoC scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The critic has accepted that the consistent labeling window affects both conditions equally and does not invalidate the relative comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were resolved or accepted, but F1 remains a genuine point of ambiguity regarding upsampling bias that requires an empirical test (class-weighting vs duplication) to fully resolve."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Upsampling confirmed incidents in the training set to ~5% of alerts does not introduce bias or distort the ranking objective.",
+        "failure_mechanism": "Upsampling duplicates entire incidents (including all their alerts) to reach the target ratio. This artificially inflates the representation of certain incident patterns in training, while validation and test sets retain the original sparse distribution. The ranking model may learn to prioritize patterns that are overrepresented due to duplication rather than genuinely predictive features. Since evaluation is at the incident level, the model could exploit this imbalance by ranking duplicated incidents higher, inflating Recall@10 without generalizing to real-world conditions where duplication does not occur.",
+        "evidence_test": "Train the ranking model and baseline on the original un-upsampled training data (with class reweighting or focal loss instead of duplication) and compare Recall@10 on the same test set. If performance drops significantly, the upsampling is biasing the results. Alternatively, evaluate on a test set where incidents are artificially duplicated in the same way as training and observe whether Recall@10 improves disproportionately.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split prevents information leakage and ensures realistic deployment generalization.",
+        "failure_mechanism": "While the temporal split is correctly implemented at the alert/incident level, the feature set includes 'incident-response history' features such as 'count of previous alerts from the same rule in past 30 days' and 'count of prior incidents involving the same asset in past 90 days'. These features implicitly encode future information relative to the alert's timestamp because they are computed using data from the entire training window (months 1\u201312), not just the past. For example, an alert in month 12 may have a high count of prior incidents from months 1\u201311, but in deployment, the model would only have access to incidents up to the current time. This creates a form of temporal leakage that inflates performance.",
+        "evidence_test": "Recompute all 'incident-response history' features using only data available up to the timestamp of each alert (i.e., rolling windows). Retrain and evaluate the model. If Recall@10 drops significantly, the leakage is confirmed. Alternatively, remove these features entirely and observe whether the ranking model still outperforms the baseline.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The incident-level evaluation (grouping alerts by incident ID) ensures the metric reflects realistic operator experience.",
+        "failure_mechanism": "The evaluation counts an incident as 'found' if *any* of its alerts rank in the top 10. This metric does not account for the fact that analysts may not see all alerts in the top 10 due to volume, UI constraints, or alert fatigue. If the top 10 contains multiple alerts from the same incident, the analyst may still miss the incident if they stop reviewing after a few alerts. The metric overestimates the practical utility of the ranking. Additionally, the metric does not penalize rankings that bury the most critical alert of an incident deep in the top 10.",
+        "evidence_test": "Introduce a secondary metric: 'Top-Alert Recall@10', defined as the fraction of incidents where the *highest-severity alert* in the incident ranks in the top 10. Compare this metric to the current 'Incident Recall@10'. If the two metrics diverge significantly, the current metric is overestimating practical utility. Alternatively, simulate analyst behavior by truncating the top 10 to the first 3\u20135 alerts and measure how often the incident is still captured.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline (logistic regression) is a fair and sufficient comparator for the ranking model.",
+        "failure_mechanism": "The baseline is a binary classifier that outputs a probability score, which is then used to rank alerts. However, the ranking model is trained with a pairwise or listwise ranking loss, which directly optimizes for ranking quality (e.g., LambdaMART optimizes NDCG). The baseline's ranking is a post-hoc transformation of a classification objective, which may not be optimal for ranking. The comparison is not fair because the baseline is not trained to rank; it is trained to classify. The ranking model may appear to outperform simply because it is optimized for the evaluation metric.",
+        "evidence_test": "Implement a ranking-aware baseline, such as a logistic regression trained with a ranking loss (e.g., pairwise hinge loss) or a pointwise ranking baseline (e.g., LambdaRank with linear scoring). Compare its Recall@10 to the original baseline and the ranking model. If the original baseline performs similarly to the ranking-aware baseline, the ranking model's advantage may be due to the loss function rather than the model architecture.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratified analysis by asset criticality and alert family verifies generalization.",
+        "failure_mechanism": "Stratified analysis is useful for detecting subgroup performance disparities, but it does not guarantee generalization to unseen subgroups or deployment conditions. The test set may not include rare but critical asset tiers or alert families that could appear in production. Additionally, the analysis does not test for interaction effects (e.g., does the model perform poorly on high-criticality assets *and* certain alert families?). The claim assumes that the test set is representative of all possible subgroups, which is unverified.",
+        "evidence_test": "Perform a subgroup robustness test by simulating rare subgroups: create synthetic test sets where asset criticality or alert family distributions are shifted (e.g., 90% high-criticality assets). Measure Recall@10 on these shifted sets. If performance drops significantly, the model is not robust to subgroup shifts. Alternatively, use a domain adaptation technique (e.g., importance weighting) and observe whether performance degrades.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 72-hour window for labeling true incidents is sufficient to capture all analyst-confirmed incidents.",
+        "failure_mechanism": "The 72-hour window is arbitrary and may not reflect real-world analyst behavior or incident confirmation processes. Some incidents may take longer to confirm (e.g., complex multi-stage attacks requiring weeks of investigation). Conversely, some alerts may be incorrectly labeled as non-incidents if they are not linked to an incident ticket within 72 hours, even if they are part of a larger incident. The window may introduce both false negatives (missed incidents) and false positives (incorrectly labeled incidents).",
+        "evidence_test": "Sensitivity analysis: vary the confirmation window from 24 hours to 168 hours and retrain/evaluate the model. If Recall@10 varies significantly with the window size, the labeling window is a critical assumption. Alternatively, use analyst feedback logs (if available) to validate the window's realism.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC contains multiple FATAL flaws that invalidate its central claims: (1) upsampling incidents in training introduces bias, (2) 'incident-response history' features leak future information, and (3) the evaluation metric overestimates practical utility. These issues must be addressed before the hypothesis can be meaningfully tested.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F3, F5, and F6 as they were accepted by the critic. For F1, the critic argues that upsampling could lead the model to learn spurious patterns that still generalize to the test set; since the design does not have a specific control to prevent this other than the test set itself, and the critic's point about pattern overrepresentation is mechanistically plausible, I am switching to DEFER. For F4, the critic's PARTIAL verdict notes that the baseline is disadvantaged by its objective; since this is a fundamental part of the 'Ranking vs Classification' hypothesis, I am strengthening the REBUT-DESIGN to clarify that the 'unfairness' is the object of study.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly notes that duplicating entire incidents in training might lead the model to over-index on specific incident patterns that are still present (though sparse) in the test set, potentially inflating Recall@10 without a corresponding drop in test performance. To settle this: 1) Retrain the model using class-weighting (cost-sensitive learning) instead of duplication. 2) If Recall@10 remains stable, the design is vindicated as the signal was predictive, not an artifact of duplication. 3) If Recall@10 drops significantly, the critique is validated, and the conclusion must be adjusted to account for upsampling bias. 4) The primary conclusion (Ranking vs Classification) can remain valid because the baseline is subject to the same upsampling process, meaning the relative improvement of the ranking model over the baseline is likely preserved even if absolute metrics are inflated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 2,
+        "justification": "The critic has accepted that the 'history' features are rolling windows relative to each alert's timestamp, eliminating the risk of temporal leakage.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The critic has accepted that incident-level evaluation is a deliberate design choice aligned with SOC operational reality.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern is that the baseline is disadvantaged by its training objective. However, this 'disadvantage' is the exact variable being tested. The hypothesis is whether a ranking-specific objective (LambdaMART) provides material benefit over a classification objective (Logistic Regression). If we used a ranking-aware baseline, we would be testing 'Model A vs Model B' rather than 'Ranking vs Classification'. The comparison is fair because both models have access to the same features and tuning effort; the difference in optimization objective is the intended independent variable.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic has accepted that the temporal split is the primary generalization mechanism and synthetic shift testing is outside the PoC scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The critic has accepted that the consistent labeling window affects both conditions equally and does not invalidate the relative comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were resolved or accepted, but F1 remains a genuine point of ambiguity regarding upsampling bias that requires an empirical test (class-weighting vs duplication) to fully resolve."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=9, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,234 @@
+{
+  "case_id": "eval_scenario_068",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "mistralai/mistral-small-2603",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts sepsis onset without seeing post-sepsis signals or future care patterns.",
+        "failure_mechanism": "The labeling criteria include 'presumed infection with empiric antibiotics' and 'vasopressor need' to define the onset timestamp. In clinical practice, these are often the *result* of a clinician suspecting sepsis. If the model uses 'medication events' (antibiotics, vasopressors) as features, it will likely pick up the administration of these treatments as a near-perfect proxy for the label. Because the label is assigned to the 'earliest moment the full criteria set is met,' and the criteria include the treatment itself, the model is effectively predicting that a patient has sepsis because they are already being treated for sepsis.",
+        "evidence_test": "Run the model using a feature set that explicitly excludes all medications and interventions (antibiotics, vasopressors, fluids) and compare performance to the full model. A significant drop in precision/recall indicates the model is leaking the diagnosis via the treatment.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The sequence model outperforms the baseline by exploiting temporal structure in irregular ICU data.",
+        "failure_mechanism": "The baseline is restricted to summary features from the *first 12 hours* of admission, whereas the sequence model makes predictions hourly from *hour 6 through hour 60*. This creates a massive information asymmetry: the sequence model has access to the most recent data leading up to time t, while the baseline is permanently anchored to a static window at the start of the stay. Any performance gain may simply be due to the sequence model having 'fresher' data rather than 'better' temporal modeling.",
+        "evidence_test": "Implement a 'sliding window' baseline that calculates the same summary statistics over the 12 hours immediately preceding each prediction time t, rather than the first 12 hours of admission.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model is robust across the health system due to hospital stratification.",
+        "failure_mechanism": "Stratification ensures sites are represented in each split, but it does not account for the fact that sepsis labeling (especially 'presumed infection') is highly subjective and varies by hospital site documentation culture. The model may learn site-specific 'coding styles' or 'treatment triggers' rather than biological signals of sepsis, leading to high performance that is actually an artifact of site-specific clinical workflows.",
+        "evidence_test": "Perform a 'Leave-One-Hospital-Out' (LOHO) cross-validation. If performance drops significantly when testing on a site not seen during training, the model is overfitting to site-specific workflows rather than generalizable sepsis signals.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC contains two fatal flaws: severe signal leakage where the model likely predicts sepsis based on the treatment used to define the label, and an unfair baseline comparison that denies the baseline access to recent data. These issues invalidate the claim that sequence models provide superior predictive power via temporal structure.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "=== Analysis of F1 ===\n\nCritic claim: The model predicts sepsis onset without seeing post-sepsis signals or future care patterns. The labeling criteria include 'presumed infection with empiric antibiotics' and 'vasopressor need,' which are often the *result* of clinician suspicion. If the model uses medication events as features, it will pick up administration of these treatments as a near-perfect proxy for the label. The label is assigned to the 'earliest moment the full criteria set is met,' and the criteria include the treatment itself, so the model is effectively predicting that a patient has sepsis because they are already being treated for sepsis.\n\nDesign intent and controls: The labeling criteria are clinical criteria for sepsis onset, not treatment decisions. The onset timestamp is assigned to the earliest moment the full clinical criteria set is met, which may occur *before* antibiotics are administered (e.g., based on fever, tachycardia, and leukocytosis). Antibiotics and vasopressors are *events* that occur after the label is assigned. The model uses these events as features, but only if they occur *before* the prediction time t. The feature availability audit (Section 6.1) explicitly verifies that all features at time t come from data timestamped before t. The critic\u2019s concern assumes that antibiotics/vasopressors are part of the label definition and thus available to the model at prediction time, but the label is defined by clinical criteria *independent* of treatment. The treatment events are features that may correlate with sepsis onset but are not the label itself. The critic\u2019s evidence test (exclude medications and interventions) is valid in principle, but the design already includes a recency ablation (Section 6.4) that isolates whether gains come from long-range temporal patterns vs. subtle timing artifacts. This ablation implicitly tests whether medication events are driving performance, as medication events are recent features. The critic does not acknowledge this control.\n\nWhat remains uncertain: The critic\u2019s claim hinges on whether antibiotics/vasopressors are part of the label definition or merely correlated features. The methodology defines the label by clinical criteria (infection + systemic inflammation OR organ dysfunction), not by treatment. The model\u2019s use of medication events as features is constrained to pre-t events, so leakage would require that medication events are part of the label definition, which they are not. The recency ablation provides empirical evidence about whether temporal patterns or recent events drive performance. The critic\u2019s concern is thus addressed by design intent and an existing control.\n\n=== Analysis of F2 ===\n\nCritic claim: The sequence model outperforms the baseline by exploiting temporal structure, but the baseline is restricted to summary features from the *first 12 hours* of admission, while the sequence model makes predictions hourly from hour 6 through hour 60. This creates an information asymmetry: the sequence model has access to fresher data, while the baseline is anchored to a static window. Any performance gain may be due to fresher data rather than better temporal modeling.\n\nDesign intent and controls: The baseline is designed to test whether a simple, interpretable model using early data can predict sepsis onset in the next 6 hours. The sequence model is designed to test whether temporal patterns in irregular data improve prediction. The critic is correct that the baseline uses a static window, but this is intentional: the hypothesis is that early data (first 12 hours) contains predictive signal for impending sepsis. The sequence model\u2019s access to fresher data is part of the hypothesis: can temporal patterns in the *entire* ICU stay improve prediction over early static features? The critic\u2019s evidence test (sliding window baseline) is a valid alternative baseline, but it tests a *different hypothesis*: whether recent data alone is predictive. The original baseline tests whether early data is predictive. The two baselines are not directly comparable because they test different hypotheses. The methodology does not claim the sequence model should outperform a sliding-window baseline; it claims the sequence model should outperform an early-static baseline. The critic conflates two different comparisons.\n\nWhat remains uncertain: The critic\u2019s concern is valid for a different experimental question (recent vs. early data), but not for the stated hypothesis. The methodology\u2019s primary comparison is between a sequence model and an early-static baseline, which is a valid test of the hypothesis.\n\n=== Analysis of F3 ===\n\nCritic claim: Hospital stratification ensures robustness across the health system, but sepsis labeling (especially 'presumed infection') is subjective and varies by site. The model may learn site-specific 'coding styles' or 'treatment triggers' rather than biological signals, leading to high performance that is an artifact of site-specific workflows.\n\nDesign intent and controls: Hospital stratification ensures each split contains all sites, preventing site-specific overfitting. The critic\u2019s evidence test (Leave-One-Hospital-Out cross-validation) is a valid way to test generalizability, but the methodology already includes hospital stratification as a control (Section 2 and 6.5). The critic does not acknowledge this control. The recency ablation (Section 6.4) and feature availability audit (Section 6.1) further mitigate the risk of learning site-specific artifacts. The critic\u2019s concern is addressed by existing controls.\n\nWhat remains uncertain: The critic\u2019s claim is valid in principle, but the methodology includes controls that directly address it. The LOHO test is a stronger control, but the existing stratification is a reasonable first step for a PoC.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critique assumes antibiotics/vasopressors are part of the label definition, but the label is defined by clinical criteria (infection + systemic inflammation OR organ dysfunction), not treatment. Medication events are features timestamped before prediction time t, so leakage would require the label to include treatment, which it does not. The methodology includes a recency ablation (Section 6.4) that isolates whether gains come from temporal patterns vs. recent events, directly addressing this concern. The critic\u2019s evidence test is already partially covered by the recency ablation."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The baseline is designed to test whether early static features predict sepsis onset, while the sequence model tests whether temporal patterns in irregular data improve prediction. The critic\u2019s sliding-window baseline tests a different hypothesis (recent data vs. early data). The methodology\u2019s primary comparison is valid for its stated hypothesis: sequence models vs. early-static baselines. The critic conflates two different comparisons."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Hospital stratification (Section 2 and 6.5) is explicitly designed to mitigate site-specific overfitting. The critic\u2019s LOHO test is a valid additional control, but the methodology already includes a control that directly addresses the concern. The recency ablation and feature availability audit further mitigate the risk."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings are rebutted with design controls or scope clarifications, reducing their adjusted severities to \u22643. The methodology\u2019s primary hypothesis and controls are sound; critiques either misinterpret the design intent or apply to alternative baselines/scopes not under test."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender's rebuttal contains a factual contradiction. They claim the label is not defined by treatment, yet the Methodology (Section 1) explicitly states: 'Sepsis onset is defined using clinical criteria: documented infection (positive culture, presumed infection with empiric antibiotics...)' and 'organ dysfunction (vasopressor need...)'. Therefore, the administration of empiric antibiotics or the decision to start vasopressors *is* part of the label definition. If these are also features, the model can simply detect the treatment to predict the label. The 'recency ablation' does not solve this; it only determines if the leak is happening in the last 6 hours versus earlier, not whether the leak exists. The failure mechanism remains fully active."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender uses a scope argument to justify a fundamentally flawed baseline. The objective is to test if 'sequence models... outperform a baseline... in predicting sepsis onset'. If the sequence model uses data up to time t (e.g., hour 40) and the baseline only uses data from hour 0-12, the sequence model isn't necessarily better at 'temporal modeling'\u2014it simply has 28 hours of additional, more relevant information. To isolate the benefit of the *model architecture* (sequence vs. summary), the baseline must have access to the same information window. The rebuttal fails to address the information asymmetry mechanism."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender argues that stratification mitigates site-specific overfitting. While stratification ensures the model sees all sites, it does not prevent the model from learning site-specific shortcuts (e.g., 'Hospital A always codes presumed infection when X happens, but Hospital B doesn't'). However, since the primary claim is about the utility of sequence models rather than universal generalizability, this is a lower-risk issue. The rebuttal is generic, but the severity is appropriately low for a study of this nature."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 and F2 were challenged by the critic, who argued that the rebuttals contained factual contradictions or failed to address the core mechanism of the failure. F3 was partially addressed, but the critic acknowledged the lower risk. For F1, the critic correctly identified that the label definition includes treatment proxies (empiric antibiotics, vasopressor need), which are also features, creating a leakage mechanism. For F2, the critic correctly identified that the baseline's static window creates an information asymmetry, not a fair comparison of model architectures. For F3, the rebuttal stands but is strengthened to clarify the role of stratification. F1 will be conceded due to the factual contradiction in the label definition. F2 will be deferred to empirical testing, as the critic's point about information asymmetry is mechanistically correct and cannot be resolved by argument alone. F3 will be maintained with a clarified rebuttal.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct: the label definition explicitly includes 'presumed infection with empiric antibiotics' and 'vasopressor need' as part of the clinical criteria for sepsis onset. These are also features in the model, creating a direct leakage mechanism where the model can predict the label by detecting the administration of antibiotics or vasopressors. The recency ablation does not address this fundamental flaw, as the leakage can occur at any time before the label timestamp. This is an undeniable flaw with no design control, and the primary evaluation metric (Precision@FPR=10%) is materially affected.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies that the baseline's static window (first 12 hours) creates an information asymmetry with the sequence model, which has access to data up to time t. This asymmetry means the comparison is not a fair test of temporal modeling vs. static features, but rather a test of 'more recent data vs. early data.' The rebuttal's scope argument fails because the stated objective is to test whether sequence models outperform a baseline in predicting sepsis onset, and the baseline must have access to the same information window to isolate the benefit of the model architecture. This is a genuine ambiguity that cannot be resolved by argument alone; empirical testing with a sliding-window baseline is required.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic acknowledges that the rebuttal is generic but correctly notes that the severity is lower for this study, which focuses on the utility of sequence models rather than universal generalizability. Hospital stratification (Section 2 and 6.5) is explicitly designed to mitigate site-specific overfitting by ensuring all sites are represented in each split. While the LOHO test is a valid additional control, the methodology already includes controls (stratification, recency ablation, feature availability audit) that directly address the concern. The primary claim is not about generalization to new health systems, so the risk is appropriately mitigated.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is conceded as an undeniable flaw with no design control, while F2 is deferred to empirical testing due to a genuine ambiguity about information asymmetry. F3 is maintained with a clarified rebuttal. The presence of a DEFER and a CONCEDE results in an 'empirical_test_agreed' verdict, which is appropriate for this scenario."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts sepsis onset without seeing post-sepsis signals or future care patterns.",
+        "failure_mechanism": "The labeling criteria include 'presumed infection with empiric antibiotics' and 'vasopressor need' to define the onset timestamp. In clinical practice, these are often the *result* of a clinician suspecting sepsis. If the model uses 'medication events' (antibiotics, vasopressors) as features, it will likely pick up the administration of these treatments as a near-perfect proxy for the label. Because the label is assigned to the 'earliest moment the full criteria set is met,' and the criteria include the treatment itself, the model is effectively predicting that a patient has sepsis because they are already being treated for sepsis.",
+        "evidence_test": "Run the model using a feature set that explicitly excludes all medications and interventions (antibiotics, vasopressors, fluids) and compare performance to the full model. A significant drop in precision/recall indicates the model is leaking the diagnosis via the treatment.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The sequence model outperforms the baseline by exploiting temporal structure in irregular ICU data.",
+        "failure_mechanism": "The baseline is restricted to summary features from the *first 12 hours* of admission, whereas the sequence model makes predictions hourly from *hour 6 through hour 60*. This creates a massive information asymmetry: the sequence model has access to the most recent data leading up to time t, while the baseline is permanently anchored to a static window at the start of the stay. Any performance gain may simply be due to the sequence model having 'fresher' data rather than 'better' temporal modeling.",
+        "evidence_test": "Implement a 'sliding window' baseline that calculates the same summary statistics over the 12 hours immediately preceding each prediction time t, rather than the first 12 hours of admission.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model is robust across the health system due to hospital stratification.",
+        "failure_mechanism": "Stratification ensures sites are represented in each split, but it does not account for the fact that sepsis labeling (especially 'presumed infection') is highly subjective and varies by hospital site documentation culture. The model may learn site-specific 'coding styles' or 'treatment triggers' rather than biological signals of sepsis, leading to high performance that is actually an artifact of site-specific clinical workflows.",
+        "evidence_test": "Perform a 'Leave-One-Hospital-Out' (LOHO) cross-validation. If performance drops significantly when testing on a site not seen during training, the model is overfitting to site-specific workflows rather than generalizable sepsis signals.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC contains two fatal flaws: severe signal leakage where the model likely predicts sepsis based on the treatment used to define the label, and an unfair baseline comparison that denies the baseline access to recent data. These issues invalidate the claim that sequence models provide superior predictive power via temporal structure.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 and F2 were challenged by the critic, who argued that the rebuttals contained factual contradictions or failed to address the core mechanism of the failure. F3 was partially addressed, but the critic acknowledged the lower risk. For F1, the critic correctly identified that the label definition includes treatment proxies (empiric antibiotics, vasopressor need), which are also features, creating a leakage mechanism. For F2, the critic correctly identified that the baseline's static window creates an information asymmetry, not a fair comparison of model architectures. For F3, the rebuttal stands but is strengthened to clarify the role of stratification. F1 will be conceded due to the factual contradiction in the label definition. F2 will be deferred to empirical testing, as the critic's point about information asymmetry is mechanistically correct and cannot be resolved by argument alone. F3 will be maintained with a clarified rebuttal.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic is correct: the label definition explicitly includes 'presumed infection with empiric antibiotics' and 'vasopressor need' as part of the clinical criteria for sepsis onset. These are also features in the model, creating a direct leakage mechanism where the model can predict the label by detecting the administration of antibiotics or vasopressors. The recency ablation does not address this fundamental flaw, as the leakage can occur at any time before the label timestamp. This is an undeniable flaw with no design control, and the primary evaluation metric (Precision@FPR=10%) is materially affected.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies that the baseline's static window (first 12 hours) creates an information asymmetry with the sequence model, which has access to data up to time t. This asymmetry means the comparison is not a fair test of temporal modeling vs. static features, but rather a test of 'more recent data vs. early data.' The rebuttal's scope argument fails because the stated objective is to test whether sequence models outperform a baseline in predicting sepsis onset, and the baseline must have access to the same information window to isolate the benefit of the model architecture. This is a genuine ambiguity that cannot be resolved by argument alone; empirical testing with a sliding-window baseline is required.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic acknowledges that the rebuttal is generic but correctly notes that the severity is lower for this study, which focuses on the utility of sequence models rather than universal generalizability. Hospital stratification (Section 2 and 6.5) is explicitly designed to mitigate site-specific overfitting by ensuring all sites are represented in each split. While the LOHO test is a valid additional control, the methodology already includes controls (stratification, recency ablation, feature availability audit) that directly address the concern. The primary claim is not about generalization to new health systems, so the risk is appropriately mitigated.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is conceded as an undeniable flaw with no design control, while F2 is deferred to empirical testing due to a genuine ambiguity about information asymmetry. F3 is maintained with a clarified rebuttal. The presence of a DEFER and a CONCEDE results in an 'empirical_test_agreed' verdict, which is appropriate for this scenario."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_703",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Free-text is screened to exclude outcome-predictive language (e.g., 'poor prognosis', 'comfort care') to prevent leakage.",
+        "failure_mechanism": "Keyword screening is insufficient to remove 'outcome leakage' in clinical notes. Clinicians document the trajectory toward death using a vast array of euphemisms, specific palliative care orders, or descriptions of physiological decline (e.g., 'transitioning to comfort measures', 'family meeting regarding goals of care', 'multi-organ failure progressing despite max support') that a simple screen will miss. The model can learn to identify the 'tone' of a dying patient or the specific administrative language associated with imminent mortality, which is a proxy for the label rather than a predictive clinical signal.",
+        "evidence_test": "Perform a 'shuffled-text' or 'ablation' test: train the model on notes where clinical entities are masked but the general structure/tone remains, or compare performance on notes from the first 24h vs 72h. If performance drops precipitously when late-stage notes are removed, the model is likely picking up on 'death-rattle' documentation rather than early predictive signals.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts 30-day mortality using data from the first 72 hours, respecting censoring at discharge.",
+        "failure_mechanism": "There is a critical temporal overlap/leakage risk regarding the 'discharge' event. If a patient is discharged from the ICU to a ward and then dies within 30 days, the 'discharge' note often contains the summary of the ICU stay, including the reason for transfer and the patient's precarious state. If the 'first 72 hours' of notes include the discharge summary (which often happens if the patient is in the ICU for < 72 hours), the model is seeing the 'conclusion' of the ICU episode to predict the outcome. Furthermore, the PoC does not specify how it handles patients who die *within* the first 72 hours; if notes written *after* death (death summaries) are included in the 72h window, the target is leaked directly into the features.",
+        "evidence_test": "Strictly enforce a 'cutoff' time for all features (e.g., T+72h) and explicitly remove any notes timestamped after the event of interest (death) or the event of censoring (discharge). Compare C-index when using notes from 0-24h vs 0-72h.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Note embeddings are pooled (e.g., mean pooling) to create a single representation for the admission.",
+        "failure_mechanism": "Mean pooling across all notes in a 72-hour window washes out the temporal trajectory of the patient. In ICU mortality, the *trend* (e.g., improving vs. deteriorating) is more predictive than the average state. By collapsing the sequence, the model loses the ability to distinguish between a patient who started critical and stabilized versus a patient who started stable and crashed, even if the 'average' embedding is similar.",
+        "evidence_test": "Compare the mean-pooled model against a simple Recurrent Neural Network (RNN) or Transformer that processes notes in chronological order. A significant gain in the sequential model indicates that the pooling strategy is a bottleneck for the hypothesis.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Informatively missing laboratory values... are managed via forward-fill within 72 hours and a missing-indicator encoding.",
+        "failure_mechanism": "Forward-filling in a high-acuity ICU setting can introduce artificial stability. If a critical lab (e.g., lactate) was high 48 hours ago and not re-measured, forward-filling suggests the patient is still in that state, whereas the *absence* of a re-test might actually signal clinical improvement (the doctor stopped ordering the test because the patient looked better). While the missing indicator helps, the interaction between the filled value and the indicator in a GBDT model can lead to overfitting on specific sampling patterns of certain clinicians rather than physiology.",
+        "evidence_test": "Compare performance using forward-fill vs. a model that treats missing values as a distinct category (native XGBoost handling) or uses multiple imputation. If results differ significantly, the forward-fill is introducing bias.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has a high risk of signal leakage due to the nature of clinical documentation; specifically, the inability of keyword screening to remove 'prognostic' tone and the potential inclusion of post-event/discharge summaries within the 72-hour window. These flaws could lead to an inflated C-index that reflects the model's ability to identify 'patients already marked for death' rather than predicting mortality.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I have analyzed all four critique findings against the methodology design.\n\nF1 (FATAL, 8): The critic claims keyword screening for outcome-predictive language is insufficient, leading to 'death-rattle' leakage. However, the design intent (Section 3) is to use pre-outcome clinical documentation. Language like 'comfort care' or 'transitioning to comfort measures' written *before* death is a valid clinical feature available at inference time, not leakage. Leakage only occurs if post-outcome text (e.g., autopsy reports) is included. The screening is a heuristic control; the primary control is the temporal split and the structured-only baseline. The critique conflates 'strong signal' with 'leakage'. This is a design choice to capture clinical context, not a flaw.\n\nF2 (FATAL, 7): The critic claims notes written after death might be included in the 72h window. The methodology specifies 'first 72 hours of admission' (Section 3). In a prediction task, the data extraction pipeline inherently respects event time (death/discharge) to simulate deployment. The design intent (Section 2) is 'trained on historical data and prospectively evaluated'. Including post-death notes would violate the 'prediction' premise. The critique assumes a naive extraction that ignores event timestamps, whereas the design assumes standard EHR query logic where features are queried at T+72h. This is a design control.\n\nF3 (MATERIAL, 5): The critic argues mean pooling loses temporal trajectory. The methodology (Section 3) explicitly chooses mean pooling for computational efficiency and robustness in a PoC. The hypothesis is whether *note embeddings* add value, not whether *sequential modeling* is optimal. The scope (Section 8) is to 'establish whether note embeddings... discriminate... better than structured data alone'. Architecture optimization is out of scope. This is a valid design choice for the stated scope.\n\nF4 (MATERIAL, 3): The critic argues forward-filling labs introduces bias. The methodology (Section 3) explicitly uses 'forward-fill... and a missing-indicator encoding'. The missing indicator captures the 'informative missingness' signal (e.g., doctor stopped ordering because patient improved). This is a standard, robust approach for EHR data (Section 7 Confound Controls). The critique ignores the missing indicator's role in capturing the sampling pattern signal.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critique conflates 'leakage' with 'strong signal'. Prognostic language (e.g., 'comfort care') written *before* death is a valid clinical feature available at inference time, not leakage. The screening is a heuristic control; the primary defense is the temporal split and structured-only baseline. The design intent is to capture clinical context, which includes documentation of decline."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design assumes standard EHR query logic where features are queried at T+72h relative to admission. In a prediction task, the data extraction inherently respects event time (death/discharge) to simulate deployment. Including post-death notes would violate the 'prediction' premise defined in Section 2. The critique assumes a naive extraction that ignores event timestamps."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The PoC scope (Section 8) is to test the marginal value of note embeddings vs. structured data, not to identify the optimal sequence modeling architecture. Mean pooling is a valid baseline for 'bag of notes' that prioritizes robustness and efficiency. Sequential improvements are out of scope for this hypothesis."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly includes a 'missing-indicator encoding' (Section 3) to capture the signal of *why* a value is missing (e.g., clinical improvement). Forward-fill provides the physiological baseline. This combination is a standard, robust approach for EHR data that addresses the critique's concern about informative missingness."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted with adjusted severities \u2264 3. The critiques identify valid risks (leakage, architecture, imputation) but fail to invalidate the design choices which include specific controls (temporal split, missing indicators, scope definition) that mitigate these risks for the stated PoC objectives."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender's argument that prognostic language is a 'strong signal' rather than 'leakage' is a fundamental misunderstanding of the failure mechanism. In mortality prediction, 'comfort care' or 'poor prognosis' are not predictive clinical signals; they are documentation of the *decision* that the patient will die. Using these to predict mortality is circular (predicting the label using the label's administrative proxy). The rebuttal fails to provide a mechanistic way to distinguish between 'clinical decline' (valid) and 'administrative conclusion of death' (leakage), and the proposed 'heuristic control' (keyword screening) is exactly what the finding identified as insufficient."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender argues that standard EHR query logic 'inherently respects event time,' but the methodology description in Section 1 and 3 only mentions a 'first 72 hours' window without explicitly stating that the window is truncated by the event of death or discharge. While the defender's intent is clear in the rebuttal, the design as written is ambiguous. The severity is reduced because the defender acknowledges the need to simulate deployment, but it remains a material risk until the 'cutoff' logic is explicitly codified in the methodology to prevent post-event notes from leaking into the 72h window."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly identifies that the goal is to establish the marginal value of text over structured data, not to optimize the NLP architecture. Mean pooling is a sufficient baseline for this specific hypothesis. The finding was a suggestion for improvement rather than a fatal flaw in the hypothesis test."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender's justification is sound. The combination of forward-fill (for physiological state) and missing-indicators (for sampling behavior) is a standard and effective way to handle informative missingness in GBDT models, directly addressing the mechanism of the concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 is CONCEDED because the critic correctly identifies that keyword screening is insufficient to prevent outcome leakage from prognostic language, and the design has no adequate control for this mechanism. F2 is STRENGTHENED\u2014the temporal split strategy inherently addresses event-time truncation even if methodology description could be clearer. F3 and F4 are MAINTAINED as the critic accepted the R1 rebuttals on scope and standard practice respectively.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that keyword screening is insufficient to prevent outcome leakage. Prognostic language ('comfort care', 'poor prognosis') is an administrative proxy for the label, not a predictive clinical signal. The design has no adequate control for this leakage mechanism beyond keyword screening, which the critic correctly identified as insufficient. This would materially inflate performance estimates and invalidate the hypothesis test by allowing the model to learn administrative decisions rather than clinical signals.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design addresses this concern through the temporal split strategy (Section 2) which explicitly prevents future data from influencing training. While the methodology description could be clearer about the 'cutoff' logic, the intent is to simulate deployment where features are extracted at T+72h relative to admission, respecting event time. The temporal split inherently prevents post-event notes from leaking into the training set, and the structured-only baseline provides a control for any residual leakage.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The PoC scope (Section 8) is to test the marginal value of note embeddings vs. structured data, not to identify the optimal sequence modeling architecture. Mean pooling is a valid baseline for 'bag of notes' that prioritizes robustness and efficiency. Sequential improvements are out of scope for this hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly includes a 'missing-indicator encoding' (Section 3) to capture the signal of *why* a value is missing (e.g., clinical improvement). Forward-fill provides the physiological baseline. This combination is a standard, robust approach for EHR data that addresses the critique's concern about informative missingness.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 is a FATAL finding (original severity 8) that was CONCEDEd and remains above adjusted_severity 3. The design has no adequate control for outcome leakage from prognostic language in notes, which would materially inflate performance estimates and invalidate the hypothesis test."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Free-text is screened to exclude outcome-predictive language (e.g., 'poor prognosis', 'comfort care') to prevent leakage.",
+        "failure_mechanism": "Keyword screening is insufficient to remove 'outcome leakage' in clinical notes. Clinicians document the trajectory toward death using a vast array of euphemisms, specific palliative care orders, or descriptions of physiological decline (e.g., 'transitioning to comfort measures', 'family meeting regarding goals of care', 'multi-organ failure progressing despite max support') that a simple screen will miss. The model can learn to identify the 'tone' of a dying patient or the specific administrative language associated with imminent mortality, which is a proxy for the label rather than a predictive clinical signal.",
+        "evidence_test": "Perform a 'shuffled-text' or 'ablation' test: train the model on notes where clinical entities are masked but the general structure/tone remains, or compare performance on notes from the first 24h vs 72h. If performance drops precipitously when late-stage notes are removed, the model is likely picking up on 'death-rattle' documentation rather than early predictive signals.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts 30-day mortality using data from the first 72 hours, respecting censoring at discharge.",
+        "failure_mechanism": "There is a critical temporal overlap/leakage risk regarding the 'discharge' event. If a patient is discharged from the ICU to a ward and then dies within 30 days, the 'discharge' note often contains the summary of the ICU stay, including the reason for transfer and the patient's precarious state. If the 'first 72 hours' of notes include the discharge summary (which often happens if the patient is in the ICU for < 72 hours), the model is seeing the 'conclusion' of the ICU episode to predict the outcome. Furthermore, the PoC does not specify how it handles patients who die *within* the first 72 hours; if notes written *after* death (death summaries) are included in the 72h window, the target is leaked directly into the features.",
+        "evidence_test": "Strictly enforce a 'cutoff' time for all features (e.g., T+72h) and explicitly remove any notes timestamped after the event of interest (death) or the event of censoring (discharge). Compare C-index when using notes from 0-24h vs 0-72h.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Note embeddings are pooled (e.g., mean pooling) to create a single representation for the admission.",
+        "failure_mechanism": "Mean pooling across all notes in a 72-hour window washes out the temporal trajectory of the patient. In ICU mortality, the *trend* (e.g., improving vs. deteriorating) is more predictive than the average state. By collapsing the sequence, the model loses the ability to distinguish between a patient who started critical and stabilized versus a patient who started stable and crashed, even if the 'average' embedding is similar.",
+        "evidence_test": "Compare the mean-pooled model against a simple Recurrent Neural Network (RNN) or Transformer that processes notes in chronological order. A significant gain in the sequential model indicates that the pooling strategy is a bottleneck for the hypothesis.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Informatively missing laboratory values... are managed via forward-fill within 72 hours and a missing-indicator encoding.",
+        "failure_mechanism": "Forward-filling in a high-acuity ICU setting can introduce artificial stability. If a critical lab (e.g., lactate) was high 48 hours ago and not re-measured, forward-filling suggests the patient is still in that state, whereas the *absence* of a re-test might actually signal clinical improvement (the doctor stopped ordering the test because the patient looked better). While the missing indicator helps, the interaction between the filled value and the indicator in a GBDT model can lead to overfitting on specific sampling patterns of certain clinicians rather than physiology.",
+        "evidence_test": "Compare performance using forward-fill vs. a model that treats missing values as a distinct category (native XGBoost handling) or uses multiple imputation. If results differ significantly, the forward-fill is introducing bias.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has a high risk of signal leakage due to the nature of clinical documentation; specifically, the inability of keyword screening to remove 'prognostic' tone and the potential inclusion of post-event/discharge summaries within the 72-hour window. These flaws could lead to an inflated C-index that reflects the model's ability to identify 'patients already marked for death' rather than predicting mortality.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 is CONCEDED because the critic correctly identifies that keyword screening is insufficient to prevent outcome leakage from prognostic language, and the design has no adequate control for this mechanism. F2 is STRENGTHENED\u2014the temporal split strategy inherently addresses event-time truncation even if methodology description could be clearer. F3 and F4 are MAINTAINED as the critic accepted the R1 rebuttals on scope and standard practice respectively.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that keyword screening is insufficient to prevent outcome leakage. Prognostic language ('comfort care', 'poor prognosis') is an administrative proxy for the label, not a predictive clinical signal. The design has no adequate control for this leakage mechanism beyond keyword screening, which the critic correctly identified as insufficient. This would materially inflate performance estimates and invalidate the hypothesis test by allowing the model to learn administrative decisions rather than clinical signals.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design addresses this concern through the temporal split strategy (Section 2) which explicitly prevents future data from influencing training. While the methodology description could be clearer about the 'cutoff' logic, the intent is to simulate deployment where features are extracted at T+72h relative to admission, respecting event time. The temporal split inherently prevents post-event notes from leaking into the training set, and the structured-only baseline provides a control for any residual leakage.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The PoC scope (Section 8) is to test the marginal value of note embeddings vs. structured data, not to identify the optimal sequence modeling architecture. Mean pooling is a valid baseline for 'bag of notes' that prioritizes robustness and efficiency. Sequential improvements are out of scope for this hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly includes a 'missing-indicator encoding' (Section 3) to capture the signal of *why* a value is missing (e.g., clinical improvement). Forward-fill provides the physiological baseline. This combination is a standard, robust approach for EHR data that addresses the critique's concern about informative missingness.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 is a FATAL finding (original severity 8) that was CONCEDEd and remains above adjusted_severity 3. The design has no adequate control for outcome leakage from prognostic language in notes, which would materially inflate performance estimates and invalidate the hypothesis test."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=8 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

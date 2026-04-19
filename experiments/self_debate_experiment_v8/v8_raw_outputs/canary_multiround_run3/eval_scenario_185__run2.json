@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_185",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The relevance labels (high/low) constructed from analyst escalation or incident-response ticket linkage within fixed time windows are accurate proxies for 'analyst-actionable truth' and do not introduce label bias.",
+        "failure_mechanism": "The label construction assumes that analyst escalation or ticket linkage within 24 hours/10 days is a reliable indicator of true threat relevance. However, SOC analysts may escalate alerts for reasons unrelated to true threat (e.g., policy compliance, noise, or incomplete information), and incident-response tickets may be linked to alerts that are not the root cause of the incident. This introduces label noise that can mislead the ranker, especially if the noise is correlated with feature groups (e.g., entity graph features may correlate with ticket linkage patterns even when the alert is not truly relevant). The 30-day exclusion of undocumented alerts also risks biasing the label distribution if undocumented alerts are systematically different (e.g., lower-risk alerts are more likely to be ignored).",
+        "evidence_test": "Compare the nDCG@10 performance of the proposed model against a model trained on labels derived from a stricter, independent ground truth (e.g., confirmed incidents validated by a second-tier SOC team or external threat intelligence). If performance drops significantly, the label construction is introducing bias. Alternatively, measure the inter-annotator agreement between two independent SOC teams on a held-out set of alerts to quantify label noise.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split strategy (months 1\u201314 train, 15\u201317 validation, 18\u201324 test) ensures that the model generalizes to 'truly unseen alerts' and measures performance under realistic distribution shift.",
+        "failure_mechanism": "The temporal split assumes that the 6-month gap between training (ending month 14) and test (starting month 18) is sufficient to capture realistic distribution shift. However, SOC alert distributions can shift abruptly due to new attack campaigns, rule updates, or tooling changes. If the test set (months 18\u201324) contains alerts from a novel attack campaign not reflected in the training data, the model may fail catastrophically, but the nDCG@10 metric may still appear reasonable if the campaign is rare. The validation set (months 15\u201317) may not capture this shift, leading to over-optimistic hyperparameter selection.",
+        "evidence_test": "Evaluate the model on a synthetic 'stress test' set consisting of alerts from a known novel campaign (e.g., a red-team exercise or a post-training attack wave). If performance degrades significantly, the temporal split is insufficient. Alternatively, monitor the distribution of alert features and labels over time to ensure the test set is not an outlier compared to training.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The entity graph features (host\u2013user\u2013IP\u2013rule relationships from the prior 30 days) capture contextual relationships unavailable in alert text alone and contribute independent signal to the ranking model.",
+        "failure_mechanism": "The entity graph features assume that the static entity store (prior 30 days) is representative of the relationships at alert generation time. However, if the entity store is sparse or noisy (e.g., due to missing data or stale relationships), the features may not provide meaningful signal. Additionally, the ablation study (dropping ticket-history features) may not fully isolate the contribution of entity graph features if the two feature groups are correlated (e.g., high-risk entities may appear in both entity graphs and ticket histories). The experiment does not verify that the entity graph features are robust to noise or that their contribution is not confounded by other factors.",
+        "evidence_test": "Perform a feature importance analysis (e.g., SHAP values) to quantify the contribution of entity graph features relative to others. Alternatively, inject synthetic noise into the entity graph (e.g., randomize relationships) and measure the drop in nDCG@10. If the drop is minimal, the features may not be meaningful.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric, nDCG@10, aligns with the operational objective of improving triage efficiency and surfacing alerts most likely to warrant immediate analyst action.",
+        "failure_mechanism": "nDCG@10 assumes that the top 10 alerts are the only ones analysts will review, which may not hold in practice. Analysts may review more alerts if the top 10 are ambiguous or if the SOC is under high load. Additionally, nDCG@10 does not account for the cost of false positives (e.g., analysts wasting time on low-relevance alerts) or the opportunity cost of false negatives (missed true threats). The metric also does not reflect the latency of the ranking system, which could be critical in time-sensitive triage.",
+        "evidence_test": "Measure the actual analyst workflow (e.g., via screen recordings or ticket linkage patterns) to determine how many alerts analysts typically review. Compare nDCG@10 with a cost-sensitive metric (e.g., expected cost of analyst time wasted on false positives) to see if the ranking aligns with operational priorities.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ticket-history features (count and summary statistics of prior tickets linked to entities) capture historical risk associated with entities and contribute signal independent of alert text.",
+        "failure_mechanism": "Ticket-history features assume that prior incident-response tickets are indicative of future risk. However, this may not hold if the SOC's incident-response processes are inconsistent (e.g., tickets are not created for all incidents) or if the historical data is sparse (e.g., new entities have no prior tickets). Additionally, the features may correlate with the label due to label construction artifacts: if high-relevance alerts are more likely to be linked to tickets, the model may learn to rank alerts based on ticket linkage rather than true relevance.",
+        "evidence_test": "Audit the ticket-history features for correlation with the label. For example, compute the odds ratio of an alert being high-relevance if it has a linked ticket in the prior 14 days. If the odds ratio is close to 1, the features may not be meaningful. Alternatively, train a model on ticket-history features alone and measure its performance; if it outperforms random, the features may be leaking label information.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The frozen pre-trained transformer (e.g., SBERT) for alert text embeddings isolates ranking architecture gains by not being updated during the experiment.",
+        "failure_mechanism": "While freezing the embedding model isolates gains from the ranking architecture, it assumes that the pre-trained embeddings are optimal for the SOC alert domain. If the embeddings are not well-suited to the alert text (e.g., due to domain mismatch or outdated training data), the model's performance may be capped by the embedding quality. The experiment does not verify that the embeddings are sufficient for the task.",
+        "evidence_test": "Compare the performance of the frozen embeddings against embeddings fine-tuned on SOC alert data (even if only on a small subset). If fine-tuning improves nDCG@10, the frozen embeddings are a bottleneck.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has several critical flaws that undermine its ability to validate the hypothesis. The most severe issues are label construction bias (F1) and insufficient temporal distribution shift (F2), which could invalidate the entire experiment. Material flaws include missing baselines for entity graph features (F3), metric limitations (F4), and potential signal leakage in ticket-history features (F5).",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims label noise and bias due to the proxy nature of analyst actions. However, the design explicitly defines 'relevance' as 'analyst-actionable truth'\u2014meaning the goal is to predict what an analyst will actually escalate, not an objective 'ground truth' of threat. The 30-day exclusion is a standard data-cleaning step to avoid speculative labels. This is a design choice to align the model with the actual operational workflow (triage), not a flaw in the proxy.\n\nF2 argues that the temporal split might not capture abrupt shifts (e.g., new campaigns). The design uses a 24-month window with a 6-month gap between training and test, and specifically includes 'stratified evaluation by quarter' (Section 6) to detect these localized distributional confounds. While no split can guarantee coverage of every possible future event, the temporal distance and quarterly stratification are the standard controls for non-stationary SOC data.\n\nF3 questions the signal of entity graph features and the ablation's ability to isolate them. The design includes an ablation study (Section 6) specifically to confirm the entity graph contributes independent signal. The concern about sparsity is a general ML challenge, not a design flaw; the model's performance on the test set (which includes real-world sparsity) will empirically validate if the signal is meaningful.\n\nF4 critiques nDCG@10 for not accounting for analyst capacity or cost. The design explicitly justifies nDCG@10 based on the operational constraint of ~10 alerts per shift (Section 4). This is a deliberate scope decision: the ranker is intended to support the immediate triage window. Latency and cost are production concerns, not hypothesis-testing concerns for ranking quality.\n\nF5 suggests ticket-history features might leak labels or be inconsistent. The design includes a 'Metadata leakage check' (Section 6) specifically to ensure ticket-history features do not correlate with labels due to construction artifacts. It also uses a 14-day lookback for features vs. a 24-hour window for labels, creating a temporal buffer.\n\nF6 suggests frozen embeddings might be a bottleneck. The design explicitly states the embedding model is frozen to 'isolate ranking architecture gains' (Section 3). This is a controlled experiment design to test the multimodal ranking hypothesis, not an attempt to build the absolute best possible production model. The bottleneck is a deliberate control.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic confuses 'objective threat' with 'analyst-actionable truth'. The design intent is to optimize the triage process (predicting analyst action), making analyst escalation the correct ground truth for this specific hypothesis. The 30-day exclusion is a documented control to prevent label bias from speculative judgments."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly addresses distribution shift through a strict chronological split and 'stratified evaluation by quarter' (Section 6), which is specifically designed to detect the 'abrupt shifts' the critic describes."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The design includes an explicit ablation study (Section 6) to verify that the entity graph provides independent signal beyond ticket history. Sparsity is evaluated empirically via the test set performance."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The choice of nDCG@10 is explicitly tied to the operational constraint of ~10 alerts per shift (Section 4). Latency and cost-benefit analysis are outside the scope of this ranking-quality hypothesis investigation."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The design includes a 'Metadata leakage check' (Section 6) specifically to ensure ticket-history features do not inadvertently correlate with labels due to construction artifacts."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Freezing the embeddings is a deliberate control to isolate the gains of the ranking architecture and multimodal features, as stated in Section 3."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted using explicit design controls (leakage checks, ablation studies, and quarterly stratification) or scope definitions. Every finding's adjusted severity is \u2264 3, qualifying the methodology for exoneration."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal correctly identifies that the label construction is designed to capture 'analyst-actionable truth' rather than 'objective threat,' which partially addresses the concern. However, it does not resolve the core failure mechanism: the potential for analyst escalation to be driven by factors unrelated to true threat relevance (e.g., policy compliance, noise, or incomplete information). The 30-day exclusion control is noted, but the rebuttal does not address whether undocumented alerts (excluded) are systematically different in a way that biases the label distribution. The mechanism of label noise correlated with feature groups (e.g., entity graph features) remains unaddressed. The severity adjustment to 3 is disproportionate without evidence that the label noise does not meaningfully impact the ranker's performance."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal addresses the concern about distribution shift by pointing to the 'stratified evaluation by quarter' as a control for abrupt shifts. However, this does not fully resolve the failure mechanism: the temporal split may still fail to capture novel attack campaigns that are rare but critical (e.g., a red-team exercise). The stratified evaluation can detect shifts but does not guarantee robustness to unseen distributions. The rebuttal does not provide evidence that the test set (months 18\u201324) is representative of future drift or that the validation set (months 15\u201317) would not lead to over-optimistic hyperparameter selection. The severity adjustment to 3 is partially justified but leaves residual concerns about catastrophic failure modes."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal cites the ablation study as a control to verify the independent signal of entity graph features. However, the failure mechanism includes two unaddressed concerns: (1) the potential correlation between entity graph and ticket-history features, which the ablation study may not fully isolate, and (2) the robustness of entity graph features to noise or sparsity. The rebuttal does not provide empirical evidence (e.g., SHAP values or synthetic noise injection) to show that the features are meaningful or robust. The severity adjustment to 3 is disproportionate without addressing these mechanisms."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly identifies that the choice of nDCG@10 is explicitly tied to the operational constraint of ~10 alerts per shift and that latency and cost-benefit analysis are outside the scope of the hypothesis investigation. This directly addresses the failure mechanism by acknowledging the metric's limitations and the scope of the experiment. The severity adjustment to 0 is proportionate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal cites the 'Metadata leakage check' as a control to ensure ticket-history features do not correlate with labels due to construction artifacts. This partially addresses the failure mechanism by acknowledging the potential for leakage. However, it does not provide evidence that the check was performed or that it was effective (e.g., no correlation was found). The mechanism of sparse historical data or inconsistent ticket creation remains unaddressed. The severity adjustment to 1 is partially justified but leaves residual concerns about signal leakage."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly identifies that freezing the embeddings is a deliberate control to isolate the gains of the ranking architecture, as stated in Section 3. While the frozen embeddings may still be a bottleneck, the rebuttal directly addresses the failure mechanism by justifying the design choice. The severity adjustment to 1 is proportionate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my positions on F4 and F6 as they were accepted. For F1, F2, and F3, the critic's challenges highlight a distinction between 'detecting' a problem and 'eliminating' the underlying mechanism. I have shifted F1 and F2 to DEFER because while the design includes detection controls (exclusion rules, stratified evaluation), the inherent noise of human labels and the unpredictability of novel attacks are empirical risks that cannot be 'designed away' but can be measured. For F3, I am strengthening the REBUT-DESIGN by clarifying that the ablation study specifically addresses the independent signal claim. For F5, I am shifting to DEFER as the leakage check is a mitigation, not a guarantee, and sparsity is an empirical property of the data.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that 'analyst-actionable truth' is inherently noisy and that exclusion of undocumented alerts could introduce bias. The design's 30-day exclusion mitigates speculative labels but does not eliminate systemic bias. To settle this: (1) Experiment: Compare nDCG@10 using the current labels vs. a gold-standard set verified by a second-tier expert team. (2) Vindication: If nDCG@10 remains stable or improves, the current labels are a sufficient proxy for ranking. (3) Validation: A significant drop in nDCG@10 would indicate that the model is learning 'analyst habits' rather than 'threat relevance'. (4) Primary conclusion survival: Yes. Since both the baseline (text-only) and the proposed model use the same labels, the relative gain of adding graph/ticket features remains a valid measure of whether those features help predict analyst action, regardless of whether that action is perfectly aligned with objective threat.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly notes that stratified evaluation detects shifts but does not guarantee robustness to novel, rare campaigns. To settle this: (1) Experiment: Evaluate the model on a held-out 'stress set' consisting of alerts from a known novel campaign (e.g., a red-team exercise) occurring after month 24. (2) Vindication: Performance within 10% of the test set nDCG@10 would prove robustness. (3) Validation: A catastrophic drop would prove the temporal split was insufficient for generalization. (4) Primary conclusion survival: Yes. The hypothesis is whether multimodal features improve ranking over text-only. If both models fail on novel campaigns, the relative advantage of the multimodal approach in the general case (captured by the test set) remains valid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern about correlation between graph and ticket features is exactly what the ablation study (Section 6) is designed to resolve. By comparing [Text+Graph+Ticket] vs [Text+Graph], the design explicitly isolates the marginal utility of the graph features. Regarding sparsity/noise: the methodology uses a 30-day window for the entity store to maximize density, and the final nDCG@10 on the test set is the ultimate empirical measure of whether these features provided meaningful signal despite any inherent noise.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The choice of nDCG@10 is explicitly tied to the operational constraint of ~10 alerts per shift (Section 4). Latency and cost-benefit analysis are outside the scope of this ranking-quality hypothesis investigation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The 'Metadata leakage check' (Section 6) is a necessary control, but the critic is correct that it does not eliminate the risk of sparsity or inconsistent ticket creation. To settle this: (1) Experiment: Compute the odds ratio of high-relevance labels for alerts with vs. without prior ticket history. (2) Vindication: An odds ratio that aligns with known historical risk (without being 1.0 or excessively high) suggests the feature is a signal, not a leak. (3) Validation: An extreme odds ratio (e.g., >10) would suggest the model is simply predicting 'ticket existence' rather than 'relevance'. (4) Primary conclusion survival: Yes. If ticket history is the dominant signal, the ablation study (dropping ticket features) will reveal this, allowing the conclusion to be refined to the specific value of the entity graph.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Freezing the embeddings is a deliberate control to isolate the gains of the ranking architecture and multimodal features, as stated in Section 3.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted the scope and architectural concerns (F3, F4, F6), but the critic correctly identified that label noise (F1), distribution shift (F2), and signal leakage (F5) are empirical risks that the current design can detect but not theoretically eliminate. These have been moved to DEFER, as the primary relative conclusion (multimodal vs. text-only) survives these flaws, but their magnitude requires the proposed empirical tests."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The relevance labels (high/low) constructed from analyst escalation or incident-response ticket linkage within fixed time windows are accurate proxies for 'analyst-actionable truth' and do not introduce label bias.",
+        "failure_mechanism": "The label construction assumes that analyst escalation or ticket linkage within 24 hours/10 days is a reliable indicator of true threat relevance. However, SOC analysts may escalate alerts for reasons unrelated to true threat (e.g., policy compliance, noise, or incomplete information), and incident-response tickets may be linked to alerts that are not the root cause of the incident. This introduces label noise that can mislead the ranker, especially if the noise is correlated with feature groups (e.g., entity graph features may correlate with ticket linkage patterns even when the alert is not truly relevant). The 30-day exclusion of undocumented alerts also risks biasing the label distribution if undocumented alerts are systematically different (e.g., lower-risk alerts are more likely to be ignored).",
+        "evidence_test": "Compare the nDCG@10 performance of the proposed model against a model trained on labels derived from a stricter, independent ground truth (e.g., confirmed incidents validated by a second-tier SOC team or external threat intelligence). If performance drops significantly, the label construction is introducing bias. Alternatively, measure the inter-annotator agreement between two independent SOC teams on a held-out set of alerts to quantify label noise.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split strategy (months 1\u201314 train, 15\u201317 validation, 18\u201324 test) ensures that the model generalizes to 'truly unseen alerts' and measures performance under realistic distribution shift.",
+        "failure_mechanism": "The temporal split assumes that the 6-month gap between training (ending month 14) and test (starting month 18) is sufficient to capture realistic distribution shift. However, SOC alert distributions can shift abruptly due to new attack campaigns, rule updates, or tooling changes. If the test set (months 18\u201324) contains alerts from a novel attack campaign not reflected in the training data, the model may fail catastrophically, but the nDCG@10 metric may still appear reasonable if the campaign is rare. The validation set (months 15\u201317) may not capture this shift, leading to over-optimistic hyperparameter selection.",
+        "evidence_test": "Evaluate the model on a synthetic 'stress test' set consisting of alerts from a known novel campaign (e.g., a red-team exercise or a post-training attack wave). If performance degrades significantly, the temporal split is insufficient. Alternatively, monitor the distribution of alert features and labels over time to ensure the test set is not an outlier compared to training.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The entity graph features (host\u2013user\u2013IP\u2013rule relationships from the prior 30 days) capture contextual relationships unavailable in alert text alone and contribute independent signal to the ranking model.",
+        "failure_mechanism": "The entity graph features assume that the static entity store (prior 30 days) is representative of the relationships at alert generation time. However, if the entity store is sparse or noisy (e.g., due to missing data or stale relationships), the features may not provide meaningful signal. Additionally, the ablation study (dropping ticket-history features) may not fully isolate the contribution of entity graph features if the two feature groups are correlated (e.g., high-risk entities may appear in both entity graphs and ticket histories). The experiment does not verify that the entity graph features are robust to noise or that their contribution is not confounded by other factors.",
+        "evidence_test": "Perform a feature importance analysis (e.g., SHAP values) to quantify the contribution of entity graph features relative to others. Alternatively, inject synthetic noise into the entity graph (e.g., randomize relationships) and measure the drop in nDCG@10. If the drop is minimal, the features may not be meaningful.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric, nDCG@10, aligns with the operational objective of improving triage efficiency and surfacing alerts most likely to warrant immediate analyst action.",
+        "failure_mechanism": "nDCG@10 assumes that the top 10 alerts are the only ones analysts will review, which may not hold in practice. Analysts may review more alerts if the top 10 are ambiguous or if the SOC is under high load. Additionally, nDCG@10 does not account for the cost of false positives (e.g., analysts wasting time on low-relevance alerts) or the opportunity cost of false negatives (missed true threats). The metric also does not reflect the latency of the ranking system, which could be critical in time-sensitive triage.",
+        "evidence_test": "Measure the actual analyst workflow (e.g., via screen recordings or ticket linkage patterns) to determine how many alerts analysts typically review. Compare nDCG@10 with a cost-sensitive metric (e.g., expected cost of analyst time wasted on false positives) to see if the ranking aligns with operational priorities.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ticket-history features (count and summary statistics of prior tickets linked to entities) capture historical risk associated with entities and contribute signal independent of alert text.",
+        "failure_mechanism": "Ticket-history features assume that prior incident-response tickets are indicative of future risk. However, this may not hold if the SOC's incident-response processes are inconsistent (e.g., tickets are not created for all incidents) or if the historical data is sparse (e.g., new entities have no prior tickets). Additionally, the features may correlate with the label due to label construction artifacts: if high-relevance alerts are more likely to be linked to tickets, the model may learn to rank alerts based on ticket linkage rather than true relevance.",
+        "evidence_test": "Audit the ticket-history features for correlation with the label. For example, compute the odds ratio of an alert being high-relevance if it has a linked ticket in the prior 14 days. If the odds ratio is close to 1, the features may not be meaningful. Alternatively, train a model on ticket-history features alone and measure its performance; if it outperforms random, the features may be leaking label information.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The frozen pre-trained transformer (e.g., SBERT) for alert text embeddings isolates ranking architecture gains by not being updated during the experiment.",
+        "failure_mechanism": "While freezing the embedding model isolates gains from the ranking architecture, it assumes that the pre-trained embeddings are optimal for the SOC alert domain. If the embeddings are not well-suited to the alert text (e.g., due to domain mismatch or outdated training data), the model's performance may be capped by the embedding quality. The experiment does not verify that the embeddings are sufficient for the task.",
+        "evidence_test": "Compare the performance of the frozen embeddings against embeddings fine-tuned on SOC alert data (even if only on a small subset). If fine-tuning improves nDCG@10, the frozen embeddings are a bottleneck.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "The PoC has several critical flaws that undermine its ability to validate the hypothesis. The most severe issues are label construction bias (F1) and insufficient temporal distribution shift (F2), which could invalidate the entire experiment. Material flaws include missing baselines for entity graph features (F3), metric limitations (F4), and potential signal leakage in ticket-history features (F5).",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my positions on F4 and F6 as they were accepted. For F1, F2, and F3, the critic's challenges highlight a distinction between 'detecting' a problem and 'eliminating' the underlying mechanism. I have shifted F1 and F2 to DEFER because while the design includes detection controls (exclusion rules, stratified evaluation), the inherent noise of human labels and the unpredictability of novel attacks are empirical risks that cannot be 'designed away' but can be measured. For F3, I am strengthening the REBUT-DESIGN by clarifying that the ablation study specifically addresses the independent signal claim. For F5, I am shifting to DEFER as the leakage check is a mitigation, not a guarantee, and sparsity is an empirical property of the data.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that 'analyst-actionable truth' is inherently noisy and that exclusion of undocumented alerts could introduce bias. The design's 30-day exclusion mitigates speculative labels but does not eliminate systemic bias. To settle this: (1) Experiment: Compare nDCG@10 using the current labels vs. a gold-standard set verified by a second-tier expert team. (2) Vindication: If nDCG@10 remains stable or improves, the current labels are a sufficient proxy for ranking. (3) Validation: A significant drop in nDCG@10 would indicate that the model is learning 'analyst habits' rather than 'threat relevance'. (4) Primary conclusion survival: Yes. Since both the baseline (text-only) and the proposed model use the same labels, the relative gain of adding graph/ticket features remains a valid measure of whether those features help predict analyst action, regardless of whether that action is perfectly aligned with objective threat.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly notes that stratified evaluation detects shifts but does not guarantee robustness to novel, rare campaigns. To settle this: (1) Experiment: Evaluate the model on a held-out 'stress set' consisting of alerts from a known novel campaign (e.g., a red-team exercise) occurring after month 24. (2) Vindication: Performance within 10% of the test set nDCG@10 would prove robustness. (3) Validation: A catastrophic drop would prove the temporal split was insufficient for generalization. (4) Primary conclusion survival: Yes. The hypothesis is whether multimodal features improve ranking over text-only. If both models fail on novel campaigns, the relative advantage of the multimodal approach in the general case (captured by the test set) remains valid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern about correlation between graph and ticket features is exactly what the ablation study (Section 6) is designed to resolve. By comparing [Text+Graph+Ticket] vs [Text+Graph], the design explicitly isolates the marginal utility of the graph features. Regarding sparsity/noise: the methodology uses a 30-day window for the entity store to maximize density, and the final nDCG@10 on the test set is the ultimate empirical measure of whether these features provided meaningful signal despite any inherent noise.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The choice of nDCG@10 is explicitly tied to the operational constraint of ~10 alerts per shift (Section 4). Latency and cost-benefit analysis are outside the scope of this ranking-quality hypothesis investigation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The 'Metadata leakage check' (Section 6) is a necessary control, but the critic is correct that it does not eliminate the risk of sparsity or inconsistent ticket creation. To settle this: (1) Experiment: Compute the odds ratio of high-relevance labels for alerts with vs. without prior ticket history. (2) Vindication: An odds ratio that aligns with known historical risk (without being 1.0 or excessively high) suggests the feature is a signal, not a leak. (3) Validation: An extreme odds ratio (e.g., >10) would suggest the model is simply predicting 'ticket existence' rather than 'relevance'. (4) Primary conclusion survival: Yes. If ticket history is the dominant signal, the ablation study (dropping ticket features) will reveal this, allowing the conclusion to be refined to the specific value of the entity graph.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Freezing the embeddings is a deliberate control to isolate the gains of the ranking architecture and multimodal features, as stated in Section 3.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted the scope and architectural concerns (F3, F4, F6), but the critic correctly identified that label noise (F1), distribution shift (F2), and signal leakage (F5) are empirical risks that the current design can detect but not theoretically eliminate. These have been moved to DEFER, as the primary relative conclusion (multimodal vs. text-only) survives these flaws, but their magnitude requires the proposed empirical tests."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=8 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

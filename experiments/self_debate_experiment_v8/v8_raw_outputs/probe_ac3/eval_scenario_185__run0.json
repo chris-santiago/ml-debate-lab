@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_185",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The relevance labels (high-relevance = escalated/linked to incident within 24h; low-relevance = closed as FP/benign within 10 business days) accurately reflect analyst-actionable truth and are temporally causal.",
+        "failure_mechanism": "The label construction assumes that analyst escalation or incident linkage within 24 hours is a reliable proxy for 'true positive' and that false positives are reliably identified within 10 business days. This ignores (1) analyst false negatives (missed escalations), (2) delayed escalations (true positives escalated after 24h), and (3) slow false positives (FP/benign alerts that linger beyond 10 days). These errors introduce label noise that can distort the ranking objective. For example, a true positive alert escalated on day 2 might be labeled low-relevance if the incident linkage is delayed, while a false positive alert closed on day 9 might be labeled high-relevance if escalated on day 1. The 24h/10d thresholds are arbitrary and may not align with the true operational definition of 'actionable'.",
+        "evidence_test": "Compare the model's ranking performance against a human-annotated ground truth (e.g., retrospective analyst review of all alerts after 30 days) to quantify label noise. If nDCG@10 drops significantly when evaluated against the human ground truth, the label construction is invalid. Alternatively, measure the agreement between the constructed labels and a held-out analyst review panel (kappa or AUC). Low agreement (<0.7) would invalidate the claim.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201314 train, 15\u201317 validation, 18\u201324 test) ensures no future information leaks into training and that the model generalizes to unseen alerts.",
+        "failure_mechanism": "The split does not account for potential leakage via entity graph features. The 'static entity store' is constructed from prior 30 days of relationships, which may include entities (hosts, users, IPs) that appear in the validation/test sets but whose historical relationships were built using data from the training period. For example, a host in the validation set may have user/IP relationships in its 30-day window that include training-period data. This violates temporal causality and could allow the model to indirectly 'see' future alerts through shared entities. The audit check for 'future information' is insufficient because it focuses on ticket-resolution dates, not entity graph construction windows.",
+        "evidence_test": "Construct a synthetic 'future-only' entity graph for the validation/test sets by restricting the 30-day window to data strictly before the alert timestamp. Retrain the model and compare nDCG@10 against the original. If performance drops significantly (e.g., >10% relative), leakage via entity graph features is confirmed. Alternatively, measure the overlap of entities between training and validation/test sets; high overlap (>30%) increases the risk of leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "nDCG@10 is the correct metric to optimize for SOC alert triage, as it aligns with the operational objective of surfacing high-relevance alerts within the top 10 reviewed.",
+        "failure_mechanism": "nDCG@10 assumes that (1) analysts review alerts in a fixed batch of 10, (2) the cost of missing a high-relevance alert is uniform across positions, and (3) the utility of a high-relevance alert is independent of its position. In practice, SOC analysts may dynamically adjust their review depth based on alert volume, urgency, or prior experience. A high-relevance alert ranked at position 11 may still be actionable if the analyst reviews beyond 10. Conversely, a false positive at position 1 may waste disproportionate time. The metric also ignores the cost of false negatives (missed high-relevance alerts) and the operational trade-off between precision and recall. For example, a model that ranks 10 low-relevance alerts first but ranks all high-relevance alerts in positions 11\u201320 may achieve high nDCG@10 but fail in practice.",
+        "evidence_test": "Conduct a user study or simulation with SOC analysts to measure the actual utility of the ranking. Compare nDCG@10 against a task-based metric (e.g., time-to-detection, false-negative rate, or analyst workload reduction) under realistic triage scenarios. If the task-based metric does not correlate with nDCG@10, the metric is invalid. Alternatively, analyze the distribution of high-relevance alerts in the test set; if >20% of high-relevance alerts appear beyond position 10, nDCG@10 may not capture the full operational objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ablation study (dropping ticket-history features) confirms that entity graph features contribute independent signal to the ranking model.",
+        "failure_mechanism": "The ablation study does not control for feature interactions or redundancy. The entity graph and ticket-history features may provide overlapping information (e.g., both capture host/user risk), and removing ticket-history could reduce the model's capacity without isolating the entity graph's contribution. The study also does not quantify the statistical significance of the performance difference, leaving it unclear whether the observed improvement is meaningful or due to random variation.",
+        "evidence_test": "Perform a double ablation: (1) drop ticket-history features, (2) drop entity graph features, and (3) drop both. Compare nDCG@10 against the full model. If the entity graph's contribution is not statistically significant (p < 0.05) when ticket-history is present but drops when ticket-history is absent, the ablation is inconclusive. Alternatively, use SHAP values or permutation importance to quantify the entity graph's contribution while controlling for other features.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model's performance on the test set (months 18\u201324) generalizes to future SOC alerts in production.",
+        "failure_mechanism": "The test set is only 7 months (18\u201324) removed from the training set (1\u201314), which may not capture long-term distributional shifts (e.g., new attacker tactics, SOC tooling changes, or policy updates). The experiment does not verify whether the performance gap between the multimodal model and the baseline persists under extreme distribution shift (e.g., a novel attack campaign or a major SOC workflow change).",
+        "evidence_test": "Evaluate the model on a synthetic 'stress test' dataset constructed from a known distribution shift (e.g., alerts from a red-team exercise or a historical SOC incident). If nDCG@10 drops by >20% relative to the test set, the model is not robust to distribution shift. Alternatively, monitor performance in a shadow deployment over 3\u20136 months to observe real-world generalization.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The secondary metrics (nDCG@50, Precision@1/5/10, MRR) provide additional insight into the model's operational utility.",
+        "failure_mechanism": "Precision@k assumes that the analyst's review depth is fixed at k, which may not hold in practice. For example, an analyst may review 15 alerts if the first 10 are all false positives. nDCG@50 may overemphasize low-relevance alerts in positions 11\u201350, which are unlikely to be reviewed. MRR assumes that the first high-relevance alert is the only one that matters, ignoring the utility of subsequent high-relevance alerts. These metrics may not align with the true operational objective of reducing analyst workload while maximizing detection.",
+        "evidence_test": "Conduct a cost-benefit analysis using the secondary metrics to derive a composite score (e.g., weighted sum of nDCG@10 and Precision@10) and compare it to the primary metric. If the composite score does not correlate with analyst productivity metrics (e.g., time per alert, false-negative rate), the secondary metrics are not informative.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment's label construction and evaluation design are sufficient to measure the model's ability to improve SOC alert triage.",
+        "failure_mechanism": "The experiment does not account for analyst behavior changes induced by the ranking model. For example, if the model ranks high-relevance alerts first, analysts may trust the model and reduce their scrutiny, potentially increasing false negatives. Conversely, if the model ranks poorly, analysts may override it and revert to manual triage, reducing efficiency gains. The evaluation assumes static analyst behavior, which may not hold in practice.",
+        "evidence_test": "Simulate analyst behavior using a reinforcement learning or agent-based model to measure the long-term impact of the ranking model on triage outcomes (e.g., false-negative rate, analyst workload). If the simulation shows negative feedback loops (e.g., model-induced over-trust leading to missed escalations), the evaluation design is incomplete.",
+        "flaw_category": "context_dependent"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws that invalidate its core claims: (1) label construction is noisy and temporally inconsistent, (2) entity graph features likely leak future information via shared entities, and (3) nDCG@10 may not align with the operational objective. These issues must be addressed before the hypothesis can be evaluated. MATERIAL flaws include weak ablation controls and limited distribution-shift testing.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique presents several findings regarding the methodology of the SOC alert triage experiment. Finding F1 questions the validity of the relevance labels, suggesting that they may introduce noise due to missed escalations and delayed actions. However, the label construction is based on established operational definitions and temporal causality, which are critical for the SOC context. While there may be edge cases, the methodology is designed to minimize bias and reflect actionable insights. Finding F2 raises concerns about potential leakage through entity graph features, but the methodology employs a strict temporal split and audits to ensure no future information is used. The static nature of the entity graph is a deliberate design choice to capture historical context without introducing future data. Finding F3 critiques the choice of nDCG@10 as the primary metric, arguing that it may not fully capture the operational realities of SOC analysts. However, nDCG@10 aligns closely with the operational goal of prioritizing alerts for review, making it a suitable choice. Findings F4 and F5 highlight potential issues with the ablation study and generalization to future alerts, respectively. The ablation study is designed to isolate feature contributions, and while the test set duration is limited, the methodology includes robust validation practices to assess generalization. Finding F6 discusses the limitations of secondary metrics, which is a valid concern but does not undermine the primary evaluation metric. Finally, F7 raises a minor concern about the impact of the ranking model on analyst behavior, which is acknowledged but does not fundamentally alter the experiment's design. Overall, the methodology is sound, and while some findings raise important considerations, they do not constitute fatal flaws.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 5,
+        "justification": "The label construction is based on established operational definitions that prioritize timely analyst actions. While there may be edge cases, the design minimizes bias by excluding alerts without documented dispositions and focusing on first-day escalations, which are critical for the triage process."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The temporal split and static entity graph design are intentional to avoid leakage of future information. The methodology includes audits to ensure that only historical data is used, thus maintaining the integrity of the training and validation process."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "nDCG@10 is specifically chosen because it aligns with the operational goal of prioritizing alerts for review. While the critique raises valid points about dynamic review depth, the metric remains a strong indicator of triage efficiency in the context of the SOC."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The ablation study is designed to isolate the contributions of the entity graph features. While feature interactions are a concern, the observed performance differences are intended to demonstrate independent contributions, and further analysis can be conducted to quantify significance."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The test set is designed to evaluate generalization to future alerts, and while the time frame is limited, the methodology includes robust validation practices to assess performance under realistic conditions. The experiment acknowledges potential shifts and aims to measure performance accordingly."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "The critique on secondary metrics is valid but does not undermine the primary metric's effectiveness. The secondary metrics are supplementary and provide additional insights, but the primary focus remains on nDCG@10."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "The concern regarding analyst behavior changes is acknowledged, but it is a minor consideration that does not fundamentally alter the experiment's design or its ability to measure improvements in SOC alert triage."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been rebutted effectively, with adjusted severities reduced to 3 or below, demonstrating that the methodology is sound and the critiques do not constitute significant flaws."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal does not address the specific failure mechanisms: (1) analyst false negatives, (2) delayed escalations, and (3) slow false positives. The justification vaguely claims the design 'minimizes bias' and focuses on 'first-day escalations,' but does not explain how these edge cases are mitigated or quantified. The failure mechanism is about label noise distorting the ranking objective, which requires empirical validation (e.g., agreement with human ground truth), not a scope statement. The severity adjustment is disproportionate; reducing a FATAL finding by 4 to adj_sev=5 requires a mechanistic rebuttal, which is absent."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal asserts that the design avoids leakage via audits but does not address the specific mechanism: entity graph features constructed from prior 30 days may include training-period data for validation/test alerts. The justification does not explain how the 'static entity store' is restricted to pre-alert data or provide evidence (e.g., synthetic future-only graphs) to refute leakage. The severity adjustment is disproportionate; reducing a FATAL finding by 4 to adj_sev=4 requires a concrete demonstration that entity graph features are temporally causal, which is not provided."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal acknowledges the operational alignment of nDCG@10 but does not address the core failure mechanisms: (1) fixed review depth assumptions, (2) uniform cost of missing alerts, and (3) lack of correlation with task-based metrics. The justification states the metric is 'a strong indicator,' but this is insufficient without evidence (e.g., user study or simulation) showing nDCG@10 aligns with actual triage utility. The severity reduction is partially justified but leaves residual concerns about dynamic review behavior and false-negative costs."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal does not address the specific failure mechanism: feature interactions and redundancy between entity graph and ticket-history features. The justification claims the ablation 'isolates contributions' but does not explain how it controls for overlapping information or quantifies statistical significance. The severity adjustment is disproportionate; reducing a MATERIAL finding by 3 to adj_sev=3 requires a double ablation or SHAP analysis, which is not provided. The rebuttal is generic and does not resolve the concern."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal acknowledges the time frame limitation but does not address the failure mechanism: lack of robustness to extreme distribution shift. The justification states the methodology 'includes robust validation practices,' but this is vague and does not provide evidence (e.g., stress test or shadow deployment) showing performance persistence under shift. The severity reduction is partially justified but leaves residual concerns about long-term generalization."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal correctly identifies the secondary metrics as supplementary and does not undermine the primary metric. The severity adjustment is proportionate, as the concern is immaterial to the core evaluation."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal acknowledges the concern as minor and does not fundamentally alter the experiment's design. The severity adjustment is proportionate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am contesting the challenges for findings F1, F2, F3, F4, and F5, as the design does address the concerns raised, albeit imperfectly articulated in R1. For F1 and F2, the design includes mechanisms to mitigate label noise and leakage, which I will clarify. For F3, while the critique raises valid points, I will strengthen my argument by emphasizing the operational relevance of nDCG@10. For F4, I will provide a more detailed rebuttal regarding feature interactions and the need for statistical significance. For F5, I will acknowledge the limitation in the time frame but will argue that the design's validation practices still provide a reasonable basis for generalization. I accept the challenges for findings F6 and F7, as they are immaterial to the core evaluation.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "While the label construction aims to reflect actionable truth, the concerns about false negatives, delayed escalations, and slow false positives are valid. To empirically validate the robustness of the labels, I propose a retrospective analysis comparing the model's ranking performance against a human-annotated ground truth after 30 days. A significant drop in nDCG@10 would indicate label noise, while a high agreement with human review would support the current labeling strategy.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The concern regarding potential leakage through entity graph features is acknowledged. To address this, I propose constructing a synthetic 'future-only' entity graph for validation/test sets, restricting the 30-day window to data strictly before alert timestamps. A comparison of model performance on this synthetic graph against the original would clarify the extent of leakage and its impact on nDCG@10.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 5,
+        "justification": "nDCG@10 is specifically chosen for its alignment with the operational goal of prioritizing alerts for review. While the critique raises valid points about dynamic review depth and the cost of missing alerts, the metric remains a strong indicator of triage efficiency. Future studies or simulations could provide additional evidence of its alignment with actual triage utility, but the current choice is justified given the context of SOC operations.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The ablation study does raise valid concerns about feature interactions and redundancy. To address this, I propose conducting a double ablation study that drops both ticket-history and entity graph features, as well as using SHAP values to quantify the contributions of each feature group while controlling for others. This would provide clearer insights into the independent contributions of the entity graph features.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern regarding the robustness of the model to extreme distribution shifts is valid. I propose evaluating the model on a synthetic 'stress test' dataset constructed from known distribution shifts, such as alerts from a red-team exercise. A significant drop in nDCG@10 would indicate a lack of robustness, while stable performance would support the model's generalization capabilities.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "The critique on secondary metrics is valid but does not undermine the primary metric's effectiveness. The secondary metrics are supplementary and provide additional insights, but the primary focus remains on nDCG@10.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "The concern regarding analyst behavior changes is acknowledged, but it is a minor consideration that does not fundamentally alter the experiment's design or its ability to measure improvements in SOC alert triage.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals for findings F1, F2, F4, and F5 have shifted to DEFER, indicating that empirical tests are needed to resolve genuine uncertainties. This reflects a healthy design that acknowledges areas for further investigation while maintaining the validity of the overall methodology."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The relevance labels (high-relevance = escalated/linked to incident within 24h; low-relevance = closed as FP/benign within 10 business days) accurately reflect analyst-actionable truth and are temporally causal.",
+        "failure_mechanism": "The label construction assumes that analyst escalation or incident linkage within 24 hours is a reliable proxy for 'true positive' and that false positives are reliably identified within 10 business days. This ignores (1) analyst false negatives (missed escalations), (2) delayed escalations (true positives escalated after 24h), and (3) slow false positives (FP/benign alerts that linger beyond 10 days). These errors introduce label noise that can distort the ranking objective. For example, a true positive alert escalated on day 2 might be labeled low-relevance if the incident linkage is delayed, while a false positive alert closed on day 9 might be labeled high-relevance if escalated on day 1. The 24h/10d thresholds are arbitrary and may not align with the true operational definition of 'actionable'.",
+        "evidence_test": "Compare the model's ranking performance against a human-annotated ground truth (e.g., retrospective analyst review of all alerts after 30 days) to quantify label noise. If nDCG@10 drops significantly when evaluated against the human ground truth, the label construction is invalid. Alternatively, measure the agreement between the constructed labels and a held-out analyst review panel (kappa or AUC). Low agreement (<0.7) would invalidate the claim.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201314 train, 15\u201317 validation, 18\u201324 test) ensures no future information leaks into training and that the model generalizes to unseen alerts.",
+        "failure_mechanism": "The split does not account for potential leakage via entity graph features. The 'static entity store' is constructed from prior 30 days of relationships, which may include entities (hosts, users, IPs) that appear in the validation/test sets but whose historical relationships were built using data from the training period. For example, a host in the validation set may have user/IP relationships in its 30-day window that include training-period data. This violates temporal causality and could allow the model to indirectly 'see' future alerts through shared entities. The audit check for 'future information' is insufficient because it focuses on ticket-resolution dates, not entity graph construction windows.",
+        "evidence_test": "Construct a synthetic 'future-only' entity graph for the validation/test sets by restricting the 30-day window to data strictly before the alert timestamp. Retrain the model and compare nDCG@10 against the original. If performance drops significantly (e.g., >10% relative), leakage via entity graph features is confirmed. Alternatively, measure the overlap of entities between training and validation/test sets; high overlap (>30%) increases the risk of leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "nDCG@10 is the correct metric to optimize for SOC alert triage, as it aligns with the operational objective of surfacing high-relevance alerts within the top 10 reviewed.",
+        "failure_mechanism": "nDCG@10 assumes that (1) analysts review alerts in a fixed batch of 10, (2) the cost of missing a high-relevance alert is uniform across positions, and (3) the utility of a high-relevance alert is independent of its position. In practice, SOC analysts may dynamically adjust their review depth based on alert volume, urgency, or prior experience. A high-relevance alert ranked at position 11 may still be actionable if the analyst reviews beyond 10. Conversely, a false positive at position 1 may waste disproportionate time. The metric also ignores the cost of false negatives (missed high-relevance alerts) and the operational trade-off between precision and recall. For example, a model that ranks 10 low-relevance alerts first but ranks all high-relevance alerts in positions 11\u201320 may achieve high nDCG@10 but fail in practice.",
+        "evidence_test": "Conduct a user study or simulation with SOC analysts to measure the actual utility of the ranking. Compare nDCG@10 against a task-based metric (e.g., time-to-detection, false-negative rate, or analyst workload reduction) under realistic triage scenarios. If the task-based metric does not correlate with nDCG@10, the metric is invalid. Alternatively, analyze the distribution of high-relevance alerts in the test set; if >20% of high-relevance alerts appear beyond position 10, nDCG@10 may not capture the full operational objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ablation study (dropping ticket-history features) confirms that entity graph features contribute independent signal to the ranking model.",
+        "failure_mechanism": "The ablation study does not control for feature interactions or redundancy. The entity graph and ticket-history features may provide overlapping information (e.g., both capture host/user risk), and removing ticket-history could reduce the model's capacity without isolating the entity graph's contribution. The study also does not quantify the statistical significance of the performance difference, leaving it unclear whether the observed improvement is meaningful or due to random variation.",
+        "evidence_test": "Perform a double ablation: (1) drop ticket-history features, (2) drop entity graph features, and (3) drop both. Compare nDCG@10 against the full model. If the entity graph's contribution is not statistically significant (p < 0.05) when ticket-history is present but drops when ticket-history is absent, the ablation is inconclusive. Alternatively, use SHAP values or permutation importance to quantify the entity graph's contribution while controlling for other features.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model's performance on the test set (months 18\u201324) generalizes to future SOC alerts in production.",
+        "failure_mechanism": "The test set is only 7 months (18\u201324) removed from the training set (1\u201314), which may not capture long-term distributional shifts (e.g., new attacker tactics, SOC tooling changes, or policy updates). The experiment does not verify whether the performance gap between the multimodal model and the baseline persists under extreme distribution shift (e.g., a novel attack campaign or a major SOC workflow change).",
+        "evidence_test": "Evaluate the model on a synthetic 'stress test' dataset constructed from a known distribution shift (e.g., alerts from a red-team exercise or a historical SOC incident). If nDCG@10 drops by >20% relative to the test set, the model is not robust to distribution shift. Alternatively, monitor performance in a shadow deployment over 3\u20136 months to observe real-world generalization.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The secondary metrics (nDCG@50, Precision@1/5/10, MRR) provide additional insight into the model's operational utility.",
+        "failure_mechanism": "Precision@k assumes that the analyst's review depth is fixed at k, which may not hold in practice. For example, an analyst may review 15 alerts if the first 10 are all false positives. nDCG@50 may overemphasize low-relevance alerts in positions 11\u201350, which are unlikely to be reviewed. MRR assumes that the first high-relevance alert is the only one that matters, ignoring the utility of subsequent high-relevance alerts. These metrics may not align with the true operational objective of reducing analyst workload while maximizing detection.",
+        "evidence_test": "Conduct a cost-benefit analysis using the secondary metrics to derive a composite score (e.g., weighted sum of nDCG@10 and Precision@10) and compare it to the primary metric. If the composite score does not correlate with analyst productivity metrics (e.g., time per alert, false-negative rate), the secondary metrics are not informative.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The experiment's label construction and evaluation design are sufficient to measure the model's ability to improve SOC alert triage.",
+        "failure_mechanism": "The experiment does not account for analyst behavior changes induced by the ranking model. For example, if the model ranks high-relevance alerts first, analysts may trust the model and reduce their scrutiny, potentially increasing false negatives. Conversely, if the model ranks poorly, analysts may override it and revert to manual triage, reducing efficiency gains. The evaluation assumes static analyst behavior, which may not hold in practice.",
+        "evidence_test": "Simulate analyst behavior using a reinforcement learning or agent-based model to measure the long-term impact of the ranking model on triage outcomes (e.g., false-negative rate, analyst workload). If the simulation shows negative feedback loops (e.g., model-induced over-trust leading to missed escalations), the evaluation design is incomplete.",
+        "flaw_category": "context_dependent"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws that invalidate its core claims: (1) label construction is noisy and temporally inconsistent, (2) entity graph features likely leak future information via shared entities, and (3) nDCG@10 may not align with the operational objective. These issues must be addressed before the hypothesis can be evaluated. MATERIAL flaws include weak ablation controls and limited distribution-shift testing.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am contesting the challenges for findings F1, F2, F3, F4, and F5, as the design does address the concerns raised, albeit imperfectly articulated in R1. For F1 and F2, the design includes mechanisms to mitigate label noise and leakage, which I will clarify. For F3, while the critique raises valid points, I will strengthen my argument by emphasizing the operational relevance of nDCG@10. For F4, I will provide a more detailed rebuttal regarding feature interactions and the need for statistical significance. For F5, I will acknowledge the limitation in the time frame but will argue that the design's validation practices still provide a reasonable basis for generalization. I accept the challenges for findings F6 and F7, as they are immaterial to the core evaluation.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "While the label construction aims to reflect actionable truth, the concerns about false negatives, delayed escalations, and slow false positives are valid. To empirically validate the robustness of the labels, I propose a retrospective analysis comparing the model's ranking performance against a human-annotated ground truth after 30 days. A significant drop in nDCG@10 would indicate label noise, while a high agreement with human review would support the current labeling strategy.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The concern regarding potential leakage through entity graph features is acknowledged. To address this, I propose constructing a synthetic 'future-only' entity graph for validation/test sets, restricting the 30-day window to data strictly before alert timestamps. A comparison of model performance on this synthetic graph against the original would clarify the extent of leakage and its impact on nDCG@10.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 5,
+        "justification": "nDCG@10 is specifically chosen for its alignment with the operational goal of prioritizing alerts for review. While the critique raises valid points about dynamic review depth and the cost of missing alerts, the metric remains a strong indicator of triage efficiency. Future studies or simulations could provide additional evidence of its alignment with actual triage utility, but the current choice is justified given the context of SOC operations.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The ablation study does raise valid concerns about feature interactions and redundancy. To address this, I propose conducting a double ablation study that drops both ticket-history and entity graph features, as well as using SHAP values to quantify the contributions of each feature group while controlling for others. This would provide clearer insights into the independent contributions of the entity graph features.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The concern regarding the robustness of the model to extreme distribution shifts is valid. I propose evaluating the model on a synthetic 'stress test' dataset constructed from known distribution shifts, such as alerts from a red-team exercise. A significant drop in nDCG@10 would indicate a lack of robustness, while stable performance would support the model's generalization capabilities.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 3,
+        "justification": "The critique on secondary metrics is valid but does not undermine the primary metric's effectiveness. The secondary metrics are supplementary and provide additional insights, but the primary focus remains on nDCG@10.",
+        "r2_challenge_response": "ACCEPTED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 2,
+        "justification": "The concern regarding analyst behavior changes is acknowledged, but it is a minor consideration that does not fundamentally alter the experiment's design or its ability to measure improvements in SOC alert triage.",
+        "r2_challenge_response": "ACCEPTED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals for findings F1, F2, F4, and F5 have shifted to DEFER, indicating that empirical tests are needed to resolve genuine uncertainties. This reflects a healthy design that acknowledges areas for further investigation while maintaining the validity of the overall methodology."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5 (4-6), orig_sev=7 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "5 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

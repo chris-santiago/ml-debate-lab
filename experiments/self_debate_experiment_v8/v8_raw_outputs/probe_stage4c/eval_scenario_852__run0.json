@@ -1,0 +1,372 @@
+{
+  "case_id": "eval_scenario_852",
+  "stratum": "regular",
+  "flaw_category": "eval_inflation",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "x-ai/grok-4.1-fast",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Post-hoc heuristic clustering of senders/recipients and identical-subject patterns sufficiently detects campaign leakage such that >5% test set contamination triggers re-evaluation.",
+        "failure_mechanism": "Phishing campaigns often vary subjects slightly, use multiple compromised sender domains, or distribute across recipients without exact matches, evading simple clustering; undetected similar campaigns from training period would leak patterns into test predictions, inflating transformer and baseline performance and undermining the temporal split's validity for measuring adaptation to novel threats.",
+        "evidence_test": "Embed train and test malicious emails (e.g., subject + body BERT embeddings) and measure the fraction of test malicious emails with high similarity (cosine > 0.9) to any train malicious email; if >10-20%, indicates uncaptured leakage regardless of cluster proportion.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Label stratification within fixed temporal folds preserves class distributions across splits without distorting the training distribution.",
+        "failure_mechanism": "If stratification requires subsampling the majority benign class in early folds (where malicious ratio may differ from later folds), the train set becomes unrepresentative by under-sampling diverse benign emails, causing the model to overfit to a narrowed benign distribution and degrade on test's full benign variety.",
+        "evidence_test": "Report raw class proportions and dataset sizes per fold before/after stratification, plus retention rates per class; absence of subsampling (full folds used) or matched proportions without size reduction confirms no distortion.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A ~200-email stratified sample provides reliable quantification of label noise via Cohen's kappa across train and test.",
+        "failure_mechanism": "At 2-5% malicious prevalence, the sample yields only 4-10 malicious emails, yielding kappa with wide confidence intervals due to small n for the rare class, potentially masking higher noise in malicious labels that disproportionately affects PR-AUC.",
+        "evidence_test": "Compute kappa separately on benign vs. malicious subsamples with bootstrap 95% CIs; if malicious kappa CI spans >0.2 or includes <0.5, sample more malicious emails (e.g., fixed 100 per class) for reliable estimate.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Random partitioning of the test period into two halves validly confirms deployment-readiness on the first half before locking and reporting on the second.",
+        "failure_mechanism": "Random splits scramble intra-test temporal order, averaging out short-term drift or campaign bursts within the 3-month test; the 'confirmation pass' fails to simulate sequential deployment, where early test performance might mislead about later stability.",
+        "evidence_test": "Compare PR-AUC on random halves vs. chronological split (e.g., first 1.5 months confirmation, last 1.5 holdout); significant difference (>5% PR-AUC) indicates random split masks temporal issues.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Metadata-only model exceeding 80% of transformer's PR-AUC definitively indicates sender reputation (not semantics) drives performance.",
+        "failure_mechanism": "The 80% threshold is arbitrary without statistical justification; e.g., 75% relative performance might still reflect meaningful semantic gains, leading to over-discounting transformer's value.",
+        "evidence_test": "Include ablation of transformer without metadata features; if text-only closes much of the metadata-only gap, semantics contribute independently of the 80% rule.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "N1",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Grid search with 50 trials suffices for hyperparameter tuning of both transformer and baseline.",
+        "failure_mechanism": "Transformers have high-dimensional hyperparameter spaces; 50 trials may under-explore, yielding suboptimal configs that undervalue transformer potential.",
+        "evidence_test": "Compare final val PR-AUC to a denser search (e.g., 100+ trials or Bayesian opt); stagnation indicates sufficiency.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The design is thoughtful with strong controls for temporal validity and confounds, but relies on unverified effectiveness of leakage detection, stratification mechanics, and small-sample noise estimation, which could weaken claims of transformer superiority under drift. Minor issues in test partitioning and thresholds are noted but do not invalidate core comparisons.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (MATERIAL): The critic argues that post-hoc clustering for campaign leakage is insufficient to prevent semantic leakage that inflates performance. The methodology designates the chronological split as the primary defense against temporal leakage, with clustering as a secondary validation step. For a PoC comparing architectures, the temporal split ensures models are evaluated on future data. While the clustering check is reactive, the critique applies more strongly to production deployment standards where absolute performance claims are critical. In a PoC comparison, if leakage affects both models similarly, the relative performance conclusion remains valid. The scope of this experiment is architecture comparison, not production-grade leakage auditing.\n\nF2 (MATERIAL): The critic assumes stratification within temporal folds subsamples the benign class, distorting the training distribution. The methodology states stratification is used to 'preserve class distribution across splits' within the fold. Standard stratification preserves ratios, not absolute counts, and subsampling is only required if the fold is small. With a 12-month training set, subsampling is not necessary. The critic's failure mechanism relies on an incorrect assumption about the implementation.\n\nF3 (MATERIAL): The critic argues a 200-email sample is insufficient for reliable label noise quantification due to low malicious prevalence. This is true for a production audit, but for a PoC comparing architectures, label noise affects both models equally. The comparison remains valid regardless of absolute noise levels. The critique applies to a label quality certification scope, not the PoC's architecture comparison scope.\n\nF4 (MINOR): The critic argues random partitioning of the test period masks temporal drift. The methodology explicitly addresses temporal drift in Section 6 by evaluating performance separately for each month in the test period. The random split is a secondary check for configuration stability, not the primary drift evaluation. The design control (monthly evaluation) resolves the drift concern.\n\nF5 (MINOR): The critic argues the 80% threshold for the metadata-only baseline is arbitrary. This is a deliberate design heuristic for the PoC to simplify the decision rule regarding semantic value. While ablation would be useful in a full study, the threshold is a valid design choice for the PoC's binary conclusion goal.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critique applies to production deployment standards where absolute performance claims are critical. For this PoC, the primary goal is architecture comparison; leakage affects both models similarly, preserving the validity of the relative performance conclusion. The chronological split is the primary control, with clustering as a secondary validation step."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Stratification preserves class ratios within the fold without subsampling unless the fold is small. With a 12-month training set, subsampling is not required. The critic's failure mechanism assumes subsampling occurs without evidence from the methodology."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "Label noise quantification is a secondary validation step for this PoC. The noise affects both models equally, so the architecture comparison remains valid. The critique applies to a production audit scope, not the PoC's comparison scope."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly addresses temporal drift by evaluating performance separately for each month in the test period (Section 6). The random split is a secondary check for configuration stability, not the primary drift evaluation."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The 80% threshold is a deliberate design heuristic for the PoC to simplify the decision rule regarding semantic value. While ablation would be useful in a full study, the threshold is a valid design choice for the PoC's binary conclusion goal."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been adjusted to severity \u2264 3 through design and scope rebuttals, satisfying the EXONERATE condition. The methodology is sound for the stated PoC scope of architecture comparison."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "REBUT-SCOPE is invalid as campaign leakage detection is explicitly within scope (Section 6 controls); justification generically invokes PoC goals and equal leakage impact without addressing the specific failure mechanism\u2014simple sender/recipient/subject clustering evades detection of phishing campaigns with slight subject variations, multiple domains, or dispersed recipients, allowing undetected pattern leakage that inflates adaptation claims even for relative comparison (transformer may capture subtle leaked semantics better than BoW)."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "Rebuttal generically claims 'no subsampling unless fold small' without mechanistic detail on how intra-fold stratification 'preserves class distribution across splits' if natural malicious/benign ratios differ temporally (permitted up to 5% drift in controls); leaves unresolved whether/ how majority-class benign subsampling in early folds narrows train diversity, distorting representation despite large train size."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "REBUT-SCOPE invalid as label noise quantification is core to design (Sections 1,6); equal impact on models unproven\u2014transformer fine-tuning may be more sensitive to rare malicious label errors than BoW, affecting PR-AUC; small n (4-10 malicious) yields unreliable kappa CIs for rare class, unaddressed beyond flagging high disagreement."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "Rebuttal directly and mechanistically addresses failure via Section 6's per-month test evaluation, which captures short-term drift/bursts across months 16-18 more robustly than random halves; random partitioning appropriately limited to secondary stability confirmation."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 1,
+        "reasoning": "Rebuttal acknowledges arbitrary heuristic but justifies only as 'deliberate design choice for PoC binary goal' without mechanistic or statistical basis (e.g., power analysis for detecting meaningful gaps); residual risk of over-discounting transformer if metadata achieves 75-80% PR-AUC with true semantic gains."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic's R2 challenges reveal genuine design ambiguities that cannot be resolved by argument alone. F1, F2, F3, and F5 all require empirical resolution through specified experiments. F4 was accepted by the critic and maintained. Four DEFER decisions reflect that the design has partial controls but the magnitude of concerns needs empirical settling. No CONCEDE decisions because each finding has at least some design control, even if incomplete.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The clustering control (identical subject lines, sender/recipient patterns) mitigates but does not eliminate subtle campaign leakage. Slight subject variations, multiple compromised domains, and dispersed recipients may evade detection while still inflating performance. The design has a partial answer\u2014flagging >5% leakage triggers re-evaluation\u2014but the magnitude of undetected leakage needs empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Stratification preserves class ratios but the mechanism for preserving benign diversity across temporally varying folds is not fully specified. With 12 months of training data, subsampling may not be needed, but if early folds have significantly different malicious ratios, benign subsampling could narrow train diversity. The design has a control but the impact on representation needs empirical verification.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The ~200-email stratified sample yields only 4-10 malicious emails at 2-5% prevalence, producing kappa with wide confidence intervals for the rare class. Transformer fine-tuning may be more sensitive to label noise than BoW, affecting PR-AUC disproportionately. The design has kappa computation but the reliability of rare-class noise estimation needs empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Section 6 explicitly evaluates performance separately for each month in the test period (months 16, 17, 18), which captures short-term drift and campaign bursts more robustly than random halves. The random partitioning is appropriately limited to secondary configuration stability confirmation, not primary drift evaluation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The 80% threshold is a heuristic without statistical justification (e.g., power analysis for detecting meaningful gaps). If metadata achieves 75-80% PR-AUC with true semantic gains, the threshold may over-discount the transformer's value. The design has a metadata-only baseline but the interpretation threshold needs empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Four findings require DEFER to empirical resolution (F1, F2, F3, F5), indicating genuine design ambiguities where both parties have valid points and experiments should settle the magnitude of concerns. F4 is maintained as REBUT-DESIGN. The verdict reflects that reasonable disagreement exists on material concerns that the experiment itself should test."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Post-hoc heuristic clustering of senders/recipients and identical-subject patterns sufficiently detects campaign leakage such that >5% test set contamination triggers re-evaluation.",
+        "failure_mechanism": "Phishing campaigns often vary subjects slightly, use multiple compromised sender domains, or distribute across recipients without exact matches, evading simple clustering; undetected similar campaigns from training period would leak patterns into test predictions, inflating transformer and baseline performance and undermining the temporal split's validity for measuring adaptation to novel threats.",
+        "evidence_test": "Embed train and test malicious emails (e.g., subject + body BERT embeddings) and measure the fraction of test malicious emails with high similarity (cosine > 0.9) to any train malicious email; if >10-20%, indicates uncaptured leakage regardless of cluster proportion.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Label stratification within fixed temporal folds preserves class distributions across splits without distorting the training distribution.",
+        "failure_mechanism": "If stratification requires subsampling the majority benign class in early folds (where malicious ratio may differ from later folds), the train set becomes unrepresentative by under-sampling diverse benign emails, causing the model to overfit to a narrowed benign distribution and degrade on test's full benign variety.",
+        "evidence_test": "Report raw class proportions and dataset sizes per fold before/after stratification, plus retention rates per class; absence of subsampling (full folds used) or matched proportions without size reduction confirms no distortion.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A ~200-email stratified sample provides reliable quantification of label noise via Cohen's kappa across train and test.",
+        "failure_mechanism": "At 2-5% malicious prevalence, the sample yields only 4-10 malicious emails, yielding kappa with wide confidence intervals due to small n for the rare class, potentially masking higher noise in malicious labels that disproportionately affects PR-AUC.",
+        "evidence_test": "Compute kappa separately on benign vs. malicious subsamples with bootstrap 95% CIs; if malicious kappa CI spans >0.2 or includes <0.5, sample more malicious emails (e.g., fixed 100 per class) for reliable estimate.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Random partitioning of the test period into two halves validly confirms deployment-readiness on the first half before locking and reporting on the second.",
+        "failure_mechanism": "Random splits scramble intra-test temporal order, averaging out short-term drift or campaign bursts within the 3-month test; the 'confirmation pass' fails to simulate sequential deployment, where early test performance might mislead about later stability.",
+        "evidence_test": "Compare PR-AUC on random halves vs. chronological split (e.g., first 1.5 months confirmation, last 1.5 holdout); significant difference (>5% PR-AUC) indicates random split masks temporal issues.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Metadata-only model exceeding 80% of transformer's PR-AUC definitively indicates sender reputation (not semantics) drives performance.",
+        "failure_mechanism": "The 80% threshold is arbitrary without statistical justification; e.g., 75% relative performance might still reflect meaningful semantic gains, leading to over-discounting transformer's value.",
+        "evidence_test": "Include ablation of transformer without metadata features; if text-only closes much of the metadata-only gap, semantics contribute independently of the 80% rule.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "N1",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Grid search with 50 trials suffices for hyperparameter tuning of both transformer and baseline.",
+        "failure_mechanism": "Transformers have high-dimensional hyperparameter spaces; 50 trials may under-explore, yielding suboptimal configs that undervalue transformer potential.",
+        "evidence_test": "Compare final val PR-AUC to a denser search (e.g., 100+ trials or Bayesian opt); stagnation indicates sufficiency.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The design is thoughtful with strong controls for temporal validity and confounds, but relies on unverified effectiveness of leakage detection, stratification mechanics, and small-sample noise estimation, which could weaken claims of transformer superiority under drift. Minor issues in test partitioning and thresholds are noted but do not invalidate core comparisons.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic's R2 challenges reveal genuine design ambiguities that cannot be resolved by argument alone. F1, F2, F3, and F5 all require empirical resolution through specified experiments. F4 was accepted by the critic and maintained. Four DEFER decisions reflect that the design has partial controls but the magnitude of concerns needs empirical settling. No CONCEDE decisions because each finding has at least some design control, even if incomplete.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The clustering control (identical subject lines, sender/recipient patterns) mitigates but does not eliminate subtle campaign leakage. Slight subject variations, multiple compromised domains, and dispersed recipients may evade detection while still inflating performance. The design has a partial answer\u2014flagging >5% leakage triggers re-evaluation\u2014but the magnitude of undetected leakage needs empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Stratification preserves class ratios but the mechanism for preserving benign diversity across temporally varying folds is not fully specified. With 12 months of training data, subsampling may not be needed, but if early folds have significantly different malicious ratios, benign subsampling could narrow train diversity. The design has a control but the impact on representation needs empirical verification.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The ~200-email stratified sample yields only 4-10 malicious emails at 2-5% prevalence, producing kappa with wide confidence intervals for the rare class. Transformer fine-tuning may be more sensitive to label noise than BoW, affecting PR-AUC disproportionately. The design has kappa computation but the reliability of rare-class noise estimation needs empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Section 6 explicitly evaluates performance separately for each month in the test period (months 16, 17, 18), which captures short-term drift and campaign bursts more robustly than random halves. The random partitioning is appropriately limited to secondary configuration stability confirmation, not primary drift evaluation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The 80% threshold is a heuristic without statistical justification (e.g., power analysis for detecting meaningful gaps). If metadata achieves 75-80% PR-AUC with true semantic gains, the threshold may over-discount the transformer's value. The design has a metadata-only baseline but the interpretation threshold needs empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Four findings require DEFER to empirical resolution (F1, F2, F3, F5), indicating genuine design ambiguities where both parties have valid points and experiments should settle the magnitude of concerns. F4 is maintained as REBUT-DESIGN. The verdict reflects that reasonable disagreement exists on material concerns that the experiment itself should test."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

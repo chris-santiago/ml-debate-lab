@@ -1,0 +1,411 @@
+{
+  "case_id": "hyp_204_case",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Labels are defined conservatively to avoid noise; excluding alerts without mature labels eliminates ambiguous cases and does not introduce bias.",
+        "failure_mechanism": "The 30\u2011day maturation window may systematically exclude alerts near the end of the data collection period (e.g., month\u202f24 alerts that have not yet matured), causing the test set to be unrepresentative of recent alerts. Additionally, if the label decision implicitly uses information beyond the 24\u2011hour window (e.g., ticket resolution >\u202f4\u202fh observed only after waiting), the label could leak future information.",
+        "evidence_test": "Measure the exclusion rate per month; a rising exclusion rate toward the end of the period indicates temporal bias. Compare the distribution of features and analyst behavior between excluded and included alerts to detect systematic differences.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "For each group of alerts (e.g., all alerts on a host in a 24\u2011hour window), LambdaMART produces a ranked list that uses only information available at triage time.",
+        "failure_mechanism": "If the group includes alerts that occur after the target alert within the same 24\u2011hour window, the model can leverage future alert information to rank the current alert. This creates signal leakage because, at prediction time, future alerts in the window are not yet observed, inflating Recall@5.",
+        "evidence_test": "Re\u2011define groups to include only alerts up to the current alert time (cumulative past) and re\u2011evaluate Recall@5. A substantial drop in performance relative to the original grouping indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ablation LambdaMART trained on baseline features only shows that performance gains come from the ranking objective, not from richer features.",
+        "failure_mechanism": "Without a classification model trained on the extended feature set (text, ticket history, analyst behavior), it is impossible to determine whether the ranking model's improvement is due to the ranking objective or simply to the extended features. The ranking model may be benefiting from richer features rather than the pairwise loss.",
+        "evidence_test": "Train a logistic regression (or another classification model) on the exact extended feature set used by the ranking model and evaluate Recall@5. If its performance matches or exceeds the ranking model, the ranking objective may not be necessary.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Recall@5 directly measures the stakeholder's objective: analysts see critical incidents first.",
+        "failure_mechanism": "Recall@5 considers only the top five alerts globally and ignores the number of incidents per host\u201124\u2011hour window. If many incidents occur within a single window, top\u20115 recall can be high while analysts still miss most incidents in that window. The metric also disregards precision, so analysts may be overwhelmed by false positives despite high Recall@5.",
+        "evidence_test": "Analyze the distribution of high\u2011priority incidents per host\u201124\u2011hour window. Compute Recall@5 alongside precision@5 and the workload required to achieve a given recall (e.g., number of alerts analysts must review to capture 80% of incidents). If Recall@5 is high but workload is large or precision low, the metric is misleading for the stated objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning on the validation set by maximizing Recall@5 yields models that generalize to the held\u2011out test set.",
+        "failure_mechanism": "The validation set spans only 4 months; tuning to maximize Recall@5 may lead to overfitting to that specific period, resulting in models that capture validation\u2011set quirks rather than general patterns. The single test evaluation may not reveal this overfitting, inflating reported performance.",
+        "evidence_test": "Perform nested cross\u2011validation or rolling\u2011window validation (e.g., train on months\u202f1\u201112, validate on 13\u201116, test on 17\u201124; repeat with different splits). If performance varies widely across splits or validation performance does not predict test performance, overfitting is present.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Bootstrap resampling over alert groups provides valid 95% confidence intervals for Recall@5.",
+        "failure_mechanism": "Alert groups (host\u201124\u2011hour windows) may exhibit temporal autocorrelation (e.g., the same host appears in consecutive windows). Bootstrapping assumes independence of groups; violated independence leads to underestimated variance and overly narrow confidence intervals, giving false certainty about performance.",
+        "evidence_test": "Examine autocorrelation of group\u2011level Recall@5 across time. Compute confidence intervals using a block bootstrap that respects temporal dependence (e.g., resampling blocks of consecutive months). If the block\u2011bootstrap CIs are substantially wider, the original CIs were too optimistic.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC contains several methodological issues, most critically a potential signal leakage in the ranking group definition that could invalidate the claimed advantage of learning-to-rank over classification. Other concerns include label maturation bias, missing baselines, metric limitations, overfitting from validation tuning, and overly optimistic confidence intervals.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The 30-day maturation window creates a genuine temporal exclusion concern for month 24 alerts, but the design includes temporal stratification by test-set month (Section 7) as a monitoring control for exactly this bias. Sub-concern (b) about label information leakage is incorrect \u2014 the label criterion is applied at a fixed horizon and does not use future information as features. The combined concern is real but addressed by design. F2: The critic claims future alerts within the same 24-hour window leak into the ranking. This is factually incorrect against the methodology's feature set: no feature is derived from other alerts within the same window. LambdaMART ranks the full window as a batch (consistent with SOC daily triage workflows), but the ranking uses only per-alert and historical features. No leakage mechanism exists. F3: A logistic regression on extended features (the missing comparison) would isolate whether the ranking objective, rather than richer features, drives the observed advantage. The design acknowledges it does not establish 'why,' but this confound affects whether the primary comparison (ranking vs. classification) is interpretable. No design control addresses this gap. F4: The concern about Recall@5 ignoring within-window incident distribution is valid, but partially addressed by the difficulty stratification control and the secondary precision metrics. The scope explicitly limits the experiment to ranking quality under the agreed protocol. F5: Validation-set overfitting risk is partially mitigated by the 24-month span and temporal stratification, but the specific overfitting concern is not ruled out by design. The mitigation reduces but does not eliminate the concern. F6: The bootstrap independence violation is technically correct but affects only confidence interval width, not point estimates. For a relative comparison of two methods on the same data, the CI concern is immaterial to the primary conclusion.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The 30-day maturation window concern for month 24 alerts is mitigated by the design's explicit temporal stratification control: 'performance is stratified by test-set month to detect attacker/detection-rule drift' (Section 7). This control directly surfaces rising exclusion rates toward the end of the collection window. Sub-concern (b) about label information leakage is incorrect \u2014 the '>4 hours open' criterion is a fixed-horizon evaluation rule, not a feature that leaks future information into the model. The combined concern is real but addressed by design. Severity adjusted from 5 to 2."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's failure mechanism \u2014 that LambdaMART uses future alerts within the same 24-hour window to rank the current alert \u2014 is not supported by the methodology. No feature in the baseline or extended feature set is derived from other alerts within the same window. All features are per-alert (vendor severity, rule ID, host risk score) or historical (TF-IDF, ticket metadata from past 7 days, analyst behavior from past 30 days, host alert count in past 24 hours). LambdaMART ranks the full window simultaneously (consistent with SOC batch triage workflows), but the ranking uses only information available at triage time for each alert. The empirical claim of signal leakage has no basis in the stated feature set. Adjusted from severity 9 to 4 \u2014 the concern is rebutted as a leakage claim, but the design's batch-ranking assumption for streaming triage is an ambiguity warranting clarification rather than a confirmed flaw."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly identifies that the ablation (LambdaMART on baseline features only) does not isolate the ranking objective from the feature confound. A logistic regression trained on the exact extended feature set used by the ranking model would reveal whether the extended features alone (without the pairwise ranking loss) produce comparable Recall@5. Without this comparison, the experiment cannot determine whether the ranking objective, rather than richer features, drives the observed advantage. The methodology acknowledges it does not establish 'why,' but this confound directly affects the interpretability of the primary comparison. No design control addresses this gap. Severity remains at 5 (adjusted cannot go below 0, floor applied)."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The concern about Recall@5 ignoring within-window incident clustering is valid in principle but outside the stated experiment scope. The design explicitly limits the experiment to ranking quality under the agreed evaluation protocol, with 'difficulty stratification' (Recall@5 by vendor severity) to control for severity amplification. Precision is addressed as a secondary metric (Section 5), and calibration is also tracked. The scope statement explicitly acknowledges this trade-off: the design tests ranking vs. classification, not comprehensive operational utility. Within the agreed scope, Recall@5 is an appropriate primary metric. Adjusted from severity 4 to 1."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The validation-set overfitting concern is partially mitigated by the 24-month total span (which captures seasonal and rule-tuning cycles, reducing dependence on any single 4-month window) and temporal stratification by test-set month (Section 7), which would detect period-specific performance anomalies. The design's structural protections reduce the overfitting risk substantially. The critic's proposed rolling-window nested CV would provide stronger evidence but represents a methodology enhancement, not a correction of a design flaw. Adjusted from severity 5 to 2."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The bootstrap independence violation is technically correct \u2014 alert groups on the same host across consecutive windows exhibit temporal autocorrelation. However, this affects only confidence interval width, not the Recall@5 point estimates. For the primary conclusion (does learning-to-rank outperform binary classification), the relative comparison depends on point estimates, not CI width. Block bootstrap would widen CIs but would not change which model performs better. This is a MINOR methodological improvement (use block bootstrap for more accurate CIs) but is immaterial to the primary conclusion. Original severity 2 reduced to 0."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have adjusted severity \u2264 4 after rebuttal (F2 at adjusted sev 4 is a rebutted claim with unresolved ambiguity warranting empirical clarification, but below the threshold for material impact). EXONERATE applies: every finding's adjusted severity is at or below 3 except F2 (sev 4), which was fully rebutted as a signal leakage claim (the failure mechanism has no basis in the stated features). F3 was conceded, but the methodology explicitly scopes 'why' as out of scope and limits the primary question to whether ranking outperforms classification on the agreed metric, which the design does test."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender notes that temporal stratification by test-set month would surface rising exclusion rates and that the >4\u2011hour open criterion is a fixed\u2011horizon labeling rule, not a feature. This addresses the detection of bias but does not prevent the systematic exclusion of late\u2011period alerts or the potential label bias introduced by requiring a ticket to stay open >4\u202fhours. Thus the failure mechanism is only partially mitigated."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 4,
+        "reasoning": "The defender correctly points out that no feature in the baseline or extended sets is derived from other alerts within the same 24\u2011hour window; LambdaMART scores each alert independently using only its own features. Hence the alleged signal leakage from future alerts within the window has no basis in the methodology."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender concedes that the ablation (LambdaMART on baseline features only) does not isolate the ranking objective from the feature confound, acknowledging the missing baseline of a classification model trained on the extended feature set. This concession is valid and the finding stands."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender argues that the concern about Recall@5 ignoring within\u2011window incident clustering is outside the experiment\u2019s scope. However, the methodology explicitly states that Recall@5 directly measures the stakeholder\u2019s objective (analysts seeing critical incidents first). By treating the limitation as out of scope without addressing how the metric fails to capture that objective, the rebuttal does not engage with the specific failure mechanism."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender claims that the 24\u2011month span and temporal stratification reduce overfitting risk, but does not explain how these elements prevent the model from fitting validation\u2011set quirks. The argument is generic and does not directly address the failure mechanism that hyperparameter tuning on a short validation set may lead to overfitting that is not revealed by a single test evaluation."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly notes that bootstrap independence violations affect only confidence\u2011interval width, not the point estimates used to compare models. Since the primary conclusion depends on which model yields higher Recall@5, the CI width issue is immaterial to the core claim."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Three findings require shifting from rebuttal to DEFER (F1, F4, F5) because the critic correctly identified that the design detects but does not prevent the concerns. F2, F3, F6 are either accepted or conceded and maintained. All DEFER cases satisfy Q4: the primary conclusion (ranking vs. classification comparison) survives if the critique is correct because both conditions are affected equally by the ambiguous design elements. The R2 challenges revealed that certain protections are detection mechanisms rather than prevention, which warrants empirical resolution rather than defended certainty.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The temporal stratification control detects but does not prevent the systematic exclusion of late-period alerts. The critic correctly notes this is partial mitigation. The specific experiment to resolve: stratify Recall@5 by test-set month (early: months 19-21 vs. late: months 22-24). If Recall@5 ranking (ranking model vs. baseline) is consistent across both periods despite different exclusion rates, the design controls for the bias. Additionally, compare feature distributions between included/excluded alerts \u2014 if late-period excluded alerts have similar features to included ones, bias is minimal. The primary conclusion survives because both models would be equally affected by any exclusion bias.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "Critic ACCEPTs \u2014 no feature in the methodology is derived from other alerts within the same 24-hour window. The alleged signal leakage has no basis in the stated feature set. LambdaMART scores each alert independently using per-alert and historical features only.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Critic ACCEPTs \u2014 I correctly conceded that the ablation does not isolate the ranking objective from the extended feature confound. The methodology lacks a classification model trained on the extended feature set as a comparison baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The scope argument is insufficient because the methodology explicitly claims Recall@5 'directly measures the stakeholder's objective.' If the metric fails at that objective (ignoring within-window incident clustering), scope does not resolve the ambiguity. The settling experiment: compute per-window recall (mean percentage of incidents captured per host-24h window) alongside global Recall@5. If the ranking model shows higher per-window recall while maintaining Recall@5, the metric limitation is resolved. If both models score similarly on per-window recall, the global metric is insufficient and a new operational metric is needed. The primary conclusion survives because both models are evaluated on the same metric \u2014 if the metric is flawed, it biases both equally.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The R1 rebuttal was generic \u2014 the 24-month span and stratification are background features, not controls that prevent validation-set overfitting. The specific experiment to resolve: perform rolling-window nested cross-validation (train on months 1-12, validate on 13-16, test on 17-24; then train on 1-8, validate on 9-12, test on 13-24; repeat). If Recall@5 ranking is consistent across multiple train/validation splits, the design controls for overfitting. If validation performance does not predict test performance, overfitting is present. The primary conclusion CAN survive if overfitting affects both models equally \u2014 but this is uncertain because one model type may overfit more readily than another.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Critic ACCEPTs \u2014 confidence interval width does not affect point estimates used for the primary comparison. Both models would be affected equally by any autocorrelation in the bootstrap.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Three findings (F1, F4, F5) shifted to DEFER because the critic correctly identified that the design's controls detect but do not prevent the concerns. All three DEFER cases name specific experiments that would resolve the ambiguity: monthly-stratified Recall@5 comparison (F1), per-window recall alongside global Recall@5 (F4), and rolling-window nested CV (F5). The primary conclusion survives in all cases because both comparison conditions would be equally affected by the design ambiguities. This is the correct outcome when reasonable people can disagree and empirical evidence is the right arbiter."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Labels are defined conservatively to avoid noise; excluding alerts without mature labels eliminates ambiguous cases and does not introduce bias.",
+        "failure_mechanism": "The 30\u2011day maturation window may systematically exclude alerts near the end of the data collection period (e.g., month\u202f24 alerts that have not yet matured), causing the test set to be unrepresentative of recent alerts. Additionally, if the label decision implicitly uses information beyond the 24\u2011hour window (e.g., ticket resolution >\u202f4\u202fh observed only after waiting), the label could leak future information.",
+        "evidence_test": "Measure the exclusion rate per month; a rising exclusion rate toward the end of the period indicates temporal bias. Compare the distribution of features and analyst behavior between excluded and included alerts to detect systematic differences.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "For each group of alerts (e.g., all alerts on a host in a 24\u2011hour window), LambdaMART produces a ranked list that uses only information available at triage time.",
+        "failure_mechanism": "If the group includes alerts that occur after the target alert within the same 24\u2011hour window, the model can leverage future alert information to rank the current alert. This creates signal leakage because, at prediction time, future alerts in the window are not yet observed, inflating Recall@5.",
+        "evidence_test": "Re\u2011define groups to include only alerts up to the current alert time (cumulative past) and re\u2011evaluate Recall@5. A substantial drop in performance relative to the original grouping indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ablation LambdaMART trained on baseline features only shows that performance gains come from the ranking objective, not from richer features.",
+        "failure_mechanism": "Without a classification model trained on the extended feature set (text, ticket history, analyst behavior), it is impossible to determine whether the ranking model's improvement is due to the ranking objective or simply to the extended features. The ranking model may be benefiting from richer features rather than the pairwise loss.",
+        "evidence_test": "Train a logistic regression (or another classification model) on the exact extended feature set used by the ranking model and evaluate Recall@5. If its performance matches or exceeds the ranking model, the ranking objective may not be necessary.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Recall@5 directly measures the stakeholder's objective: analysts see critical incidents first.",
+        "failure_mechanism": "Recall@5 considers only the top five alerts globally and ignores the number of incidents per host\u201124\u2011hour window. If many incidents occur within a single window, top\u20115 recall can be high while analysts still miss most incidents in that window. The metric also disregards precision, so analysts may be overwhelmed by false positives despite high Recall@5.",
+        "evidence_test": "Analyze the distribution of high\u2011priority incidents per host\u201124\u2011hour window. Compute Recall@5 alongside precision@5 and the workload required to achieve a given recall (e.g., number of alerts analysts must review to capture 80% of incidents). If Recall@5 is high but workload is large or precision low, the metric is misleading for the stated objective.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Hyperparameter tuning on the validation set by maximizing Recall@5 yields models that generalize to the held\u2011out test set.",
+        "failure_mechanism": "The validation set spans only 4 months; tuning to maximize Recall@5 may lead to overfitting to that specific period, resulting in models that capture validation\u2011set quirks rather than general patterns. The single test evaluation may not reveal this overfitting, inflating reported performance.",
+        "evidence_test": "Perform nested cross\u2011validation or rolling\u2011window validation (e.g., train on months\u202f1\u201112, validate on 13\u201116, test on 17\u201124; repeat with different splits). If performance varies widely across splits or validation performance does not predict test performance, overfitting is present.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Bootstrap resampling over alert groups provides valid 95% confidence intervals for Recall@5.",
+        "failure_mechanism": "Alert groups (host\u201124\u2011hour windows) may exhibit temporal autocorrelation (e.g., the same host appears in consecutive windows). Bootstrapping assumes independence of groups; violated independence leads to underestimated variance and overly narrow confidence intervals, giving false certainty about performance.",
+        "evidence_test": "Examine autocorrelation of group\u2011level Recall@5 across time. Compute confidence intervals using a block bootstrap that respects temporal dependence (e.g., resampling blocks of consecutive months). If the block\u2011bootstrap CIs are substantially wider, the original CIs were too optimistic.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC contains several methodological issues, most critically a potential signal leakage in the ranking group definition that could invalidate the claimed advantage of learning-to-rank over classification. Other concerns include label maturation bias, missing baselines, metric limitations, overfitting from validation tuning, and overly optimistic confidence intervals.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Three findings require shifting from rebuttal to DEFER (F1, F4, F5) because the critic correctly identified that the design detects but does not prevent the concerns. F2, F3, F6 are either accepted or conceded and maintained. All DEFER cases satisfy Q4: the primary conclusion (ranking vs. classification comparison) survives if the critique is correct because both conditions are affected equally by the ambiguous design elements. The R2 challenges revealed that certain protections are detection mechanisms rather than prevention, which warrants empirical resolution rather than defended certainty.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The temporal stratification control detects but does not prevent the systematic exclusion of late-period alerts. The critic correctly notes this is partial mitigation. The specific experiment to resolve: stratify Recall@5 by test-set month (early: months 19-21 vs. late: months 22-24). If Recall@5 ranking (ranking model vs. baseline) is consistent across both periods despite different exclusion rates, the design controls for the bias. Additionally, compare feature distributions between included/excluded alerts \u2014 if late-period excluded alerts have similar features to included ones, bias is minimal. The primary conclusion survives because both models would be equally affected by any exclusion bias.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "Critic ACCEPTs \u2014 no feature in the methodology is derived from other alerts within the same 24-hour window. The alleged signal leakage has no basis in the stated feature set. LambdaMART scores each alert independently using per-alert and historical features only.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "Critic ACCEPTs \u2014 I correctly conceded that the ablation does not isolate the ranking objective from the extended feature confound. The methodology lacks a classification model trained on the extended feature set as a comparison baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The scope argument is insufficient because the methodology explicitly claims Recall@5 'directly measures the stakeholder's objective.' If the metric fails at that objective (ignoring within-window incident clustering), scope does not resolve the ambiguity. The settling experiment: compute per-window recall (mean percentage of incidents captured per host-24h window) alongside global Recall@5. If the ranking model shows higher per-window recall while maintaining Recall@5, the metric limitation is resolved. If both models score similarly on per-window recall, the global metric is insufficient and a new operational metric is needed. The primary conclusion survives because both models are evaluated on the same metric \u2014 if the metric is flawed, it biases both equally.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The R1 rebuttal was generic \u2014 the 24-month span and stratification are background features, not controls that prevent validation-set overfitting. The specific experiment to resolve: perform rolling-window nested cross-validation (train on months 1-12, validate on 13-16, test on 17-24; then train on 1-8, validate on 9-12, test on 13-24; repeat). If Recall@5 ranking is consistent across multiple train/validation splits, the design controls for overfitting. If validation performance does not predict test performance, overfitting is present. The primary conclusion CAN survive if overfitting affects both models equally \u2014 but this is uncertain because one model type may overfit more readily than another.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Critic ACCEPTs \u2014 confidence interval width does not affect point estimates used for the primary comparison. Both models would be affected equally by any autocorrelation in the bootstrap.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Three findings (F1, F4, F5) shifted to DEFER because the critic correctly identified that the design's controls detect but do not prevent the concerns. All three DEFER cases name specific experiments that would resolve the ambiguity: monthly-stratified Recall@5 comparison (F1), per-window recall alongside global Recall@5 (F4), and rolling-window nested CV (F5). The primary conclusion survives in all cases because both comparison conditions would be equally affected by the design ambiguities. This is the correct outcome when reasonable people can disagree and empirical evidence is the right arbiter."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-EVIDENCE \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=5, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

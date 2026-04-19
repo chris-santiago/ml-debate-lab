@@ -1,0 +1,352 @@
+{
+  "case_id": "eval_scenario_897",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Upsampling confirmed incidents in the training set to ~5% prevalence does not distort the model's learned ranking function for the true, highly imbalanced distribution it will encounter in validation/test/production.",
+        "failure_mechanism": "Upsampling positives changes the prior class distribution the model learns from. A ranking model's objective (e.g., pairwise or listwise loss) is sensitive to the relative frequency of positive vs. negative examples in each batch. Artificially increasing the positive rate can cause the model to over-penalize mis-ranking of positives, leading it to learn a scoring function that is overly aggressive in ranking any alert with positive-like features to the top, at the expense of correctly discriminating among the vast sea of negatives. This can inflate Recall@10 on the training distribution but cause degraded precision and overall ranking quality on the true, sparse distribution, where the model must be highly selective.",
+        "evidence_test": "Compare the model's Precision@10 and Recall@10 on a held-out validation set where the positive rate matches the true operational distribution (no upsampling). If Precision@10 collapses (e.g., near zero) while Recall@10 remains high, the model's ranking is not discriminative. A better test: train an identical model without upsampling (using e.g., class-weighted loss or sampling from the true distribution) and compare its Recall@10/Precision@10 trade-off on the true test set. If the upsampled model shows significantly worse precision for equivalent recall, the upsampling has distorted the objective.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-12 train, 13-15 val, 16-18 test) is sufficient to prevent all forms of information leakage and ensures the model generalizes to future data.",
+        "failure_mechanism": "Temporal splitting prevents explicit future->past leakage but does not address leakage through static or slowly evolving features. If features like 'asset criticality score' or 'user risk score' are computed using data from the entire dataset (including future months) or are updated in a way that incorporates future information, their values can leak future label information into the training set. Similarly, features like 'count of prior incidents involving the same asset in past 90 days' calculated naively at the time of each alert could use incident data from the future relative to that alert's timestamp if the calculation is done post-hoc with the full dataset. This is a form of target leakage.",
+        "evidence_test": "For each time-dependent feature (especially incident-response history features), audit the feature engineering code to ensure it uses only data available strictly before the timestamp of the alert being featurized. Implement a rigorous point-in-time feature generation for the training set, and verify that the same logic, frozen at the training period's end, is applied to validation/test without refitting on their later data. A simple check: compute the correlation between these features and the target label on the training set after proper point-in-time featurization vs. a naive full-dataset featurization; a large discrepancy indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The logistic regression baseline is a sufficient and fair comparison to establish the value of a learning-to-rank inductive bias.",
+        "failure_mechanism": "Logistic regression optimizes for per-instance classification accuracy (or log loss) and outputs well-calibrated probabilities, but its ranking performance is a byproduct of that calibration. A more direct and stronger baseline for a ranking task is a model trained explicitly to optimize the evaluation metric (e.g., a model trained with a loss that directly approximates Recall@10, or a GBM classifier whose output scores are commonly used for ranking without calibration). The claim that the ranking model provides 'material benefit' could be inflated if the baseline is suboptimally configured for the ranking objective. A poorly tuned logistic regression might have poor discrimination, making the ranking model look good by comparison.",
+        "evidence_test": "Introduce an additional baseline: a Gradient Boosting Machine (e.g., XGBoost, LightGBM) trained with a standard classification objective (binary:logistic). These models are strong, off-the-shelf rankers in practice and would provide a more competitive comparison. If the learning-to-rank model fails to outperform a well-tuned GBM on Recall@10, its specialized ranking loss may not be providing practical value over a powerful, general-purpose classifier.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Recall@10 per day/shift is the correct primary metric to measure the operational goal of 'how often are genuine incidents included in the analyst's top-10 review window'.",
+        "failure_mechanism": "Recall@10 averaged over days assumes analyst capacity is fixed at 10 alerts per day and that all days are equally important. However, alert volume varies daily. On a high-volume day, the top 10 might be a tiny fraction of total alerts, making recall artificially low. On a low-volume day, recall might be artificially high. More critically, the operational goal is to surface all true incidents quickly, not necessarily within an arbitrary fixed budget per day. A model could achieve good Recall@10 by clustering multiple alerts from the same incident in the top 10 on one day, while missing other incidents entirely on other days. The metric does not penalize missing entire incidents.",
+        "evidence_test": "Supplement the primary metric with 'Incident Coverage@K over rolling N-hour window': the proportion of distinct incidents that have at least one alert appearing in the top K alerts within N hours of the first alert in that incident. This better reflects the SOC's need to detect each threat promptly. Compare the ranking of models using this coverage metric; if the relative performance changes vs. Recall@10, the original metric was misaligned.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Handling new categories in validation/test via a pre-established 'unknown' token is sufficient to prevent preprocessing leakage and ensure realistic evaluation.",
+        "failure_mechanism": "While this prevents technical errors, it creates a distribution shift between training and evaluation for categorical features. If important new alert rules or asset types emerge in the test period, the model will see them only as 'unknown', potentially degrading performance. The experiment's conclusion that the ranking model generalizes temporally might be weakened if the test period contains a significant number of novel categories that the model cannot effectively handle, and this effect is not measured or reported.",
+        "evidence_test": "Report the proportion of alerts in the validation and test sets where key categorical features (like rule name, asset type) map to the 'unknown' token. If this proportion is significant (>5-10%), conduct a stratified analysis of Recall@10 for 'known' vs. 'unknown' categories. A large performance drop on 'unknown' categories indicates the model's generalization is limited to previously seen schema, a realistic deployment challenge.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC design is generally sound with strong temporal splitting and incident-level evaluation. However, a FATAL flaw exists in the training data upsampling strategy, which risks distorting the ranking objective. Additional MATERIAL concerns involve potential feature leakage, an insufficiently strong baseline, and a primary metric that may not fully capture operational needs.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "## Analysis of Each Finding\n\n**F1 (FATAL, sev 7):** The critic claims upsampling to 5% prevalence distorts the ranking function. However, the methodology explicitly states: (1) upsampling is done only on training data to ensure adequate positive signal, (2) NO resampling is applied to validation or test, and (3) both the ranking model AND baseline use identical upsampled training data. The key control is that evaluation occurs on the TRUE operational distribution (no upsampling). The relative comparison between ranking model and baseline remains fair because both are trained on identical data. The critic's concern about Precision@10 collapse is valid as an empirical test, but the design already controls for this by evaluating on the true distribution. This is a deliberate design choice with documented rationale.\n\n**F2 (MATERIAL, sev 5):** The critic raises legitimate concern about feature leakage through time-dependent features like 'count of prior incidents involving the same asset in past 90 days'. If computed naively using the full dataset, this feature could include future incidents relative to each alert's timestamp. The methodology states preprocessing is fit exclusively on training data, but this controls fit-time for encoders/scalers, not temporal leakage in feature values themselves. The concern requires verification of point-in-time feature construction logic \u2014 the methodology does not explicitly confirm this. This is a partial control (temporal split) but the specific feature engineering concern is not resolved.\n\n**F3 (MATERIAL, sev 4):** The critic argues logistic regression is a weak baseline for ranking. However, the methodology explicitly states the comparison tests whether 'ranking-specific inductive biases (vs. classification accuracy optimization) provide material benefit.' Logistic regression producing probability scores for ranking is a valid, standard baseline in information retrieval. The design intent is to compare ranking-specific loss vs. classification loss, not to find the strongest possible classifier. Adding GBM would be an ablation, not a required fix.\n\n**F4 (MATERIAL, sev 3):** The critic raises valid points about Recall@10 limitations with variable alert volume. However, the methodology includes secondary metrics (Precision@10, MRR, Recall@5, Recall@20) that partially address these concerns. The per-time-window breakdown is explicitly designed into the metric. The suggested alternative (Incident Coverage@K over rolling window) is reasonable but represents a different operationalization, not a correction of a broken metric.\n\n**F5 (MINOR, sev 2):** The critic notes unknown token handling creates distribution shift not measured. This is a valid deployment concern but the scope explicitly limits claims to 'benchmarks the ranking approach against a simpler baseline on historical data' \u2014 not production generalization. The PoC scope makes this concern immaterial to the primary conclusion.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The upsampling concern is addressed by design controls: (1) evaluation occurs on the TRUE distribution with no resampling applied to validation/test, (2) both ranking model and baseline use identical upsampled training data, ensuring fair comparison. The critic's evidence test (comparing Precision@10 between upsampled and non-upsampled models) would be informative ablation, but the current design already ensures the primary comparison (ranking vs. classification) is evaluated on operational distribution. The design choice is deliberate and justified \u2014 upsampling enables training on sparse positives while evaluation reflects reality."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The temporal split provides partial control against explicit leakage, but the specific concern about point-in-time feature construction for 'count of prior incidents involving the same asset in past 90 days' requires empirical verification. The methodology does not explicitly confirm that feature engineering uses only data available strictly before each alert's timestamp. The settling experiment: audit feature engineering code to verify temporal boundaries, then compare model performance with properly constructed point-in-time features vs. naive full-dataset features. If performance changes significantly, the current design has leakage. If not, the concern is resolved. The primary conclusion could remain valid if the leakage affects both model and baseline equally (preserving relative ranking), but this cannot be determined by argument alone."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The logistic regression baseline is a deliberate choice to test the specific hypothesis: whether ranking-specific inductive biases (pairwise/listwise loss) provide material benefit over classification optimization. Logistic regression producing probability scores for ranking is a valid, standard baseline in information retrieval. The critic's suggestion to add GBM would strengthen the evaluation but is an ablation, not a required fix for the stated hypothesis. The design intent explicitly rejects the premise that the comparison should use the strongest possible classifier \u2014 it tests ranking-specific vs. classification-specific optimization."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The concerns about variable alert volume and fixed capacity are valid operational considerations, but the metric choice is documented and reasonable for the PoC scope. The methodology explicitly includes secondary metrics (Precision@10, MRR, Recall@5, Recall@20) that provide additional signal. The suggested alternative (Incident Coverage@K over rolling window) is a reasonable operationalization but represents a different metric, not a correction of a fundamentally broken one. The primary conclusion (ranking vs. classification comparison) is not materially affected by these metric limitations."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The distribution shift concern for novel categories is a valid deployment consideration, but the PoC scope explicitly limits claims to 'benchmarks the ranking approach against a simpler baseline on historical data' \u2014 not production generalization to novel alert types. The experiment's primary conclusion (ranking vs. classification performance on historical data) is not affected by this limitation. Reporting unknown category proportions would be good practice but is below the threshold for design change."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Finding F2 (adjusted severity 5) uses DEFER \u2014 the concern about point-in-time feature construction cannot be resolved by argument alone and requires empirical verification. No FATAL or MATERIAL findings were CONCEDEd. F1 is rebutted to adjusted severity 3 (REBUT-DESIGN), F3 to 0 (REBUT-DESIGN), F4 to 1 (REBUT-IMMATERIAL), F5 to 0 (REBUT-IMMATERIAL). The methodology is sound for the stated hypothesis; the deferred concern about temporal feature leakage requires code audit to settle."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal does not address the core failure mechanism: upsampling changes the loss landscape and can distort the ranking function's discrimination. The defense merely states that evaluation occurs on the true distribution and both models use identical upsampling\u2014this ensures fair comparison but does not address whether the comparison itself is valid. If both models are distorted by the same upsampling, they could both perform poorly on the true distribution while maintaining relative parity. The rebuttal acknowledges the evidence test would be 'informative ablation' but dismisses it as unnecessary. This is insufficient for a FATAL finding about distribution distortion. The severity adjustment from 7 to 3 is disproportionate without mechanistic justification."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender correctly DEFERs this finding, acknowledging that point-in-time feature construction requires empirical verification. They accept the need for an audit and performance comparison to resolve the concern. This is an appropriate response that maintains the original severity while flagging the open question."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal correctly states that logistic regression is a standard baseline for testing ranking-specific inductive biases vs. classification optimization. This addresses part of the concern about hypothesis testing. However, it does not address the failure mechanism that a poorly configured baseline could inflate the apparent benefit of the ranking model. The defense that 'the design intent explicitly rejects the premise that the comparison should use the strongest possible classifier' is valid for testing the specific hypothesis, but leaves residual risk that the ranking model's advantage might disappear against a more competitive baseline. The severity adjustment to 0 is too aggressive; a reduction to 2 acknowledges the partial resolution."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly notes that metric limitations don't materially affect the primary comparison between ranking and classification models, as both are evaluated identically. The concern about variable alert volume and fixed capacity is valid but represents an operational refinement rather than a fatal flaw in the experimental design. The defender's acknowledgment that secondary metrics provide additional signal, and that the suggested alternative is a different metric rather than a correction, is reasonable. The severity adjustment to 1 is proportionate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly limits the scope to benchmarking on historical data, not production generalization. The distribution shift concern for novel categories is indeed a deployment consideration that falls outside the stated claims of the experiment. Since the primary conclusion about ranking vs. classification comparison on historical data is unaffected by this limitation, the severity adjustment to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Two findings were challenged: F1 (upsampling) and F3 (baseline). For F1, the critic correctly identifies that while evaluation on the true distribution is a control, it measures rather than eliminates the distortion mechanism. This is a genuine ambiguity requiring empirical resolution - I switch from REBUT-DESIGN to DEFER. For F3, the design intent is explicit and the baseline is appropriate for the stated hypothesis, but the critic raises a valid point about competitive baselines - I strengthen the REBUT-DESIGN with clearer mechanistic explanation. F2, F4, F5 were accepted and remain unchanged.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly identifies that evaluation on the true distribution (no upsampling on val/test) measures the effect of distortion but does not eliminate the mechanism. The design has partial controls: (1) evaluation occurs on the true operational distribution, and (2) both ranking model and baseline use identical upsampling, ensuring fair comparison. However, upsampling does change the loss landscape during training, and this mechanism is not eliminated\u2014only its impact is measured via evaluation on true distribution. The settling experiment: train an identical model without upsampling (using class-weighted loss or sampling from the true distribution) and compare its Recall@10/Precision@10 trade-off on the true test set. If the non-upsampled model shows significantly better Precision@10 at equivalent Recall@10, upsampling distorts the objective. The primary conclusion survives if the critique is correct: both models are affected equally by upsampling, preserving the relative comparison between ranking-specific and classification-specific optimization.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic ACCEPTed the DEFER response. The temporal split provides partial control, but the specific concern about point-in-time feature construction for features like 'count of prior incidents involving the same asset in past 90 days' requires empirical verification. The methodology does not explicitly confirm that feature engineering uses only data available strictly before each alert's timestamp. The settling experiment: audit feature engineering code to verify temporal boundaries, then compare model performance with properly constructed point-in-time features vs. naive full-dataset features. If performance changes significantly, the current design has leakage. If not, the concern is resolved. The primary conclusion could remain valid if the leakage affects both model and baseline equally (preserving relative ranking), but this cannot be determined by argument alone.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly tests the hypothesis: 'whether ranking-specific inductive biases (pairwise/listwise loss) provide material benefit over classification optimization.' Logistic regression producing probability scores for ranking is a standard, valid baseline in information retrieval literature. The design intent explicitly rejects the premise that the comparison should use the strongest possible classifier\u2014it tests ranking-specific vs. classification-specific optimization. The critic's concern about a 'poorly configured baseline' is addressed by the methodology's explicit statement that both models undergo 'equivalent hyperparameter search effort' on the validation set. This ensures the baseline is not suboptimally configured for the ranking objective. The residual risk (that a GBM might outperform both) is acknowledged but falls outside the stated hypothesis scope\u2014the experiment tests ranking-specific loss value, not whether any classifier can be improved.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed the REBUT-IMMATERIAL response. The concerns about variable alert volume and fixed capacity are valid operational considerations, but the metric choice is documented and reasonable for the PoC scope. The methodology explicitly includes secondary metrics (Precision@10, MRR, Recall@5, Recall@20) that provide additional signal. The suggested alternative (Incident Coverage@K over rolling window) is a reasonable operationalization but represents a different metric, not a correction of a fundamentally broken one. The primary conclusion (ranking vs. classification comparison) is not materially affected by these metric limitations.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTed the REBUT-IMMATERIAL response. The distribution shift concern for novel categories is a valid deployment consideration, but the PoC scope explicitly limits claims to 'benchmarks the ranking approach against a simpler baseline on historical data'\u2014not production generalization to novel alert types. The experiment's primary conclusion (ranking vs. classification performance on historical data) is not affected by this limitation. Reporting unknown category proportions would be good practice but is below the threshold for design change.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two FATAL/MATERIAL findings (F1 and F2) are DEFERred, indicating genuine ambiguity requiring empirical resolution. F1 requires ablation comparing upsampled vs. non-upsampled training to determine if upsampling distorts the ranking function. F2 requires audit of point-in-time feature construction to verify no temporal leakage. Both concerns have partial design controls but cannot be resolved by argument alone. The remaining findings are successfully rebutted orimmaterial. The primary comparison (ranking vs. classification) remains valid if both models are equally affected by any identified flaws."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Upsampling confirmed incidents in the training set to ~5% prevalence does not distort the model's learned ranking function for the true, highly imbalanced distribution it will encounter in validation/test/production.",
+        "failure_mechanism": "Upsampling positives changes the prior class distribution the model learns from. A ranking model's objective (e.g., pairwise or listwise loss) is sensitive to the relative frequency of positive vs. negative examples in each batch. Artificially increasing the positive rate can cause the model to over-penalize mis-ranking of positives, leading it to learn a scoring function that is overly aggressive in ranking any alert with positive-like features to the top, at the expense of correctly discriminating among the vast sea of negatives. This can inflate Recall@10 on the training distribution but cause degraded precision and overall ranking quality on the true, sparse distribution, where the model must be highly selective.",
+        "evidence_test": "Compare the model's Precision@10 and Recall@10 on a held-out validation set where the positive rate matches the true operational distribution (no upsampling). If Precision@10 collapses (e.g., near zero) while Recall@10 remains high, the model's ranking is not discriminative. A better test: train an identical model without upsampling (using e.g., class-weighted loss or sampling from the true distribution) and compare its Recall@10/Precision@10 trade-off on the true test set. If the upsampled model shows significantly worse precision for equivalent recall, the upsampling has distorted the objective.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1-12 train, 13-15 val, 16-18 test) is sufficient to prevent all forms of information leakage and ensures the model generalizes to future data.",
+        "failure_mechanism": "Temporal splitting prevents explicit future->past leakage but does not address leakage through static or slowly evolving features. If features like 'asset criticality score' or 'user risk score' are computed using data from the entire dataset (including future months) or are updated in a way that incorporates future information, their values can leak future label information into the training set. Similarly, features like 'count of prior incidents involving the same asset in past 90 days' calculated naively at the time of each alert could use incident data from the future relative to that alert's timestamp if the calculation is done post-hoc with the full dataset. This is a form of target leakage.",
+        "evidence_test": "For each time-dependent feature (especially incident-response history features), audit the feature engineering code to ensure it uses only data available strictly before the timestamp of the alert being featurized. Implement a rigorous point-in-time feature generation for the training set, and verify that the same logic, frozen at the training period's end, is applied to validation/test without refitting on their later data. A simple check: compute the correlation between these features and the target label on the training set after proper point-in-time featurization vs. a naive full-dataset featurization; a large discrepancy indicates leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The logistic regression baseline is a sufficient and fair comparison to establish the value of a learning-to-rank inductive bias.",
+        "failure_mechanism": "Logistic regression optimizes for per-instance classification accuracy (or log loss) and outputs well-calibrated probabilities, but its ranking performance is a byproduct of that calibration. A more direct and stronger baseline for a ranking task is a model trained explicitly to optimize the evaluation metric (e.g., a model trained with a loss that directly approximates Recall@10, or a GBM classifier whose output scores are commonly used for ranking without calibration). The claim that the ranking model provides 'material benefit' could be inflated if the baseline is suboptimally configured for the ranking objective. A poorly tuned logistic regression might have poor discrimination, making the ranking model look good by comparison.",
+        "evidence_test": "Introduce an additional baseline: a Gradient Boosting Machine (e.g., XGBoost, LightGBM) trained with a standard classification objective (binary:logistic). These models are strong, off-the-shelf rankers in practice and would provide a more competitive comparison. If the learning-to-rank model fails to outperform a well-tuned GBM on Recall@10, its specialized ranking loss may not be providing practical value over a powerful, general-purpose classifier.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Recall@10 per day/shift is the correct primary metric to measure the operational goal of 'how often are genuine incidents included in the analyst's top-10 review window'.",
+        "failure_mechanism": "Recall@10 averaged over days assumes analyst capacity is fixed at 10 alerts per day and that all days are equally important. However, alert volume varies daily. On a high-volume day, the top 10 might be a tiny fraction of total alerts, making recall artificially low. On a low-volume day, recall might be artificially high. More critically, the operational goal is to surface all true incidents quickly, not necessarily within an arbitrary fixed budget per day. A model could achieve good Recall@10 by clustering multiple alerts from the same incident in the top 10 on one day, while missing other incidents entirely on other days. The metric does not penalize missing entire incidents.",
+        "evidence_test": "Supplement the primary metric with 'Incident Coverage@K over rolling N-hour window': the proportion of distinct incidents that have at least one alert appearing in the top K alerts within N hours of the first alert in that incident. This better reflects the SOC's need to detect each threat promptly. Compare the ranking of models using this coverage metric; if the relative performance changes vs. Recall@10, the original metric was misaligned.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Handling new categories in validation/test via a pre-established 'unknown' token is sufficient to prevent preprocessing leakage and ensure realistic evaluation.",
+        "failure_mechanism": "While this prevents technical errors, it creates a distribution shift between training and evaluation for categorical features. If important new alert rules or asset types emerge in the test period, the model will see them only as 'unknown', potentially degrading performance. The experiment's conclusion that the ranking model generalizes temporally might be weakened if the test period contains a significant number of novel categories that the model cannot effectively handle, and this effect is not measured or reported.",
+        "evidence_test": "Report the proportion of alerts in the validation and test sets where key categorical features (like rule name, asset type) map to the 'unknown' token. If this proportion is significant (>5-10%), conduct a stratified analysis of Recall@10 for 'known' vs. 'unknown' categories. A large performance drop on 'unknown' categories indicates the model's generalization is limited to previously seen schema, a realistic deployment challenge.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC design is generally sound with strong temporal splitting and incident-level evaluation. However, a FATAL flaw exists in the training data upsampling strategy, which risks distorting the ranking objective. Additional MATERIAL concerns involve potential feature leakage, an insufficiently strong baseline, and a primary metric that may not fully capture operational needs.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Two findings were challenged: F1 (upsampling) and F3 (baseline). For F1, the critic correctly identifies that while evaluation on the true distribution is a control, it measures rather than eliminates the distortion mechanism. This is a genuine ambiguity requiring empirical resolution - I switch from REBUT-DESIGN to DEFER. For F3, the design intent is explicit and the baseline is appropriate for the stated hypothesis, but the critic raises a valid point about competitive baselines - I strengthen the REBUT-DESIGN with clearer mechanistic explanation. F2, F4, F5 were accepted and remain unchanged.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly identifies that evaluation on the true distribution (no upsampling on val/test) measures the effect of distortion but does not eliminate the mechanism. The design has partial controls: (1) evaluation occurs on the true operational distribution, and (2) both ranking model and baseline use identical upsampling, ensuring fair comparison. However, upsampling does change the loss landscape during training, and this mechanism is not eliminated\u2014only its impact is measured via evaluation on true distribution. The settling experiment: train an identical model without upsampling (using class-weighted loss or sampling from the true distribution) and compare its Recall@10/Precision@10 trade-off on the true test set. If the non-upsampled model shows significantly better Precision@10 at equivalent Recall@10, upsampling distorts the objective. The primary conclusion survives if the critique is correct: both models are affected equally by upsampling, preserving the relative comparison between ranking-specific and classification-specific optimization.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic ACCEPTed the DEFER response. The temporal split provides partial control, but the specific concern about point-in-time feature construction for features like 'count of prior incidents involving the same asset in past 90 days' requires empirical verification. The methodology does not explicitly confirm that feature engineering uses only data available strictly before each alert's timestamp. The settling experiment: audit feature engineering code to verify temporal boundaries, then compare model performance with properly constructed point-in-time features vs. naive full-dataset features. If performance changes significantly, the current design has leakage. If not, the concern is resolved. The primary conclusion could remain valid if the leakage affects both model and baseline equally (preserving relative ranking), but this cannot be determined by argument alone.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The design explicitly tests the hypothesis: 'whether ranking-specific inductive biases (pairwise/listwise loss) provide material benefit over classification optimization.' Logistic regression producing probability scores for ranking is a standard, valid baseline in information retrieval literature. The design intent explicitly rejects the premise that the comparison should use the strongest possible classifier\u2014it tests ranking-specific vs. classification-specific optimization. The critic's concern about a 'poorly configured baseline' is addressed by the methodology's explicit statement that both models undergo 'equivalent hyperparameter search effort' on the validation set. This ensures the baseline is not suboptimally configured for the ranking objective. The residual risk (that a GBM might outperform both) is acknowledged but falls outside the stated hypothesis scope\u2014the experiment tests ranking-specific loss value, not whether any classifier can be improved.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed the REBUT-IMMATERIAL response. The concerns about variable alert volume and fixed capacity are valid operational considerations, but the metric choice is documented and reasonable for the PoC scope. The methodology explicitly includes secondary metrics (Precision@10, MRR, Recall@5, Recall@20) that provide additional signal. The suggested alternative (Incident Coverage@K over rolling window) is a reasonable operationalization but represents a different metric, not a correction of a fundamentally broken one. The primary conclusion (ranking vs. classification comparison) is not materially affected by these metric limitations.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTed the REBUT-IMMATERIAL response. The distribution shift concern for novel categories is a valid deployment consideration, but the PoC scope explicitly limits claims to 'benchmarks the ranking approach against a simpler baseline on historical data'\u2014not production generalization to novel alert types. The experiment's primary conclusion (ranking vs. classification performance on historical data) is not affected by this limitation. Reporting unknown category proportions would be good practice but is below the threshold for design change.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two FATAL/MATERIAL findings (F1 and F2) are DEFERred, indicating genuine ambiguity requiring empirical resolution. F1 requires ablation comparing upsampled vs. non-upsampled training to determine if upsampling distorts the ranking function. F2 requires audit of point-in-time feature construction to verify no temporal leakage. Both concerns have partial design controls but cannot be resolved by argument alone. The remaining findings are successfully rebutted orimmaterial. The primary comparison (ranking vs. classification) remains valid if both models are equally affected by any identified flaws."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=6 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

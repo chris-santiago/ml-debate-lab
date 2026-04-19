@@ -1,0 +1,529 @@
+{
+  "case_id": "eval_scenario_hyp_017",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label (fraud = chargeback filed and sustained within 120 days) is a complete and accurate operational ground truth with no systematic bias.",
+        "failure_mechanism": "The label definition creates a delayed and incomplete signal. Many fraudulent transactions do not result in a chargeback (e.g., fraudster uses stolen card for small test purchase, cardholder doesn't notice or bother to dispute, merchant absorbs loss). Conversely, some legitimate transactions are incorrectly filed as chargebacks ('friendly fraud'). The 120-day exclusion window also creates a systematic bias: transactions near the study end are excluded, potentially removing a distinct fraud pattern (e.g., a new attack vector). The model is trained and evaluated on a proxy label that may misclassify a significant portion of the true fraud distribution.",
+        "evidence_test": "Perform a manual audit on a sample of transactions labeled 'legitimate' to estimate the false negative rate of the chargeback label. Correlate fraud model scores with later customer complaints or account closures not tied to chargebacks. Analyze the characteristics of transactions excluded by the 120-day window to see if they differ significantly from the labeled data.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The primary evaluation metric (Precision-Recall AUC at a fixed FPR of 2\u20135%) directly answers the business question of fraud capture within a fixed review budget.",
+        "failure_mechanism": "Precision-Recall AUC is calculated across all thresholds, not at a single operational point. A model can have a higher PR-AUC but lower recall at the specific FPR threshold chosen for deployment (2-5%). The metric is misaligned with the stated objective. Model selection and hyperparameter tuning optimizing for PR-AUC could select a model that is suboptimal for the operational recall@FPR target. This is a classic case of optimizing a proxy metric that does not guarantee performance on the true objective.",
+        "evidence_test": "Compare the model selected by PR-AUC with a model selected by direct optimization of recall@FPR (2-5%) on the validation set. If the selected models differ and the latter has higher operational recall on the test set, the metric choice is flawed.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (Train: 1-12, Val: 13-16, Test: 17-24) with preserved order is sufficient to prevent all leakage and simulate deployment.",
+        "failure_mechanism": "Sequence-based feature engineering (e.g., 'last 10-30 transactions') creates a subtle form of temporal leakage when the sequence window crosses the split boundary. For a transaction early in the validation set (month 13), its input sequence may include transactions from the training set (month 12). This means the validation (and potentially test) model inputs contain direct information from the training period, violating the strict temporal holdout principle. The model is evaluated on sequences partially constructed from data it was trained on, which can inflate performance.",
+        "evidence_test": "Audit the feature generation code for sequences. For the first transaction in the validation set, check if any transactions in its lookback window are from the training set. If so, this is leakage. The correct approach is to ensure the sequence for any transaction in period X uses only transactions from periods <= X, and never from future splits.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The hand-engineered aggregate features (Set B) for the baseline are a 'fair' representation of the information available, providing a strong competitive benchmark.",
+        "failure_mechanism": "The design does not verify that the aggregate feature set captures the same predictive signal as the raw sequences. The transformer has direct access to the raw temporal order and interaction of features within a sequence, which may contain patterns (e.g., specific sequences of merchant categories) that are lost in rolling-window aggregates like 'merchant category diversity'. The comparison may be between a model with rich, raw data and a model with a deliberately impoverished view of that data, conflating architectural advantage with feature representation advantage. The hypothesis claims the transformer 'outperforms,' but the experiment cannot attribute the cause.",
+        "evidence_test": "Run an ablation: train a gradient-boosted model on the raw, flattened sequence features (Set A, without sequence structure) and compare its performance to both the transformer and the aggregate baseline. If the flattened GBM performance is close to the transformer, the gain is from features, not architecture. If it's close to the aggregate baseline, the aggregate features are the bottleneck.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The hyperparameter tuning effort (50 trials for each model) is 'equal' and sufficient for a fair comparison.",
+        "failure_mechanism": "Transformer models have a vastly larger and more complex hyperparameter space (layers, heads, sequence length, dropout, learning rate, embedding dimensions, etc.) compared to gradient-boosted trees. A fixed number of trials does not constitute equal effort; 50 trials may be sufficient to find a good GBM configuration but may only scratch the surface of the transformer's search space. The selected transformer may be suboptimal, making the comparison biased against the transformer. The 'fairness' claim is unverified.",
+        "evidence_test": "Perform a sensitivity analysis: run a much larger search (e.g., 200 trials) for the transformer and see if performance on the validation set improves significantly over the best model from the 50-trial search. If it does, the original comparison was not using a competitively tuned transformer.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Preprocessing (scaling, encoding, imputation) fit on the training set only prevents leakage.",
+        "failure_mechanism": "For sequence models, common preprocessing steps like scaling transaction amounts using training set statistics can be problematic if the distribution of amounts shifts over time. More critically, imputing missing values (e.g., for session duration) with training set statistics and applying that to the test set assumes the missingness mechanism is stationary. If fraudsters adapt and cause different patterns of missing data, this imputation could erase a predictive signal or introduce bias.",
+        "evidence_test": "Compare the distribution of missing values and the values used for imputation (e.g., mean/median) across the train, validation, and test sets. A significant shift indicates a violation of the stationarity assumption for preprocessing.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The uniform padding of sequences to 10-30 transactions does not distort the model's ability to learn from sequences of varying lengths.",
+        "failure_mechanism": "Padding all sequences to a fixed maximum length (e.g., 30) forces the model to attend to many 'padding' tokens for short sequences, which may dilute the attention mechanism's focus on real transactions. Alternatively, using a short maximum length (e.g., 10) truncates long histories, potentially removing crucial context for accounts with many transactions. The choice of length is a hyperparameter, but its interaction with model capacity and the true predictive value of very old vs. recent history is unexamined.",
+        "evidence_test": "Analyze the performance of the transformer model stratified by the true sequence length of the account. If performance degrades significantly for accounts with sequences much shorter or longer than the padded length, the padding strategy is harmful.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding transactions declined by pre-existing fraud rules is sufficient to mitigate feedback loop bias.",
+        "failure_mechanism": "If declined transactions are completely excluded, the model never learns the feature patterns that *would have been* fraudulent if the rule had not fired. This creates a 'cherry-picked' dataset where only fraud that evades existing rules is present, potentially causing the model to overfit to a specific subset of fraud and perform poorly if the rules are changed. The alternative (flagging them) also has complications, as the label for these transactions is fundamentally unknown.",
+        "evidence_test": "Compare the feature distributions of fraudulent transactions that were approved vs. those that would have been declined (if known). If they differ significantly, the model is trained on a non-representative sample of the fraud distribution.",
+        "flaw_category": "context_dependent"
+      }
+    ],
+    "summary": "The PoC has a potentially fatal flaw in its label definition (relying on an incomplete chargeback proxy) and a critical misalignment between its primary optimization metric (PR-AUC) and its operational objective (recall@FPR). Temporal leakage in sequence construction and an incomplete baseline comparison further weaken the central claim.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims the chargeback label is biased. However, in banking fraud, chargebacks are the industry-standard operational ground truth for 'sustained' fraud. While some fraud is missed, this is a limitation of the data source, not the experiment design. The 120-day exclusion is a standard control to prevent label leakage/censoring. \n\nF2 claims PR-AUC is a proxy that doesn't guarantee Recall@FPR. The design explicitly lists 'Recall and precision at fixed FPR' as secondary metrics and states the primary success measure is 'higher fraud recall at the same review budget.' PR-AUC is used as a general performance indicator, but the operational decision is based on the fixed FPR threshold. \n\nF3 claims temporal leakage because sequences for validation transactions may include training transactions. This is not leakage; it is a requirement for sequence modeling. In production, a model predicting on a transaction today uses the account's history (which includes yesterday). As long as the *labels* are split and the model is not trained on the validation *targets*, using historical features from the training period is the correct way to simulate deployment. \n\nF4 argues the baseline is 'impoverished' because it uses aggregates instead of raw sequences. This is the core of the hypothesis: 'whether a transformer-based model ingesting raw transaction sequences... outperforms a gradient-boosted baseline trained on hand-engineered aggregate features.' The comparison is intentionally between these two paradigms. \n\nF5 argues 50 trials is insufficient for Transformers. While Transformers have more hyperparameters, 50 trials is a standard PoC budget. The goal is to see if the architecture *can* outperform the baseline, not to find the global optimum. \n\nF6 and F7 are standard ML trade-offs (imputation and padding) that do not invalidate the hypothesis test. \n\nF8 discusses the feedback loop. The design explicitly mentions that declined transactions are either excluded or flagged to prevent learning spurious rule correlations, which is a standard control for this domain.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The use of sustained chargebacks is the operational ground truth for the bank. The 120-day exclusion window is a deliberate design control (Section 2) to eliminate censored labels, ensuring the model is evaluated on confirmed outcomes."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly identifies 'Recall at this fixed FPR' as the interpretable success measure (Section 6). PR-AUC is used for general model ranking, but the final recommendation is based on the operational FPR threshold."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The critic confuses feature history with label leakage. For a sequence model to function in production, it must access the account's prior history. Using training-period transactions as features for validation-period targets is the only way to accurately simulate real-world inference."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The hypothesis specifically tests the transformer's ability to handle raw sequences vs. the baseline's use of aggregates (Section 1). The 'impoverishment' of the baseline is the independent variable being tested."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "For a PoC, 50 trials per model provides a sufficient baseline for architectural comparison. Extreme hyperparameter optimization is out of scope for this hypothesis investigation."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "Stationarity of preprocessing is a standard assumption for this PoC; significant shifts would be detected by the temporal stability checks mentioned in Section 8."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Padding is a standard implementation detail for transformers. The impact of sequence length is a secondary tuning concern, not a flaw in the hypothesis test."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The design explicitly addresses feedback loops in Section 8. The trade-off between excluding and flagging declined transactions is a known domain constraint."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted. The most severe concerns regarding labels and metrics were addressed by cited design controls, and the claim of temporal leakage was based on a misunderstanding of sequence-based feature engineering."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": -1,
+        "reasoning": "The rebuttal does not address the core failure mechanism: that chargeback labels are an incomplete proxy for true fraud. The defender merely restates the design choice without engaging with the substantive critique about false negatives (unnoticed fraud) and false positives (friendly fraud). The 120-day window exclusion addresses censoring but introduces systematic bias by removing recent transactions that may represent emerging fraud patterns. The rebuttal is generic ('deliberate design control') rather than mechanistic. A valid rebuttal would need to provide evidence that chargeback labels correlate strongly with true fraud or that the bias from excluded transactions is negligible."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal partially addresses the concern by noting that the final recommendation is based on the operational threshold. However, it does not resolve the core failure mechanism: model selection and hyperparameter tuning are still optimized for PR-AUC, not recall@FPR. If the model selected by PR-AUC performs suboptimally at the operational threshold compared to a model directly optimized for recall@FPR, the metric choice remains flawed. The rebuttal acknowledges the distinction but doesn't demonstrate that the optimization strategy aligns with the operational objective."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal fundamentally misunderstands the leakage concern. The issue is not about accessing prior history in general\u2014it's about using data from the training period to construct features for validation/test evaluation. In a proper temporal split, the model should not see any training data during validation/testing, even as features. The correct approach is to ensure sequences for period X use only transactions from periods \u2264 X, but strictly before the training/validation boundary. The rebuttal's claim that 'using training-period transactions as features for validation-period targets is the only way to simulate real-world inference' is incorrect\u2014in production, the model would use the account's actual prior history, not data from a period it was trained on. This is classic temporal leakage that can inflate performance."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly identifies that the feature representation difference is the independent variable being tested. The hypothesis explicitly compares transformer-on-sequences vs. GBM-on-aggregates, not transformer-vs-GBM architecture in isolation. While the finding correctly notes that the experiment cannot attribute cause to architecture vs. features, this limitation is acknowledged in the methodology's 'Scope of Conclusions' (Section 9). The defender's rebuttal aligns with the stated experimental goal."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal dismisses the concern as 'out of scope' without addressing the mechanistic flaw: fixed trial counts don't constitute equal effort across vastly different hyperparameter spaces. Calling it a 'PoC' doesn't resolve the fairness issue\u2014if the transformer is under-tuned relative to the GBM, the comparison is biased. The rebuttal is generic and doesn't provide evidence that 50 trials is sufficient for both model classes or that performance plateaus have been reached."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal notes that temporal stability checks would detect shifts, which partially addresses the concern. However, it doesn't specify how these checks would catch preprocessing-specific issues like shifts in missing value patterns or imputation bias. The failure mechanism involves subtle distribution shifts that might not be captured by aggregate feature distribution checks. The rebuttal assumes stationarity without evidence."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly identifies this as an implementation detail rather than a methodological flaw. Padding strategies are standard for transformers, and their impact would be explored during hyperparameter tuning (sequence length is listed as a tunable parameter). The finding points to a potential performance issue, not a validity threat to the hypothesis test."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly notes that the design explicitly addresses feedback loops and that the trade-off is a known domain constraint. The methodology acknowledges the issue and chooses a reasonable approach (exclusion or flagging). The finding identifies a real challenge but one that is recognized and managed within the experimental design."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my position on F1 and F5, as the critic's challenges relate to ideal-world data perfection and exhaustive optimization rather than flaws in the designed hypothesis test. I am strengthening the rebuttal for F2 to clarify the relationship between PR-AUC and the operational threshold. I am switching F3 to DEFER because the critic has raised a nuanced point about the boundary between feature history and training set leakage that requires empirical verification of the feature engineering pipeline. I am maintaining the ACCEPTed findings (F4, F7, F8) and the PARTIAL on F6, as the stability checks in the design are the appropriate control for stationarity assumptions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's challenge focuses on the difference between 'true fraud' and 'chargeback fraud'. However, in a banking operational context, the chargeback is the only verifiable ground truth available at scale. Training on a 'theoretical' fraud label that doesn't exist in the data is impossible. The 120-day window is a standard industry control to ensure label maturity. While no proxy is perfect, this is the most accurate operational signal available, and the hypothesis tests model performance relative to this specific business signal.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design uses PR-AUC as a global quality metric for model selection, but the primary success measure is explicitly 'Recall at this fixed FPR' (Section 6). Because the operational threshold (2-5% FPR) is a narrow window, optimizing for the area under the curve ensures the model is robust across the region of interest, rather than over-fitting to a single point on the validation set, which would lead to poor generalization on the test set. The operational recall is the final arbiter, not the PR-AUC.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic argues that using training-period transactions as features for validation-period targets constitutes leakage. The defender argues this is necessary to simulate production inference (where history is always available). Whether this 'history' constitutes 'leakage' if the model was trained on those same transactions as targets is a subtle point of temporal validation theory. This is best resolved by an empirical audit of the feature pipeline to ensure that no target labels from the training set are leaked into the feature vectors of the validation set.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the R1 rebuttal. The difference in feature representation is the independent variable of the experiment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The claim of 'equal effort' refers to the computational budget allocated to the search process (50 trials each). While the transformer's search space is larger, the goal of this investigation is to determine if the architecture provides a meaningful lift over a strong baseline, not to find the global optimum of the transformer. If a reasonably tuned transformer cannot beat a well-tuned GBM, the hypothesis is effectively refuted for the given constraints.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The temporal stability checks (Section 8) are designed to detect distribution shifts. While the critic suggests these might not catch specific imputation biases, such shifts would manifest as changes in the feature distributions of the imputed columns. This is a standard risk in all ML projects and is mitigated by the out-of-time degradation analysis (months 17-20 vs 21-24).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the R1 rebuttal. Padding is an implementation detail.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the R1 rebuttal. Feedback loop mitigation is addressed in the design.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were successfully rebutted or accepted. However, F3 (temporal leakage in sequences) remains a point of genuine disagreement between the defender and critic regarding the definition of leakage in sequence models, necessitating an empirical audit of the feature pipeline."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label (fraud = chargeback filed and sustained within 120 days) is a complete and accurate operational ground truth with no systematic bias.",
+        "failure_mechanism": "The label definition creates a delayed and incomplete signal. Many fraudulent transactions do not result in a chargeback (e.g., fraudster uses stolen card for small test purchase, cardholder doesn't notice or bother to dispute, merchant absorbs loss). Conversely, some legitimate transactions are incorrectly filed as chargebacks ('friendly fraud'). The 120-day exclusion window also creates a systematic bias: transactions near the study end are excluded, potentially removing a distinct fraud pattern (e.g., a new attack vector). The model is trained and evaluated on a proxy label that may misclassify a significant portion of the true fraud distribution.",
+        "evidence_test": "Perform a manual audit on a sample of transactions labeled 'legitimate' to estimate the false negative rate of the chargeback label. Correlate fraud model scores with later customer complaints or account closures not tied to chargebacks. Analyze the characteristics of transactions excluded by the 120-day window to see if they differ significantly from the labeled data.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The primary evaluation metric (Precision-Recall AUC at a fixed FPR of 2\u20135%) directly answers the business question of fraud capture within a fixed review budget.",
+        "failure_mechanism": "Precision-Recall AUC is calculated across all thresholds, not at a single operational point. A model can have a higher PR-AUC but lower recall at the specific FPR threshold chosen for deployment (2-5%). The metric is misaligned with the stated objective. Model selection and hyperparameter tuning optimizing for PR-AUC could select a model that is suboptimal for the operational recall@FPR target. This is a classic case of optimizing a proxy metric that does not guarantee performance on the true objective.",
+        "evidence_test": "Compare the model selected by PR-AUC with a model selected by direct optimization of recall@FPR (2-5%) on the validation set. If the selected models differ and the latter has higher operational recall on the test set, the metric choice is flawed.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (Train: 1-12, Val: 13-16, Test: 17-24) with preserved order is sufficient to prevent all leakage and simulate deployment.",
+        "failure_mechanism": "Sequence-based feature engineering (e.g., 'last 10-30 transactions') creates a subtle form of temporal leakage when the sequence window crosses the split boundary. For a transaction early in the validation set (month 13), its input sequence may include transactions from the training set (month 12). This means the validation (and potentially test) model inputs contain direct information from the training period, violating the strict temporal holdout principle. The model is evaluated on sequences partially constructed from data it was trained on, which can inflate performance.",
+        "evidence_test": "Audit the feature generation code for sequences. For the first transaction in the validation set, check if any transactions in its lookback window are from the training set. If so, this is leakage. The correct approach is to ensure the sequence for any transaction in period X uses only transactions from periods <= X, and never from future splits.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The hand-engineered aggregate features (Set B) for the baseline are a 'fair' representation of the information available, providing a strong competitive benchmark.",
+        "failure_mechanism": "The design does not verify that the aggregate feature set captures the same predictive signal as the raw sequences. The transformer has direct access to the raw temporal order and interaction of features within a sequence, which may contain patterns (e.g., specific sequences of merchant categories) that are lost in rolling-window aggregates like 'merchant category diversity'. The comparison may be between a model with rich, raw data and a model with a deliberately impoverished view of that data, conflating architectural advantage with feature representation advantage. The hypothesis claims the transformer 'outperforms,' but the experiment cannot attribute the cause.",
+        "evidence_test": "Run an ablation: train a gradient-boosted model on the raw, flattened sequence features (Set A, without sequence structure) and compare its performance to both the transformer and the aggregate baseline. If the flattened GBM performance is close to the transformer, the gain is from features, not architecture. If it's close to the aggregate baseline, the aggregate features are the bottleneck.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The hyperparameter tuning effort (50 trials for each model) is 'equal' and sufficient for a fair comparison.",
+        "failure_mechanism": "Transformer models have a vastly larger and more complex hyperparameter space (layers, heads, sequence length, dropout, learning rate, embedding dimensions, etc.) compared to gradient-boosted trees. A fixed number of trials does not constitute equal effort; 50 trials may be sufficient to find a good GBM configuration but may only scratch the surface of the transformer's search space. The selected transformer may be suboptimal, making the comparison biased against the transformer. The 'fairness' claim is unverified.",
+        "evidence_test": "Perform a sensitivity analysis: run a much larger search (e.g., 200 trials) for the transformer and see if performance on the validation set improves significantly over the best model from the 50-trial search. If it does, the original comparison was not using a competitively tuned transformer.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Preprocessing (scaling, encoding, imputation) fit on the training set only prevents leakage.",
+        "failure_mechanism": "For sequence models, common preprocessing steps like scaling transaction amounts using training set statistics can be problematic if the distribution of amounts shifts over time. More critically, imputing missing values (e.g., for session duration) with training set statistics and applying that to the test set assumes the missingness mechanism is stationary. If fraudsters adapt and cause different patterns of missing data, this imputation could erase a predictive signal or introduce bias.",
+        "evidence_test": "Compare the distribution of missing values and the values used for imputation (e.g., mean/median) across the train, validation, and test sets. A significant shift indicates a violation of the stationarity assumption for preprocessing.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The uniform padding of sequences to 10-30 transactions does not distort the model's ability to learn from sequences of varying lengths.",
+        "failure_mechanism": "Padding all sequences to a fixed maximum length (e.g., 30) forces the model to attend to many 'padding' tokens for short sequences, which may dilute the attention mechanism's focus on real transactions. Alternatively, using a short maximum length (e.g., 10) truncates long histories, potentially removing crucial context for accounts with many transactions. The choice of length is a hyperparameter, but its interaction with model capacity and the true predictive value of very old vs. recent history is unexamined.",
+        "evidence_test": "Analyze the performance of the transformer model stratified by the true sequence length of the account. If performance degrades significantly for accounts with sequences much shorter or longer than the padded length, the padding strategy is harmful.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding transactions declined by pre-existing fraud rules is sufficient to mitigate feedback loop bias.",
+        "failure_mechanism": "If declined transactions are completely excluded, the model never learns the feature patterns that *would have been* fraudulent if the rule had not fired. This creates a 'cherry-picked' dataset where only fraud that evades existing rules is present, potentially causing the model to overfit to a specific subset of fraud and perform poorly if the rules are changed. The alternative (flagging them) also has complications, as the label for these transactions is fundamentally unknown.",
+        "evidence_test": "Compare the feature distributions of fraudulent transactions that were approved vs. those that would have been declined (if known). If they differ significantly, the model is trained on a non-representative sample of the fraud distribution.",
+        "flaw_category": "context_dependent"
+      }
+    ],
+    "summary": "The PoC has a potentially fatal flaw in its label definition (relying on an incomplete chargeback proxy) and a critical misalignment between its primary optimization metric (PR-AUC) and its operational objective (recall@FPR). Temporal leakage in sequence construction and an incomplete baseline comparison further weaken the central claim.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my position on F1 and F5, as the critic's challenges relate to ideal-world data perfection and exhaustive optimization rather than flaws in the designed hypothesis test. I am strengthening the rebuttal for F2 to clarify the relationship between PR-AUC and the operational threshold. I am switching F3 to DEFER because the critic has raised a nuanced point about the boundary between feature history and training set leakage that requires empirical verification of the feature engineering pipeline. I am maintaining the ACCEPTed findings (F4, F7, F8) and the PARTIAL on F6, as the stability checks in the design are the appropriate control for stationarity assumptions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's challenge focuses on the difference between 'true fraud' and 'chargeback fraud'. However, in a banking operational context, the chargeback is the only verifiable ground truth available at scale. Training on a 'theoretical' fraud label that doesn't exist in the data is impossible. The 120-day window is a standard industry control to ensure label maturity. While no proxy is perfect, this is the most accurate operational signal available, and the hypothesis tests model performance relative to this specific business signal.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design uses PR-AUC as a global quality metric for model selection, but the primary success measure is explicitly 'Recall at this fixed FPR' (Section 6). Because the operational threshold (2-5% FPR) is a narrow window, optimizing for the area under the curve ensures the model is robust across the region of interest, rather than over-fitting to a single point on the validation set, which would lead to poor generalization on the test set. The operational recall is the final arbiter, not the PR-AUC.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic argues that using training-period transactions as features for validation-period targets constitutes leakage. The defender argues this is necessary to simulate production inference (where history is always available). Whether this 'history' constitutes 'leakage' if the model was trained on those same transactions as targets is a subtle point of temporal validation theory. This is best resolved by an empirical audit of the feature pipeline to ensure that no target labels from the training set are leaked into the feature vectors of the validation set.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the R1 rebuttal. The difference in feature representation is the independent variable of the experiment.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The claim of 'equal effort' refers to the computational budget allocated to the search process (50 trials each). While the transformer's search space is larger, the goal of this investigation is to determine if the architecture provides a meaningful lift over a strong baseline, not to find the global optimum of the transformer. If a reasonably tuned transformer cannot beat a well-tuned GBM, the hypothesis is effectively refuted for the given constraints.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The temporal stability checks (Section 8) are designed to detect distribution shifts. While the critic suggests these might not catch specific imputation biases, such shifts would manifest as changes in the feature distributions of the imputed columns. This is a standard risk in all ML projects and is mitigated by the out-of-time degradation analysis (months 17-20 vs 21-24).",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the R1 rebuttal. Padding is an implementation detail.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted the R1 rebuttal. Feedback loop mitigation is addressed in the design.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were successfully rebutted or accepted. However, F3 (temporal leakage in sequences) remains a point of genuine disagreement between the defender and critic regarding the definition of leakage in sequence models, necessitating an empirical audit of the feature pipeline."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

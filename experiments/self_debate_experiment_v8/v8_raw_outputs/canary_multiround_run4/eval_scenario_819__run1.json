@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_819",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Triage notes written at initial assessment (check-in) do not contain information that would reveal the eventual disposition decision.",
+        "failure_mechanism": "Even though notes are timestamped at check-in, triage nurses often document their clinical suspicion in the note. Phrases like 'patient appears unwell,' 'may require admission,' or 'discussed with senior clinician re: admission' directly encode disposition intent. The pre-trained embedding model will capture this language, creating a shortcut where the model learns to predict admission from the nurse's suspicion rather than from clinically meaningful text features. This is a subtle form of target leakage through narrative language.",
+        "evidence_test": "Perform a qualitative audit of a random sample of triage notes (n=100) to identify explicit disposition language. Additionally, train a simple classifier on note embeddings to predict admission, then manually inspect which tokens/embeddings have highest weight. If the model relies on suspicion language rather than clinical findings, this would be evident.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Note length is an independent predictor of admission risk that does not confound the multimodal model's text content advantage.",
+        "failure_mechanism": "Sicker patients receive longer triage notes because nurses spend more time assessing them, document more findings, and may add more detail. Note length therefore correlates with acuity (the strongest predictor) and admission. By including note length as a feature in both models, the experiment attempts to control for this, but the multimodal model can still leverage the correlation between note length and acuity that is already captured in the structured data. The incremental value of text embeddings may be partially mediated by this shared signal.",
+        "evidence_test": "Run the secondary analysis mentioned (standardized/minimal-text subsets) and examine whether the multimodal advantage persists. If performance drops substantially when controlling for note length, the text advantage is not independent of documentation behavior.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 6-month test set (months 31-36) provides sufficient sample size and temporal coverage to characterize model performance for deployment.",
+        "failure_mechanism": " ED patient volumes and acuity distributions vary seasonally (flu season, holidays). A 6-month window captures at most one full seasonal cycle and may not represent the full range of operational conditions. If months 31-36 happen to be low-acuity months, the AUROC could be inflated relative to annual average performance.",
+        "evidence_test": "Analyze admission rate and volume trends across all 36 months. Report performance stratified by month in the test set. If performance varies substantially across test months, the single AUROC point estimate is not robust.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratification by hospital site within temporal splits controls for site-specific admission thresholds and documentation practices.",
+        "failure_mechanism": "Site stratification ensures proportional representation, but if a hospital changes its triage protocols or admission criteria during the 36-month period (e.g., implements a new observation unit, changes ESI scoring guidelines), the temporal shift within that site is not controlled. The model trained on months 1-24 may not generalize to that site's practices in months 31-36.",
+        "evidence_test": "Examine site-level admission rates over time. If any site shows a significant trend (e.g., admission rate shifts by >5 percentage points between early and late periods), report performance separately by time period to detect generalization failure.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUROC is the appropriate primary metric for this deployment scenario.",
+        "failure_mechanism": "AUROC measures discrimination across all thresholds but does not account for the operational cost of false positives vs. false negatives. In ED triage, the cost of admitting a patient who didn't need it (false positive) differs from the cost of missing an admission (false negative). AUROC weights all thresholds equally, which may not reflect the actual deployment decision curve.",
+        "evidence_test": "Report decision curve analysis or net benefit at clinically relevant threshold(s) (e.g., the threshold corresponding to a 20% admission probability). If the decision curve shows harm relative to treat-all or treat-none strategies within the model's operating range, AUROC alone is misleading.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Frozen pre-trained embeddings (BioBERT/ClinicalBERT) capture clinically relevant language without domain shift issues.",
+        "failure_mechanism": "These models are trained on general biomedical text (pubmed, clinical notes from different settings). ED triage notes have distinct language patterns (abbreviations, urgency-focused phrasing). The embeddings may not optimally represent the relevant semantic space, though this would bias against finding an effect (conservative), not toward one.",
+        "evidence_test": "This is not a flaw requiring correction, but a limitation worth noting. The experiment is still valid if the multimodal model outperforms baseline even with suboptimal embeddings.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "Two FATAL flaws identified: (1) triage notes may contain implicit disposition language that creates target leakage through embeddings, and (2) note length confounds the text advantage. Additionally, MATERIAL concerns around test set temporal coverage and site-level practice drift. The core comparison design is sound, but these issues could substantially inflate the multimodal model's apparent advantage.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims that triage notes contain 'suspicion language' (e.g., 'may require admission') which acts as a shortcut for the model. However, the design intent is to test whether the multimodal model (which includes these notes) outperforms a structured-only model. In a real-world triage setting, the nurse's clinical suspicion *is* a primary clinical feature. If the nurse's intuition is captured in the text and improves prediction, this is a valid signal, not 'leakage' in the sense of using future data. The notes are timestamped at check-in, so no post-hoc disposition data is present. This is a feature of the data, not a flaw in the methodology.\n\nF2 argues that note length is a confounder because sicker patients get longer notes. The design explicitly addresses this in Section 7 ('Confound Controls') by including note length as a feature in both models and planning a secondary analysis on minimal-text subsets. By providing the same 'length' signal to both the baseline and multimodal models, any incremental gain in the multimodal model must come from the *content* of the text, not the *volume* of the text.\n\nF3 concerns seasonal variance in a 6-month test set. While true that 6 months is not a full year, the design uses a chronological split (months 31-36) to simulate deployment. The primary goal is to test the hypothesis of multimodal superiority, not to provide a final production-ready performance guarantee. The 6-month window is standard for PoCs of this scale, and the stratification by site and outcome ensures the test set is representative of the training distribution.\n\nF4 suggests that site-specific protocol shifts over 36 months aren't controlled. The design uses a chronological split specifically to address 'operational non-stationarity' (Section 2). The fact that the model must generalize from months 1-24 to 31-36 *is* the test of the model's robustness to these shifts. This is a feature of the evaluation, not a flaw.\n\nF5 argues AUROC is insufficient for operational costs. The design acknowledges this in Section 6 by listing secondary metrics: AUPRC, sensitivity at fixed specificity, and calibration error. AUROC is the primary metric for discrimination (the hypothesis), while the secondary metrics address the operational concerns raised by the critic.\n\nF6 notes that frozen embeddings might not be optimal for ED-specific jargon. The critic admits this would bias the results conservatively (making it harder to find an effect). Since the goal is to see if text *helps*, a conservative bias does not invalidate the conclusion; it only potentially underestimates the gain.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic confuses 'clinical intuition' with 'target leakage.' Target leakage occurs when information from the future (the label) is present in the features. Since notes are timestamped at check-in, they contain the nurse's *prediction* of the outcome, which is a legitimate clinical feature. The hypothesis is whether multimodal data (including nurse intuition) improves prediction over structured data. This is a deliberate design choice to capture the full triage signal."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Section 7 explicitly controls for this by including note length as a feature in both the baseline and multimodal models. This ensures that the baseline model also benefits from the 'verbosity = acuity' signal. Any delta in performance is therefore attributable to the semantic content of the embeddings, not the length of the note."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The scope of this PoC is to test the hypothesis of multimodal superiority, not to provide a final, seasonally-validated production deployment metric. A 6-month held-out test set is sufficient to establish whether the multimodal approach provides a statistically significant lift over the baseline."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The chronological split (Months 1-24 train, 31-36 test) is specifically designed to test the model's ability to generalize across temporal shifts and protocol changes. The critic is describing the exact challenge the design is intended to evaluate."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The design already addresses operational costs via secondary metrics (sensitivity at fixed specificity and calibration error) in Section 6. AUROC is the correct primary metric for testing the hypothesis of improved discrimination."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "As the critic notes, suboptimal embeddings would create a conservative bias. This does not invalidate the methodology; it only means the observed gain would be a lower bound of the potential gain."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted. The most severe concerns (F1, F2) were addressed by explicit design controls (timestamping and note-length features), and all adjusted severities are \u2264 3, qualifying the methodology for exoneration."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender argues that nurse intuition is a 'legitimate clinical feature' and not target leakage because notes are timestamped at check-in. However, this rebuttal conflates 'information available at check-in' with 'information that doesn't encode disposition intent.' The specific failure mechanism I identified is not about nurse intuition generally, but about explicit disposition speculation language ('may require admission,' 'discussed with senior clinician re: admission') that directly encodes the nurse's prediction of the outcome. The defender does not address how the model might use this disposition speculation as a shortcut rather than clinical content. While the hypothesis may intentionally test whether multimodal data (including nurse intuition) improves prediction, the specific concern about disposition-encoding language creating a shortcut remains unresolved. The rebuttal is a scope/design choice argument that doesn't address the specific failure mechanism."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly notes that including note length in both models controls for the direct 'verbosity = acuity' signal. The logic is sound: if both models have access to note length, the delta should be attributable to semantic content. Additionally, Section 7 mentions a secondary analysis on standardized/minimal-text subsets to further control for this. While there is a residual concern that the multimodal model could leverage interactions between note length and semantic content (e.g., long notes about serious symptoms vs. long notes about minor complaints), this is a subtle effect that the secondary analysis is designed to evaluate. The rebuttal directly addresses the failure mechanism through the design control."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender's scope argument is partially valid: a PoC focused on testing multimodal superiority does not require seasonally-validated deployment metrics. However, the finding is not just about deployment readiness \u2014 it's about whether the test set's temporal window happens to be favorable (e.g., low-acuity months), which could inflate AUROC and affect the validity of the hypothesis comparison itself. The scope limitation reduces the severity of the concern but does not fully eliminate it. The 6-month window may still not represent the full range of operational conditions, and if the test months are systematically different from training months in ways that favor the multimodal model, the comparison is biased. The rebuttal reduces the severity appropriately but leaves the residual concern that seasonal variation could affect the comparative result."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly identifies that the chronological split is explicitly designed to test generalization across temporal shifts and protocol changes. The finding describes a scenario (site-level practice changes) that the design intentionally evaluates. If the model fails to generalize to a site's new practices in the test period, that is a valid finding about the model's limitations \u2014 not a flaw in the experimental design. The design choice to use temporal splits precisely to detect such shifts is methodologically sound. The rebuttal directly addresses the failure mechanism by showing it is the intended evaluation target."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly notes that AUROC is appropriate for testing the hypothesis of improved discrimination (comparative discriminative ability), while secondary metrics (sensitivity at fixed specificity, calibration error) address operational costs. The finding is more about whether AUROC is the optimal deployment metric rather than whether it's appropriate for hypothesis testing. The design accounts for operational considerations through secondary metrics. The rebuttal directly addresses the concern by showing the design includes metrics for operational cost analysis."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly notes that suboptimal embeddings would create a conservative bias (bias against finding an effect), not a bias toward false positive results. This is a valid limitation that does not invalidate the methodology \u2014 it only means any observed gain would be a lower bound of the potential gain with domain-optimized embeddings. The rebuttal is sound and directly addresses the concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F4, F5, and F6 as they were accepted by the critic. For F1, the critic argues that 'disposition speculation' is a shortcut that differs from 'clinical intuition.' Since the methodology does not contain a specific text-filtering control to remove such phrases, and the critic's point about shortcuts is mechanistically correct, I am switching to DEFER. I will define a qualitative audit and a feature-importance analysis to determine if the model relies on these shortcuts. For F3, the critic's concern about seasonal bias affecting the comparative result (not just deployment) is valid. I am switching to DEFER to include a distribution analysis of the test set relative to the training set.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly identifies that explicit disposition language ('may require admission') creates a shortcut that differs from general clinical intuition. While this information is available at check-in, its presence may inflate the multimodal model's performance via a non-clinical shortcut. To settle this: (1) We will perform a qualitative audit of 100 notes to quantify the prevalence of disposition-speculation language. (2) We will use SHAP or Integrated Gradients on the multimodal model to identify if tokens related to 'admission' or 'disposition' are the primary drivers of high-risk predictions. (3) If these tokens dominate, the critique is validated, and the 'multimodal gain' is partially a result of shortcut learning. (4) The primary conclusion (multimodal > baseline) remains valid because the baseline model has zero access to this signal; however, the magnitude of the gain would be re-interpreted as 'nurse's predictive intent' rather than 'clinical text features.'",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly includes note length as a feature in both models (Section 7), ensuring the baseline model captures the 'verbosity = acuity' signal. The secondary analysis on minimal-text subsets further isolates semantic value from documentation volume.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The critic's point that a 6-month window could be systematically biased (favoring one model over another) is a valid empirical concern. To settle this: (1) We will compare the distribution of admission rates and ESI acuity levels in the test set (months 31-36) against the training set (months 1-24). (2) If distributions are similar, the design is vindicated. (3) If the test set is significantly lower-acuity, the AUROC may be inflated. (4) The primary conclusion (comparative lift) survives because seasonal shifts in patient acuity typically affect the predictive difficulty for both models similarly, preserving the relative delta between structured and multimodal approaches.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The chronological split is the intended mechanism to evaluate the model's robustness to the exact temporal and protocol shifts described by the critic.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "AUROC is the correct metric for testing discriminative hypothesis; operational costs are addressed via the secondary metrics (calibration and sensitivity) specified in Section 6.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Suboptimal embeddings create a conservative bias, meaning any observed improvement is a lower bound of the potential gain, which does not invalidate the experiment.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While most findings were resolved, F1 (target leakage via disposition language) and F3 (seasonal bias) remain genuinely ambiguous and require the specified empirical tests (SHAP analysis and distribution audits) to settle the magnitude of the effect."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Triage notes written at initial assessment (check-in) do not contain information that would reveal the eventual disposition decision.",
+        "failure_mechanism": "Even though notes are timestamped at check-in, triage nurses often document their clinical suspicion in the note. Phrases like 'patient appears unwell,' 'may require admission,' or 'discussed with senior clinician re: admission' directly encode disposition intent. The pre-trained embedding model will capture this language, creating a shortcut where the model learns to predict admission from the nurse's suspicion rather than from clinically meaningful text features. This is a subtle form of target leakage through narrative language.",
+        "evidence_test": "Perform a qualitative audit of a random sample of triage notes (n=100) to identify explicit disposition language. Additionally, train a simple classifier on note embeddings to predict admission, then manually inspect which tokens/embeddings have highest weight. If the model relies on suspicion language rather than clinical findings, this would be evident.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Note length is an independent predictor of admission risk that does not confound the multimodal model's text content advantage.",
+        "failure_mechanism": "Sicker patients receive longer triage notes because nurses spend more time assessing them, document more findings, and may add more detail. Note length therefore correlates with acuity (the strongest predictor) and admission. By including note length as a feature in both models, the experiment attempts to control for this, but the multimodal model can still leverage the correlation between note length and acuity that is already captured in the structured data. The incremental value of text embeddings may be partially mediated by this shared signal.",
+        "evidence_test": "Run the secondary analysis mentioned (standardized/minimal-text subsets) and examine whether the multimodal advantage persists. If performance drops substantially when controlling for note length, the text advantage is not independent of documentation behavior.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 6-month test set (months 31-36) provides sufficient sample size and temporal coverage to characterize model performance for deployment.",
+        "failure_mechanism": " ED patient volumes and acuity distributions vary seasonally (flu season, holidays). A 6-month window captures at most one full seasonal cycle and may not represent the full range of operational conditions. If months 31-36 happen to be low-acuity months, the AUROC could be inflated relative to annual average performance.",
+        "evidence_test": "Analyze admission rate and volume trends across all 36 months. Report performance stratified by month in the test set. If performance varies substantially across test months, the single AUROC point estimate is not robust.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratification by hospital site within temporal splits controls for site-specific admission thresholds and documentation practices.",
+        "failure_mechanism": "Site stratification ensures proportional representation, but if a hospital changes its triage protocols or admission criteria during the 36-month period (e.g., implements a new observation unit, changes ESI scoring guidelines), the temporal shift within that site is not controlled. The model trained on months 1-24 may not generalize to that site's practices in months 31-36.",
+        "evidence_test": "Examine site-level admission rates over time. If any site shows a significant trend (e.g., admission rate shifts by >5 percentage points between early and late periods), report performance separately by time period to detect generalization failure.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUROC is the appropriate primary metric for this deployment scenario.",
+        "failure_mechanism": "AUROC measures discrimination across all thresholds but does not account for the operational cost of false positives vs. false negatives. In ED triage, the cost of admitting a patient who didn't need it (false positive) differs from the cost of missing an admission (false negative). AUROC weights all thresholds equally, which may not reflect the actual deployment decision curve.",
+        "evidence_test": "Report decision curve analysis or net benefit at clinically relevant threshold(s) (e.g., the threshold corresponding to a 20% admission probability). If the decision curve shows harm relative to treat-all or treat-none strategies within the model's operating range, AUROC alone is misleading.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Frozen pre-trained embeddings (BioBERT/ClinicalBERT) capture clinically relevant language without domain shift issues.",
+        "failure_mechanism": "These models are trained on general biomedical text (pubmed, clinical notes from different settings). ED triage notes have distinct language patterns (abbreviations, urgency-focused phrasing). The embeddings may not optimally represent the relevant semantic space, though this would bias against finding an effect (conservative), not toward one.",
+        "evidence_test": "This is not a flaw requiring correction, but a limitation worth noting. The experiment is still valid if the multimodal model outperforms baseline even with suboptimal embeddings.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "Two FATAL flaws identified: (1) triage notes may contain implicit disposition language that creates target leakage through embeddings, and (2) note length confounds the text advantage. Additionally, MATERIAL concerns around test set temporal coverage and site-level practice drift. The core comparison design is sound, but these issues could substantially inflate the multimodal model's apparent advantage.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F4, F5, and F6 as they were accepted by the critic. For F1, the critic argues that 'disposition speculation' is a shortcut that differs from 'clinical intuition.' Since the methodology does not contain a specific text-filtering control to remove such phrases, and the critic's point about shortcuts is mechanistically correct, I am switching to DEFER. I will define a qualitative audit and a feature-importance analysis to determine if the model relies on these shortcuts. For F3, the critic's concern about seasonal bias affecting the comparative result (not just deployment) is valid. I am switching to DEFER to include a distribution analysis of the test set relative to the training set.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The critic correctly identifies that explicit disposition language ('may require admission') creates a shortcut that differs from general clinical intuition. While this information is available at check-in, its presence may inflate the multimodal model's performance via a non-clinical shortcut. To settle this: (1) We will perform a qualitative audit of 100 notes to quantify the prevalence of disposition-speculation language. (2) We will use SHAP or Integrated Gradients on the multimodal model to identify if tokens related to 'admission' or 'disposition' are the primary drivers of high-risk predictions. (3) If these tokens dominate, the critique is validated, and the 'multimodal gain' is partially a result of shortcut learning. (4) The primary conclusion (multimodal > baseline) remains valid because the baseline model has zero access to this signal; however, the magnitude of the gain would be re-interpreted as 'nurse's predictive intent' rather than 'clinical text features.'",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The design explicitly includes note length as a feature in both models (Section 7), ensuring the baseline model captures the 'verbosity = acuity' signal. The secondary analysis on minimal-text subsets further isolates semantic value from documentation volume.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The critic's point that a 6-month window could be systematically biased (favoring one model over another) is a valid empirical concern. To settle this: (1) We will compare the distribution of admission rates and ESI acuity levels in the test set (months 31-36) against the training set (months 1-24). (2) If distributions are similar, the design is vindicated. (3) If the test set is significantly lower-acuity, the AUROC may be inflated. (4) The primary conclusion (comparative lift) survives because seasonal shifts in patient acuity typically affect the predictive difficulty for both models similarly, preserving the relative delta between structured and multimodal approaches.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The chronological split is the intended mechanism to evaluate the model's robustness to the exact temporal and protocol shifts described by the critic.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "AUROC is the correct metric for testing discriminative hypothesis; operational costs are addressed via the secondary metrics (calibration and sensitivity) specified in Section 6.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Suboptimal embeddings create a conservative bias, meaning any observed improvement is a lower bound of the potential gain, which does not invalidate the experiment.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "While most findings were resolved, F1 (target leakage via disposition language) and F3 (seasonal bias) remain genuinely ambiguous and require the specified empirical tests (SHAP analysis and distribution audits) to settle the magnitude of the effect."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

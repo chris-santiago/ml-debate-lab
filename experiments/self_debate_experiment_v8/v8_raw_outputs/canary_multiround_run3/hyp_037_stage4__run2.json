@@ -1,0 +1,234 @@
+{
+  "case_id": "hyp_037_stage4",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Preprocessing artifacts (standardization, vocabularies, and co-occurrence statistics for embeddings) are established from the full modeling corpus before training to ensure a consistent feature space.",
+        "failure_mechanism": "This is a classic case of target/distribution leakage. By calculating co-occurrence statistics and standardization parameters using the 'full modeling corpus' (which includes the validation and test sets), the training set is implicitly informed by the distribution and relationships present in the future (test) data. In a production environment, the model cannot know the co-occurrence statistics of transactions that haven't happened yet. This inflates performance by reducing the impact of distribution shift between the training and test windows.",
+        "evidence_test": "Re-run the experiment where all preprocessing parameters (mean, std, and co-occurrence matrices) are calculated strictly using the Training set (months 1-12) and then applied to the validation and test sets. A significant drop in test performance would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model (Logistic Regression) serves as a stable reference point to measure the added value of transaction-sequence information.",
+        "failure_mechanism": "The experiment compares a highly optimized non-linear model (XGBoost/LightGBM with hyperparameter tuning) against a deliberately under-optimized linear model (Logistic Regression with fixed regularization). Any observed improvement may be attributed to the model's ability to capture non-linear interactions between the *baseline* features themselves, rather than the added value of the *proposed* sequence features. The 'added value' of the sequence embeddings is confounded by the 'added value' of the GBDT architecture.",
+        "evidence_test": "Introduce a second baseline: a GBDT model trained only on the baseline features, tuned using the same validation process as the proposed model. If the proposed model still outperforms this GBDT baseline, the claim about sequence embeddings is supported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The proposed features (raw transaction sequences) provide predictive signal beyond aggregated RFM summaries.",
+        "failure_mechanism": "The PoC describes representing sequences as 'daily summaries (e.g., one embedding per day) or aggregated appropriately'. If the 'aggregation' involves simple counts or sums of embeddings per day, the model may simply be recovering the same RFM (Recency, Frequency, Monetary) signals already present in the baseline, just at a different granularity. Without a specific constraint or analysis, the model might just be 're-learning' the baseline features through a more complex representation.",
+        "evidence_test": "Perform a feature importance analysis (e.g., SHAP) or a permutation importance test. If the GBDT relies heavily on the sequence features but those features are highly correlated with the RFM baseline features, the 'sequence' hypothesis is not uniquely validated.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC contains a fatal signal leakage flaw by using the full corpus for preprocessing and a fatal baseline flaw by comparing a tuned GBDT to an untuned Logistic Regression, making it impossible to isolate the effect of the sequence embeddings.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding in sequence, referencing the methodology design intent and controls.\n\n**F1 (Severity 9 - FATAL):** The critic claims that establishing preprocessing artifacts (including co-occurrence statistics for embeddings) from the full modeling corpus constitutes target/distribution leakage. This is a serious claim that requires careful examination of the methodology's temporal controls. The methodology explicitly states: \"preprocessing artifacts that define the feature space itself (standardization parameters, categorical vocabularies, and merchant-category co-occurrence statistics used for embedding initialization) are established once from the full modeling corpus before training and then frozen.\" The key question is whether this violates the temporal split principle. I need to examine what \"full modeling corpus\" means in context. The methodology defines three non-overlapping windows (training: months 1-12, validation: 13-15, test: 16-18). If \"full modeling corpus\" refers to the entire 18-month dataset, then yes, this would leak future test information into feature construction. However, I must check if there's an alternative interpretation consistent with sound design. The methodology emphasizes preventing temporal leakage through chronological splits and states features are observed during a 90-day window with labels 30 days after. A careful reading suggests the design intent is to avoid leakage of label information, but the critic is pointing out a different type of leakage: feature space definition leakage. This is a genuine concern unless the methodology explicitly restricts the corpus to training data only. I need to scan for any design control that addresses this. The methodology doesn't have a section explicitly stating that preprocessing uses only training data. Therefore, this appears to be a valid FATAL finding unless I can find implicit justification in the design rationale.\n\n**F2 (Severity 7 - FATAL):** The critic claims the comparison is confounded because the proposed model (GBDT with sequence features) is compared against an under-optimized linear baseline, so any improvement could be due to the GBDT architecture rather than the sequence features. The methodology states: \"The baseline is kept intentionally simple, using a fixed regularization setting selected a priori rather than a full hyperparameter sweep, so it serves as a stable linear reference point for the added value of transaction-sequence information.\" The critic's proposed test is to add a GBDT baseline with only baseline features. This is a standard ablation test. The question is whether the current design adequately isolates the effect of sequence features. The methodology acknowledges concentrating optimization effort on the proposed model because \"the hypothesis concerns whether richer sequence structure adds predictive signal beyond standard RFM-style summaries.\" However, the critic correctly identifies that without controlling for model architecture, we cannot attribute gains to features versus architecture. This is a material concern that affects the primary claim. I need to check if the design rationale addresses this through scope limitation or other controls. The methodology doesn't explicitly state that architecture effects are controlled for or that the comparison is intentionally confounded to test a different hypothesis. Therefore, this appears to be a valid MATERIAL finding (though perhaps not FATAL).\n\n**F3 (Severity 5 - MATERIAL):** The critic claims that the proposed sequence features might simply recover the same RFM signals already in baseline features, so the hypothesis isn't uniquely validated. The methodology states the proposed features include \"raw transaction sequences over the past 90 days, encoded as merchant-category embeddings\" and that sequences are represented as \"daily summaries (e.g., one embedding per day) or aggregated appropriately.\" The critic suggests feature importance analysis to check correlation. This is a valid concern about whether the model is learning truly sequential patterns versus aggregated counts. However, the methodology's hypothesis is specifically about \"transaction sequence embeddings\" providing signal beyond \"aggregated spend and RFM features.\" The critic's concern is essentially that the implementation might not actually test sequences but rather re-encode aggregates. This is an implementation verification question rather than a design flaw per se. The design as stated intends to test sequences; whether the implementation achieves this is an empirical question. The methodology doesn't include explicit controls to ensure the sequence representation captures temporal patterns beyond aggregates. This is a valid concern but likely at the MATERIAL level, not FATAL.\n\nNow I'll consider each finding in light of potential rebuttals, looking for design controls I might have missed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies a fatal leakage flaw. The methodology states preprocessing artifacts (including co-occurrence statistics for embeddings) are 'established once from the full modeling corpus before training.' Given the defined temporal splits (training: months 1-12, validation: 13-15, test: 16-18), 'full modeling corpus' necessarily includes validation and test data. This leaks future distribution information into feature construction, violating the temporal ordering principle. No design control in the methodology explicitly restricts preprocessing to training data only, and the described approach would indeed allow the model to implicitly learn about future transaction patterns through the embedding initialization. This would inflate test performance and invalidate the comparison."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies a confounding factor: the comparison between a tuned GBDT (with sequence features) and a fixed-parameter logistic regression (without sequence features) cannot isolate the effect of sequence features versus model architecture. The methodology explicitly states the baseline is 'kept intentionally simple' and optimization effort is concentrated on the proposed model, but this design choice confounds architecture effects with feature effects. While the hypothesis concerns 'whether richer sequence structure adds predictive signal,' the current comparison cannot answer this because any improvement could be due to the GBDT's ability to capture non-linear interactions among baseline features. No design control (e.g., architecture ablation) addresses this concern."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic raises a valid concern about whether sequence embeddings capture truly sequential patterns versus re-encoding aggregated RFM signals. This is an empirical question that requires feature analysis to settle. 1) The settling experiment is feature importance analysis (SHAP/permutation) to examine correlation between sequence features and baseline RFM features. 2) A result showing sequence features have low correlation with baseline features and unique predictive power would vindicate the design. 3) A result showing high correlation and redundancy would validate the critique, indicating the model is not learning sequential patterns beyond aggregates. 4) The primary conclusion could remain valid if sequence features show unique predictive power even if partially correlated with baseline features, but if they are perfectly redundant, the hypothesis would be unsupported. This requires empirical testing."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL findings (F1 and F2) were conceded with adjusted severities of 9 and 7 respectively, both above the threshold of 3. F1 reveals target leakage in preprocessing, and F2 reveals a confounded comparison that prevents isolating the effect of sequence features. These material flaws invalidate the experimental design's ability to test the hypothesis."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "The defender fully conceded the finding, acknowledging that using the 'full modeling corpus' for preprocessing violates temporal ordering and introduces distribution leakage."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 7,
+        "reasoning": "The defender fully conceded the finding, admitting that the lack of a GBDT baseline trained only on baseline features confounds the effect of the model architecture with the effect of the sequence features."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender deferred the finding, acknowledging it as an empirical question and agreeing that feature importance analysis (SHAP/permutation) is the correct method to determine if the sequence features are merely redundant RFM signals."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic accepted all three of my R1 rebuttals. For F1 and F2, I conceded, as the design contains fatal flaws with no mitigating controls. For F3, I deferred, as the design has a partial answer (the model can learn non-linear interactions from sequences) but the concern about redundancy is genuine and requires empirical testing. Since the critic accepted these positions, my final rebuttals remain unchanged.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies a fatal leakage flaw. The methodology states preprocessing artifacts (including co-occurrence statistics for embeddings) are 'established once from the full modeling corpus before training.' Given the defined temporal splits (training: months 1-12, validation: 13-15, test: 16-18), 'full modeling corpus' necessarily includes validation and test data. This leaks future distribution information into feature construction, violating the temporal ordering principle. No design control in the methodology explicitly restricts preprocessing to training data only, and the described approach would indeed allow the model to implicitly learn about future transaction patterns through the embedding initialization. This would inflate test performance and invalidate the comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies a confounding factor: the comparison between a tuned GBDT (with sequence features) and a fixed-parameter logistic regression (without sequence features) cannot isolate the effect of sequence features versus model architecture. The methodology explicitly states the baseline is 'kept intentionally simple' and optimization effort is concentrated on the proposed model, but this design choice confounds architecture effects with feature effects. While the hypothesis concerns 'whether richer sequence structure adds predictive signal,' the current comparison cannot answer this because any improvement could be due to the GBDT's ability to capture non-linear interactions among baseline features. No design control (e.g., architecture ablation) addresses this concern.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic raises a valid concern about whether sequence embeddings capture truly sequential patterns versus re-encoding aggregated RFM signals. This is an empirical question that requires feature analysis to settle. 1) The settling experiment is feature importance analysis (SHAP/permutation) to examine correlation between sequence features and baseline RFM features. 2) A result showing sequence features have low correlation with baseline features and unique predictive power would vindicate the design. 3) A result showing high correlation and redundancy would validate the critique, indicating the model is not learning sequential patterns beyond aggregates. 4) The primary conclusion could remain valid if sequence features show unique predictive power even if partially correlated with baseline features, but if they are perfectly redundant, the hypothesis would be unsupported. This requires empirical testing.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL findings (F1, F2) were conceded and remain at high severity (9 and 7), invalidating the experiment's primary conclusion. F3 was deferred, but the conceded fatal flaws are sufficient for the critique to win."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Preprocessing artifacts (standardization, vocabularies, and co-occurrence statistics for embeddings) are established from the full modeling corpus before training to ensure a consistent feature space.",
+        "failure_mechanism": "This is a classic case of target/distribution leakage. By calculating co-occurrence statistics and standardization parameters using the 'full modeling corpus' (which includes the validation and test sets), the training set is implicitly informed by the distribution and relationships present in the future (test) data. In a production environment, the model cannot know the co-occurrence statistics of transactions that haven't happened yet. This inflates performance by reducing the impact of distribution shift between the training and test windows.",
+        "evidence_test": "Re-run the experiment where all preprocessing parameters (mean, std, and co-occurrence matrices) are calculated strictly using the Training set (months 1-12) and then applied to the validation and test sets. A significant drop in test performance would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model (Logistic Regression) serves as a stable reference point to measure the added value of transaction-sequence information.",
+        "failure_mechanism": "The experiment compares a highly optimized non-linear model (XGBoost/LightGBM with hyperparameter tuning) against a deliberately under-optimized linear model (Logistic Regression with fixed regularization). Any observed improvement may be attributed to the model's ability to capture non-linear interactions between the *baseline* features themselves, rather than the added value of the *proposed* sequence features. The 'added value' of the sequence embeddings is confounded by the 'added value' of the GBDT architecture.",
+        "evidence_test": "Introduce a second baseline: a GBDT model trained only on the baseline features, tuned using the same validation process as the proposed model. If the proposed model still outperforms this GBDT baseline, the claim about sequence embeddings is supported.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The proposed features (raw transaction sequences) provide predictive signal beyond aggregated RFM summaries.",
+        "failure_mechanism": "The PoC describes representing sequences as 'daily summaries (e.g., one embedding per day) or aggregated appropriately'. If the 'aggregation' involves simple counts or sums of embeddings per day, the model may simply be recovering the same RFM (Recency, Frequency, Monetary) signals already present in the baseline, just at a different granularity. Without a specific constraint or analysis, the model might just be 're-learning' the baseline features through a more complex representation.",
+        "evidence_test": "Perform a feature importance analysis (e.g., SHAP) or a permutation importance test. If the GBDT relies heavily on the sequence features but those features are highly correlated with the RFM baseline features, the 'sequence' hypothesis is not uniquely validated.",
+        "flaw_category": "eval_inflation"
+      }
+    ],
+    "summary": "The PoC contains a fatal signal leakage flaw by using the full corpus for preprocessing and a fatal baseline flaw by comparing a tuned GBDT to an untuned Logistic Regression, making it impossible to isolate the effect of the sequence embeddings.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic accepted all three of my R1 rebuttals. For F1 and F2, I conceded, as the design contains fatal flaws with no mitigating controls. For F3, I deferred, as the design has a partial answer (the model can learn non-linear interactions from sequences) but the concern about redundancy is genuine and requires empirical testing. Since the critic accepted these positions, my final rebuttals remain unchanged.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies a fatal leakage flaw. The methodology states preprocessing artifacts (including co-occurrence statistics for embeddings) are 'established once from the full modeling corpus before training.' Given the defined temporal splits (training: months 1-12, validation: 13-15, test: 16-18), 'full modeling corpus' necessarily includes validation and test data. This leaks future distribution information into feature construction, violating the temporal ordering principle. No design control in the methodology explicitly restricts preprocessing to training data only, and the described approach would indeed allow the model to implicitly learn about future transaction patterns through the embedding initialization. This would inflate test performance and invalidate the comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic correctly identifies a confounding factor: the comparison between a tuned GBDT (with sequence features) and a fixed-parameter logistic regression (without sequence features) cannot isolate the effect of sequence features versus model architecture. The methodology explicitly states the baseline is 'kept intentionally simple' and optimization effort is concentrated on the proposed model, but this design choice confounds architecture effects with feature effects. While the hypothesis concerns 'whether richer sequence structure adds predictive signal,' the current comparison cannot answer this because any improvement could be due to the GBDT's ability to capture non-linear interactions among baseline features. No design control (e.g., architecture ablation) addresses this concern.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic raises a valid concern about whether sequence embeddings capture truly sequential patterns versus re-encoding aggregated RFM signals. This is an empirical question that requires feature analysis to settle. 1) The settling experiment is feature importance analysis (SHAP/permutation) to examine correlation between sequence features and baseline RFM features. 2) A result showing sequence features have low correlation with baseline features and unique predictive power would vindicate the design. 3) A result showing high correlation and redundancy would validate the critique, indicating the model is not learning sequential patterns beyond aggregates. 4) The primary conclusion could remain valid if sequence features show unique predictive power even if partially correlated with baseline features, but if they are perfectly redundant, the hypothesis would be unsupported. This requires empirical testing.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL findings (F1, F2) were conceded and remain at high severity (9 and 7), invalidating the experiment's primary conclusion. F3 was deferred, but the conceded fatal flaws are sufficient for the critique to win."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=7 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

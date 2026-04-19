@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_hyp_140_0",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split at the alert level prevents leakage of future information.",
+        "failure_mechanism": "In cybersecurity, a single 'incident' often generates a burst of multiple alerts over several days. If an incident spans the temporal boundary (e.g., starts in month 12 and continues into month 13), the model may see 'future' alerts from the same incident in the training set while predicting 'past' alerts from that same incident in the validation/test set. Because alerts within one incident are highly correlated (same attacker, same C2, same compromised host), the model can 'cheat' by recognizing the incident signature rather than predicting the triage outcome, leading to inflated performance metrics.",
+        "evidence_test": "Perform a 'Group-based Temporal Split'. Identify all alerts belonging to the same incident ID or sharing the same compromised entity within a 14-day window. Ensure that all alerts associated with a single incident are assigned to the same split. If PR-AUC drops significantly compared to the alert-level split, leakage was occurring.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Labels derived from analyst disposition decisions recorded within 7 days serve as ground truth.",
+        "failure_mechanism": "This introduces a 'label delay' bias. By excluding alerts without a disposition after 7 days, the PoC implicitly removes the hardest cases\u2014complex intrusions that take weeks to investigate\u2014and keeps the easiest cases (obvious benigns or obvious malware). This creates a dataset that does not represent the actual distribution of alerts the model will face in production, where the most critical 'true positives' are often the ones that take the longest to confirm.",
+        "evidence_test": "Compare the distribution of alert types and severities between the 'excluded' set (no label after 7 days) and the 'included' set. If the excluded set has a higher proportion of high-severity alerts or specific complex alert types, the dataset is biased toward 'easy' cases.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GNN's advantage comes from exploiting relational structure in entity interactions.",
+        "failure_mechanism": "The GNN uses a 30-day lookback window to build a graph. However, the tabular baseline uses 'unique entities (users, hosts, domains)' as features. If the GNN is simply counting the number of unique neighbors or the degree of the alert node, it is performing a form of aggregation that the tabular baseline already does. Without a baseline that uses a non-temporal graph (static GNN) or a baseline that explicitly uses 'entity degree' as a tabular feature, the PoC cannot distinguish between 'relational structure' (topology) and 'entity popularity' (degree).",
+        "evidence_test": "Add a tabular feature to the XGBoost baseline that explicitly calculates the degree (number of connections) of the primary entity in the 30-day window. If the performance gap between the GNN and XGBoost closes, the GNN was merely acting as a degree-counter.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The model is retrained on training + validation data (months 1\u201315) to maximize use of available data.",
+        "failure_mechanism": "The PoC selects hyperparameters on the validation set and then retrains on the combined set. However, it does not specify if the hyperparameters are re-tuned or if the training duration (epochs) is adjusted. Because the data distribution in SOCs shifts rapidly (new threats, new software), the optimal hyperparameters for months 1\u201312 may not be optimal for the combined 1\u201315 set, potentially leading to a sub-optimal final model.",
+        "evidence_test": "Compare the test performance of the model trained only on months 1\u201312 (using validation for early stopping) vs. the model retrained on 1\u201315. If the 1\u201315 model performs worse, the distribution shift is too aggressive for simple retraining.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC has a critical flaw regarding temporal leakage (alert-level vs. incident-level splitting) and a significant selection bias in the labeling process that likely excludes the most complex and important security incidents.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding in sequence, considering the design intent and methodology controls.\n\n**F1 (Incident-level leakage):** The critic correctly identifies that cybersecurity incidents can span multiple alerts over time. However, the methodology explicitly states the split is at the alert level with a temporal boundary to prevent leakage of future information. The design intent is to simulate real-time scoring: when an alert arrives, the model must predict its disposition using only prior history. The critic's proposed 'Group-based Temporal Split' would require incident grouping information that may not be available at alert time in production. The methodology's temporal split is operationally realistic for a triage system that scores alerts as they arrive. The concern about correlated alerts within incidents is valid, but this is a feature of the real-world problem, not a methodological flaw. The model learning 'incident signatures' from early alerts to predict later ones is exactly what we want it to do - recognize patterns of malicious activity. The validation/test performance would reflect this capability, not artificial inflation.\n\n**F2 (Label delay bias):** The critic raises a valid concern about excluding alerts without disposition after 7 days potentially removing complex cases. However, the methodology explicitly addresses this in Section 7: 'Label noise and analyst drift: Stratified post-hoc analysis on test subsets (by month, incident type, or analyst) checks whether performance is stable over time.' This control would surface if performance degrades on certain alert types. Additionally, the 7-day window is operationally justified - SOCs must triage alerts promptly, and alerts without disposition after 7 days often represent abandoned investigations or low-priority items. The methodology acknowledges this as a simplification but includes validation checks.\n\n**F3 (GNN vs degree counting):** The critic questions whether the GNN's advantage comes from relational structure versus simple entity degree counting. The methodology already addresses this in Section 4: 'a secondary baseline\u2014a Transformer or LSTM that encodes event sequences chronologically\u2014is trained to control for the possibility that the tGNN's advantage comes from temporal modeling rather than graph structure.' While not identical to the critic's suggested 'entity degree' feature, the sequence model baseline captures temporal patterns without graph structure. The tabular baseline already includes 'unique entities' features which capture some degree information. The critic's concern is partially valid but the methodology has controls to distinguish temporal from structural advantages.\n\n**F4 (Retraining on combined data):** The critic notes that retraining on training+validation data without hyperparameter retuning could be suboptimal due to distribution shift. This is a minor concern because: (1) The methodology states hyperparameters are tuned on validation set, then the model is retrained on combined data - this is standard practice to maximize data usage; (2) Distribution shift is acknowledged in Section 7 and addressed through stratified analysis; (3) The temporal split already accounts for distribution shift by evaluating on future data; (4) Any suboptimality would affect both GNN and baselines equally, preserving the comparative conclusion.\n\nOverall, the methodology has explicit controls for the main concerns raised. F1 and F2 are addressed by design choices justified for the operational context. F3 is partially addressed by existing baselines. F4 is a minor implementation detail.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The alert-level temporal split is a deliberate design choice that matches production deployment: alerts are scored as they arrive, using only prior history. Learning to recognize 'incident signatures' from early alerts is the intended capability, not leakage. The methodology explicitly states in Section 2: 'This reflects deployment: in production, the model scores alerts as they arrive and must predict their disposition using only prior history.' Incident grouping information is often unavailable at alert time in real SOC operations."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "The 7-day labeling window is operationally realistic for SOC triage. The methodology explicitly addresses label quality concerns in Section 7: 'Label noise and analyst drift: Stratified post-hoc analysis on test subsets (by month, incident type, or analyst) checks whether performance is stable over time.' This control would surface if performance degrades on complex cases. The exclusion of unresolved alerts after 7 days reflects real-world SOC workflows where alerts without timely disposition are typically low-priority."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The methodology already includes controls to distinguish temporal from structural advantages. Section 4 states: 'a secondary baseline\u2014a Transformer or LSTM that encodes event sequences chronologically\u2014is trained to control for the possibility that the tGNN's advantage comes from temporal modeling rather than graph structure.' While not identical to the critic's suggested degree feature, this baseline isolates temporal patterns. The tabular baseline's 'unique entities' features already capture entity popularity aspects."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Retraining on combined data after validation-based hyperparameter selection is standard practice to maximize data usage. Any suboptimality from distribution shift would affect both GNN and baselines equally, preserving the comparative conclusion. The temporal evaluation already accounts for distribution shift by testing on future data. This is a minor implementation detail that doesn't affect the validity of the hypothesis test."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been rebutted with adjusted severities \u2264 3. The methodology's explicit design controls address the main concerns, and the remaining issues are either deliberate operational choices or minor implementation details that don't affect the hypothesis test validity."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender fundamentally misunderstands the nature of the leakage. The concern is not about whether the model *should* recognize incident signatures, but that it can 'cheat' by seeing the outcome of a future alert from the same incident during training to predict a past alert from that same incident in the test set. If Alert A (Month 12, Train) and Alert B (Month 13, Test) are part of the same incident, the model has seen the 'ground truth' for that specific attacker/host/C2 combination in the training set. This is not 'learning a signature'\u2014it is data leakage. The rebuttal's claim that this 'matches production' is incorrect because in production, the model cannot see the labels of future alerts to predict current ones."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender argues that unresolved alerts are typically low-priority, but this is an assumption that contradicts the failure mechanism: that the *most critical* (complex) intrusions are the ones that take the longest to resolve. The cited post-hoc analysis (Section 7) checks for stability over time, but it does not address the *selection bias* created by removing the 'hard' cases from the dataset entirely. However, since the defender acknowledges the operational reality of the 7-day window, the severity is slightly reduced, but the bias remains unresolved."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal is generic and fails to address the specific mechanism. The critic's point is that a GNN can act as a 'degree counter' (counting neighbors), which is a tabular aggregation. The defender points to a Transformer/LSTM baseline, which controls for *temporal sequences*, not *graph topology vs. node degree*. A sequence model does not simulate the 'degree counting' behavior of a GNN. The tabular baseline's 'unique entities' feature is a global count, not the local node degree within the specific 30-day graph. The failure mechanism remains: we cannot tell if the GNN is using the graph's structure or just the number of connections."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender is correct that this is a standard ML practice and that any resulting sub-optimality would likely affect all models (GNN and baselines) similarly, thus not biasing the comparative result of the hypothesis test."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am contesting the challenges for F1 and F3, as the critic mischaracterizes the design's intent and controls. For F1, the alert-level split is the correct simulation of production; the critic's proposed 'incident-level' split is a different, more stringent test not required for the stated hypothesis. For F3, the design includes a Transformer/LSTM baseline to isolate temporal modeling, and the critic's proposed 'degree' feature is a specific, narrow aggregation that the GNN's architecture is designed to surpass; the hypothesis is about relational structure, not just degree counting. I am conceding F2 as a PARTIAL challenge, as the critic correctly identifies a selection bias that the design's post-hoc analysis does not fully address, warranting a severity reduction but not a concession of a fatal flaw. F4 was accepted and remains immaterial.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's challenge incorrectly reframes the intended capability as leakage. The methodology's core hypothesis tests whether a tGNN can improve triage **at alert arrival time**. In production, when Alert B arrives in Month 13, the model has **not** seen its label, but it may have learned patterns from similar, earlier alerts (like Alert A in Month 12) that were part of analogous incidents. This is legitimate generalization, not cheating. The temporal split at the alert level is the standard, correct method to simulate this live deployment scenario. An 'incident-level' split tests a different, more restrictive hypothesis about forecasting entirely novel incident types, which is not the goal here. The design in Section 2 is explicit: 'This reflects deployment: in production, the model scores alerts as they arrive and must predict their disposition using only prior history.'",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "I concede the critic's point that a selection bias exists: complex, long-running investigations may be underrepresented. However, this does not constitute a fatal flaw invalidating the hypothesis test. The 7-day window is an operational constraint inherent to the real-world system being modeled. The bias affects the **absolute performance** estimates of all models (GNN and baselines) equally. The **comparative** conclusion about whether the tGNN outperforms tabular/sequence baselines remains valid, as all models are evaluated on the same biased dataset. The post-hoc analysis in Section 7 can still reveal if performance degrades on specific alert types that are present. The severity is reduced because the bias is acknowledged, but the core experimental comparison is preserved.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic's suggested 'degree counter' baseline is an overly narrow mechanistic test, not a required control for the stated hypothesis. The hypothesis is that the tGNN's **relational structure** provides an advantage. A GNN performing mere degree counting is a degenerate case of using structure; the architecture is capable of learning far more complex topological patterns (e.g., multi-hop paths, heterogeneous edge semantics). The provided Transformer/LSTM baseline already controls for whether the advantage comes from sophisticated **temporal** encoding of events versus this relational structure. If the tGNN beats both a tabular aggregator **and** a temporal sequence model, the most parsimonious explanation is the exploitation of relational information beyond simple counts. The design in Section 4 and Section 7 provides these necessary controls.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTED the R1 rebuttal. The practice of retraining on combined data after validation-based selection is standard and any suboptimality affects all models equally, preserving the comparative result. This is a minor implementation detail.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings (F1, F2, F3) have been rebutted to an adjusted severity of 3 or below. The core hypothesis test comparing tGNN to baselines under a realistic deployment simulation remains valid."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split at the alert level prevents leakage of future information.",
+        "failure_mechanism": "In cybersecurity, a single 'incident' often generates a burst of multiple alerts over several days. If an incident spans the temporal boundary (e.g., starts in month 12 and continues into month 13), the model may see 'future' alerts from the same incident in the training set while predicting 'past' alerts from that same incident in the validation/test set. Because alerts within one incident are highly correlated (same attacker, same C2, same compromised host), the model can 'cheat' by recognizing the incident signature rather than predicting the triage outcome, leading to inflated performance metrics.",
+        "evidence_test": "Perform a 'Group-based Temporal Split'. Identify all alerts belonging to the same incident ID or sharing the same compromised entity within a 14-day window. Ensure that all alerts associated with a single incident are assigned to the same split. If PR-AUC drops significantly compared to the alert-level split, leakage was occurring.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Labels derived from analyst disposition decisions recorded within 7 days serve as ground truth.",
+        "failure_mechanism": "This introduces a 'label delay' bias. By excluding alerts without a disposition after 7 days, the PoC implicitly removes the hardest cases\u2014complex intrusions that take weeks to investigate\u2014and keeps the easiest cases (obvious benigns or obvious malware). This creates a dataset that does not represent the actual distribution of alerts the model will face in production, where the most critical 'true positives' are often the ones that take the longest to confirm.",
+        "evidence_test": "Compare the distribution of alert types and severities between the 'excluded' set (no label after 7 days) and the 'included' set. If the excluded set has a higher proportion of high-severity alerts or specific complex alert types, the dataset is biased toward 'easy' cases.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GNN's advantage comes from exploiting relational structure in entity interactions.",
+        "failure_mechanism": "The GNN uses a 30-day lookback window to build a graph. However, the tabular baseline uses 'unique entities (users, hosts, domains)' as features. If the GNN is simply counting the number of unique neighbors or the degree of the alert node, it is performing a form of aggregation that the tabular baseline already does. Without a baseline that uses a non-temporal graph (static GNN) or a baseline that explicitly uses 'entity degree' as a tabular feature, the PoC cannot distinguish between 'relational structure' (topology) and 'entity popularity' (degree).",
+        "evidence_test": "Add a tabular feature to the XGBoost baseline that explicitly calculates the degree (number of connections) of the primary entity in the 30-day window. If the performance gap between the GNN and XGBoost closes, the GNN was merely acting as a degree-counter.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The model is retrained on training + validation data (months 1\u201315) to maximize use of available data.",
+        "failure_mechanism": "The PoC selects hyperparameters on the validation set and then retrains on the combined set. However, it does not specify if the hyperparameters are re-tuned or if the training duration (epochs) is adjusted. Because the data distribution in SOCs shifts rapidly (new threats, new software), the optimal hyperparameters for months 1\u201312 may not be optimal for the combined 1\u201315 set, potentially leading to a sub-optimal final model.",
+        "evidence_test": "Compare the test performance of the model trained only on months 1\u201312 (using validation for early stopping) vs. the model retrained on 1\u201315. If the 1\u201315 model performs worse, the distribution shift is too aggressive for simple retraining.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC has a critical flaw regarding temporal leakage (alert-level vs. incident-level splitting) and a significant selection bias in the labeling process that likely excludes the most complex and important security incidents.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am contesting the challenges for F1 and F3, as the critic mischaracterizes the design's intent and controls. For F1, the alert-level split is the correct simulation of production; the critic's proposed 'incident-level' split is a different, more stringent test not required for the stated hypothesis. For F3, the design includes a Transformer/LSTM baseline to isolate temporal modeling, and the critic's proposed 'degree' feature is a specific, narrow aggregation that the GNN's architecture is designed to surpass; the hypothesis is about relational structure, not just degree counting. I am conceding F2 as a PARTIAL challenge, as the critic correctly identifies a selection bias that the design's post-hoc analysis does not fully address, warranting a severity reduction but not a concession of a fatal flaw. F4 was accepted and remains immaterial.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's challenge incorrectly reframes the intended capability as leakage. The methodology's core hypothesis tests whether a tGNN can improve triage **at alert arrival time**. In production, when Alert B arrives in Month 13, the model has **not** seen its label, but it may have learned patterns from similar, earlier alerts (like Alert A in Month 12) that were part of analogous incidents. This is legitimate generalization, not cheating. The temporal split at the alert level is the standard, correct method to simulate this live deployment scenario. An 'incident-level' split tests a different, more restrictive hypothesis about forecasting entirely novel incident types, which is not the goal here. The design in Section 2 is explicit: 'This reflects deployment: in production, the model scores alerts as they arrive and must predict their disposition using only prior history.'",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "I concede the critic's point that a selection bias exists: complex, long-running investigations may be underrepresented. However, this does not constitute a fatal flaw invalidating the hypothesis test. The 7-day window is an operational constraint inherent to the real-world system being modeled. The bias affects the **absolute performance** estimates of all models (GNN and baselines) equally. The **comparative** conclusion about whether the tGNN outperforms tabular/sequence baselines remains valid, as all models are evaluated on the same biased dataset. The post-hoc analysis in Section 7 can still reveal if performance degrades on specific alert types that are present. The severity is reduced because the bias is acknowledged, but the core experimental comparison is preserved.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic's suggested 'degree counter' baseline is an overly narrow mechanistic test, not a required control for the stated hypothesis. The hypothesis is that the tGNN's **relational structure** provides an advantage. A GNN performing mere degree counting is a degenerate case of using structure; the architecture is capable of learning far more complex topological patterns (e.g., multi-hop paths, heterogeneous edge semantics). The provided Transformer/LSTM baseline already controls for whether the advantage comes from sophisticated **temporal** encoding of events versus this relational structure. If the tGNN beats both a tabular aggregator **and** a temporal sequence model, the most parsimonious explanation is the exploitation of relational information beyond simple counts. The design in Section 4 and Section 7 provides these necessary controls.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTED the R1 rebuttal. The practice of retraining on combined data after validation-based selection is standard and any suboptimality affects all models equally, preserving the comparative result. This is a minor implementation detail.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings (F1, F2, F3) have been rebutted to an adjusted severity of 3 or below. The core hypothesis test comparing tGNN to baselines under a realistic deployment simulation remains valid."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "defense_wins",
+    "case_rationale": "all points resolved to defense_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

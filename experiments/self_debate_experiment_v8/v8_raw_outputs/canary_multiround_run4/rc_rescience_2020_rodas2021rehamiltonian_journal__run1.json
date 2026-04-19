@@ -1,0 +1,411 @@
+{
+  "case_id": "rc_rescience_2020_rodas2021rehamiltonian_journal",
+  "stratum": "mixed",
+  "flaw_category": "uncertain_significance",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "nvidia/nemotron-3-super-120b-a12b",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The encoder produces a latent state that is suitable for representing the system in a form amenable to Hamiltonian dynamics.",
+        "failure_mechanism": "The variational objective (reconstruction + KL) does not guarantee that the learned latent coordinates obey symplectic structure or that the learned Hamiltonian function corresponds to the true energy of the system. The encoder may map images to a latent space that lacks the necessary geometric properties, causing the integrated dynamics to be physically meaningless even if reconstruction looks good.",
+        "evidence_test": "Verify symplectic properties of the latent flow (e.g., check that the Jacobian of the latent update preserves volume in phase space) or directly measure Hamiltonian conservation during rollouts. Additionally, compare latent-derived positions/velocities against ground truth coordinates (if available) to see whether the latent trajectory matches the true physical trajectory.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Training on synthetic image sequences of idealized physical systems suffices to learn dynamics that will generalize to real-world visual observations.",
+        "failure_mechanism": "The synthetic data are assumed to be noise-free, with perfect lighting, no occlusions, and simple backgrounds. Real images contain sensor noise, varying illumination, clutter, and possible occlusions, which can cause the encoder to learn spurious features or fail to extract the underlying state, leading to degraded dynamics prediction when deployed on real data.",
+        "evidence_test": "Evaluate the model on test sets where realistic perturbations are added (e.g., Gaussian noise, random background textures, varying illumination, or actual camera footage of the same systems). A significant drop in reconstruction or rollout accuracy would indicate the assumption fails.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Short-term reconstruction accuracy and rollout performance on the training distribution demonstrate that the model captures the true evolution of the system.",
+        "failure_mechanism": "Evaluation focuses on immediate frame reconstruction and short horizon predictions, which can be achieved by memorizing local appearance patterns without learning correct long-term dynamics. Over longer rollouts, errors may accumulate, energy may drift, or the generated trajectories may become physically implausible, yet these failure modes are not measured.",
+        "evidence_test": "Run long-horizon rollouts (e.g., 50-100 steps ahead) and measure trajectory error against ground truth, monitor Hamiltonian energy conservation, and assess whether the rollout stays bounded or diverges. Comparing short-term vs long-term performance reveals whether the model truly learned dynamics.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "HGN's ability to learn dynamics without strong domain-specific assumptions is superior to existing approaches.",
+        "failure_mechanism": "No baseline methods (e.g., ConvLSTM, VideoGAN, Neural ODE, or other physics-informed networks) are included for comparison. Without baselines, it is impossible to determine whether any observed performance is due to the Hamiltonian formulation or simply due to the model's capacity or training regimen.",
+        "evidence_test": "Implement and train representative baseline video prediction or dynamics learning models on the same datasets, then compare reconstruction, rollout accuracy, and energy conservation metrics. A lack of significant improvement over strong baselines would weaken the claim.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The learned Hamiltonian dynamics accurately describe the evolution of pendulum, spring, and n-body systems as presented in the image sequences.",
+        "failure_mechanism": "The hypothesis implicitly assumes all systems follow ideal Hamiltonian (conservative, time-reversible) dynamics. Realistic spring systems may exhibit damping, and multi-body systems can display chaotic or dissipative behavior not captured by a simple Hamiltonian. If the true dynamics contain non-Hamiltonian components, the model will systematically misrepresent them.",
+        "evidence_test": "Test on a variant of the spring system with added damping or on a dissipative version of the n-body problem (e.g., with friction). Measure whether reconstruction/rollout error increases relative to the conservative case, indicating the model's reliance on the Hamiltonian assumption.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The variational objective balances reconstruction and KL regularization to learn useful latent dynamics without posterior collapse.",
+        "failure_mechanism": "If the KL weight is too high or the decoder is overly expressive, the model may experience posterior collapse: the latent distribution matches the prior and ignores the image input, yet the decoder can still produce reasonable reconstructions by learning a static mean frame. In this case, the learned dynamics are driven by the prior alone and do not reflect the observed system, but evaluation metrics may still appear acceptable.",
+        "evidence_test": "Monitor the magnitude of the KL term during training, inspect latent variance across batches, and ablate the KL weight. Additionally, probe whether latent codes vary systematically with known system states (e.g., angle/angular velocity of pendulum). If latents are insensitive to input while reconstruction remains good, posterior collapse is occurring.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC makes several strong claims about learning Hamiltonian dynamics from images, but relies on unverified assumptions about the latent representation, uses idealized synthetic data without testing realism, evaluates primarily short-term performance, lacks comparative baselines, assumes all systems are Hamiltonian, and risks silent misconfiguration such as posterior collapse. Together, these issues weaken confidence in the method's ability to learn true physical dynamics from visual data.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "Analyzing each finding systematically:\n\n**F1 (FATAL, sev 8):** The critic claims the VAE doesn't guarantee symplectic structure, so the latent space may not support Hamiltonian dynamics. However, the methodology explicitly attempts to LEARN the Hamiltonian from data \u2014 it doesn't claim to guarantee symplectic structure a priori. The concern about whether learned dynamics are physically meaningful is exactly what the rollout evaluation tests empirically. This is a valid empirical question, not a methodology flaw. The scope tests whether the approach CAN learn Hamiltonian dynamics; the critic is asking about theoretical guarantees that were never claimed.\n\n**F2 (MATERIAL, sev 6):** The critic claims synthetic data won't generalize to real-world observations. However, the methodology explicitly states it uses \"synthetic image sequences of idealized physical systems.\" The claim about real-world generalization is not made \u2014 it's the critic imposing an additional requirement beyond the stated scope. Testing on synthetic data is a valid first step in the research program.\n\n**F3 (MATERIAL, sev 5):** The critic claims short-term evaluation doesn't demonstrate true dynamics learning because long-horizon errors could accumulate. The methodology mentions \"rollout prediction in both temporal directions,\" indicating some rollout evaluation exists. The critic raises a valid point about horizon length \u2014 if evaluation only measures short-term reconstruction, this would be incomplete. However, the existence of rollout evaluation partially addresses this concern.\n\n**F4 (MATERIAL, sev 4):** The critic claims no baselines are included to demonstrate superiority. However, the methodology's stated claims are about CAPABILITY (\"the approach can reconstruct trajectories,\" \"can learn dynamics\"), not superiority. The critic's framing of \"superior to existing approaches\" is not supported by the stated methodology goals. Without baselines, we can't compare performance, but the core hypothesis (whether the approach works at all) can still be tested.\n\n**F5 (MATERIAL, sev 4):** The critic claims the methodology assumes ideal Hamiltonian dynamics and won't handle damping or dissipation. However, the methodology explicitly tests on systems that follow Hamiltonian dynamics (pendulum, spring, n-body). Testing on damped systems would test a different hypothesis. This is a scope limitation, not a flaw.\n\n**F6 (MATERIAL, sev 6):** The critic claims posterior collapse could occur, where the latent ignores input but decoder still reconstructs. This is a standard VAE training concern. The methodology should include monitoring (KL magnitude, latent variance) to detect this. This is a training implementation detail that can be addressed, not a fundamental methodology flaw.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology tests whether a VAE can LEARN Hamiltonian dynamics from image observations \u2014 it does not claim to guarantee symplectic structure a priori. The critic's concern about whether the learned dynamics preserve physical properties is exactly what the rollout evaluation empirically tests. The finding is valid in a different context (theoretical guarantees) but not within the stated experiment scope (testing learned dynamics capability)."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The methodology explicitly uses synthetic image sequences of idealized physical systems. The claim about 'real-world' generalization is not made \u2014 it's the critic imposing an additional requirement beyond the stated scope. Testing on synthetic data is a valid first step; whether it generalizes to real images is a separate research question."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 3,
+        "justification": "The methodology mentions 'rollout prediction in both temporal directions,' indicating some form of rollout evaluation exists. The critic's concern about long-horizon (50-100 step) evaluation is partially addressed by the existing rollout evaluation \u2014 the question is one of horizon length in the evaluation protocol. This is a design consideration rather than a fundamental flaw."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critic claims the methodology asserts 'superiority over existing approaches,' but the stated claims are about capability ('can reconstruct trajectories,' 'can learn dynamics from images'), not superiority. This empirical claim about what the paper asserts is not supported by the methodology description. Without baselines, the core hypothesis can still be tested \u2014 baselines would contextualize performance but don't invalidate the experimental approach."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The methodology explicitly tests on systems that follow Hamiltonian dynamics (pendulum, spring, n-body). Testing on damped or dissipative systems would test a different hypothesis about handling non-conservative dynamics. The Hamiltonian assumption is the stated scope, not an unexamined flaw."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "Posterior collapse is a standard VAE training concern that can be monitored through KL magnitude, latent variance inspection, and probing latent sensitivity to input. The methodology should include these checks as part of proper training procedure. This is a training implementation detail that can be addressed through standard practices, not a fundamental methodology flaw."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All six findings have been rebutted with adjusted severity \u2264 3. F1 and F6 are reduced to adjusted severity 3 through scope and design rebuttals. F2, F3, and F5 are scope or design considerations with adjusted severities 2, 3, and 1. F4 is fully rebutted (adjusted severity 0) as the critic's claim about superiority is not supported by the methodology's stated goals. The EXONERATE threshold is met \u2014 no material finding survives above adjusted severity 3."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The defender argues that rollout evaluation empirically tests whether learned dynamics preserve physical properties. However, the methodology description only mentions reconstruction and rollout prediction without specifying any check of symplectic structure, volume preservation, or Hamiltonian conservation. The rebuttal does not explain how the existing rollout evaluation addresses the specific failure mechanism (latent space lacking symplectic structure leading to physically meaningless integrated dynamics). It is therefore a generic defense that leaves the core concern unresolved."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The paper's stated claims are limited to learning dynamics from synthetic image sequences and do not include a claim about generalization to real-world visual observations. The defender correctly points out that the critic's concern about real-world noise, illumination, occlusions, etc., imposes an additional requirement beyond the paper's scope. Thus the finding misattributes a claim that is not made, and the rebuttal adequately addresses the failure mechanism."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender notes that the methodology mentions rollout prediction in both temporal directions, indicating some rollout evaluation exists. This partially addresses the concern by acknowledging that dynamics are evaluated beyond single-frame reconstruction. However, the rebuttal does not confirm that the evaluation includes long-horizon rollouts (e.g., 50-100 steps) needed to detect error accumulation, energy drift, or implausible trajectories. The concern about insufficient horizon remains unresolved."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly identifies that the paper does not claim superiority over existing approaches; its claims are limited to capability (reconstruction, learning dynamics from images, bidirectional rollout). The original finding mistakenly attributed a superiority claim to the paper, so the rebuttal invalidates the factual premise of the finding."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The paper explicitly evaluates on systems that follow ideal Hamiltonian dynamics (pendulum, spring, n-body) and does not claim to handle damped or dissipative behaviors. The defender correctly frames the Hamiltonian assumption as part of the stated scope, not an unexamined flaw. Therefore the concern about non-Hamiltonian dynamics lies outside the paper's claims and does not constitute a flaw within its methodology."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender acknowledges posterior collapse as a known VAE issue and notes it can be monitored via KL magnitude, latent variance, and latent sensitivity checks. However, the rebuttal does not provide evidence that the methodology actually incorporates these checks; it merely states that they \"should\" be part of proper training. Without confirmation that the paper implements such diagnostics, the concern about silent posterior collapse remains partially unaddressed."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Three findings received CHALLENGE or PARTIAL verdicts. For F1, the critic correctly identified that my R1 rebuttal was too generic - I need to explain HOW rollout evaluation addresses the symplectic structure concern. For F3 and F6, the critic correctly noted that my rebuttals assumed or implied controls without confirming they exist in the methodology. I will now apply the proper analysis: F1 gets STRENGTHENED with a clear REBUT-DESIGN explaining how rollout evaluation empirically validates the learned dynamics; F3 and F6 both get DEFERRED because the design has partial answers but the specific controls aren't confirmed in the methodology, and the primary conclusions can survive if the critiques are correct.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes my R1 was too generic. The methodology includes rollout prediction where the learned latent dynamics are integrated forward/backward to generate future frames, which are then compared against ground truth. This empirical test directly addresses the failure mechanism: if the latent space lacked meaningful geometric properties, the integrated dynamics would produce trajectories that diverge from ground truth. The rollout evaluation IS the check for physically meaningful dynamics - it validates that the learned Hamiltonian produces correct system evolution. The specific failure mode (latent coordinates lacking symplectic structure leading to meaningless integrated dynamics) would manifest as rollout failure. The methodology's design includes this empirical validation, even if it doesn't explicitly check mathematical symplectic properties.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly uses synthetic image sequences and makes no claim about real-world generalization. The concern about noise, illumination, and occlusions is outside the stated scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The methodology mentions 'rollout prediction' but does not specify the horizon length. The critic correctly notes this ambiguity. The design has a partial answer (rollout evaluation exists) but doesn't confirm long-horizon (50-100 step) testing. The settling experiment: run rollouts at varying horizons (10, 25, 50, 100 steps) and measure whether trajectory error remains bounded or diverges. If error stays bounded, the design is validated; if error accumulates catastrophically, the concern is confirmed. The primary conclusion CAN survive if the critique is correct: even short-horizon rollouts demonstrating correct local dynamics would support the hypothesis that the model learns meaningful dynamics, just with the caveat that long-term behavior is not evaluated. This is a genuine empirical ambiguity warranting defer.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTed this rebuttal. The paper makes capability claims, not superiority claims. Baselines would contextualize performance but don't invalidate the experimental approach.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly tests on Hamiltonian systems (pendulum, spring, n-body). The Hamiltonian assumption is the stated scope, not an unexamined flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes my R1 said posterior collapse 'should' be monitored but didn't confirm the methodology implements these checks. The design has a partial answer (standard VAE training practices exist) but the specific diagnostics aren't confirmed in the methodology text. The settling experiment: examine training logs for KL divergence magnitude, compute latent variance across batches, and test whether latent codes correlate with known system states (e.g., pendulum angle). If KL stays non-zero and latents vary with input, posterior collapse is not occurring - the design is validated. If KL approaches zero while reconstruction remains good, collapse is happening. The primary conclusion CAN survive if the critique is correct: posterior collapse is a training configuration issue that can be detected and addressed; its presence would not invalidate the experimental approach itself, only require retraining with adjusted hyperparameters.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F3, F6) are now DEFERred, representing genuine empirical ambiguities where the design has partial answers but specific controls aren't confirmed in the methodology - the settling experiments are clearly defined. F1 is STRENGTHENED to REBUT-DESIGN with a clear explanation of how rollout evaluation empirically validates learned dynamics. With adjusted severities: F1=4, F2=2, F3=4, F4=0, F5=1, F6=4 - no FATAL findings remain above severity 3, but the presence of two DEFERred findings makes empirical_test_agreed the appropriate verdict."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The encoder produces a latent state that is suitable for representing the system in a form amenable to Hamiltonian dynamics.",
+        "failure_mechanism": "The variational objective (reconstruction + KL) does not guarantee that the learned latent coordinates obey symplectic structure or that the learned Hamiltonian function corresponds to the true energy of the system. The encoder may map images to a latent space that lacks the necessary geometric properties, causing the integrated dynamics to be physically meaningless even if reconstruction looks good.",
+        "evidence_test": "Verify symplectic properties of the latent flow (e.g., check that the Jacobian of the latent update preserves volume in phase space) or directly measure Hamiltonian conservation during rollouts. Additionally, compare latent-derived positions/velocities against ground truth coordinates (if available) to see whether the latent trajectory matches the true physical trajectory.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Training on synthetic image sequences of idealized physical systems suffices to learn dynamics that will generalize to real-world visual observations.",
+        "failure_mechanism": "The synthetic data are assumed to be noise-free, with perfect lighting, no occlusions, and simple backgrounds. Real images contain sensor noise, varying illumination, clutter, and possible occlusions, which can cause the encoder to learn spurious features or fail to extract the underlying state, leading to degraded dynamics prediction when deployed on real data.",
+        "evidence_test": "Evaluate the model on test sets where realistic perturbations are added (e.g., Gaussian noise, random background textures, varying illumination, or actual camera footage of the same systems). A significant drop in reconstruction or rollout accuracy would indicate the assumption fails.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Short-term reconstruction accuracy and rollout performance on the training distribution demonstrate that the model captures the true evolution of the system.",
+        "failure_mechanism": "Evaluation focuses on immediate frame reconstruction and short horizon predictions, which can be achieved by memorizing local appearance patterns without learning correct long-term dynamics. Over longer rollouts, errors may accumulate, energy may drift, or the generated trajectories may become physically implausible, yet these failure modes are not measured.",
+        "evidence_test": "Run long-horizon rollouts (e.g., 50-100 steps ahead) and measure trajectory error against ground truth, monitor Hamiltonian energy conservation, and assess whether the rollout stays bounded or diverges. Comparing short-term vs long-term performance reveals whether the model truly learned dynamics.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "HGN's ability to learn dynamics without strong domain-specific assumptions is superior to existing approaches.",
+        "failure_mechanism": "No baseline methods (e.g., ConvLSTM, VideoGAN, Neural ODE, or other physics-informed networks) are included for comparison. Without baselines, it is impossible to determine whether any observed performance is due to the Hamiltonian formulation or simply due to the model's capacity or training regimen.",
+        "evidence_test": "Implement and train representative baseline video prediction or dynamics learning models on the same datasets, then compare reconstruction, rollout accuracy, and energy conservation metrics. A lack of significant improvement over strong baselines would weaken the claim.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The learned Hamiltonian dynamics accurately describe the evolution of pendulum, spring, and n-body systems as presented in the image sequences.",
+        "failure_mechanism": "The hypothesis implicitly assumes all systems follow ideal Hamiltonian (conservative, time-reversible) dynamics. Realistic spring systems may exhibit damping, and multi-body systems can display chaotic or dissipative behavior not captured by a simple Hamiltonian. If the true dynamics contain non-Hamiltonian components, the model will systematically misrepresent them.",
+        "evidence_test": "Test on a variant of the spring system with added damping or on a dissipative version of the n-body problem (e.g., with friction). Measure whether reconstruction/rollout error increases relative to the conservative case, indicating the model's reliance on the Hamiltonian assumption.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The variational objective balances reconstruction and KL regularization to learn useful latent dynamics without posterior collapse.",
+        "failure_mechanism": "If the KL weight is too high or the decoder is overly expressive, the model may experience posterior collapse: the latent distribution matches the prior and ignores the image input, yet the decoder can still produce reasonable reconstructions by learning a static mean frame. In this case, the learned dynamics are driven by the prior alone and do not reflect the observed system, but evaluation metrics may still appear acceptable.",
+        "evidence_test": "Monitor the magnitude of the KL term during training, inspect latent variance across batches, and ablate the KL weight. Additionally, probe whether latent codes vary systematically with known system states (e.g., angle/angular velocity of pendulum). If latents are insensitive to input while reconstruction remains good, posterior collapse is occurring.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC makes several strong claims about learning Hamiltonian dynamics from images, but relies on unverified assumptions about the latent representation, uses idealized synthetic data without testing realism, evaluates primarily short-term performance, lacks comparative baselines, assumes all systems are Hamiltonian, and risks silent misconfiguration such as posterior collapse. Together, these issues weaken confidence in the method's ability to learn true physical dynamics from visual data.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Three findings received CHALLENGE or PARTIAL verdicts. For F1, the critic correctly identified that my R1 rebuttal was too generic - I need to explain HOW rollout evaluation addresses the symplectic structure concern. For F3 and F6, the critic correctly noted that my rebuttals assumed or implied controls without confirming they exist in the methodology. I will now apply the proper analysis: F1 gets STRENGTHENED with a clear REBUT-DESIGN explaining how rollout evaluation empirically validates the learned dynamics; F3 and F6 both get DEFERRED because the design has partial answers but the specific controls aren't confirmed in the methodology, and the primary conclusions can survive if the critiques are correct.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes my R1 was too generic. The methodology includes rollout prediction where the learned latent dynamics are integrated forward/backward to generate future frames, which are then compared against ground truth. This empirical test directly addresses the failure mechanism: if the latent space lacked meaningful geometric properties, the integrated dynamics would produce trajectories that diverge from ground truth. The rollout evaluation IS the check for physically meaningful dynamics - it validates that the learned Hamiltonian produces correct system evolution. The specific failure mode (latent coordinates lacking symplectic structure leading to meaningless integrated dynamics) would manifest as rollout failure. The methodology's design includes this empirical validation, even if it doesn't explicitly check mathematical symplectic properties.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly uses synthetic image sequences and makes no claim about real-world generalization. The concern about noise, illumination, and occlusions is outside the stated scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The methodology mentions 'rollout prediction' but does not specify the horizon length. The critic correctly notes this ambiguity. The design has a partial answer (rollout evaluation exists) but doesn't confirm long-horizon (50-100 step) testing. The settling experiment: run rollouts at varying horizons (10, 25, 50, 100 steps) and measure whether trajectory error remains bounded or diverges. If error stays bounded, the design is validated; if error accumulates catastrophically, the concern is confirmed. The primary conclusion CAN survive if the critique is correct: even short-horizon rollouts demonstrating correct local dynamics would support the hypothesis that the model learns meaningful dynamics, just with the caveat that long-term behavior is not evaluated. This is a genuine empirical ambiguity warranting defer.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critic ACCEPTed this rebuttal. The paper makes capability claims, not superiority claims. Baselines would contextualize performance but don't invalidate the experimental approach.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic ACCEPTed this rebuttal. The methodology explicitly tests on Hamiltonian systems (pendulum, spring, n-body). The Hamiltonian assumption is the stated scope, not an unexamined flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly notes my R1 said posterior collapse 'should' be monitored but didn't confirm the methodology implements these checks. The design has a partial answer (standard VAE training practices exist) but the specific diagnostics aren't confirmed in the methodology text. The settling experiment: examine training logs for KL divergence magnitude, compute latent variance across batches, and test whether latent codes correlate with known system states (e.g., pendulum angle). If KL stays non-zero and latents vary with input, posterior collapse is not occurring - the design is validated. If KL approaches zero while reconstruction remains good, collapse is happening. The primary conclusion CAN survive if the critique is correct: posterior collapse is a training configuration issue that can be detected and addressed; its presence would not invalidate the experimental approach itself, only require retraining with adjusted hyperparameters.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F3, F6) are now DEFERred, representing genuine empirical ambiguities where the design has partial answers but specific controls aren't confirmed in the methodology - the settling experiments are clearly defined. F1 is STRENGTHENED to REBUT-DESIGN with a clear explanation of how rollout evaluation empirically validates learned dynamics. With adjusted severities: F1=4, F2=2, F3=4, F4=0, F5=1, F6=4 - no FATAL findings remain above severity 3, but the presence of two DEFERred findings makes empirical_test_agreed the appropriate verdict."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=8 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

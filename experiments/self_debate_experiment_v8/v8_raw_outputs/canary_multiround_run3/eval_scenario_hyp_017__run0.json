@@ -1,0 +1,230 @@
+{
+  "case_id": "eval_scenario_hyp_017",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "x-ai/grok-4.1-fast",
+    "defender": "nvidia/nemotron-3-super-120b-a12b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The test set (months 17\u201324, after censoring transactions without a full 120-day chargeback window) has a distribution representative of real-world deployment transactions, including recent ones.",
+        "failure_mechanism": "Censoring disproportionately excludes recent transactions in the test period (e.g., late month 24 transactions require chargebacks after study end), which may differ in fraud rate or features due to evolving fraud tactics, merchant trends, or economic shifts; this biases the test set toward 'older' transactions within the test window, under- or over-estimating performance relative to deployment on all incoming (including 'recent') transactions.",
+        "evidence_test": "Compare fraud rates, feature distributions (e.g., merchant categories, amounts, geolocations), and model performance between censored (excluded) and non-censored transactions within the test period; significant differences confirm bias. Alternatively, use partial-label models (e.g., survival analysis on time-to-chargeback) to impute/extrapolate on censored transactions.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer model correctly processes variable-length transaction sequences by ignoring padding tokens.",
+        "failure_mechanism": "Uniform padding without explicit attention or padding masks (not mentioned in design) allows the model to attend to padding artifacts (e.g., zero embeddings), causing it to learn spurious patterns from pad positions rather than true temporal dependencies; this produces plausible validation performance if pad patterns correlate with sequence length (e.g., short histories for new accounts) but degrades on test distributions with different length distributions.",
+        "evidence_test": "Verify attention weights or hidden states on padded positions (should be near-zero effect); compare model performance with masking enabled vs. disabled on validation set, or ablate by training separate models with/without masks.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Handling of transactions declined by pre-existing fraud rules (excluded or flagged) fully mitigates feedback loops without introducing distribution bias or spurious correlations.",
+        "failure_mechanism": "Ambiguous handling ('either excluded or flagged') could condition the dataset on surviving rules (if excluded), altering fraud rates and feature distributions to non-deployment-like conditions, or allow the model to proxy rule decisions (if flagged), inflating performance by memorizing rules rather than learning novel fraud signals.",
+        "evidence_test": "Explicitly document and report the chosen method; compute and compare fraud rates, feature distributions, and model performance on datasets with/without declined transactions (or flagged vs. unflagged), ensuring no performance drop or rule-mimicry via feature importance analysis.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The design is strong overall with good temporal splitting, equal tuning effort, and confounds addressed, but material flaws arise from unaddressed label censoring bias in the test set, unspecified transformer padding masking, and ambiguous declined-transaction handling, which could silently undermine the hypothesis that transformers outperform aggregates under deployment conditions.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 concerns possible bias from censoring recent transactions in the test set due to the 120\u2011day chargeback window. The methodology notes that fraud rates and feature distributions are checked across train, validation, and test sets to detect shifts, which mitigates the concern. F2 claims the transformer may attend to padding tokens because masking is not mentioned. In standard transformer practice, padding masks are routinely applied; the design\u2019s omission of explicit mention does not indicate absence of this control. F3 points out ambiguity in how transactions declined by existing fraud rules are handled (excluded vs. flagged). The confound\u2011control section states that such transactions are either excluded or flagged in both datasets to prevent learning spurious rule correlations, indicating a deliberate mitigation strategy, though the exact choice is not specified. Each critique raises a valid point but is addressed\u2014or can be addressed\u2014by existing design controls, suggesting the issues are not fatal or material after reconsideration.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The design includes a explicit check for distribution shifts across train, validation, and test sets (see Confound Controls). By verifying that fraud rates and feature distributions remain stable, the potential bias from censoring recent transactions is monitored and mitigated, reducing the materiality of the concern."
+      },
+      {
+        "finding_id": "F2",
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critique asserts that without explicit padding masks the model will attend to padding artifacts, but it provides no empirical evidence from the PoC that this occurs. Standard transformer implementations incorporate padding masks by default; absent any shown degradation, the claim remains unsupported."
+      },
+      {
+        "finding_id": "F3",
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The Confound Controls section specifies that transactions declined by pre\u2011existing fraud rules are either excluded or flagged in both datasets to prevent the model from learning spurious rule correlations. This deliberate control addresses the feedback\u2011loop concern, even though the exact method (exclude vs. flag) is not detailed."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "After applying rebuttals, all findings have adjusted severities \u2264 3, meaning no material or fatal issues remain; the methodology stands under scrutiny."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal cites cross-split verification of fraud rates and feature distributions, which would detect if censoring makes the non-censored test set deviate from train/val. However, this does not address the specific failure mechanism: deployment evaluates on all incoming transactions (including those that would be censored/recent), so even a stable non-censored test underestimates performance on the full deployment distribution if censored transactions differ systematically."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The REBUT-EVIDENCE correctly identifies that the factual premise (no masks, leading to padding attention) errs by assuming non-standard implementation; standard transformer libraries (e.g., PyTorch, Hugging Face) default to padding masks, resolving the unverified prerequisite without need for design verbatim confirmation."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal generically references the 'deliberate control' without specifying exclude vs. flag, leaving both failure mechanisms unaddressed: exclusion alters dataset distributions away from deployment (conditioning on rule survival), while flagging risks rule proxying via feature importance. No mechanistic resolution provided."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "For F1 the critic's PARTIAL challenge shows the design lacks a specific control for censoring bias; we therefore defer to an experiment that can settle whether the relative model ranking holds. For F2 the critic ACCEPTed our rebuttal, so we maintain the evidence-based defense. For F3 the critic's CHALLENGE highlights the ambiguous handling of declined transactions; without a definitive specification we defer to an experiment comparing both exclusion and flagging strategies.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The design does not contain a specific mechanism to eliminate bias from censoring recent transactions; it only monitors distribution shifts across splits, which does not address the concern that the test set (non\u2011censored) may not represent the full deployment distribution. To resolve, we propose an experiment: use survival analysis or partial\u2011label methods to infer labels for censored transactions, then evaluate both models on the full set (including imputed labels) and compare recall at fixed FPR. If the transformer\u2019s advantage over the baseline persists, the primary conclusion survives. The bias, if present, affects both models equally because they are evaluated on the same test set, so the relative ranking remains valid even if absolute performance is mis\u2011estimated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted that the premise of missing padding masks is incorrect; standard transformer implementations (e.g., PyTorch, Hugging Face) automatically apply padding masks, so the unverified prerequisite is resolved without needing explicit design text. Hence the concern is not valid.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The design states that declined transactions are 'either excluded or flagged' but does not specify which approach is used, leaving open the risk of distribution shift (if excluded) or rule proxying (if flagged). To settle, we propose an experiment: train and evaluate both models under both handling strategies (exclude vs. flag) and compare recall at fixed FPR and feature importance. If the transformer\u2019s advantage over the baseline is consistent across strategies, the primary conclusion holds. Any bias introduced by the handling method would affect both models equally, so the relative comparison remains robust even if absolute performance shifts.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F3) are deferred to empirical tests that can determine whether the cited biases affect the relative model ranking, while F2 is rebutted via evidence. Because at least one finding is deferred, the appropriate verdict is empirical_test_agreed."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The test set (months 17\u201324, after censoring transactions without a full 120-day chargeback window) has a distribution representative of real-world deployment transactions, including recent ones.",
+        "failure_mechanism": "Censoring disproportionately excludes recent transactions in the test period (e.g., late month 24 transactions require chargebacks after study end), which may differ in fraud rate or features due to evolving fraud tactics, merchant trends, or economic shifts; this biases the test set toward 'older' transactions within the test window, under- or over-estimating performance relative to deployment on all incoming (including 'recent') transactions.",
+        "evidence_test": "Compare fraud rates, feature distributions (e.g., merchant categories, amounts, geolocations), and model performance between censored (excluded) and non-censored transactions within the test period; significant differences confirm bias. Alternatively, use partial-label models (e.g., survival analysis on time-to-chargeback) to impute/extrapolate on censored transactions.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer model correctly processes variable-length transaction sequences by ignoring padding tokens.",
+        "failure_mechanism": "Uniform padding without explicit attention or padding masks (not mentioned in design) allows the model to attend to padding artifacts (e.g., zero embeddings), causing it to learn spurious patterns from pad positions rather than true temporal dependencies; this produces plausible validation performance if pad patterns correlate with sequence length (e.g., short histories for new accounts) but degrades on test distributions with different length distributions.",
+        "evidence_test": "Verify attention weights or hidden states on padded positions (should be near-zero effect); compare model performance with masking enabled vs. disabled on validation set, or ablate by training separate models with/without masks.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Handling of transactions declined by pre-existing fraud rules (excluded or flagged) fully mitigates feedback loops without introducing distribution bias or spurious correlations.",
+        "failure_mechanism": "Ambiguous handling ('either excluded or flagged') could condition the dataset on surviving rules (if excluded), altering fraud rates and feature distributions to non-deployment-like conditions, or allow the model to proxy rule decisions (if flagged), inflating performance by memorizing rules rather than learning novel fraud signals.",
+        "evidence_test": "Explicitly document and report the chosen method; compute and compare fraud rates, feature distributions, and model performance on datasets with/without declined transactions (or flagged vs. unflagged), ensuring no performance drop or rule-mimicry via feature importance analysis.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The design is strong overall with good temporal splitting, equal tuning effort, and confounds addressed, but material flaws arise from unaddressed label censoring bias in the test set, unspecified transformer padding masking, and ambiguous declined-transaction handling, which could silently undermine the hypothesis that transformers outperform aggregates under deployment conditions.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "For F1 the critic's PARTIAL challenge shows the design lacks a specific control for censoring bias; we therefore defer to an experiment that can settle whether the relative model ranking holds. For F2 the critic ACCEPTed our rebuttal, so we maintain the evidence-based defense. For F3 the critic's CHALLENGE highlights the ambiguous handling of declined transactions; without a definitive specification we defer to an experiment comparing both exclusion and flagging strategies.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The design does not contain a specific mechanism to eliminate bias from censoring recent transactions; it only monitors distribution shifts across splits, which does not address the concern that the test set (non\u2011censored) may not represent the full deployment distribution. To resolve, we propose an experiment: use survival analysis or partial\u2011label methods to infer labels for censored transactions, then evaluate both models on the full set (including imputed labels) and compare recall at fixed FPR. If the transformer\u2019s advantage over the baseline persists, the primary conclusion survives. The bias, if present, affects both models equally because they are evaluated on the same test set, so the relative ranking remains valid even if absolute performance is mis\u2011estimated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted that the premise of missing padding masks is incorrect; standard transformer implementations (e.g., PyTorch, Hugging Face) automatically apply padding masks, so the unverified prerequisite is resolved without needing explicit design text. Hence the concern is not valid.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The design states that declined transactions are 'either excluded or flagged' but does not specify which approach is used, leaving open the risk of distribution shift (if excluded) or rule proxying (if flagged). To settle, we propose an experiment: train and evaluate both models under both handling strategies (exclude vs. flag) and compare recall at fixed FPR and feature importance. If the transformer\u2019s advantage over the baseline is consistent across strategies, the primary conclusion holds. Any bias introduced by the handling method would affect both models equally, so the relative comparison remains robust even if absolute performance shifts.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1 and F3) are deferred to empirical tests that can determine whether the cited biases affect the relative model ranking, while F2 is rebutted via evidence. Because at least one finding is deferred, the appropriate verdict is empirical_test_agreed."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 6,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=6, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

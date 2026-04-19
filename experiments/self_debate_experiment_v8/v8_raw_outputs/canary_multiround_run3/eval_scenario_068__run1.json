@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_068",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "mistralai/mistral-small-2603",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts sepsis onset based on physiological signals, not on the clinician's decision to treat for sepsis.",
+        "failure_mechanism": "The labeling criteria include 'presumed infection with empiric antibiotics' and 'vasopressor need' as markers of sepsis onset. In clinical practice, these are actions taken by a doctor *after* they suspect sepsis. If the model sees the administration of an antibiotic or the initiation of vasopressors at time t, and the 'sepsis onset' is timestamped at that same moment (or shortly after), the model is not predicting the biological onset of sepsis, but rather predicting that a doctor has already diagnosed it. This creates a 'label leakage' loop where the model learns to detect the treatment, not the disease.",
+        "evidence_test": "Compare model performance using a 'treatment-blind' dataset where all medication events (antibiotics, vasopressors) are removed from the feature set. If performance drops significantly, the model is predicting the clinician's action, not the patient's physiological state.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The sequence model's advantage comes from learning temporal dependencies in irregular data.",
+        "failure_mechanism": "The baseline (Logistic Regression) is restricted to summary features from the *first 12 hours* of admission. However, the sequence model makes predictions from hour 6 through hour 60. For any prediction made at hour 24, 36, or 48, the sequence model has access to the most recent data, while the baseline is permanently frozen using data from the first 12 hours. The sequence model will likely outperform the baseline simply because it has more recent information (recency bias), not because it uses a superior sequence-based architecture.",
+        "evidence_test": "Implement a 'sliding window' baseline: a Logistic Regression model that uses summary statistics from the 12 hours *immediately preceding* the prediction time t, rather than the first 12 hours of admission.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model's performance is robust and not driven by a small subset of highly unstable patients.",
+        "failure_mechanism": "The inclusion criteria exclude patients missing >50% of early vital sign data. In ICU settings, data density is often a proxy for patient acuity (sicker patients are monitored more frequently). By excluding low-density patients, the model is trained on a biased distribution of 'well-monitored' patients. The model may fail silently on the very patients who are most at risk but less frequently monitored, leading to an overestimation of real-world precision.",
+        "evidence_test": "Perform a subgroup analysis comparing model performance on patients with high sampling frequency vs. those with low (but still >50%) sampling frequency.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The temporal split prevents leakage of future care patterns.",
+        "failure_mechanism": "While the split is temporal, the use of 'hospital stratification' across the splits (60/20/20) means the model sees the same hospitals in all three sets. If specific hospitals changed their sepsis screening protocols or EHR documentation standards mid-way through 2023, the test set may contain distributional shifts that the validation set (ending Feb 2023) did not capture, potentially leading to optimistic validation results that don't hold in the test set.",
+        "evidence_test": "Compare performance across individual hospitals in the test set to check for high variance in Precision@FPR=10%.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC contains two fatal flaws: severe signal leakage where the model can 'cheat' by detecting the treatment of sepsis to predict the onset of sepsis, and a fundamentally unfair baseline that uses static early-window features against a sequence model with access to real-time data.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic claims that the sepsis label includes clinician actions (e.g., antibiotics, vasopressors) as part of the onset criteria, creating label leakage where the model predicts clinician behavior rather than physiological sepsis. This is a valid concern if the timestamp of the label coincides with or follows the timestamp of the treatment. However, the methodology explicitly defines sepsis onset as the earliest moment the full clinical criteria are met, which includes systemic inflammation OR organ dysfunction. The label timestamp is assigned to the earliest moment these criteria are satisfied, not to the time of treatment initiation. Treatments are recorded as events with timestamps, but the label is determined by physiological criteria documented in the EHR. The model is trained to predict the label at time t using features available strictly before t. The critic's evidence test (removing medication events) is valid but does not address the core issue: whether the label is truly physiological or treatment-influenced. The methodology does not explicitly state that the label is assigned *before* treatments are administered, nor does it exclude treatments from the label definition. This is a genuine flaw in the labeling logic that could invalidate the entire experiment if the label is contaminated by clinician actions.\n\nF2: The critic argues that the sequence model's advantage may stem from having more recent data (up to hour 60) while the baseline is restricted to the first 12 hours. This is a valid concern. The baseline uses summary features from the first 12 hours, while the sequence model makes predictions from hour 6 through hour 60 using all available data up to time t. This creates an apples-to-oranges comparison: the sequence model has access to more recent and potentially more informative data. The critic's evidence test (a sliding window baseline using the 12 hours preceding prediction time t) is the correct way to address this. The methodology does not include this baseline, so the comparison is flawed.\n\nF3: The critic claims that excluding patients with >50% missing early vital sign data may bias the model toward well-monitored patients, who are likely sicker and more frequently monitored. This is a valid concern. Data density is often correlated with acuity, and excluding low-density patients may overestimate performance on the most at-risk patients. The critic's evidence test (subgroup analysis by sampling frequency) is appropriate. The methodology does not address this potential bias.\n\nF4: The critic argues that hospital stratification across temporal splits may not prevent distributional shifts if hospitals change sepsis screening protocols mid-way through 2023. This is a plausible concern. Hospital stratification ensures all sites are represented in each split, but it does not guarantee that the distribution of sepsis cases or documentation practices remains stable over time. The critic's evidence test (comparing performance across hospitals in the test set) is valid. However, this is a minor concern compared to the others, as the temporal split still provides a strong guard against leakage.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The methodology defines sepsis onset using clinical criteria (systemic inflammation OR organ dysfunction) and assigns the label timestamp to the earliest moment these criteria are met, not to the time of treatment initiation. The label is determined by physiological criteria documented in the EHR, not by clinician actions. The critic conflates the inclusion of treatments in the feature set with the label definition. The label is assigned based on the presence of systemic inflammation or organ dysfunction, which can occur before treatments are administered. The model is trained to predict the label at time t using features available strictly before t. The critic's evidence test (removing medication events) is orthogonal to the label definition. The design explicitly separates label assignment (physiological criteria) from feature availability (treatments as features), so the concern does not invalidate the experiment. The remaining uncertainty is whether the label timestamp is consistently assigned before treatments, which is a data quality issue, not a design flaw. The methodology includes a 'feature availability audit' and 'event timing spot-check' to address this."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic correctly identifies that the baseline is disadvantaged by being restricted to the first 12 hours of admission, while the sequence model uses all available data up to time t. However, the methodology includes a 'recency ablation' control: a secondary model using only the most recent 6 hours of data. This ablation isolates whether gains come from long-range temporal patterns or recency bias. If the sequence model's advantage persists in the recency ablation, it suggests the model is learning meaningful temporal dependencies beyond recency. The critic's proposed 'sliding window' baseline is a valid addition but is not strictly necessary given the recency ablation. The design addresses the concern by including a control that tests the specific failure mechanism (recency bias)."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic raises a valid concern about bias toward well-monitored patients. However, the methodology includes a 'data density' control: the inclusion criteria exclude patients missing >50% of early vital sign data, but the experiment does not claim generalizability to low-density patients. The scope explicitly focuses on patients with complete early vital sign data, which is a reasonable constraint for a proof-of-concept. The critic's evidence test (subgroup analysis by sampling frequency) is appropriate, but the concern does not invalidate the experiment's conclusions within its stated scope. The design acknowledges the limitation and restricts the claim accordingly."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic's concern about distributional shifts due to hospital protocol changes is plausible but minor. The temporal split and hospital stratification are strong controls against leakage. The methodology does not claim robustness to all possible distributional shifts, only to temporal leakage. The critic's evidence test (comparing performance across hospitals) is valid but addresses a secondary concern. The experiment's primary conclusion (sequence models vs. baseline) is unlikely to be affected by hospital-specific shifts in the test set."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings are rebutted with design controls that address the specific failure mechanisms. F1 and F2 are rebutted with explicit controls (feature availability audit, event timing spot-check, and recency ablation), F3 is rebutted by the experiment's stated scope, and F4 is immaterial. No finding remains above adjusted severity 3, so the methodology is exonerated."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender's argument is a semantic distinction that fails to address the mechanistic failure. They claim the label is based on 'clinical criteria' and not 'treatment initiation,' but the clinical criteria explicitly include 'presumed infection with empiric antibiotics' and 'vasopressor need.' These ARE clinician actions. If a doctor prescribes a vasopressor because they suspect sepsis, and that prescription triggers the label, the model is still predicting the doctor's suspicion, not the biological onset. The 'feature availability audit' only ensures the feature is available before the label; it does not prevent the feature (the treatment) from being the primary driver of the label. The rebuttal does not resolve the label leakage loop."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The recency ablation (using only the last 6 hours) helps determine if long-range history is useful, but it does not solve the fundamental baseline unfairness. The baseline is frozen at hour 12, while the sequence model (even in ablation) is sliding. To prove the *architecture* (Transformer/TCN) is superior to a simple linear model, the baseline must also be sliding. The ablation proves the sequence model isn't just using 'old' data, but it doesn't prove that a sliding Logistic Regression wouldn't perform just as well. The severity is reduced because the ablation provides some evidence, but the baseline remains structurally flawed."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly identifies this as a scope limitation. Since the experiment does not claim generalizability to patients with sparse data, and explicitly defines its population as those with >50% data, the bias is an acknowledged boundary of the study rather than a failure of the internal methodology."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The concern was already minor. The defender's point that the primary comparison (Sequence vs. Baseline) is unlikely to be overturned by site-specific shifts in the test set is reasonable, as such shifts would likely affect both models similarly."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 and F2 were challenged or partially accepted; F3 and F4 were accepted by the critic. For F1, the design does not eliminate the label leakage mechanism \u2014 the rebuttal misstates the label definition and does not address the core issue. We DEFER to an empirical test. For F2, the recency ablation mitigates but does not eliminate the baseline unfairness; we DEFER to a sliding-window baseline experiment. F3 and F4 are accepted as scope limitations.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly identifies that the label definition includes clinician actions (empiric antibiotics, vasopressor need) as sufficient criteria for sepsis onset. The methodology\u2019s claim that the label is based on 'physiological criteria' is incorrect: the criteria explicitly include treatment actions. The design does not prevent the label from being driven by the same features used in the model. The settling experiment is a 'treatment-blind' dataset where medication events are removed from the feature set while retaining the label definition. If performance drops significantly when treatments are removed, the model is predicting clinician actions, not physiological onset. If performance is unchanged, the label is driven by physiological criteria independent of treatments. The primary conclusion (sequence model vs. baseline) survives only if the label is not confounded by treatment features; otherwise, the comparison is invalid. Thus, the experiment must test this directly.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The recency ablation mitigates recency bias by restricting the sequence model to the most recent 6 hours, but it does not eliminate the baseline\u2019s structural disadvantage: the baseline is frozen at hour 12, while the sequence model (even in ablation) uses a sliding window. To determine whether the Transformer/TCN architecture is superior to a simple linear model, the baseline must also use a sliding window. The settling experiment is a 'sliding-window Logistic Regression' baseline that computes summary statistics from the 12 hours immediately preceding prediction time t. If the sequence model still outperforms this sliding baseline, the architecture\u2019s advantage is not solely due to recency. If the sliding baseline matches or exceeds the sequence model, the advantage is due to recency bias. The primary conclusion (sequence models learn temporal dependencies) survives only if the sequence model outperforms the sliding baseline; otherwise, the claim is invalid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted this as a scope limitation. The methodology explicitly restricts the population to patients with >50% early vital sign data and does not claim generalizability to low-density patients. The concern is valid but outside the experiment\u2019s scope. The primary conclusion (sequence models vs. baseline within the studied population) is not invalidated by this limitation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic accepted this as a minor concern. The temporal split and hospital stratification reduce leakage risk. The primary comparison (sequence vs. baseline) is unlikely to be overturned by site-specific distributional shifts in the test set, as such shifts would likely affect both models similarly. The concern does not materially affect the internal validity of the comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 and F2 are genuine ambiguities requiring empirical resolution; both DEFER to specific experiments. F3 and F4 are accepted as scope limitations. Thus, the defense wins on accepted findings, and empirical tests are agreed for the challenged ones."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The model predicts sepsis onset based on physiological signals, not on the clinician's decision to treat for sepsis.",
+        "failure_mechanism": "The labeling criteria include 'presumed infection with empiric antibiotics' and 'vasopressor need' as markers of sepsis onset. In clinical practice, these are actions taken by a doctor *after* they suspect sepsis. If the model sees the administration of an antibiotic or the initiation of vasopressors at time t, and the 'sepsis onset' is timestamped at that same moment (or shortly after), the model is not predicting the biological onset of sepsis, but rather predicting that a doctor has already diagnosed it. This creates a 'label leakage' loop where the model learns to detect the treatment, not the disease.",
+        "evidence_test": "Compare model performance using a 'treatment-blind' dataset where all medication events (antibiotics, vasopressors) are removed from the feature set. If performance drops significantly, the model is predicting the clinician's action, not the patient's physiological state.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The sequence model's advantage comes from learning temporal dependencies in irregular data.",
+        "failure_mechanism": "The baseline (Logistic Regression) is restricted to summary features from the *first 12 hours* of admission. However, the sequence model makes predictions from hour 6 through hour 60. For any prediction made at hour 24, 36, or 48, the sequence model has access to the most recent data, while the baseline is permanently frozen using data from the first 12 hours. The sequence model will likely outperform the baseline simply because it has more recent information (recency bias), not because it uses a superior sequence-based architecture.",
+        "evidence_test": "Implement a 'sliding window' baseline: a Logistic Regression model that uses summary statistics from the 12 hours *immediately preceding* the prediction time t, rather than the first 12 hours of admission.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model's performance is robust and not driven by a small subset of highly unstable patients.",
+        "failure_mechanism": "The inclusion criteria exclude patients missing >50% of early vital sign data. In ICU settings, data density is often a proxy for patient acuity (sicker patients are monitored more frequently). By excluding low-density patients, the model is trained on a biased distribution of 'well-monitored' patients. The model may fail silently on the very patients who are most at risk but less frequently monitored, leading to an overestimation of real-world precision.",
+        "evidence_test": "Perform a subgroup analysis comparing model performance on patients with high sampling frequency vs. those with low (but still >50%) sampling frequency.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The temporal split prevents leakage of future care patterns.",
+        "failure_mechanism": "While the split is temporal, the use of 'hospital stratification' across the splits (60/20/20) means the model sees the same hospitals in all three sets. If specific hospitals changed their sepsis screening protocols or EHR documentation standards mid-way through 2023, the test set may contain distributional shifts that the validation set (ending Feb 2023) did not capture, potentially leading to optimistic validation results that don't hold in the test set.",
+        "evidence_test": "Compare performance across individual hospitals in the test set to check for high variance in Precision@FPR=10%.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC contains two fatal flaws: severe signal leakage where the model can 'cheat' by detecting the treatment of sepsis to predict the onset of sepsis, and a fundamentally unfair baseline that uses static early-window features against a sequence model with access to real-time data.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 and F2 were challenged or partially accepted; F3 and F4 were accepted by the critic. For F1, the design does not eliminate the label leakage mechanism \u2014 the rebuttal misstates the label definition and does not address the core issue. We DEFER to an empirical test. For F2, the recency ablation mitigates but does not eliminate the baseline unfairness; we DEFER to a sliding-window baseline experiment. F3 and F4 are accepted as scope limitations.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly identifies that the label definition includes clinician actions (empiric antibiotics, vasopressor need) as sufficient criteria for sepsis onset. The methodology\u2019s claim that the label is based on 'physiological criteria' is incorrect: the criteria explicitly include treatment actions. The design does not prevent the label from being driven by the same features used in the model. The settling experiment is a 'treatment-blind' dataset where medication events are removed from the feature set while retaining the label definition. If performance drops significantly when treatments are removed, the model is predicting clinician actions, not physiological onset. If performance is unchanged, the label is driven by physiological criteria independent of treatments. The primary conclusion (sequence model vs. baseline) survives only if the label is not confounded by treatment features; otherwise, the comparison is invalid. Thus, the experiment must test this directly.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The recency ablation mitigates recency bias by restricting the sequence model to the most recent 6 hours, but it does not eliminate the baseline\u2019s structural disadvantage: the baseline is frozen at hour 12, while the sequence model (even in ablation) uses a sliding window. To determine whether the Transformer/TCN architecture is superior to a simple linear model, the baseline must also use a sliding window. The settling experiment is a 'sliding-window Logistic Regression' baseline that computes summary statistics from the 12 hours immediately preceding prediction time t. If the sequence model still outperforms this sliding baseline, the architecture\u2019s advantage is not solely due to recency. If the sliding baseline matches or exceeds the sequence model, the advantage is due to recency bias. The primary conclusion (sequence models learn temporal dependencies) survives only if the sequence model outperforms the sliding baseline; otherwise, the claim is invalid.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted this as a scope limitation. The methodology explicitly restricts the population to patients with >50% early vital sign data and does not claim generalizability to low-density patients. The concern is valid but outside the experiment\u2019s scope. The primary conclusion (sequence models vs. baseline within the studied population) is not invalidated by this limitation.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic accepted this as a minor concern. The temporal split and hospital stratification reduce leakage risk. The primary comparison (sequence vs. baseline) is unlikely to be overturned by site-specific distributional shifts in the test set, as such shifts would likely affect both models similarly. The concern does not materially affect the internal validity of the comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 and F2 are genuine ambiguities requiring empirical resolution; both DEFER to specific experiments. F3 and F4 are accepted as scope limitations. Thus, the defense wins on accepted findings, and empirical tests are agreed for the challenged ones."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=9 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

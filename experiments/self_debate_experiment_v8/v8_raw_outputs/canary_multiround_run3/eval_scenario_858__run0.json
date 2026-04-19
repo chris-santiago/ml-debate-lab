@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_858",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The weak-supervision labeling strategy (clicks/sends within 5 minutes) accurately captures document relevance.",
+        "failure_mechanism": "The PoC acknowledges position bias but does not implement a mechanism to decouple it from the labels. In a production system, agents are more likely to click the top-ranked result of the *existing* system regardless of its absolute relevance. If the current system is BM25, the 'positive' labels are essentially a proxy for 'what BM25 already finds.' Training a transformer on these labels will cause it to mimic the BM25 ranking (distillation) rather than learn true semantic relevance, leading to inflated performance metrics that reflect the baseline's behavior rather than an improvement over it.",
+        "evidence_test": "Compare the MRR of the transformer on the automatic labels vs. the MRR on the 300 manually annotated queries. If the transformer shows significant gains on automatic labels but zero or negative gains on manual labels, the model has simply learned to emulate the existing system's biases.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The contrastive loss (InfoNCE/Triplet) with in-batch negatives is sufficient for training a robust dense retriever.",
+        "failure_mechanism": "In semantic search, the most critical challenge is distinguishing between 'hard negatives' (documents that share keywords with the query but are irrelevant) and 'true positives.' In-batch negatives are typically 'easy negatives' (random documents). Without explicit hard-negative mining (e.g., using the BM25 baseline to find top-ranked but non-clicked documents), the transformer may fail to learn the fine-grained semantic boundaries that distinguish a correct article from a superficially similar one, leading to poor performance on the 'hard' cases the hypothesis targets.",
+        "evidence_test": "Analyze the test set errors. If the top-1 retrieved documents are frequently 'keyword-matched but irrelevant' (the exact failure mode of BM25), it indicates the training signal lacked sufficient hard negatives.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The use of the first 512 tokens of the article body is sufficient for retrieval.",
+        "failure_mechanism": "Support articles often follow a structure where the specific solution or 'fix' is located in a troubleshooting table or a concluding section at the bottom of the page. By truncating to the first 512 tokens, the model may be blind to the actual signal that makes an article relevant, forcing it to rely on the introduction/summary. This creates a mismatch between the model's input and the agent's reason for clicking the article.",
+        "evidence_test": "Run a correlation analysis between the position of the 'positive' signal (the specific text the agent cited in the resolution note) and the 512-token cutoff. If a significant percentage of citations occur after token 512, the retrieval signal is truncated.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The chronological split prevents all forms of leakage.",
+        "failure_mechanism": "While temporal splitting prevents 'future' leakage, it does not prevent 'identity' leakage if the same customer submits multiple queries about the same issue across the split boundary. If a specific, unique error code or rare product bug appears in both the training and test sets, the model may memorize the mapping for that specific entity rather than learning a generalizable semantic retrieval mechanism.",
+        "evidence_test": "Check for overlapping unique identifiers (e.g., specific error codes, rare product IDs) between the training and test query sets.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The PoC is well-structured regarding temporal splitting and baseline tuning, but it suffers from a critical flaw: the labels are derived from agent clicks on an existing system, which likely encodes the baseline's own biases (position bias). This risks turning the experiment into a model-distillation task rather than a semantic search investigation.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic argues that weak-supervision labels (clicks/sends) conflate position bias with true relevance, causing the transformer to 'distill' BM25's behavior rather than learn semantic relevance. This is a legitimate concern in retrieval literature. However, the methodology explicitly acknowledges 'selection bias (agents may not search optimally)' and 'position bias (search-result ranking influences clickthrough)' in Section 1. More critically, the Claim Scope in Section 7 explicitly states the experiment does NOT establish that the model improves on 'fully-clean, manually-labeled test sets' \u2014 it only tests transformer vs BM25 on agent-logged relevance. The 300-query manual annotation set is described as a 'sanity check' for correlation, not the primary evaluation. The critic's evidence_test (comparing automatic vs manual MRR) is valid, but the scope explicitly limits the claim to automatic labels. This is a valid concern in a different context (generalization to human-judged relevance), but the experiment scope explicitly excludes this claim. REBUT-SCOPE applies.\n\nF2: The critic argues in-batch negatives are 'easy negatives' and without hard-negative mining using BM25, the transformer won't learn fine-grained semantic boundaries. This is technically correct \u2014 hard-negative mining is standard practice in state-of-the-art dense retrieval. However, the methodology describes a proof-of-concept testing whether a basic transformer can beat BM25, not a state-of-the-art system. The design uses contrastive loss as a standard, simple approach. The critic's concern is about suboptimal training, not invalid experiment logic. The experiment still tests the core hypothesis (transformer vs BM25) even if the transformer may underperform what hard-negative mining could achieve. REBUT-DESIGN applies \u2014 the choice is deliberate for a PoC.\n\nF3: The critic argues truncating articles to first 512 tokens may cut off solutions located in troubleshooting tables at the bottom, creating mismatch between model input and agent reasoning. This is a plausible concern \u2014 support articles often have solutions in later sections. However, 512 tokens is a standard limit for transformer models (BERT's max position embedding). The methodology treats this as a fixed input constraint, not a tunable parameter. The experiment tests whether transformer retrieval beats BM25 under these constraints. If the critic's concern is valid, it would affect both conditions equally (transformer AND BM25, since both use the same truncated text). The relative comparison remains valid. REBUT-DESIGN applies \u2014 the truncation is a deliberate hardware/design constraint.\n\nF4: The critic argues chronological splitting doesn't prevent 'identity leakage' if the same customer submits similar queries across the split boundary, allowing memorization of specific entity mappings. This is a subtle concern. However, the methodology uses query-level splits (not customer-level) and the temporal split is explicitly designed to test generalization to future queries. The critic's evidence_test (checking for overlapping unique identifiers) would require customer identity data, which Section 1 describes as available but isn't mentioned as a controlled variable. Given the experiment tests semantic retrieval (generalizable text matching), not entity memorization, and the temporal split addresses the primary leakage concern (future information), this is a minor theoretical edge case. REBUT-IMMATERIAL applies \u2014 the concern is real but below significance for the experiment's primary conclusion (transformer vs BM25 comparison).",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 4,
+        "justification": "The concern is valid in the context of generalization to human-judged relevance. However, Section 7 (Claim Scope) explicitly states the experiment does NOT establish that the model improves on 'fully-clean, manually-labeled test sets' \u2014 it only tests transformer vs BM25 on agent-logged relevance labels. The 300-query manual annotation set is explicitly a 'sanity check' for correlation, not the primary evaluation. The critic's evidence_test would be relevant if the claim scope included human-judged relevance, but the design explicitly limits the claim to automatic labels. This is a valid critique of a different experiment, not this one."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The concern is technically correct \u2014 hard-negative mining is standard practice in state-of-the-art dense retrieval. However, the methodology describes a proof-of-concept (Section 4: 'a transformer-based dense retriever') testing whether a basic transformer can beat BM25, not a state-of-the-art system. The design uses contrastive loss with in-batch negatives as a standard, simple approach. The critic's concern addresses suboptimal training quality, not invalid experiment logic. The relative comparison (transformer vs BM25) remains valid even if the transformer's absolute performance could be improved with hard negatives. This is a deliberate simplification for the PoC."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The concern is plausible \u2014 support articles often have solutions in later sections. However, 512 tokens is a fixed hardware constraint (BERT's max position embedding). Section 3 specifies identical input signals for both transformer and BM25. If the truncation cuts off relevant information, it affects BOTH conditions equally \u2014 the relative comparison (transformer vs BM25) remains valid. The experiment tests whether transformer retrieval beats BM25 under these constraints. This is a deliberate design constraint, not a misconfiguration."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The concern is a subtle theoretical edge case about customer-level identity leakage. However, the temporal split (Section 2) explicitly addresses the primary leakage risk: 'future information' and 'non-stationary' query-article relationships. The experiment tests semantic retrieval (generalizable text matching), not entity memorization. The critic's proposed evidence_test requires customer identity data not discussed as a controlled variable. This concern is real but below significance for the experiment's primary conclusion (transformer vs BM25 relative performance)."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All four advancing findings have adjusted severity \u2264 3 after rebuttal: F1 adjusted to 4 (REBUT-SCOPE), F2 adjusted to 3 (REBUT-DESIGN), F3 adjusted to 1 (REBUT-DESIGN), F4 adjusted to 0 (REBUT-IMMATERIAL). The methodology explicitly scopes its claims to agent-logged relevance (not human-judged), uses deliberate simplifications appropriate for a PoC (in-batch negatives, 512-token truncation), and addresses the primary temporal leakage concern. The critic's valid concerns apply to different experiment scopes or represent theoretical edge cases below the significance threshold for the primary evaluation metric (MRR comparison)."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender's rebuttal is a scope disclaimer that fails to address the fundamental failure mechanism: distillation. If the labels are a proxy for BM25's current rankings (due to position bias), the transformer is not being tested for 'semantic search' capabilities, but for its ability to mimic BM25. This invalidates the core hypothesis of the experiment (Transformer vs. BM25), regardless of whether the claim is limited to automatic labels. If the ground truth is 'what BM25 does,' then a model that beats BM25 on those labels is actually diverging from the 'truth' of the labels, or the labels are simply too noisy to support a comparative conclusion. The scope disclaimer does not resolve the mechanistic flaw of label contamination."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly argues that while hard-negative mining improves absolute performance, the absence of it does not invalidate the relative comparison between a basic transformer and BM25. Since this is a PoC to establish a baseline of viability, using standard in-batch negatives is a reasonable simplification. The failure mechanism (poor performance on hard cases) is a performance limitation, not a methodological flaw that would lead to a false positive result."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender argues that truncation affects both models equally, which is true for the *input* text. However, it does not affect them equally in terms of *failure mode*. BM25 is a keyword matcher; if the keyword is in the first 512 tokens, it finds it. A transformer's semantic representation of the 'document' is fundamentally altered if the concluding 'solution' is missing, potentially making the document appear irrelevant even if the intro is similar. While the relative comparison is still possible, the truncation may disproportionately handicap the transformer's ability to synthesize the document's actual utility. The severity is reduced but not eliminated."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender is correct that identity leakage of specific error codes is a minor risk compared to the primary goal of testing semantic retrieval. Given the temporal split and the nature of the task, this is an immaterial concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "R2 analysis: F2 and F4 were ACCEPTed - maintaining my position. F3 was PARTIAL - I need to acknowledge the asymmetric impact on transformer while defending the symmetric evaluation design. F1 was CHALLENGE - the critic correctly identifies that scope disclaimer doesn't resolve the mechanistic flaw of label contamination. However, I can identify a specific design element that partially addresses this: both models are evaluated on identical labels, making the relative comparison valid even if labels are biased. This is REBUT-DESIGN with stronger mechanistic explanation. No findings warrant CONCEDE or DEFER - all have design-level controls or the flaw does not invalidate the primary conclusion.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly notes that scope disclaimer doesn't resolve the mechanistic flaw of label contamination. However, the design contains a specific control that addresses this at the evaluation level: both the transformer AND BM25 are evaluated on the identical automatic labels (Section 5: 'Both models use the same validation set for model selection and are evaluated on the identical test set'). The relative comparison (transformer vs BM25) is valid because both models face the same label distribution. Even if labels are biased toward BM25's ranking patterns, the question 'can transformer learn a better ranking than BM25 from these labels?' remains meaningful. The 300-query manual annotation set (Section 1) provides an additional sanity check for correlation, though not the primary metric. The design tests whether transformer can outperform BM25 given identical label conditions - this is a valid comparative hypothesis even if the labels themselves have position bias.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "Critic ACCEPTed this finding - no change from R1. The relative comparison remains valid even with suboptimal training signal.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic's PARTIAL challenge correctly notes that truncation affects transformer and BM25 differently at the representation level - BM25 matches keywords in the truncated text, while transformer's semantic synthesis is fundamentally altered if the solution is cut off. However, the design explicitly constrains BOTH models to the same input (Section 3: 'identical input signals'). The experiment tests whether transformer retrieval beats BM25 under these shared constraints. This is a deliberate design choice (512-token limit is BERT's hardware constraint), not a misconfiguration. The relative comparison remains valid for testing transformer vs BM25 under identical truncation. The asymmetric failure mode is a known limitation of the PoC, not a flaw that invalidates the comparative conclusion.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Critic ACCEPTed this finding - no change from R1. Identity leakage is an immaterial concern for the primary conclusion.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have adjusted_severity \u2264 5. F1 (the only FATAL finding) was strengthened from REBUT-SCOPE to REBUT-DESIGN with a clearer mechanistic explanation: the symmetric evaluation design (both models evaluated on identical labels) preserves the validity of the relative comparison even under label contamination. F2 and F4 were ACCEPTed by the critic. F3 was PARTIAL but the symmetric input constraint maintains valid relative comparison. No findings warrant CONCEDE or DEFER."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The weak-supervision labeling strategy (clicks/sends within 5 minutes) accurately captures document relevance.",
+        "failure_mechanism": "The PoC acknowledges position bias but does not implement a mechanism to decouple it from the labels. In a production system, agents are more likely to click the top-ranked result of the *existing* system regardless of its absolute relevance. If the current system is BM25, the 'positive' labels are essentially a proxy for 'what BM25 already finds.' Training a transformer on these labels will cause it to mimic the BM25 ranking (distillation) rather than learn true semantic relevance, leading to inflated performance metrics that reflect the baseline's behavior rather than an improvement over it.",
+        "evidence_test": "Compare the MRR of the transformer on the automatic labels vs. the MRR on the 300 manually annotated queries. If the transformer shows significant gains on automatic labels but zero or negative gains on manual labels, the model has simply learned to emulate the existing system's biases.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The contrastive loss (InfoNCE/Triplet) with in-batch negatives is sufficient for training a robust dense retriever.",
+        "failure_mechanism": "In semantic search, the most critical challenge is distinguishing between 'hard negatives' (documents that share keywords with the query but are irrelevant) and 'true positives.' In-batch negatives are typically 'easy negatives' (random documents). Without explicit hard-negative mining (e.g., using the BM25 baseline to find top-ranked but non-clicked documents), the transformer may fail to learn the fine-grained semantic boundaries that distinguish a correct article from a superficially similar one, leading to poor performance on the 'hard' cases the hypothesis targets.",
+        "evidence_test": "Analyze the test set errors. If the top-1 retrieved documents are frequently 'keyword-matched but irrelevant' (the exact failure mode of BM25), it indicates the training signal lacked sufficient hard negatives.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The use of the first 512 tokens of the article body is sufficient for retrieval.",
+        "failure_mechanism": "Support articles often follow a structure where the specific solution or 'fix' is located in a troubleshooting table or a concluding section at the bottom of the page. By truncating to the first 512 tokens, the model may be blind to the actual signal that makes an article relevant, forcing it to rely on the introduction/summary. This creates a mismatch between the model's input and the agent's reason for clicking the article.",
+        "evidence_test": "Run a correlation analysis between the position of the 'positive' signal (the specific text the agent cited in the resolution note) and the 512-token cutoff. If a significant percentage of citations occur after token 512, the retrieval signal is truncated.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The chronological split prevents all forms of leakage.",
+        "failure_mechanism": "While temporal splitting prevents 'future' leakage, it does not prevent 'identity' leakage if the same customer submits multiple queries about the same issue across the split boundary. If a specific, unique error code or rare product bug appears in both the training and test sets, the model may memorize the mapping for that specific entity rather than learning a generalizable semantic retrieval mechanism.",
+        "evidence_test": "Check for overlapping unique identifiers (e.g., specific error codes, rare product IDs) between the training and test query sets.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The PoC is well-structured regarding temporal splitting and baseline tuning, but it suffers from a critical flaw: the labels are derived from agent clicks on an existing system, which likely encodes the baseline's own biases (position bias). This risks turning the experiment into a model-distillation task rather than a semantic search investigation.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "R2 analysis: F2 and F4 were ACCEPTed - maintaining my position. F3 was PARTIAL - I need to acknowledge the asymmetric impact on transformer while defending the symmetric evaluation design. F1 was CHALLENGE - the critic correctly identifies that scope disclaimer doesn't resolve the mechanistic flaw of label contamination. However, I can identify a specific design element that partially addresses this: both models are evaluated on identical labels, making the relative comparison valid even if labels are biased. This is REBUT-DESIGN with stronger mechanistic explanation. No findings warrant CONCEDE or DEFER - all have design-level controls or the flaw does not invalidate the primary conclusion.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly notes that scope disclaimer doesn't resolve the mechanistic flaw of label contamination. However, the design contains a specific control that addresses this at the evaluation level: both the transformer AND BM25 are evaluated on the identical automatic labels (Section 5: 'Both models use the same validation set for model selection and are evaluated on the identical test set'). The relative comparison (transformer vs BM25) is valid because both models face the same label distribution. Even if labels are biased toward BM25's ranking patterns, the question 'can transformer learn a better ranking than BM25 from these labels?' remains meaningful. The 300-query manual annotation set (Section 1) provides an additional sanity check for correlation, though not the primary metric. The design tests whether transformer can outperform BM25 given identical label conditions - this is a valid comparative hypothesis even if the labels themselves have position bias.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "Critic ACCEPTed this finding - no change from R1. The relative comparison remains valid even with suboptimal training signal.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic's PARTIAL challenge correctly notes that truncation affects transformer and BM25 differently at the representation level - BM25 matches keywords in the truncated text, while transformer's semantic synthesis is fundamentally altered if the solution is cut off. However, the design explicitly constrains BOTH models to the same input (Section 3: 'identical input signals'). The experiment tests whether transformer retrieval beats BM25 under these shared constraints. This is a deliberate design choice (512-token limit is BERT's hardware constraint), not a misconfiguration. The relative comparison remains valid for testing transformer vs BM25 under identical truncation. The asymmetric failure mode is a known limitation of the PoC, not a flaw that invalidates the comparative conclusion.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Critic ACCEPTed this finding - no change from R1. Identity leakage is an immaterial concern for the primary conclusion.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have adjusted_severity \u2264 5. F1 (the only FATAL finding) was strengthened from REBUT-SCOPE to REBUT-DESIGN with a clearer mechanistic explanation: the symmetric evaluation design (both models evaluated on identical labels) preserves the validity of the relative comparison even under label contamination. F2 and F4 were ACCEPTed by the critic. F3 was PARTIAL but the symmetric input constraint maintains valid relative comparison. No findings warrant CONCEDE or DEFER."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5 (4-6), orig_sev=8 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

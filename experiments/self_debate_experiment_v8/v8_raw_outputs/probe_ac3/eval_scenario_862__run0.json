@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_862",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "nvidia/nemotron-3-super-120b-a12b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline is a fair comparison to the transformer to isolate the value of learned text representations.",
+        "failure_mechanism": "The baseline is denied raw text entirely, while the transformer receives both raw text AND metadata. If the transformer outperforms the baseline, it is impossible to determine if the gain comes from the 'learned text representations' (the hypothesis) or from the transformer's ability to model complex non-linear interactions between the metadata and the text. The baseline is not a 'text-less' version of the same architecture; it is a different model class with a restricted feature set. A true baseline for this hypothesis would be a Transformer trained ONLY on the metadata (encoded as text) or a GBDT that includes TF-IDF/n-gram features of the text.",
+        "evidence_test": "Compare the Transformer (Text + Metadata) against a Transformer (Metadata only) and a GBDT (Text-features + Metadata). If the GBDT with text-features matches the Transformer, the 'learned representation' claim is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (Quarters 1-12 train, 13-15 val, 16 test) prevents the model from memorizing recurring campaigns.",
+        "failure_mechanism": "The PoC states that 'sender reputation score' is a feature for the baseline, derived from 'historical frequency and flagging rate from training data'. However, it does not specify how this is handled for the test set. If the reputation score for a sender in Quarter 16 is calculated using the global history (including Quarters 13-15), there is temporal leakage. More critically, if the Transformer's 'sender and domain' tokens are used, and the same attacker infrastructure persists from the training period into the test period, the model is simply performing a blacklist lookup. While the split is chronological, the *entities* (domains/IPs) are not partitioned, allowing the model to 'memorize' specific bad actors rather than 'learning' phishing language.",
+        "evidence_test": "Evaluate model performance on a 'Cold-Start' test set consisting only of senders/domains that never appeared in the training or validation sets. A significant drop in performance would prove the model is relying on entity memorization rather than linguistic patterns.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 512-token truncation strategy preserves the necessary signal for detection.",
+        "failure_mechanism": "Phishing emails often use 'padding' or 'noise' (e.g., long blocks of legitimate text copied from news articles or legal disclaimers) at the beginning of the body to push the actual malicious call-to-action or link beyond the truncation limit of common transformers. By truncating the body after the subject/sender, the model may be blind to the actual phishing signal in long emails, leading to a silent failure on a specific class of sophisticated attacks.",
+        "evidence_test": "Analyze the distribution of the position of 'malicious indicators' (URLs, urgency keywords) within the email body. If a significant percentage of indicators occur after token 512, the truncation is a material flaw.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Removing HTML tags and excessive whitespace is an appropriate preprocessing step for the transformer.",
+        "failure_mechanism": "In phishing detection, the *presence* of specific HTML anomalies (e.g., hidden <div> tags, mismatched <a> hrefs vs text, or CSS used to hide text from scanners) is often a stronger signal than the actual text content. By stripping HTML, the model loses the ability to detect 'visual deception' techniques, which are core to modern phishing.",
+        "evidence_test": "Compare performance of the current model against a version that treats HTML tags as special tokens or includes a 'HTML-anomaly' binary feature.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC suffers from a fundamental baseline flaw and a high risk of entity-based signal leakage. It fails to isolate the effect of 'learned text representations' because the baseline is denied text entirely, and it fails to ensure the model isn't simply memorizing sender blacklists across the temporal split.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique raises four concerns. F1 questions whether the baseline truly isolates the value of learned text representations, noting that the transformer also gains from modeling interactions between metadata and text. The methodology includes a confound control ('Metadata vs. text signals') that ablates metadata for both models; if the transformer's advantage drops more than the baseline's when metadata is removed, this would reveal an interaction effect, directly addressing the critic's point. F2 worries about temporal leakage via sender reputation scores and entity memorization. The feature description states reputation is derived from training data only, and the methodology includes a sender/domain memorization control (SHAP/attention analysis) to detect reliance on specific actors, which would catch any leakage or memorization. F3 argues that 512\u2011token truncation may discard phishing signals hidden after noise padding. No explicit control evaluates truncation impact; the claim hinges on an empirical distribution of indicator positions that is not presented in the PoC, making the concern an unsupported empirical assertion. F4 contends that stripping HTML removes visual\u2011deception cues. This is a MINOR concern; the design choice is a reasonable preprocessing simplification, and any loss of HTML\u2011based signal is unlikely to overturn the primary conclusion about text representations. Overall, F1 and F2 are mitigated by explicit design controls, F3 lacks empirical support in the PoC, and F4 is minor enough to be immaterial.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology includes a Metadata vs. text signals ablation: transformer performance is compared with and without metadata. If the transformer's advantage stems from modeling metadata\u2011text interactions, removing metadata will hurt the transformer more than the baseline, directly testing the critic's interaction confound. This control eliminates the ambiguity about whether gains come from text representations versus interaction modeling."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Sender reputation is computed exclusively from training data (as stated), preventing temporal leakage. Additionally, the Sender/domain memorandum control (SHAP/attention analysis) quantifies reliance on sender/domain tokens; if these tokens do not dominate, the model is not merely memorizing bad actors. Together these controls address the critic's leakage and memorization concerns."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic's claim that a significant fraction of malicious indicators appear after token 512 is an empirical assertion not substantiated by any PoC output or analysis presented in the methodology. Without evidence that truncation discards critical signals, the concern remains hypothetical and does not constitute a demonstrated flaw."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "While HTML anomalies can be informative, the preprocessing choice to strip tags is a standard simplification for text\u2011only transformers. The loss of such cues is unlikely to affect the primary PR\u2011AUC conclusion, making the concern immaterial to the experiment's comparative goal."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been rebutted to adjusted severity \u22643 (F1\u21923, F2\u21922, F3\u21920, F4\u21920), satisfying the EXONERATE condition; thus the defense wins without need for further empirical testing."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender's ablation (Transformer with vs. without metadata) only proves whether metadata is *useful*; it does not address the core failure mechanism: the lack of a baseline that uses text features in a non-transformer architecture. The hypothesis is that 'learned text representations' (the Transformer's specific way of encoding text) provide the advantage. To prove this, one must compare the Transformer against a model that has text features but *not* learned transformer representations (e.g., GBDT + TF-IDF). The current design only compares 'Transformer (Text+Meta)' vs 'GBDT (Meta)'. The ablation mentioned does not resolve the missing baseline for text-based discrimination."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender successfully addresses the temporal leakage of the reputation score by clarifying it is fit only on training data. However, the 'memorization' concern remains partially unresolved. SHAP/Attention analysis shows *which* tokens were important for a specific prediction, but it does not prove the model can generalize to *novel* entities. A model can have high attention on a domain token and still be 'memorizing' a known-bad domain from the training set. The 'Cold-Start' test suggested in the finding is the only way to mechanistically prove the model isn't just a fancy blacklist."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The defender's rebuttal is a 'lack of evidence' argument, but the finding was a 'failure mechanism' warning based on known adversarial tactics (padding/noise) in phishing. In an adversarial ML context, the burden is on the designer to demonstrate that the truncation strategy does not create a blind spot for common evasion techniques. Dismissing a known attack vector as 'hypothetical' without providing the distribution of signal positions (as requested in the evidence test) does not resolve the risk."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly identifies that this is a design trade-off. While HTML signals are valuable, the experiment's primary goal is to compare learned text representations against hand-engineered features. Stripping HTML is a standard baseline for text-only transformers and does not invalidate the comparative hypothesis."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "We accept the critic's judgment on F4 (HTML stripping) as a valid design trade\u2011off. For F1, F2, and F3 we maintain that the current design does not fully eliminate the raised concerns; instead, we defer to empirical tests that can settle each issue definitively.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly notes that our ablation (Transformer with vs. without metadata) only tests the usefulness of metadata, not whether the transformer's learned text representations provide an advantage over a non\u2011transformer model that also sees text features. To isolate the value of learned text representations we must compare the Transformer (Text+Meta) against a GBDT that includes text\u2011derived features (e.g., TF\u2011IDF/n\u2011grams) alongside the same metadata, and also against a Transformer trained on metadata only. Running this experiment will reveal whether the transformer's gain stems from its specific text encoding or merely from metadata/interaction effects.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "While we have shown that sender reputation is computed solely from training data and we analyze SHAP/attention to quantify reliance on sender/domain tokens, this does not prove the model can generalize to entirely new attackers. A model could still be memorizing known\u2011bad domains from the training set. The only way to mechanistically rule out entity memorization is to evaluate performance on a cold\u2011start test set comprising senders/domains that never appeared in training or validation. Conducting that test will determine whether the transformer learns generalizable phishing language or merely acts as a dynamic blacklist.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's concern is that adversarial padding/noise can push malicious indicators beyond the 512\u2011token truncation point, creating a silent blind spot. Our R1 rebuttal treated this as hypothetical, but in an adversarial setting the burden is on us to demonstrate that truncation does not discard critical signals. We therefore defer to the requested empirical test: analyze the distribution of the position of known malicious indicators (URLs, urgency keywords, etc.) within the email body. If a substantial fraction appear after token 512, truncation is a material flaw; if not, the concern is alleviated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepts that stripping HTML tags is a standard preprocessing step for text\u2011only transformers and does not invalidate the comparative hypothesis between learned text representations and hand\u2011engineered features. While HTML anomalies can be informative, their loss is unlikely to affect the primary PR\u2011AUC conclusion, making the concern immaterial to the experiment's goal.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "At least one finding (F1\u2011F3) has been deferred to empirical tests, indicating that the design leaves genuine uncertainties that require experimental resolution rather than being conclusively defended or refuted by argument alone."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline is a fair comparison to the transformer to isolate the value of learned text representations.",
+        "failure_mechanism": "The baseline is denied raw text entirely, while the transformer receives both raw text AND metadata. If the transformer outperforms the baseline, it is impossible to determine if the gain comes from the 'learned text representations' (the hypothesis) or from the transformer's ability to model complex non-linear interactions between the metadata and the text. The baseline is not a 'text-less' version of the same architecture; it is a different model class with a restricted feature set. A true baseline for this hypothesis would be a Transformer trained ONLY on the metadata (encoded as text) or a GBDT that includes TF-IDF/n-gram features of the text.",
+        "evidence_test": "Compare the Transformer (Text + Metadata) against a Transformer (Metadata only) and a GBDT (Text-features + Metadata). If the GBDT with text-features matches the Transformer, the 'learned representation' claim is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (Quarters 1-12 train, 13-15 val, 16 test) prevents the model from memorizing recurring campaigns.",
+        "failure_mechanism": "The PoC states that 'sender reputation score' is a feature for the baseline, derived from 'historical frequency and flagging rate from training data'. However, it does not specify how this is handled for the test set. If the reputation score for a sender in Quarter 16 is calculated using the global history (including Quarters 13-15), there is temporal leakage. More critically, if the Transformer's 'sender and domain' tokens are used, and the same attacker infrastructure persists from the training period into the test period, the model is simply performing a blacklist lookup. While the split is chronological, the *entities* (domains/IPs) are not partitioned, allowing the model to 'memorize' specific bad actors rather than 'learning' phishing language.",
+        "evidence_test": "Evaluate model performance on a 'Cold-Start' test set consisting only of senders/domains that never appeared in the training or validation sets. A significant drop in performance would prove the model is relying on entity memorization rather than linguistic patterns.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 512-token truncation strategy preserves the necessary signal for detection.",
+        "failure_mechanism": "Phishing emails often use 'padding' or 'noise' (e.g., long blocks of legitimate text copied from news articles or legal disclaimers) at the beginning of the body to push the actual malicious call-to-action or link beyond the truncation limit of common transformers. By truncating the body after the subject/sender, the model may be blind to the actual phishing signal in long emails, leading to a silent failure on a specific class of sophisticated attacks.",
+        "evidence_test": "Analyze the distribution of the position of 'malicious indicators' (URLs, urgency keywords) within the email body. If a significant percentage of indicators occur after token 512, the truncation is a material flaw.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Removing HTML tags and excessive whitespace is an appropriate preprocessing step for the transformer.",
+        "failure_mechanism": "In phishing detection, the *presence* of specific HTML anomalies (e.g., hidden <div> tags, mismatched <a> hrefs vs text, or CSS used to hide text from scanners) is often a stronger signal than the actual text content. By stripping HTML, the model loses the ability to detect 'visual deception' techniques, which are core to modern phishing.",
+        "evidence_test": "Compare performance of the current model against a version that treats HTML tags as special tokens or includes a 'HTML-anomaly' binary feature.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC suffers from a fundamental baseline flaw and a high risk of entity-based signal leakage. It fails to isolate the effect of 'learned text representations' because the baseline is denied text entirely, and it fails to ensure the model isn't simply memorizing sender blacklists across the temporal split.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "We accept the critic's judgment on F4 (HTML stripping) as a valid design trade\u2011off. For F1, F2, and F3 we maintain that the current design does not fully eliminate the raised concerns; instead, we defer to empirical tests that can settle each issue definitively.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic correctly notes that our ablation (Transformer with vs. without metadata) only tests the usefulness of metadata, not whether the transformer's learned text representations provide an advantage over a non\u2011transformer model that also sees text features. To isolate the value of learned text representations we must compare the Transformer (Text+Meta) against a GBDT that includes text\u2011derived features (e.g., TF\u2011IDF/n\u2011grams) alongside the same metadata, and also against a Transformer trained on metadata only. Running this experiment will reveal whether the transformer's gain stems from its specific text encoding or merely from metadata/interaction effects.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "While we have shown that sender reputation is computed solely from training data and we analyze SHAP/attention to quantify reliance on sender/domain tokens, this does not prove the model can generalize to entirely new attackers. A model could still be memorizing known\u2011bad domains from the training set. The only way to mechanistically rule out entity memorization is to evaluate performance on a cold\u2011start test set comprising senders/domains that never appeared in training or validation. Conducting that test will determine whether the transformer learns generalizable phishing language or merely acts as a dynamic blacklist.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's concern is that adversarial padding/noise can push malicious indicators beyond the 512\u2011token truncation point, creating a silent blind spot. Our R1 rebuttal treated this as hypothetical, but in an adversarial setting the burden is on us to demonstrate that truncation does not discard critical signals. We therefore defer to the requested empirical test: analyze the distribution of the position of known malicious indicators (URLs, urgency keywords, etc.) within the email body. If a substantial fraction appear after token 512, truncation is a material flaw; if not, the concern is alleviated.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic accepts that stripping HTML tags is a standard preprocessing step for text\u2011only transformers and does not invalidate the comparative hypothesis between learned text representations and hand\u2011engineered features. While HTML anomalies can be informative, their loss is unlikely to affect the primary PR\u2011AUC conclusion, making the concern immaterial to the experiment's goal.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "At least one finding (F1\u2011F3) has been deferred to empirical tests, indicating that the design leaves genuine uncertainties that require experimental resolution rather than being conclusively defended or refuted by argument alone."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "3 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

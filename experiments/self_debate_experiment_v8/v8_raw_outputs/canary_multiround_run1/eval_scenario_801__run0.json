@@ -1,0 +1,234 @@
+{
+  "case_id": "eval_scenario_801",
+  "stratum": "regular",
+  "flaw_category": "signal_leakage",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The preprocessing and vocabulary are established from the complete corpus before model fitting to ensure consistency.",
+        "failure_mechanism": "The PoC explicitly states that feature standardization, imputation parameters, and the event-token vocabulary are established 'once from the complete corpus of observed interactions before model fitting'. This is a classic case of data leakage. Information from the validation and test sets (e.g., the global mean/std for scaling, the presence of specific rare tokens in the vocabulary, and imputation constants) is leaked into the training process. The model may 'know' the distribution of the test set, leading to overly optimistic performance metrics.",
+        "evidence_test": "Re-run the experiment where the vocabulary and scaling parameters are derived strictly from the training split and then applied to the validation/test splits. A significant drop in performance would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Stratified sampling at the student-course instance level ensures a fair evaluation.",
+        "failure_mechanism": "The data is partitioned by 'student-course instance'. However, the dataset contains students with multiple course enrollments across 4-5 terms. If a single student is enrolled in three courses, and those instances are split across train, validation, and test sets, the model will encounter the same student's identity/behavioral patterns in both training and testing. This is 'identity leakage'. The model may memorize student-specific traits (e.g., 'Student X always fails') rather than learning generalizable sequence patterns of failure, inflating the test results.",
+        "evidence_test": "Perform a 'Group-based' split where all instances belonging to a single student are kept within the same fold. If performance drops significantly compared to the instance-level split, identity leakage was inflating the results.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer's improvement is attributable to sequence modeling, not to differences in feature access.",
+        "failure_mechanism": "The transformer receives 'event type + content ID + grade'. The baseline receives 'total interactions by type'. The transformer has access to the specific *content* (Content ID) and the *order* of specific content, whereas the baseline only sees counts. If certain content IDs are highly correlated with failure (e.g., a specific 'hard' quiz), the transformer's gain may come from identifying these specific 'trap' content items rather than the *sequential nature* of the student's behavior. The baseline is not a true control for 'content-awareness'.",
+        "evidence_test": "Create a second baseline that uses aggregated counts per content ID (or a bag-of-content-tokens) without sequence order. If this baseline matches the transformer's performance, the 'sequence' hypothesis is invalidated.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC contains two fatal signal leakage flaws: global preprocessing (leakage of distribution) and instance-level splitting (leakage of student identity). These flaws likely invalidate the current performance claims by allowing the model to overfit to the specific test population.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "## Finding F1 Analysis (Data Leakage from Preprocessing)\n\nThe critic claims that establishing preprocessing parameters from the 'complete corpus' before model fitting constitutes data leakage. This is a fundamental misunderstanding of what data leakage means in ML pipelines.\n\nThe methodology states that feature standardization, imputation parameters, and vocabulary are 'established once from the complete corpus... before model fitting and then applied identically in training, validation, and test evaluation.' This is standard practice. Computing mean/std for standardization from the full dataset (when not fitting to labels) does not leak target information. The vocabulary is a mapping of token types, not outcomes. The model weights are still fitted only on training data.\n\nThe critic's evidence test ('derive from training split only') describes an alternative valid approach, not the only correct one. Deriving scaling parameters from the full corpus is NOT leakage when those parameters are frozen transformation constants - not fitted model weights. This is categorically different from fitting a model on validation data or using test labels for feature selection.\n\n**Conclusion:** The claim of 'classic data leakage' is factually incorrect. The methodology is sound.\n\n## Finding F2 Analysis (Identity Leakage)\n\nThe critic correctly identifies that splitting at 'student-course instance level' can place the same student in train, validation, and test sets. This is a legitimate concern - the model could memorize student-specific patterns ('Student X always fails') rather than learning generalizable sequence patterns.\n\nHowever, this is a MINOR-level concern for this experiment because:\n1. The primary comparison is transformer vs. logistic baseline - both would benefit equally from identity leakage\n2. The hypothesis tests whether sequence structure adds predictive value above aggregated features\n3. Even with identity leakage, the relative comparison remains valid unless the transformer specifically memorizes student identity while logistic regression does not (unlikely given both use student metadata)\n\nThe critic's proposed fix (group-based split) is better practice, but the concern does not FATALLY undermine the comparative evaluation.\n\n## Finding F3 Analysis (Content ID Confound)\n\nThe critic claims the transformer has unfair advantage via content ID access. However, the methodology explicitly states the baseline includes 'course difficulty (inferred from the prior-term failure rate for the same course).' This IS a content-aware feature - it encodes exactly which courses have high failure rates historically.\n\nThe critic's point has partial validity: the transformer sees specific content IDs while baseline sees aggregated difficulty. But the baseline IS content-aware at the course level. The transformer would need to show improvement beyond what course-level difficulty provides to validate the sequence hypothesis - which is exactly what the experiment tests.\n\nThis is not a fatal flaw - it's a valid consideration for interpretation that the design already partially addresses.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's claim that preprocessing from the complete corpus is 'classic data leakage' is factually incorrect. Computing frozen transformation constants (mean/std for scaling, vocabulary mapping) from the full dataset does not leak target information - the model weights are still fitted only on training data. This is standard ML practice. The critic's evidence test describes an alternative approach (derive from training only), not a validation of actual leakage. The methodology is sound."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 5,
+        "justification": "The identity leakage concern is real but immaterial to the experiment's primary comparison. Both transformer and logistic baseline receive the same student metadata and would benefit equally from any student-specific memorization. The hypothesis tests whether sequence structure adds value above aggregated features - this relative comparison remains valid even with identity leakage. The critic's group-based split is better practice but not required for a valid PoC."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic's claim that baseline lacks content awareness is partially incorrect. The baseline explicitly includes 'course difficulty (inferred from prior-term failure rate)' - this IS content-aware information at the course level. The transformer has finer-grained content ID access, but the baseline is not the 'bag of counts' the critic implies. The experiment tests whether sequence modeling adds value beyond course-level difficulty - this is a valid comparison design."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All three findings have been rebutted with adjusted severities at or below 5 (F1: 4, F2: 5, F3: 2). F1 is a factual error - the methodology does not contain data leakage. F2 is a real but immaterial concern that does not bias the comparative evaluation. F3 is addressed by the design which includes course difficulty in the baseline. No finding survives above adjusted severity 3 as a material flaw, so EXONERATE applies."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 9,
+        "reasoning": "The defender's claim that this is 'standard ML practice' is incorrect. Calculating scaling parameters (mean/std) and imputation constants from the full corpus (including the test set) is a textbook example of data leakage. While it does not leak the target label directly, it leaks the distribution of the test set into the training pipeline. If the test set contains outliers or a different distribution than the training set, the model's normalization is informed by those future values, leading to optimistic performance. The rebuttal fails to address the mechanism of distributional leakage."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The defender argues that identity leakage is immaterial because both models benefit equally. This is a flawed assumption. Transformers, with significantly higher capacity and the ability to learn complex embeddings, are far more capable of memorizing specific student IDs or unique behavioral fingerprints than a Logistic Regression model. Therefore, the transformer could achieve a higher score not by learning generalizable sequence patterns, but by memorizing the 'failure profile' of specific students who appear in both sets. This directly threatens the validity of the comparison."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly notes that course-level difficulty is included, but this does not resolve the core mechanism of the finding. The finding is not about course-level difficulty, but about *item-level* content (specific Content IDs). A transformer can learn that 'Quiz 3' is a failure-trigger, whereas the baseline only knows 'Course X' is hard. While the baseline is not a simple bag-of-counts, it still lacks the item-level granularity the transformer possesses. However, since the primary goal is to see if sequence structure helps, the gap between 'course-level' and 'item-level' is a secondary concern, though still an unresolved confound."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "For F1, the critic correctly identifies that computing normalization constants from the full corpus leaks distributional information - this is a valid technical concern, but I argue it's immaterial to the relative comparison since both models use identical preprocessing. For F2, the critic makes a strong mechanistic argument that transformers can memorize student-specific patterns, threatening the comparison validity - this is a genuine ambiguity requiring empirical test. For F3, the critic partially accepts my point about course-level difficulty but correctly notes item-level granularity remains a confound - I maintain the adjusted severity but acknowledge the limitation.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies that computing normalization constants (mean/std for standardization, imputation parameters, vocabulary) from the complete corpus before splitting is technically leaking marginal distributional information from the test set. While I maintain that this is standard practice in many ML pipelines and does not leak target labels, the critic's point that 'if the test set contains outliers or a different distribution, normalization is informed by future values' is mechanistically correct. This creates a genuine ambiguity: the leakage is real but subtle (affects marginal feature distributions, not targets), and both models are affected equally, preserving relative comparison validity. However, given the FATAL severity and the legitimate concern about distributional leakage, I defer to an empirical test: compute normalization from training set only and compare test performance. This is the proper resolution for a technically valid but practically ambiguous concern.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic makes a strong mechanistic argument that transformers, with higher model capacity, can memorize student-specific behavioral fingerprints (e.g., unique sequences of interaction patterns) that appear in both training and test sets, whereas logistic regression cannot. This is a valid concern: the transformer could learn 'Student X's failure pattern' rather than generalizable sequence patterns of failure. My R1 argument that 'both benefit equally' incorrectly assumes equal memorization capacity. The critic is correct that this threatens the validity of the comparison. However, whether this actually occurs is an empirical question - it depends on whether the sequences contain sufficient unique identifying information. I defer to the critic's proposed evidence test: perform a group-based split where all instances of a student are in the same fold. If performance drops significantly, identity leakage was inflating results. This is the correct resolution for a genuine empirical ambiguity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic partially accepts my rebuttal, correctly acknowledging that course-level difficulty IS included in the baseline. The critic's remaining concern is item-level granularity (specific Content IDs like 'Quiz 3') that the baseline cannot access. This is a valid limitation but does not invalidate the experiment's core purpose. The experiment tests whether sequence structure adds value beyond aggregated features - even if the transformer gains some advantage from item-level content awareness, this is still a valid comparison for the stated hypothesis. The critic's updated severity of 3 (from original 5) reflects their recognition that this is a secondary confound, not a fatal flaw. I maintain my position that the design adequately controls for the primary comparison (sequence vs. aggregated features) and the adjusted severity of 2 is appropriate.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two of three findings (F1 and F2) are now DEFERred, representing genuine methodological ambiguities that require empirical resolution: (1) whether normalization-from-full-corpus affects test performance, and (2) whether identity leakage inflates transformer results. The critic's challenges on these points are mechanistically valid - they represent real uncertainties that the experiment should test. F3 is maintained at adjusted severity 2, acknowledging item-level granularity as a secondary confound. Since reasonable people can disagree on F1/F2 and only an experiment can settle the question, 'empirical_test_agreed' is the correct verdict."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The preprocessing and vocabulary are established from the complete corpus before model fitting to ensure consistency.",
+        "failure_mechanism": "The PoC explicitly states that feature standardization, imputation parameters, and the event-token vocabulary are established 'once from the complete corpus of observed interactions before model fitting'. This is a classic case of data leakage. Information from the validation and test sets (e.g., the global mean/std for scaling, the presence of specific rare tokens in the vocabulary, and imputation constants) is leaked into the training process. The model may 'know' the distribution of the test set, leading to overly optimistic performance metrics.",
+        "evidence_test": "Re-run the experiment where the vocabulary and scaling parameters are derived strictly from the training split and then applied to the validation/test splits. A significant drop in performance would confirm the leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Stratified sampling at the student-course instance level ensures a fair evaluation.",
+        "failure_mechanism": "The data is partitioned by 'student-course instance'. However, the dataset contains students with multiple course enrollments across 4-5 terms. If a single student is enrolled in three courses, and those instances are split across train, validation, and test sets, the model will encounter the same student's identity/behavioral patterns in both training and testing. This is 'identity leakage'. The model may memorize student-specific traits (e.g., 'Student X always fails') rather than learning generalizable sequence patterns of failure, inflating the test results.",
+        "evidence_test": "Perform a 'Group-based' split where all instances belonging to a single student are kept within the same fold. If performance drops significantly compared to the instance-level split, identity leakage was inflating the results.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer's improvement is attributable to sequence modeling, not to differences in feature access.",
+        "failure_mechanism": "The transformer receives 'event type + content ID + grade'. The baseline receives 'total interactions by type'. The transformer has access to the specific *content* (Content ID) and the *order* of specific content, whereas the baseline only sees counts. If certain content IDs are highly correlated with failure (e.g., a specific 'hard' quiz), the transformer's gain may come from identifying these specific 'trap' content items rather than the *sequential nature* of the student's behavior. The baseline is not a true control for 'content-awareness'.",
+        "evidence_test": "Create a second baseline that uses aggregated counts per content ID (or a bag-of-content-tokens) without sequence order. If this baseline matches the transformer's performance, the 'sequence' hypothesis is invalidated.",
+        "flaw_category": "missing_baselines"
+      }
+    ],
+    "summary": "The PoC contains two fatal signal leakage flaws: global preprocessing (leakage of distribution) and instance-level splitting (leakage of student identity). These flaws likely invalidate the current performance claims by allowing the model to overfit to the specific test population.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "For F1, the critic correctly identifies that computing normalization constants from the full corpus leaks distributional information - this is a valid technical concern, but I argue it's immaterial to the relative comparison since both models use identical preprocessing. For F2, the critic makes a strong mechanistic argument that transformers can memorize student-specific patterns, threatening the comparison validity - this is a genuine ambiguity requiring empirical test. For F3, the critic partially accepts my point about course-level difficulty but correctly notes item-level granularity remains a confound - I maintain the adjusted severity but acknowledge the limitation.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies that computing normalization constants (mean/std for standardization, imputation parameters, vocabulary) from the complete corpus before splitting is technically leaking marginal distributional information from the test set. While I maintain that this is standard practice in many ML pipelines and does not leak target labels, the critic's point that 'if the test set contains outliers or a different distribution, normalization is informed by future values' is mechanistically correct. This creates a genuine ambiguity: the leakage is real but subtle (affects marginal feature distributions, not targets), and both models are affected equally, preserving relative comparison validity. However, given the FATAL severity and the legitimate concern about distributional leakage, I defer to an empirical test: compute normalization from training set only and compare test performance. This is the proper resolution for a technically valid but practically ambiguous concern.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic makes a strong mechanistic argument that transformers, with higher model capacity, can memorize student-specific behavioral fingerprints (e.g., unique sequences of interaction patterns) that appear in both training and test sets, whereas logistic regression cannot. This is a valid concern: the transformer could learn 'Student X's failure pattern' rather than generalizable sequence patterns of failure. My R1 argument that 'both benefit equally' incorrectly assumes equal memorization capacity. The critic is correct that this threatens the validity of the comparison. However, whether this actually occurs is an empirical question - it depends on whether the sequences contain sufficient unique identifying information. I defer to the critic's proposed evidence test: perform a group-based split where all instances of a student are in the same fold. If performance drops significantly, identity leakage was inflating results. This is the correct resolution for a genuine empirical ambiguity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic partially accepts my rebuttal, correctly acknowledging that course-level difficulty IS included in the baseline. The critic's remaining concern is item-level granularity (specific Content IDs like 'Quiz 3') that the baseline cannot access. This is a valid limitation but does not invalidate the experiment's core purpose. The experiment tests whether sequence structure adds value beyond aggregated features - even if the transformer gains some advantage from item-level content awareness, this is still a valid comparison for the stated hypothesis. The critic's updated severity of 3 (from original 5) reflects their recognition that this is a secondary confound, not a fatal flaw. I maintain my position that the design adequately controls for the primary comparison (sequence vs. aggregated features) and the adjusted severity of 2 is appropriate.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two of three findings (F1 and F2) are now DEFERred, representing genuine methodological ambiguities that require empirical resolution: (1) whether normalization-from-full-corpus affects test performance, and (2) whether identity leakage inflates transformer results. The critic's challenges on these points are mechanistically valid - they represent real uncertainties that the experiment should test. F3 is maintained at adjusted severity 2, acknowledging item-level granularity as a secondary confound. Since reasonable people can disagree on F1/F2 and only an experiment can settle the question, 'empirical_test_agreed' is the correct verdict."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=9, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

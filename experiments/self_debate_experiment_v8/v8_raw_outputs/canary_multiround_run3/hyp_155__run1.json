@@ -1,0 +1,470 @@
+{
+  "case_id": "hyp_155",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The historical sender signals (e.g., 'fraction of prior messages that were malicious') and graph features (e.g., PageRank) computed from the training window are not contaminated by future label information.",
+        "failure_mechanism": "The design states labels are assigned by 'analyst review or corroborated user reports' and excludes messages whose label arrives >30 days after the message date. However, for a message at time T in the training set, its label may be assigned at T+29 days. When computing 'fraction of prior messages that were malicious' for a sender at a later time T' > T, the label for the message at T is now known and can be used. If this feature is computed using all labeled data available at the end of the training window, it incorporates label information from messages that were, at their send time, future events relative to other messages. This creates a subtle form of temporal leakage: the model's features for a historical message could be informed by labels assigned to chronologically later messages from the same sender, violating causality.",
+        "evidence_test": "For each sender feature that uses label information (like 'fraction prior malicious'), audit the computation timestamp. The feature value for a message at time T must be computed using only labels assigned to messages with a send time < T and where the label assignment time is also < T. If any feature uses a label assigned after T (even if for a message sent before T), leakage exists.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 'sender domain reputation score (binned, computed at message-time, not post-hoc)' is a valid, non-leaky feature for the hypothesis model.",
+        "failure_mechanism": "The reputation score is described as 'computed at message-time', but its source and update mechanism are unspecified. If this reputation score is derived from external threat intelligence feeds that are updated continuously, using the score 'at message-time' in training requires a historical snapshot of the feed's state for each past message, which is often unavailable. In practice, experiments frequently use the current reputation score for all historical messages, which incorporates future threat intelligence about domains that only became malicious later\u2014a severe leakage. Even if a snapshot exists, if the score incorporates labels from the organization's own data (e.g., based on internal malicious email reports), it risks leaking the test objective.",
+        "evidence_test": "Document the exact source and versioning of the reputation score for each message. For a sample of messages, verify the reputation score used matches a historical snapshot from the message's send date, not a modern lookup. For internally derived scores, verify the scoring algorithm uses only data available prior to the message send time.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying by sender domain (internal vs. external) within each temporal window is sufficient to ensure the train/validation/test cohorts reflect the 'realistic operational sender distribution' and does not introduce sampling bias.",
+        "failure_mechanism": "Stratification by a binary (internal/external) domain category preserves the proportion of internal vs. external emails but does not control for the distribution of specific sender identities or domains, which is critical for graph-based features. If a particular external malicious domain appears only in the test period, the model's graph features for it (based on training window history) will be zero or generic, which is realistic. However, if stratification is implemented by random sampling within each window to meet the proportion, it could accidentally place all emails from a specific high-volume sender into one split, artificially making that sender 'easy' or 'hard' for a specific set. More importantly, the graph is built from the training window; if a sender is entirely absent from the training window but appears in validation/test, its graph features will be missing/zero. Stratification does not guarantee the presence of sender identities across splits, which is a prerequisite for evaluating graph features.",
+        "evidence_test": "Report the fraction of senders in the validation and test sets that are 'cold-start' (i.e., have zero messages in the training window). If this fraction is significant (>10%), the evaluation of graph features is largely on unseen senders, which is a different and potentially harder problem than the hypothesis might imply. Also, verify the stratification method does not involve random sampling that could clump specific senders.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric 'Precision at a fixed recall of 80%' is sufficient to evaluate operational utility, and if unattainable, pivoting to 'recall at a fixed false-positive rate of 2%' is a valid fallback.",
+        "failure_mechanism": "Choosing a metric after observing model performance on the validation set can lead to metric gaming. The experiment pre-defines two possible primary metrics and states a pivot condition ('if 80% recall is unattainable'). However, the threshold for 'unattainable' is not defined. If the hypothesis model achieves 79% recall and the baseline achieves 40% recall on validation, the experimenter might decide 80% is 'unattainable' and switch to the FPR-based metric, which could favor a different model. This post-hoc selection of the evaluation metric based on validation results invalidates the statistical interpretation of the test set comparison, as the metric itself is tuned to the validation performance.",
+        "evidence_test": "Pre-specify the exact rule for the pivot. For example: 'The primary metric is Precision at Recall=80% (P@R80). If, on the validation set, neither model's maximum recall (at any threshold) reaches 80%, then the primary metric becomes Recall at FPR=2% (R@FPR2) for all models.' This rule must be fixed before any model sees the validation set and applied uniformly.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline model, which is denied access to non-text signals, provides a clean counterfactual to isolate the contribution of graph and historical context.",
+        "failure_mechanism": "The hypothesis model receives concatenated text and graph features. If the graph features are high-dimensional or very informative, the concatenated representation may dominate the MLP, causing the model to effectively ignore the text embeddings. The baseline, using only text, might underperform simply because the transformer's capacity is not being fully utilized on the text task alone, whereas the hypothesis model has a richer feature set that keeps the transformer layers engaged. The performance gap could be attributed to feature richness rather than the specific graph structure. A stronger baseline would be the hypothesis model architecture but with the graph features ablated (e.g., replaced with zeros or random noise of similar dimension) to control for the architectural effect of having additional input dimensions.",
+        "evidence_test": "Add an ablation baseline: the full hypothesis architecture but with graph/historical features replaced by random Gaussian noise (matched in dimension and variance to the real features). If this ablated model performs similarly to the text-only baseline, the isolation is valid. If it performs significantly better, the architecture itself is conferring an advantage.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding messages with labels arriving >30 days after the message date ensures 'label quality and temporal consistency' for a real-time detector.",
+        "failure_mechanism": "This filtering may systematically exclude a specific class of sophisticated spear-phishing attacks that are discovered only after long investigation (e.g., multi-stage campaigns discovered via forensic analysis months later). The resulting dataset may be biased towards easier-to-detect phishing (those caught quickly by analysts or user reports), making the task artificially easier and not representative of the hardest threats the detector should eventually catch.",
+        "evidence_test": "Analyze the distribution of label delay for malicious messages. If a significant portion (>20%) of malicious messages have delays >30 days, report the performance of the model on a 'hard' subset of messages with long-delay labels (if such labels can be obtained for a later test period without leakage).",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The chronological split with a 3-month validation and 3-month test window is sufficient to capture temporal drift for model selection and evaluation.",
+        "failure_mechanism": "Three months may be too short to observe significant drift in spear-phishing tactics, especially if the organization is not a frequent target. The validation and test performance might be statistically similar simply because the threat landscape hasn't changed, giving a false sense of robustness. Conversely, if a major new campaign occurs in a single week, it could dominate the test set statistics, making performance highly variable depending on whether that week is included.",
+        "evidence_test": "Perform a robustness check: evaluate the final selected model on multiple rolling 3-month test windows within the available 18 months (where training data is always prior). Report the variance in the primary metric across these windows to assess sensitivity to specific time periods.",
+        "flaw_category": "uncertain_significance"
+      }
+    ],
+    "summary": "The PoC has a strong temporal split design but contains a likely fatal flaw (F1) in the computation of historical sender features, risking temporal label leakage. Several material concerns exist around feature leakage, metric selection, and baseline isolation that weaken the claim's support.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic correctly identifies that the methodology does not explicitly specify temporal scoping for label-derived features like 'fraction of prior messages that were malicious.' The design intent is to use only historical data available at message time, but the methodology lacks explicit control ensuring this. This is a genuine ambiguity - the design could be implemented correctly, but we cannot confirm from the documentation. The concern would materially affect the primary metric if the implementation uses all labels available at the end of training window.\n\nF2: The critic correctly identifies that the methodology does not specify the source or versioning mechanism for the sender domain reputation score. The claim 'computed at message-time' is ambiguous - if the score comes from external threat intelligence feeds updated continuously, using current scores for historical messages would incorporate future threat intelligence. This is a real implementation concern that the methodology does not address.\n\nF3: The critic validly notes that stratification by binary internal/external does not control for specific sender identities. However, the cold-start sender scenario (sender absent from training window) is explicitly the intended evaluation condition - the methodology states the test set should represent 'the most recent threat landscape' using only historical context. This is REBUT-SCOPE - the concern describes the intended evaluation setting, not a flaw.\n\nF4: The critic correctly identifies that the pivot rule ('if 80% recall is unattainable') lacks a predefined threshold. However, the methodology does pre-define two metrics and a pivot condition, which constrains post-hoc gaming. The concern is real but represents a minor ambiguity in rule specification, not a complete absence of design control.\n\nF5: The critic raises a valid methodological point about feature richness confounding the isolation. However, the baseline already controls for the core confound (same architecture, weights, tuning effort; difference is feature access). Adding an ablation with random noise would test architecture effects but adds complexity beyond what's needed to test the hypothesis. The design choice is deliberate.\n\nF6: The critic correctly notes that excluding long-delayed labels may bias toward easier-detect attacks. However, the 30-day exclusion is explicitly justified by 'label quality and temporal consistency' for a real-time detector. The concern is a legitimate tradeoff discussion, not a design failure.\n\nF7: The critic correctly notes that 3-month windows may be too short to observe significant drift. However, the scope explicitly states the experiment does not establish robustness 'beyond 18 months.' This is REBUT-SCOPE - the concern falls outside the stated experiment scope.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The methodology does not explicitly control for temporal leakage in label-derived features. The design intent is to compute 'fraction of prior messages that were malicious' using only labels available at message time, but no explicit mechanism is documented. If features are computed using all labels available at the end of the training window, future label information leaks into historical feature computation. This would materially affect the primary metric if true."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The methodology states the reputation score is 'computed at message-time' but does not specify the source or versioning mechanism. If the score derives from external threat intelligence feeds updated continuously, using current scores for historical messages would incorporate future threat intelligence about domains that only became malicious later. This is a genuine implementation concern that would materially affect the primary metric if current scores are used retroactively."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic correctly notes that stratification does not guarantee sender identity overlap across splits. However, evaluating on cold-start senders (absent from training window) is explicitly the intended evaluation condition - the methodology states the test set should represent 'the most recent threat landscape' using only historical context. This is the realistic deployment scenario the hypothesis aims to test, not a flaw."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The critic correctly identifies that the pivot rule threshold is not predefined. However, the methodology does pre-define two metrics and a pivot condition, constraining post-hoc gaming. The design intent is clear even if the exact threshold is not specified. A more precise rule would strengthen the methodology, but the current design is a deliberate tradeoff between rigor and operational flexibility."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic raises a valid point about feature richness potentially confounding isolation. However, the baseline already controls for the core confound: same transformer architecture, pretrained weights, and tuning effort, differing only in feature access. Adding an ablation with random noise would test architecture effects but adds complexity beyond what is needed to test the graph hypothesis. The design choice is deliberate and justified."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The critic correctly notes that excluding long-delayed labels may bias toward easier-detect attacks. However, the 30-day exclusion is explicitly justified by 'label quality and temporal consistency' for a real-time detector. This is a deliberate design tradeoff - the experiment tests what can be detected with timely labels, not what might be detectable with delayed forensic analysis."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic correctly notes that 3-month windows may be too short to observe significant drift. However, the scope explicitly states the experiment does not establish robustness 'beyond 18 months.' The evaluation window is a deliberate scope choice, not a flaw - the experiment makes no claim about long-term drift."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL/MATERIAL findings (F1 and F2) were CONCEDEd with adjusted severities of 7 and 6, both above the threshold of 3. These represent genuine design gaps: the methodology does not explicitly control for temporal leakage in label-derived features or specify the versioning mechanism for sender reputation scores. These flaws would materially affect the primary evaluation metric if present. The remaining findings were successfully rebutted as immaterial, out of scope, or deliberate design choices."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 7,
+        "reasoning": "The defender concedes the finding without attempting to rebut it. The severity remains unchanged as the defender acknowledges the temporal leakage concern is valid and material."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 6,
+        "reasoning": "The defender concedes the finding without attempting to rebut it. The severity remains unchanged as the defender acknowledges the reputation score leakage concern is valid and material."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The defender's scope rebuttal mischaracterizes the finding. The failure mechanism is not about evaluating cold-start senders being unrealistic, but about whether stratification by binary domain category introduces sampling bias that could artificially make specific senders easier or harder across splits. The defender's response does not address the core concern: stratification by internal/external alone does not control for sender identity distribution, which could lead to non-representative splits where high-volume senders are concentrated in one split. This could confound performance comparisons. The severity adjustment from 5 to 1 is disproportionate for an unresolved methodological bias."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The defender's design rebuttal acknowledges the pivot threshold is undefined but claims the design intent is clear. This does not address the failure mechanism: without a pre-specified, objective rule for when to pivot, the experimenter can game the metric selection based on validation results, invalidating statistical interpretation. 'Operational flexibility' is not a valid defense against metric selection bias. The severity adjustment from 4 to 1 is disproportionate for a fundamental evaluation flaw that threatens the validity of the primary comparison."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender's design rebuttal acknowledges the concern about feature richness confounding but argues the current baseline is sufficient. This partially addresses the mechanism by recognizing the confound exists, but the justification ('adds complexity beyond what is needed') is insufficient. The failure mechanism is that the performance gap could be attributed to having additional input dimensions rather than the specific graph information. A simple ablation baseline with random noise of matching dimensions would directly test this and is not overly complex. The severity adjustment from 3 to 1 is too aggressive; the concern remains material though reduced."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender's design rebuttal correctly identifies that the 30-day exclusion is a deliberate tradeoff to test real-time detection capability. While the bias toward easier-to-detect attacks remains, the defender explicitly frames this as a scope limitation the experiment accepts. This addresses the failure mechanism by acknowledging the limitation as intentional rather than oversight. The severity reduction from 2 to 1 is appropriate."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's scope rebuttal correctly notes that the experiment explicitly disclaims robustness claims beyond 18 months. The 3-month window is presented as a deliberate scope choice to evaluate recent threat landscape, not to assess long-term drift. This directly addresses the failure mechanism by framing the window size as an intentional limitation within the stated scope. The severity reduction to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I accept the critic's challenges on F1 and F2 (both CONCEDED). For F3, F4, and F5, the critic's challenges identify real concerns, but I can strengthen my rebuttals with clearer design controls. F6 and F7 are ACCEPTed as originally rebutted. The key changes: F3 shifts to DEFER with a specific empirical test; F4 shifts to DEFER with a pre-specification requirement; F5 shifts to DEFER with an ablation experiment that would settle the question.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The methodology does not explicitly control for temporal leakage in label-derived features. The design intent is to compute 'fraction of prior messages that were malicious' using only labels available at message time, but no explicit mechanism is documented. If features are computed using all labels available at the end of the training window, future label information leaks into historical feature computation.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The methodology states the reputation score is 'computed at message-time' but does not specify the source or versioning mechanism. If the score derives from external threat intelligence feeds updated continuously, using current scores for historical messages would incorporate future threat intelligence about domains that only became malicious later.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly identifies that stratification by binary internal/external domain does not guarantee sender identity distribution is balanced across splits. The design does not include a specific control to ensure high-volume senders are not concentrated in a single split. However, this concern can be resolved empirically: report the sender overlap (Jaccard similarity) between training and test sets, and the distribution of senders by message volume across splits. If the distribution is significantly imbalanced, it would affect both hypothesis model and baseline equally, preserving the validity of the relative comparison. The primary conclusion (graph model vs text-only) survives because both models are evaluated on the same split. The experiment should measure and report sender distribution metrics to validate the split representativeness.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly identifies that the pivot rule ('if 80% recall is unattainable') lacks a predefined objective threshold. Without this, the experimenter can game metric selection based on validation results. However, this is a pre-specification issue, not a design flaw. The settling experiment is to fix the rule before any model sees validation data: e.g., 'If neither model achieves 80% recall at any threshold on validation, pivot to R@FPR2.' The primary conclusion survives even if the critique is correct: both models would be evaluated under the same metric, so the relative comparison remains valid. The experiment should pre-specify the exact pivot rule in the methodology before execution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critic correctly identifies that the performance gap could stem from additional input dimensions rather than graph-specific information. The current baseline controls for architecture and tuning, but not for feature dimensionality. The settling experiment is an ablation: add a third condition - the full hypothesis architecture with graph features replaced by random Gaussian noise (matched in dimension and variance). If this ablation performs similarly to the text-only baseline, the isolation is valid. If it performs significantly better, the architecture benefits from additional dimensions regardless of content. The primary conclusion survives if the ablation matches text-only performance - the graph features would then be shown to provide specific signal beyond dimensionality. This is a straightforward empirical check that resolves the ambiguity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The 30-day label exclusion is explicitly justified by 'label quality and temporal consistency' for a real-time detector. This is a deliberate scope decision: the experiment tests what can be detected with timely labels, not what might be detectable with delayed forensic analysis. The bias toward easier-to-detect attacks is acknowledged as a limitation within this scope. The design control is the explicit scope statement that defines the experimental boundary.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The experiment explicitly disclaims robustness claims beyond 18 months in the scope section. The 3-month evaluation window is a deliberate scope choice to evaluate the most recent threat landscape, not to assess long-term drift. This is an acknowledged limitation, not a flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two FATAL findings (F1, F2) are CONCEDED and remain at high severity. Three MATERIAL findings (F3, F4, F5) are DEFERRED to empirical validation - each has a specific experiment that would settle the concern while preserving the primary conclusion's validity. This is the correct outcome for genuinely ambiguous methodological questions where the design provides partial but not complete controls."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The historical sender signals (e.g., 'fraction of prior messages that were malicious') and graph features (e.g., PageRank) computed from the training window are not contaminated by future label information.",
+        "failure_mechanism": "The design states labels are assigned by 'analyst review or corroborated user reports' and excludes messages whose label arrives >30 days after the message date. However, for a message at time T in the training set, its label may be assigned at T+29 days. When computing 'fraction of prior messages that were malicious' for a sender at a later time T' > T, the label for the message at T is now known and can be used. If this feature is computed using all labeled data available at the end of the training window, it incorporates label information from messages that were, at their send time, future events relative to other messages. This creates a subtle form of temporal leakage: the model's features for a historical message could be informed by labels assigned to chronologically later messages from the same sender, violating causality.",
+        "evidence_test": "For each sender feature that uses label information (like 'fraction prior malicious'), audit the computation timestamp. The feature value for a message at time T must be computed using only labels assigned to messages with a send time < T and where the label assignment time is also < T. If any feature uses a label assigned after T (even if for a message sent before T), leakage exists.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 'sender domain reputation score (binned, computed at message-time, not post-hoc)' is a valid, non-leaky feature for the hypothesis model.",
+        "failure_mechanism": "The reputation score is described as 'computed at message-time', but its source and update mechanism are unspecified. If this reputation score is derived from external threat intelligence feeds that are updated continuously, using the score 'at message-time' in training requires a historical snapshot of the feed's state for each past message, which is often unavailable. In practice, experiments frequently use the current reputation score for all historical messages, which incorporates future threat intelligence about domains that only became malicious later\u2014a severe leakage. Even if a snapshot exists, if the score incorporates labels from the organization's own data (e.g., based on internal malicious email reports), it risks leaking the test objective.",
+        "evidence_test": "Document the exact source and versioning of the reputation score for each message. For a sample of messages, verify the reputation score used matches a historical snapshot from the message's send date, not a modern lookup. For internally derived scores, verify the scoring algorithm uses only data available prior to the message send time.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying by sender domain (internal vs. external) within each temporal window is sufficient to ensure the train/validation/test cohorts reflect the 'realistic operational sender distribution' and does not introduce sampling bias.",
+        "failure_mechanism": "Stratification by a binary (internal/external) domain category preserves the proportion of internal vs. external emails but does not control for the distribution of specific sender identities or domains, which is critical for graph-based features. If a particular external malicious domain appears only in the test period, the model's graph features for it (based on training window history) will be zero or generic, which is realistic. However, if stratification is implemented by random sampling within each window to meet the proportion, it could accidentally place all emails from a specific high-volume sender into one split, artificially making that sender 'easy' or 'hard' for a specific set. More importantly, the graph is built from the training window; if a sender is entirely absent from the training window but appears in validation/test, its graph features will be missing/zero. Stratification does not guarantee the presence of sender identities across splits, which is a prerequisite for evaluating graph features.",
+        "evidence_test": "Report the fraction of senders in the validation and test sets that are 'cold-start' (i.e., have zero messages in the training window). If this fraction is significant (>10%), the evaluation of graph features is largely on unseen senders, which is a different and potentially harder problem than the hypothesis might imply. Also, verify the stratification method does not involve random sampling that could clump specific senders.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary metric 'Precision at a fixed recall of 80%' is sufficient to evaluate operational utility, and if unattainable, pivoting to 'recall at a fixed false-positive rate of 2%' is a valid fallback.",
+        "failure_mechanism": "Choosing a metric after observing model performance on the validation set can lead to metric gaming. The experiment pre-defines two possible primary metrics and states a pivot condition ('if 80% recall is unattainable'). However, the threshold for 'unattainable' is not defined. If the hypothesis model achieves 79% recall and the baseline achieves 40% recall on validation, the experimenter might decide 80% is 'unattainable' and switch to the FPR-based metric, which could favor a different model. This post-hoc selection of the evaluation metric based on validation results invalidates the statistical interpretation of the test set comparison, as the metric itself is tuned to the validation performance.",
+        "evidence_test": "Pre-specify the exact rule for the pivot. For example: 'The primary metric is Precision at Recall=80% (P@R80). If, on the validation set, neither model's maximum recall (at any threshold) reaches 80%, then the primary metric becomes Recall at FPR=2% (R@FPR2) for all models.' This rule must be fixed before any model sees the validation set and applied uniformly.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The baseline model, which is denied access to non-text signals, provides a clean counterfactual to isolate the contribution of graph and historical context.",
+        "failure_mechanism": "The hypothesis model receives concatenated text and graph features. If the graph features are high-dimensional or very informative, the concatenated representation may dominate the MLP, causing the model to effectively ignore the text embeddings. The baseline, using only text, might underperform simply because the transformer's capacity is not being fully utilized on the text task alone, whereas the hypothesis model has a richer feature set that keeps the transformer layers engaged. The performance gap could be attributed to feature richness rather than the specific graph structure. A stronger baseline would be the hypothesis model architecture but with the graph features ablated (e.g., replaced with zeros or random noise of similar dimension) to control for the architectural effect of having additional input dimensions.",
+        "evidence_test": "Add an ablation baseline: the full hypothesis architecture but with graph/historical features replaced by random Gaussian noise (matched in dimension and variance to the real features). If this ablated model performs similarly to the text-only baseline, the isolation is valid. If it performs significantly better, the architecture itself is conferring an advantage.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding messages with labels arriving >30 days after the message date ensures 'label quality and temporal consistency' for a real-time detector.",
+        "failure_mechanism": "This filtering may systematically exclude a specific class of sophisticated spear-phishing attacks that are discovered only after long investigation (e.g., multi-stage campaigns discovered via forensic analysis months later). The resulting dataset may be biased towards easier-to-detect phishing (those caught quickly by analysts or user reports), making the task artificially easier and not representative of the hardest threats the detector should eventually catch.",
+        "evidence_test": "Analyze the distribution of label delay for malicious messages. If a significant portion (>20%) of malicious messages have delays >30 days, report the performance of the model on a 'hard' subset of messages with long-delay labels (if such labels can be obtained for a later test period without leakage).",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The chronological split with a 3-month validation and 3-month test window is sufficient to capture temporal drift for model selection and evaluation.",
+        "failure_mechanism": "Three months may be too short to observe significant drift in spear-phishing tactics, especially if the organization is not a frequent target. The validation and test performance might be statistically similar simply because the threat landscape hasn't changed, giving a false sense of robustness. Conversely, if a major new campaign occurs in a single week, it could dominate the test set statistics, making performance highly variable depending on whether that week is included.",
+        "evidence_test": "Perform a robustness check: evaluate the final selected model on multiple rolling 3-month test windows within the available 18 months (where training data is always prior). Report the variance in the primary metric across these windows to assess sensitivity to specific time periods.",
+        "flaw_category": "uncertain_significance"
+      }
+    ],
+    "summary": "The PoC has a strong temporal split design but contains a likely fatal flaw (F1) in the computation of historical sender features, risking temporal label leakage. Several material concerns exist around feature leakage, metric selection, and baseline isolation that weaken the claim's support.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I accept the critic's challenges on F1 and F2 (both CONCEDED). For F3, F4, and F5, the critic's challenges identify real concerns, but I can strengthen my rebuttals with clearer design controls. F6 and F7 are ACCEPTed as originally rebutted. The key changes: F3 shifts to DEFER with a specific empirical test; F4 shifts to DEFER with a pre-specification requirement; F5 shifts to DEFER with an ablation experiment that would settle the question.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The methodology does not explicitly control for temporal leakage in label-derived features. The design intent is to compute 'fraction of prior messages that were malicious' using only labels available at message time, but no explicit mechanism is documented. If features are computed using all labels available at the end of the training window, future label information leaks into historical feature computation.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 6,
+        "justification": "The methodology states the reputation score is 'computed at message-time' but does not specify the source or versioning mechanism. If the score derives from external threat intelligence feeds updated continuously, using current scores for historical messages would incorporate future threat intelligence about domains that only became malicious later.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic correctly identifies that stratification by binary internal/external domain does not guarantee sender identity distribution is balanced across splits. The design does not include a specific control to ensure high-volume senders are not concentrated in a single split. However, this concern can be resolved empirically: report the sender overlap (Jaccard similarity) between training and test sets, and the distribution of senders by message volume across splits. If the distribution is significantly imbalanced, it would affect both hypothesis model and baseline equally, preserving the validity of the relative comparison. The primary conclusion (graph model vs text-only) survives because both models are evaluated on the same split. The experiment should measure and report sender distribution metrics to validate the split representativeness.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "The critic correctly identifies that the pivot rule ('if 80% recall is unattainable') lacks a predefined objective threshold. Without this, the experimenter can game metric selection based on validation results. However, this is a pre-specification issue, not a design flaw. The settling experiment is to fix the rule before any model sees validation data: e.g., 'If neither model achieves 80% recall at any threshold on validation, pivot to R@FPR2.' The primary conclusion survives even if the critique is correct: both models would be evaluated under the same metric, so the relative comparison remains valid. The experiment should pre-specify the exact pivot rule in the methodology before execution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critic correctly identifies that the performance gap could stem from additional input dimensions rather than graph-specific information. The current baseline controls for architecture and tuning, but not for feature dimensionality. The settling experiment is an ablation: add a third condition - the full hypothesis architecture with graph features replaced by random Gaussian noise (matched in dimension and variance). If this ablation performs similarly to the text-only baseline, the isolation is valid. If it performs significantly better, the architecture benefits from additional dimensions regardless of content. The primary conclusion survives if the ablation matches text-only performance - the graph features would then be shown to provide specific signal beyond dimensionality. This is a straightforward empirical check that resolves the ambiguity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The 30-day label exclusion is explicitly justified by 'label quality and temporal consistency' for a real-time detector. This is a deliberate scope decision: the experiment tests what can be detected with timely labels, not what might be detectable with delayed forensic analysis. The bias toward easier-to-detect attacks is acknowledged as a limitation within this scope. The design control is the explicit scope statement that defines the experimental boundary.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The experiment explicitly disclaims robustness claims beyond 18 months in the scope section. The 3-month evaluation window is a deliberate scope choice to evaluate the most recent threat landscape, not to assess long-term drift. This is an acknowledged limitation, not a flaw.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two FATAL findings (F1, F2) are CONCEDED and remain at high severity. Three MATERIAL findings (F3, F4, F5) are DEFERRED to empirical validation - each has a specific experiment that would settle the concern while preserving the primary conclusion's validity. This is the correct outcome for genuinely ambiguous methodological questions where the design provides partial but not complete controls."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=7 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 6,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "adj_sev=6, CONCEDE \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 3,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

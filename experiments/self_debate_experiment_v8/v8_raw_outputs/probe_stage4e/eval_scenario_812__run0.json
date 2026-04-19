@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_812",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "nvidia/nemotron-3-super-120b-a12b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The evaluation metric (report-level recall) aligns with the clinical screening goal of not missing reports containing actionable follow-up language.",
+        "failure_mechanism": "Report-level recall measures whether at least one follow-up recommendation is detected anywhere in the report, but it does not guarantee that the detected span is correct or clinically actionable. A model could achieve high recall by flagging many incorrect spans (low precision) or by detecting irrelevant spans (e.g., negated or conditional language). This misalignment with the clinical goal invalidates the primary claim unless precision is also high enough to ensure actionable recommendations are correctly identified.",
+        "evidence_test": "Evaluate the model's precision at the report level (fraction of reports flagged as containing follow-up where at least one detected span is correct and actionable). If precision is low (<0.7), the high recall is misleading for clinical utility. Alternatively, measure the fraction of flagged reports where the detected span is both correct and not negated/conditional.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The held-out cross-site test set (one hospital system) is sufficient to test cross-site generalization.",
+        "failure_mechanism": "Generalization across hospital systems depends on the diversity and representativeness of the training data. If the training data includes only 2\u20133 hospital systems, the model may still overfit to idiosyncrasies of those systems, and the held-out system may not represent the true distribution of deployment sites. The experiment does not test generalization to a broader range of hospital systems, scanners, or reporting styles, which could reveal brittleness.",
+        "evidence_test": "Evaluate the model on additional held-out hospital systems (beyond the one already set aside) to test whether performance degrades further. If performance drops significantly on a second held-out system, the claim of cross-site generalization is invalidated.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The primary metric (report-level recall) is robust to small span-boundary differences across radiologists and hospital systems.",
+        "failure_mechanism": "Report-level recall treats any detected span as correct if it overlaps with a true span, but this ignores the clinical utility of the detected span. For example, a model might detect a span that is too broad (e.g., the entire sentence) or too narrow (e.g., a single word), neither of which is actionable. The metric does not penalize such errors, leading to overestimation of performance.",
+        "evidence_test": "Measure span-level exact match F1 (as listed as a secondary metric) and compare it to report-level recall. If span-level F1 is significantly lower than report-level recall, the primary metric is inflating performance. Additionally, manually review a sample of false positives/negatives to assess whether detected spans are clinically actionable.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The CRF baseline (TF-IDF + hand-engineered features) is a fair comparison to the Transformer model.",
+        "failure_mechanism": "The CRF baseline relies on hand-engineered features (e.g., follow-up keywords, token length) that may encode domain knowledge specific to radiology follow-up recommendations. If these features are highly predictive, the CRF could achieve artificially high performance, making the Transformer's advantage less meaningful. The experiment does not test whether the Transformer's advantage persists when the CRF is given access to the same features.",
+        "evidence_test": "Run an ablation where the Transformer is trained using only the same features as the CRF (TF-IDF + hand-engineered features). If the Transformer's performance drops to the CRF's level, the CRF's features are driving the performance gap, not the model architecture.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The annotation guidelines and inter-rater agreement (Cohen's kappa \u22650.75) ensure high-quality labels for training and evaluation.",
+        "failure_mechanism": "Inter-rater agreement measures consistency between annotators, but it does not guarantee that the labels are correct or aligned with the clinical goal. For example, annotators might consistently agree on incorrect labels (e.g., mislabeling negated language as positive). The experiment does not validate the labels against an external clinical standard (e.g., whether the detected follow-up recommendations are actionable in practice).",
+        "evidence_test": "Audit a sample of labels against an external clinical standard (e.g., radiologist review of whether the detected follow-up is actionable). If the labels are systematically incorrect, the model's performance is overestimated.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (oldest 60% train, next 20% validation, most recent 20% test) prevents leakage from recent reporting trends or template evolution.",
+        "failure_mechanism": "Temporal splits assume that the data distribution is stationary over time. If reporting trends or templates evolve gradually, the model may still overfit to recent trends in the training data, leading to overoptimistic performance on the in-distribution test set. The experiment does not test for temporal drift within the training or validation splits.",
+        "evidence_test": "Measure the out-of-vocabulary rate or template similarity between the training and validation splits. If the rate increases significantly over time, temporal drift is present, and the split may not fully prevent leakage.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The tokenizer vocabulary is fit on the training set only and frozen for validation and test.",
+        "failure_mechanism": "Fitting the tokenizer vocabulary on the training set only could lead to high out-of-vocabulary (OOV) rates on the test set, especially if the test set includes novel terms (e.g., new scanners or reporting styles). While this is a reasonable precaution against leakage, it could degrade performance if OOV rates are high.",
+        "evidence_test": "Measure the OOV rate on the in-distribution and cross-site test sets. If the rate exceeds 5%, the tokenizer may be a bottleneck for performance.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws: (1) the primary metric (report-level recall) overestimates clinical utility by ignoring precision and span correctness; (2) the cross-site test set may not represent true deployment conditions; and (3) the metric inflates performance by ignoring span-level errors. These flaws invalidate the central claims unless addressed. MATERIAL flaws include missing baselines for the CRF and unverified label quality.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique raises concerns about metric alignment, cross\u2011site generalization, span\u2011level robustness, baseline fairness, label quality, temporal leakage, and tokenizer OOV. For each, I examined whether the concern is already addressed by the stated design (e.g., metric definition requiring correct spans, site\u2011stratified temporal split holding out an entire system, ablation using CRF\u2011compatible features, adjudication by senior clinicians, validation\u2011set OOV monitoring, and the temporal gap preventing future leakage). Most criticisms either mischaracterize the defined metric or concern aspects outside the experiment\u2019s stated scope (e.g., broader cross\u2011site generalization or external label validation). Only the temporal\u2011drift point (F6) remains partially uncertain, but the design includes a clear temporal gap and uses validation for early stopping, which mitigates the risk. Overall, the methodology appears sound and the criticisms do not invalidate the core hypothesis when the stated controls are considered.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic claims report-level recall does not guarantee a correct or clinically actionable span, but the methodology explicitly defines report-level recall as the fraction of reports containing at least one follow\u2011up recommendation for which the model correctly identifies at least one recommendation span of the appropriate entity type. Correctness is built into the metric, so the claim is factually inaccurate."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The experiment\u2019s scope is to test generalization to a single unseen hospital system (held\u2011out cross\u2011site test). The critic\u2019s concern about needing multiple held\u2011out systems pertains to a broader generalization claim that the study does not make. Within the stated scope, the held\u2011out set is sufficient."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Report-level recall requires the model to correctly identify a span of the appropriate entity type, which implies exact span boundaries (BIO tag match). The critic\u2019s overlap\u2011based interpretation does not match the defined metric, so the design already prevents the described inflation."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The methodology includes a representation confound ablation: running the Transformer with CRF\u2011compatible token\u2011level features to isolate the architecture benefit. This directly addresses the critic\u2019s worry that hand\u2011engineered features drive the performance gap."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The study\u2019s goal is to compare models given the annotated data, not to validate that the annotations correspond to an external clinical standard. Adjudication by senior clinicians and version\u2011locked guidelines ensure internal consistency; external validation lies outside the experiment\u2019s scope."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The temporal split places the oldest 60% in training, the next 20% in validation, and the most recent 20% in test, guaranteeing that no training data overlaps with validation or test periods. This design prevents leakage from future reporting trends; validation is used for early stopping, so any residual temporal drift would be reflected in validation performance and not inflate test results."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The methodology states that out\u2011of\u2011vocabulary rates will be documented for each split to detect distribution shift, directly addressing the critic\u2019s concern about possible high OOV rates from a training\u2011only fitted tokenizer."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "After rebuttals, every finding has an adjusted severity of 3 or lower, satisfying the EXONERATE condition. Thus the defense prevails and no empirical test is required."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly clarifies that report-level recall is defined to require correct identification of at least one span of the appropriate entity type, which directly addresses the failure mechanism of detecting incorrect or irrelevant spans. The rebuttal is specific and mechanistic, resolving the concern."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The rebuttal argues that the scope of the experiment does not require testing generalization to multiple held-out systems. However, the finding F2 specifically targets the claim that the held-out cross-site test set is sufficient to test cross-site generalization. The defender's argument is a scope disclaimer rather than a mechanistic rebuttal of the failure mechanism (i.e., that the single held-out system may not represent true deployment diversity). The severity remains high because the claim about cross-site generalization is not substantiated by the design."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender clarifies that report-level recall requires exact span boundaries (BIO tag match), which directly addresses the failure mechanism of overlap-based inflation. The rebuttal is specific and mechanistic, resolving the concern."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender cites the inclusion of a representation confound ablation (Transformer with CRF-compatible features), which directly addresses the failure mechanism by isolating the architecture benefit. The rebuttal is specific and mechanistic, resolving the concern."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender argues that validating labels against an external clinical standard is outside the experiment's scope, which directly addresses the finding's concern about unverified prerequisites. The rebuttal is a valid scope disclaimer."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender argues that the temporal split prevents leakage by separating training, validation, and test periods, and that any residual drift would be reflected in validation performance. While this addresses temporal leakage, it does not fully address the implicit assumption of stationarity within the training split. The temporal split may still allow the model to overfit to trends present in the training period, which could inflate in-distribution test performance. The residual concern is that temporal drift within the training data itself is not explicitly tested."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender cites the plan to document out-of-vocabulary rates, which directly addresses the silent misconfiguration concern about tokenizer-induced performance degradation. The rebuttal is specific and mechanistic, resolving the concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "We accept the critic's ACCEPT judgments for F1, F3, F4, F5, and F7, maintaining our original rebuttals unchanged. For F2, we found the critic's CHALLENGE valid: the methodology lacks a specific control to ensure the single held-out hospital system represents broader deployment diversity, so we concede the finding. For F6, we strengthen our REBUT-DESIGN rebuttal by clarifying that the validation set (drawn from a later period than training) and early stopping serve as a drift detector, addressing the critic's partial concern about temporal non\u2011stationarity within the training split.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic accepted our rebuttal: report-level recall is defined as the fraction of reports containing at least one follow\u2011up recommendation for which the model correctly identifies at least one recommendation span of the appropriate entity type. Correctness is built into the metric, so the concern about detecting incorrect or irrelevant spans is already addressed.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critic correctly notes that the held\u2011out cross\u2011site test set consists of only one hospital system. The methodology does not include multiple held\u2011out systems or any design control that guarantees this system represents the full diversity of deployment sites. Consequently, the claim that the held\u2011out set is sufficient to test cross\u2011site generalization is not substantiated by the design, and we concede the finding.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted our rebuttal: report\u2011level recall requires exact span boundaries (BIO tag match), not merely overlap. Therefore, the metric does not permit inflation from overly broad or narrow spans, directly addressing the critic\u2019s concern.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted our rebuttal: the methodology includes a representation confound ablation (running the Transformer with CRF\u2011compatible token\u2011level features) to isolate the architecture benefit. This directly tests whether the CRF\u2019s hand\u2011engineered features drive any performance gap, addressing the critic\u2019s worry about an unfair baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic accepted our rebuttal: the study\u2019s goal is to compare models given the annotated data, not to validate those annotations against an external clinical standard. Adjudication by senior clinicians and version\u2011locked guidelines ensure internal consistency; external validation lies outside the experiment\u2019s scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic\u2019s partial challenge notes that the temporal split does not fully test stationarity within the training period. We strengthen our design rebuttal: the methodology explicitly places the oldest 60% of reports in training, the next 20% in validation, and the most recent 20% in test, and uses validation\u2011set recall for early stopping. Because validation is drawn from a later period than training, any temporal drift that harms performance will be reflected in validation, triggering early stopping and preventing overfitting to transient trends. This control reduces the risk of temporal leakage, though residual uncertainty remains, which the critic captured as a partial challenge.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic accepted our rebuttal: the methodology states that out\u2011of\u2011vocabulary rates will be documented for each split to detect distribution shift, directly addressing the concern about possible high OOV rates from a training\u2011only fitted tokenizer.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Because we conceded F2 (a FATAL finding) which remains above the severity threshold of 3, the critique wins."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The evaluation metric (report-level recall) aligns with the clinical screening goal of not missing reports containing actionable follow-up language.",
+        "failure_mechanism": "Report-level recall measures whether at least one follow-up recommendation is detected anywhere in the report, but it does not guarantee that the detected span is correct or clinically actionable. A model could achieve high recall by flagging many incorrect spans (low precision) or by detecting irrelevant spans (e.g., negated or conditional language). This misalignment with the clinical goal invalidates the primary claim unless precision is also high enough to ensure actionable recommendations are correctly identified.",
+        "evidence_test": "Evaluate the model's precision at the report level (fraction of reports flagged as containing follow-up where at least one detected span is correct and actionable). If precision is low (<0.7), the high recall is misleading for clinical utility. Alternatively, measure the fraction of flagged reports where the detected span is both correct and not negated/conditional.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The held-out cross-site test set (one hospital system) is sufficient to test cross-site generalization.",
+        "failure_mechanism": "Generalization across hospital systems depends on the diversity and representativeness of the training data. If the training data includes only 2\u20133 hospital systems, the model may still overfit to idiosyncrasies of those systems, and the held-out system may not represent the true distribution of deployment sites. The experiment does not test generalization to a broader range of hospital systems, scanners, or reporting styles, which could reveal brittleness.",
+        "evidence_test": "Evaluate the model on additional held-out hospital systems (beyond the one already set aside) to test whether performance degrades further. If performance drops significantly on a second held-out system, the claim of cross-site generalization is invalidated.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The primary metric (report-level recall) is robust to small span-boundary differences across radiologists and hospital systems.",
+        "failure_mechanism": "Report-level recall treats any detected span as correct if it overlaps with a true span, but this ignores the clinical utility of the detected span. For example, a model might detect a span that is too broad (e.g., the entire sentence) or too narrow (e.g., a single word), neither of which is actionable. The metric does not penalize such errors, leading to overestimation of performance.",
+        "evidence_test": "Measure span-level exact match F1 (as listed as a secondary metric) and compare it to report-level recall. If span-level F1 is significantly lower than report-level recall, the primary metric is inflating performance. Additionally, manually review a sample of false positives/negatives to assess whether detected spans are clinically actionable.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The CRF baseline (TF-IDF + hand-engineered features) is a fair comparison to the Transformer model.",
+        "failure_mechanism": "The CRF baseline relies on hand-engineered features (e.g., follow-up keywords, token length) that may encode domain knowledge specific to radiology follow-up recommendations. If these features are highly predictive, the CRF could achieve artificially high performance, making the Transformer's advantage less meaningful. The experiment does not test whether the Transformer's advantage persists when the CRF is given access to the same features.",
+        "evidence_test": "Run an ablation where the Transformer is trained using only the same features as the CRF (TF-IDF + hand-engineered features). If the Transformer's performance drops to the CRF's level, the CRF's features are driving the performance gap, not the model architecture.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The annotation guidelines and inter-rater agreement (Cohen's kappa \u22650.75) ensure high-quality labels for training and evaluation.",
+        "failure_mechanism": "Inter-rater agreement measures consistency between annotators, but it does not guarantee that the labels are correct or aligned with the clinical goal. For example, annotators might consistently agree on incorrect labels (e.g., mislabeling negated language as positive). The experiment does not validate the labels against an external clinical standard (e.g., whether the detected follow-up recommendations are actionable in practice).",
+        "evidence_test": "Audit a sample of labels against an external clinical standard (e.g., radiologist review of whether the detected follow-up is actionable). If the labels are systematically incorrect, the model's performance is overestimated.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (oldest 60% train, next 20% validation, most recent 20% test) prevents leakage from recent reporting trends or template evolution.",
+        "failure_mechanism": "Temporal splits assume that the data distribution is stationary over time. If reporting trends or templates evolve gradually, the model may still overfit to recent trends in the training data, leading to overoptimistic performance on the in-distribution test set. The experiment does not test for temporal drift within the training or validation splits.",
+        "evidence_test": "Measure the out-of-vocabulary rate or template similarity between the training and validation splits. If the rate increases significantly over time, temporal drift is present, and the split may not fully prevent leakage.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The tokenizer vocabulary is fit on the training set only and frozen for validation and test.",
+        "failure_mechanism": "Fitting the tokenizer vocabulary on the training set only could lead to high out-of-vocabulary (OOV) rates on the test set, especially if the test set includes novel terms (e.g., new scanners or reporting styles). While this is a reasonable precaution against leakage, it could degrade performance if OOV rates are high.",
+        "evidence_test": "Measure the OOV rate on the in-distribution and cross-site test sets. If the rate exceeds 5%, the tokenizer may be a bottleneck for performance.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC has three FATAL flaws: (1) the primary metric (report-level recall) overestimates clinical utility by ignoring precision and span correctness; (2) the cross-site test set may not represent true deployment conditions; and (3) the metric inflates performance by ignoring span-level errors. These flaws invalidate the central claims unless addressed. MATERIAL flaws include missing baselines for the CRF and unverified label quality.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "We accept the critic's ACCEPT judgments for F1, F3, F4, F5, and F7, maintaining our original rebuttals unchanged. For F2, we found the critic's CHALLENGE valid: the methodology lacks a specific control to ensure the single held-out hospital system represents broader deployment diversity, so we concede the finding. For F6, we strengthen our REBUT-DESIGN rebuttal by clarifying that the validation set (drawn from a later period than training) and early stopping serve as a drift detector, addressing the critic's partial concern about temporal non\u2011stationarity within the training split.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "The critic accepted our rebuttal: report-level recall is defined as the fraction of reports containing at least one follow\u2011up recommendation for which the model correctly identifies at least one recommendation span of the appropriate entity type. Correctness is built into the metric, so the concern about detecting incorrect or irrelevant spans is already addressed.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 3,
+        "justification": "The critic correctly notes that the held\u2011out cross\u2011site test set consists of only one hospital system. The methodology does not include multiple held\u2011out systems or any design control that guarantees this system represents the full diversity of deployment sites. Consequently, the claim that the held\u2011out set is sufficient to test cross\u2011site generalization is not substantiated by the design, and we concede the finding.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted our rebuttal: report\u2011level recall requires exact span boundaries (BIO tag match), not merely overlap. Therefore, the metric does not permit inflation from overly broad or narrow spans, directly addressing the critic\u2019s concern.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted our rebuttal: the methodology includes a representation confound ablation (running the Transformer with CRF\u2011compatible token\u2011level features) to isolate the architecture benefit. This directly tests whether the CRF\u2019s hand\u2011engineered features drive any performance gap, addressing the critic\u2019s worry about an unfair baseline.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The critic accepted our rebuttal: the study\u2019s goal is to compare models given the annotated data, not to validate those annotations against an external clinical standard. Adjudication by senior clinicians and version\u2011locked guidelines ensure internal consistency; external validation lies outside the experiment\u2019s scope.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The critic\u2019s partial challenge notes that the temporal split does not fully test stationarity within the training period. We strengthen our design rebuttal: the methodology explicitly places the oldest 60% of reports in training, the next 20% in validation, and the most recent 20% in test, and uses validation\u2011set recall for early stopping. Because validation is drawn from a later period than training, any temporal drift that harms performance will be reflected in validation, triggering early stopping and preventing overfitting to transient trends. This control reduces the risk of temporal leakage, though residual uncertainty remains, which the critic captured as a partial challenge.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic accepted our rebuttal: the methodology states that out\u2011of\u2011vocabulary rates will be documented for each split to detect distribution shift, directly addressing the concern about possible high OOV rates from a training\u2011only fitted tokenizer.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Because we conceded F2 (a FATAL finding) which remains above the severity threshold of 3, the critique wins."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-EVIDENCE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "defense_wins",
+    "case_rationale": "all points resolved to defense_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

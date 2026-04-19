@@ -1,0 +1,234 @@
+{
+  "case_id": "eval_scenario_hyp_140_0",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 0,
+  "model_assignments": {
+    "critic": "x-ai/grok-4.1-fast",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Excluding alerts without a final disposition after 7 days minimizes label noise without biasing the train/validation/test distributions away from hard production cases.",
+        "failure_mechanism": "Delayed-resolution alerts are disproportionately likely to be sophisticated true positives requiring extended investigation, which are systematically excluded from all splits; this filters the dataset to quick-to-resolve (easy) positives and negatives, allowing models to achieve high performance on simplistic patterns while remaining untested on ambiguous incidents where graph structure might provide unique value, leading to deployment failure on the full alert stream.",
+        "evidence_test": "Stratify labeled alerts by resolution time and true label to check if malicious alerts take significantly longer (>7 days more often); evaluate model PR-AUC separately on quick (<3 days) vs. delayed-but-labeled (3-7 days) subsets of the test set; or label a held-out sample of excluded alerts using delayed ground truth and compute performance.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Analyst disposition decisions within 7 days serve as reliable ground truth for maliciousness.",
+        "failure_mechanism": "Analysts exhibit human error, inconsistency, fatigue, and skill variation, injecting noise or biases into labels (e.g., overcalling certain types); without quantifying this, models optimize for mimicking imperfect human triage rather than objective security signals, potentially inheriting biases that degrade under analyst drift or rotation.",
+        "evidence_test": "Compute inter-analyst agreement (e.g., Cohen's Kappa or raw agreement rate) on alerts dispositioned by multiple analysts; augment stratified analyst analysis with label error bounds or cross-validation against external signals like threat intelligence matches on a labeled sample.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A fixed 30-day lookback window sufficiently captures the relevant historical context for all alerts.",
+        "failure_mechanism": "Cyber threats operate on diverse timescales (e.g., one-off phishing in hours vs. APT persistence over 90+ days); a fixed 30-day window may omit critical long-term patterns for persistent threats or dilute signal with noise for short-term ones, impairing the temporal GNN's attention mechanism and biasing toward mid-duration incidents.",
+        "evidence_test": "Perform ablation study on validation set by varying lookback windows (e.g., 7/14/30/60/90 days) and re-tuning/evaluating top models; check if optimal window varies by incident type or entity.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The design features strong temporal splits, fair baselines, and relevant metrics but rests on unverified labeling process assumptions that exclude hard cases and assume noisy human labels are pristine, potentially inflating GNN advantages on non-representative data; the fixed feature window adds a tunable prerequisite.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims that excluding alerts not resolved within 7 days introduces selection bias, specifically filtering out 'hard' cases (sophisticated APTs) that take longer to investigate. Looking at the methodology, the 7-day window is used to 'minimize label noise' and is applied consistently across all splits. However, the design does not include a control or analysis to verify if the distribution of labels in the excluded set differs from the included set. While the critic's claim is a known risk in SOC data, the primary goal of this PoC is to test if graph structure adds value over tabular/sequential features. Since the exclusion is applied to both the baseline and the tGNN, the relative comparison of model architectures remains valid, but the generalizability to the 'hardest' cases is indeed untested. This is a matter of whether the PoC's conclusion (GNN > Tabular) holds if the dataset is biased. Because the bias affects all models equally, the relative ranking is likely stable, but the absolute performance is inflated. This is a significant concern for deployment, but for a hypothesis investigation on architecture, it's a limitation of the available ground truth. I will DEFER this because an empirical test (labeling a sample of excluded alerts) can settle if the 'hard' cases are truly missing and if the GNN specifically helps there.\n\nF2 claims that human analyst labels are noisy and potentially biased. The methodology acknowledges this in Section 7 ('Label noise and analyst drift') and proposes 'Stratified post-hoc analysis on test subsets (by analyst)' to check stability. This is a mitigating control, but it doesn't eliminate the noise; it only detects if the model's performance varies by analyst. The critic is correct that labels are imperfect, but in a PoC, using the existing operational labels is the only feasible way to establish a baseline. The goal is to improve the current triage process (mimicking/exceeding the analyst), not to discover an objective truth independent of human expertise. This is a fundamental property of the dataset, not a flaw in the GNN design. I will REBUT-DESIGN by citing the analyst-stratified analysis as the control for this noise.\n\nF3 claims the 30-day window is arbitrary and may miss long-term APTs. The methodology explicitly sets this as a design choice for the lookback. The critic suggests an ablation study. While a 90-day window might be better for some cases, the 30-day window is a standard operational heuristic for 'recent activity' in triage. More importantly, the baseline (XGBoost/Transformer) uses the exact same 30-day window. Therefore, any relative gain found by the tGNN is not caused by the window length, but by how the model processes the data within that window. The choice of 30 days is a scope decision for the PoC. I will REBUT-SCOPE here.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The concern that delayed-resolution alerts are 'harder' cases is a valid risk. To settle this: (1) We would randomly sample 500 excluded alerts and have a senior analyst provide retrospective labels. (2) If the tGNN maintains its lead over the baseline on this 'hard' subset, the design is vindicated. (3) If the baseline catches up or the tGNN fails, the conclusion that graph structure is uniquely valuable for complex cases is invalidated. (4) The primary conclusion (tGNN vs. Baseline) remains valid because the exclusion applies to all models equally, meaning the relative architectural advantage is still measured, even if the absolute PR-AUC is inflated."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The design explicitly anticipates analyst inconsistency in Section 7 (Controls for Confounds), implementing 'Stratified post-hoc analysis on test subsets (by analyst)' to ensure performance is stable across different human labelers. This control identifies if the model is overfitting to a specific analyst's bias rather than learning general security signals."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The 30-day window is a defined scope parameter for this PoC. Because the tabular and sequential baselines are constrained to the exact same 30-day window, the window length cannot be a confounding factor in the comparison of model architectures. The experiment tests if GNNs extract more value from a fixed window than other methods, not whether 30 days is the optimal window for all threat types."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The material concerns regarding analyst noise and window length were successfully rebutted via design controls and scope definitions. However, the potential for selection bias in the labels (F1) remains an unresolved empirical question that requires a targeted labeling experiment to ensure the model's value extends to the most complex cases."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 8,
+        "reasoning": "DEFER rebuttal noted; open question remains unresolved pending proposed analysis, but no counter needed. Severity unchanged."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "REBUT-DESIGN validly cites Section 7's stratified analysis by analyst, which mechanistically addresses overfitting to specific analyst biases/inconsistencies by verifying performance stability across labelers. This ensures the model learns general signals robust to skill variation, fatigue, or drift, aligning with operational goal of mimicking SOC triage. While it does not quantify absolute label error (e.g., vs. external truth), it sufficiently mitigates the failure mechanism for relative model evaluation. Confidence adjusted downward; minor residual on unquantified noise."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "REBUT-SCOPE valid: the fixed 30-day window is a deliberate PoC parameter applied equally to tGNN and baselines (tabular, sequential), isolating graph structure value without confounding the architecture comparison. Diverse timescales do not invalidate relative gains within the controlled window, as both models face identical feature constraints. The prereq holds for the experiment's scoped goal. Minimal residual on absolute context sufficiency."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic has ACCEPTed all three of my R1 rebuttals. F1 remains as a DEFER because it is a genuine empirical uncertainty regarding the 'hardness' of excluded cases. F2 and F3 were accepted as REBUT-DESIGN and REBUT-SCOPE respectively, as the critic agreed that the stratified analyst analysis and the fixed-window scope sufficiently address the failure mechanisms relative to the experiment's goals.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The concern that delayed-resolution alerts are 'harder' cases is a valid risk. To settle this: (1) We would randomly sample 500 excluded alerts and have a senior analyst provide retrospective labels. (2) If the tGNN maintains its lead over the baseline on this 'hard' subset, the design is vindicated. (3) If the baseline catches up or the tGNN fails, the conclusion that graph structure is uniquely valuable for complex cases is invalidated. (4) The primary conclusion (tGNN vs. Baseline) remains valid because the exclusion applies to all models equally, meaning the relative architectural advantage is still measured, even if the absolute PR-AUC is inflated.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The design explicitly anticipates analyst inconsistency in Section 7 (Controls for Confounds), implementing 'Stratified post-hoc analysis on test subsets (by analyst)' to ensure performance is stable across different human labelers. This control identifies if the model is overfitting to a specific analyst's bias rather than learning general security signals, ensuring the relative comparison between tGNN and baselines is not driven by a subset of biased labels.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The 30-day window is a defined scope parameter for this PoC. Because the tabular and sequential baselines are constrained to the exact same 30-day window, the window length cannot be a confounding factor in the comparison of model architectures. The experiment tests if GNNs extract more value from a fixed window than other methods, not whether 30 days is the optimal window for all threat types.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted the concerns regarding analyst bias and window length. However, the concern regarding the exclusion of delayed-resolution alerts (F1) remains a valid empirical uncertainty that requires the proposed retrospective labeling experiment to resolve."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Excluding alerts without a final disposition after 7 days minimizes label noise without biasing the train/validation/test distributions away from hard production cases.",
+        "failure_mechanism": "Delayed-resolution alerts are disproportionately likely to be sophisticated true positives requiring extended investigation, which are systematically excluded from all splits; this filters the dataset to quick-to-resolve (easy) positives and negatives, allowing models to achieve high performance on simplistic patterns while remaining untested on ambiguous incidents where graph structure might provide unique value, leading to deployment failure on the full alert stream.",
+        "evidence_test": "Stratify labeled alerts by resolution time and true label to check if malicious alerts take significantly longer (>7 days more often); evaluate model PR-AUC separately on quick (<3 days) vs. delayed-but-labeled (3-7 days) subsets of the test set; or label a held-out sample of excluded alerts using delayed ground truth and compute performance.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Analyst disposition decisions within 7 days serve as reliable ground truth for maliciousness.",
+        "failure_mechanism": "Analysts exhibit human error, inconsistency, fatigue, and skill variation, injecting noise or biases into labels (e.g., overcalling certain types); without quantifying this, models optimize for mimicking imperfect human triage rather than objective security signals, potentially inheriting biases that degrade under analyst drift or rotation.",
+        "evidence_test": "Compute inter-analyst agreement (e.g., Cohen's Kappa or raw agreement rate) on alerts dispositioned by multiple analysts; augment stratified analyst analysis with label error bounds or cross-validation against external signals like threat intelligence matches on a labeled sample.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "A fixed 30-day lookback window sufficiently captures the relevant historical context for all alerts.",
+        "failure_mechanism": "Cyber threats operate on diverse timescales (e.g., one-off phishing in hours vs. APT persistence over 90+ days); a fixed 30-day window may omit critical long-term patterns for persistent threats or dilute signal with noise for short-term ones, impairing the temporal GNN's attention mechanism and biasing toward mid-duration incidents.",
+        "evidence_test": "Perform ablation study on validation set by varying lookback windows (e.g., 7/14/30/60/90 days) and re-tuning/evaluating top models; check if optimal window varies by incident type or entity.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The design features strong temporal splits, fair baselines, and relevant metrics but rests on unverified labeling process assumptions that exclude hard cases and assume noisy human labels are pristine, potentially inflating GNN advantages on non-representative data; the fixed feature window adds a tunable prerequisite.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic has ACCEPTed all three of my R1 rebuttals. F1 remains as a DEFER because it is a genuine empirical uncertainty regarding the 'hardness' of excluded cases. F2 and F3 were accepted as REBUT-DESIGN and REBUT-SCOPE respectively, as the critic agreed that the stratified analyst analysis and the fixed-window scope sufficiently address the failure mechanisms relative to the experiment's goals.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The concern that delayed-resolution alerts are 'harder' cases is a valid risk. To settle this: (1) We would randomly sample 500 excluded alerts and have a senior analyst provide retrospective labels. (2) If the tGNN maintains its lead over the baseline on this 'hard' subset, the design is vindicated. (3) If the baseline catches up or the tGNN fails, the conclusion that graph structure is uniquely valuable for complex cases is invalidated. (4) The primary conclusion (tGNN vs. Baseline) remains valid because the exclusion applies to all models equally, meaning the relative architectural advantage is still measured, even if the absolute PR-AUC is inflated.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The design explicitly anticipates analyst inconsistency in Section 7 (Controls for Confounds), implementing 'Stratified post-hoc analysis on test subsets (by analyst)' to ensure performance is stable across different human labelers. This control identifies if the model is overfitting to a specific analyst's bias rather than learning general security signals, ensuring the relative comparison between tGNN and baselines is not driven by a subset of biased labels.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The 30-day window is a defined scope parameter for this PoC. Because the tabular and sequential baselines are constrained to the exact same 30-day window, the window length cannot be a confounding factor in the comparison of model architectures. The experiment tests if GNNs extract more value from a fixed window than other methods, not whether 30 days is the optimal window for all threat types.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The defense successfully rebutted the concerns regarding analyst bias and window length. However, the concern regarding the exclusion of delayed-resolution alerts (F1) remains a valid empirical uncertainty that requires the proposed retrospective labeling experiment to resolve."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=8 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

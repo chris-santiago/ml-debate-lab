@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_hyp_140_0",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Analyst disposition decisions recorded within 7 days of each alert are a reliable ground truth for whether an alert represents a true intrusion.",
+        "failure_mechanism": "Analyst decisions may be noisy or biased, especially for low-severity or ambiguous alerts. A 7-day window may exclude delayed analyst actions (e.g., incidents discovered later via forensics or external reports), leading to false negatives in the label set. Conversely, analysts may over-disposition benign alerts as malicious due to alert fatigue or policy pressure, creating false positives. The label noise is not quantified or corrected, and may disproportionately affect rare classes (true incidents), inflating or deflating PR-AUC.",
+        "evidence_test": "Compare model performance on alerts with analyst dispositions recorded within 7 days vs. those with dispositions recorded between 8\u201330 days. If PR-AUC drops significantly for the latter, labels are unstable over time, invalidating the ground truth assumption. Alternatively, measure inter-analyst agreement (kappa) on a subset of alerts to quantify label noise.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 val, 16\u201318 test) prevents leakage of future information, including analyst responses and incident context.",
+        "failure_mechanism": "The split is applied at the alert level, but alerts are not independent events. A single incident may generate multiple alerts across days (e.g., failed logins, endpoint detections, email alerts). If one alert in the test set belongs to an incident that began in the validation or training period, the model may indirectly observe incident context through earlier alerts in the same incident chain. This violates the independence assumption and leaks information about future outcomes into the model's training or validation data.",
+        "evidence_test": "Audit a sample of test-set alerts to identify incidents spanning multiple days. For each such incident, check whether earlier alerts from the same incident appear in the training or validation sets. If >5% of test alerts are part of incidents with prior alerts in earlier splits, the split strategy is invalid. Alternatively, re-split at the incident level (not alert level) and re-run experiments to measure PR-AUC degradation.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day lookback window for both tabular and GNN features ensures that the model does not use post-alert information (analyst actions, subsequent incidents) to predict alert disposition.",
+        "failure_mechanism": "The window is defined relative to the alert timestamp, but the alert timestamp may not align with the start of the incident. If an alert is a late-stage indicator of an incident that began >30 days prior, the model may still observe incident context indirectly (e.g., repeated failed logins, endpoint detections) within the 30-day window. This is a form of leakage: the model uses information about the incident's history, which is only available because the incident is ongoing. The mechanism violates the hypothesis's requirement that the model predict disposition using only information available at alert time.",
+        "evidence_test": "For each alert in the test set, measure the time between the first event in the incident (earliest timestamp in the incident chain) and the alert timestamp. If the median time delta is >30 days for a significant fraction of alerts, the 30-day window leaks incident history. Alternatively, truncate the lookback window to the alert timestamp (no history before the alert) and re-run experiments to measure PR-AUC degradation.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GNN's advantage over the tabular baseline (XGBoost/LightGBM) and the sequential baseline (Transformer/LSTM) is attributable to its ability to exploit relational structure in entity interactions.",
+        "failure_mechanism": "The GNN may benefit from implicit temporal modeling (e.g., temporal attention over edge timestamps) or from richer feature representations (e.g., edge metadata) rather than graph structure per se. The sequential baseline controls for temporal modeling but not for feature richness. The comparison is confounded: the GNN may have access to more granular or higher-dimensional features than the baselines, not just graph structure.",
+        "evidence_test": "Ablate the GNN's graph structure: train a GNN variant that ignores edges (treats the graph as a set of isolated nodes) and compare its PR-AUC to the full GNN. If performance is similar, the advantage comes from node features or temporal attention, not graph structure. Alternatively, engineer the tabular baseline to include pairwise interaction features (e.g., user-host co-occurrence counts) to match the GNN's feature richness without graph structure.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate metric for operationalizing the goal of ranking alerts to minimize analyst labor.",
+        "failure_mechanism": "PR-AUC is sensitive to the base rate of positive labels. If the base rate of true incidents shifts between validation and test sets (e.g., due to seasonal variation or attacker behavior changes), PR-AUC may not reflect the operational goal of ranking alerts to minimize analyst labor. Additionally, PR-AUC does not directly measure the cost of analyst labor (e.g., time to triage a ranked list of alerts). The metric may not align with the deployment objective if the cost of false negatives (missed incidents) is high.",
+        "evidence_test": "Simulate a shift in base rate by re-weighting the test set to reflect a 2x increase or decrease in incident rate. Measure whether the ranking of models (GNN vs. baselines) changes under the shifted base rate. Alternatively, compute a cost-sensitive metric (e.g., expected analyst labor cost) using a cost matrix for false positives/negatives and compare models using this metric.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model's predicted scores are well-calibrated, enabling downstream threshold tuning by operations teams.",
+        "failure_mechanism": "Calibration is only meaningful if the predicted scores reflect true probabilities of an alert being a true intrusion. If the model is overconfident (e.g., due to label noise or distributional shift), calibration metrics (ECE) may appear acceptable on the validation set but fail in deployment. The PoC does not verify calibration under distribution shift or label noise.",
+        "evidence_test": "Evaluate calibration on a held-out subset of alerts with analyst dispositions recorded after 7 days (to measure label stability). Alternatively, simulate label noise by flipping a subset of labels and measure whether calibration degrades. If calibration error increases significantly under noise or shift, the claim is invalid.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 30-day lookback window is sufficient to capture entity behavior relevant to alert triage.",
+        "failure_mechanism": "The window length is arbitrary and may not reflect the temporal scale of attacker behavior (e.g., slow-moving campaigns) or entity behavior (e.g., long-lived compromised accounts). A fixed window may exclude relevant history for some entities or include irrelevant history for others.",
+        "evidence_test": "Ablate the window length (e.g., 7 days, 60 days, 90 days) and measure PR-AUC degradation. If performance is robust to window length, the claim is supported. If performance degrades significantly for shorter windows, the window is too short; if performance degrades for longer windows, the window is too long.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "Three FATAL flaws invalidate the core assumptions of the PoC: label unreliability (F1), alert-level temporal leakage (F2), and incident history leakage within the 30-day window (F3). These flaws mean the experiment cannot distinguish whether the GNN's performance comes from exploiting relational structure or from indirect access to future or incident context. MATERIAL flaws include confounded comparisons (F4), misaligned metrics (F5), and unvalidated calibration (F6).",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims analyst labels are noisy. While true in any SOC, the design explicitly uses analyst disposition as the ground truth because the model's goal is to assist analysts in their existing workflow. The 7-day cutoff is a standard operational window to ensure labels are available for training without introducing excessive lag. This is a characteristic of the data, not a flaw in the hypothesis testing.\n\nF2 claims alert-level splitting leaks incident context. This is a misunderstanding of the 30-day lookback. The model predicts an alert's disposition based on the 30 days *prior* to that alert. If an incident spans months 12 and 13, an alert in month 13 will see the month 12 activity in its lookback window. This is not leakage; it is exactly how the model is intended to work in production (using historical context to score a current alert). The 'future' is defined as anything after the alert timestamp, which is strictly excluded.\n\nF3 claims the 30-day window leaks incident history. This is a contradiction of the design intent. The hypothesis is that relational history *helps* triage. Using history prior to the alert is the core feature of the model, not leakage. Leakage would be using events that happened *after* the alert to predict the alert's label. The critic is arguing against the use of historical features entirely, which is outside the scope of the hypothesis.\n\nF4 suggests the GNN's advantage might come from feature richness rather than structure. The design addresses this in Section 4 by including a Transformer/LSTM baseline. This baseline processes the same event sequences (same feature richness) but without the graph's relational structure. This isolates the graph's value.\n\nF5 argues PR-AUC is sensitive to base rates. While true, the experiment uses a consistent temporal split from a single SOC, and the primary goal is ranking. PR-AUC is the industry standard for imbalanced cybersecurity datasets. The secondary metrics (P@R) specifically address the operational labor reduction concern.\n\nF6 concerns calibration under shift. The design includes ECE as a secondary metric and uses a temporal split (val/test) specifically to measure how the model generalizes to a future time period (a natural distribution shift). This is a standard validation approach for PoCs.\n\nF7 questions the 30-day window length. This is a hyperparameter choice. While other windows could be tested, 30 days is a reasonable heuristic for a PoC to demonstrate the viability of the tGNN approach.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The goal is to automate/assist analyst triage. Therefore, analyst disposition is the correct operational ground truth. The 7-day window is a design choice to ensure label availability and minimize noise from stale alerts, which is standard for SOC PoCs."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic confuses 'incident context' with 'future leakage'. The model is designed to use historical context (the 30-day lookback) to predict the current alert. As long as no data from *after* the alert timestamp is used, there is no leakage. The temporal split ensures the model is tested on a future time window, mirroring production."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic argues that using incident history is leakage. However, the hypothesis specifically tests whether historical relational context improves triage. Removing history would invalidate the entire experiment's purpose."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Section 4 explicitly includes a Transformer/LSTM baseline. This baseline uses the same temporal event sequences and feature richness as the GNN, but without the graph structure, specifically to isolate the value of the relational graph."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "PR-AUC is the standard for rare-event detection. To address the operational labor concern, the design includes secondary metrics: Precision at fixed Recall thresholds (P@R), which directly quantify the reduction in false alarms for analysts."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The use of a chronological split (months 13-15 val, 16-18 test) is the primary design control for distribution shift. Evaluating ECE on the test set directly measures calibration under this shift."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The window length is a hyperparameter. For a PoC, 30 days is a reasonable starting point to prove the hypothesis; exhaustive window ablation is a refinement step, not a fundamental flaw."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted. The most severe claims (F2, F3) were based on a misunderstanding of the difference between historical context (the goal of the model) and future leakage (which is strictly prevented by the temporal split and lookback window). All other findings are addressed by existing design controls (Transformer baseline, P@R metrics, and temporal validation)."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal argues that analyst disposition is the correct ground truth because it aligns with operational goals, but this does not address the failure mechanism: analyst decisions may be noisy or biased, especially for rare or ambiguous alerts. The justification does not quantify label noise, analyze delayed dispositions, or measure inter-analyst agreement. The mechanism by which analyst bias/noise is mitigated remains unspecified. The severity adjustment from 9 to 4 is disproportionate given that the rebuttal does not directly engage with the evidence test (e.g., comparing PR-AUC for alerts with dispositions within 7 vs. 8\u201330 days)."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal conflates 'incident context' with 'future leakage' and asserts that using historical context is permissible. However, the failure mechanism is not about using historical context per se, but about the potential for information leakage when a test-set alert is part of an incident that began in an earlier split (training/validation). The rebuttal does not address the mechanism: it does not provide evidence that >5% of test alerts are part of multi-day incidents with prior alerts in earlier splits, nor does it justify why alert-level splitting is sufficient despite incident-level dependence. The severity adjustment from 8 to 3 is disproportionate because the rebuttal does not resolve the core concern about incident-level leakage."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal correctly identifies that the hypothesis explicitly tests whether historical relational context improves triage, and removing history would invalidate the experiment's purpose. The failure mechanism (late-stage alerts with >30-day incident histories) is acknowledged as part of the design's intended scope. The severity adjustment to 2 is proportionate given that the rebuttal directly addresses the mechanism by reframing the leakage concern as an inherent part of the hypothesis."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal cites Section 4, which includes a Transformer/LSTM baseline designed to control for temporal modeling and feature richness. This directly addresses the failure mechanism by isolating the value of graph structure. The severity adjustment to 2 is proportionate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal acknowledges PR-AUC as standard and adds secondary metrics (P@R) to address labor concerns, which partially addresses the failure mechanism. However, it does not address the core issue: PR-AUC's sensitivity to base rate shifts or its lack of direct alignment with analyst labor costs. The rebuttal does not provide evidence that P@R or other metrics are robust to base rate shifts or that they accurately reflect operational labor costs. The severity adjustment to 2 is partially justified but underestimates the residual concern."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal argues that the chronological split controls for distribution shift and that ECE on the test set directly measures calibration under shift. This partially addresses the failure mechanism by acknowledging the need to evaluate calibration under shift. However, it does not address the core issue: label noise or analyst drift may still degrade calibration in deployment, and the rebuttal does not provide evidence that ECE is stable under such noise. The severity adjustment to 1 is slightly optimistic given the residual concern."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly identifies that the window length is a hyperparameter and that exhaustive ablation is a refinement step. This directly addresses the minor nature of the finding. The severity adjustment to 1 is proportionate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my position on F2, as the critic continues to mischaracterize the nature of temporal leakage in a streaming context. I am deferring on F1, as the critic's point about label noise in rare classes is a valid empirical uncertainty that cannot be resolved by design argument alone. I am strengthening the defense for F5 and F6 by clarifying how the chosen metrics and splits specifically address the operational concerns raised.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly points out that while analyst disposition is the operational goal, the inherent noise and bias in those labels (especially for rare incidents) could impact PR-AUC. Whether this noise is negligible or material cannot be determined by the design alone; it requires the empirical evidence test suggested by the critic (comparing 7-day vs 30-day disposition stability). I defer this to the empirical results phase.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern about 'incident-level leakage' is a misunderstanding of the temporal causality in this design. In a production SOC, an incident is a sequence of alerts. If Alert A (Month 12) and Alert B (Month 16) belong to the same incident, the model training on Alert A does not 'leak' the outcome of Alert B; rather, it learns the patterns that lead to a 'malicious' label. When the model encounters Alert B in the test set, it uses the 30-day lookback (which may include Alert A) to make a prediction. This is not leakage; it is the exact mechanism of 'incident context' the model is intended to exploit. The temporal split at the alert level correctly mirrors the real-world arrival of data.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted the R1 rebuttal. The use of historical context is the core of the hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted the R1 rebuttal. The Transformer/LSTM baseline isolates the graph structure advantage.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic's concern regarding base rate shifts is addressed by the chronological split; the test set (months 16-18) naturally contains any seasonal or behavioral shifts present in the production stream. Furthermore, P@R (Precision at Recall) is specifically chosen because it is more robust to base rate shifts than PR-AUC when evaluating the 'top-K' alerts an analyst actually reviews, directly mapping to the labor cost of false positives at a required detection rate.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The design uses a locked test set from the final three months of the production stream. This is the most rigorous way to test calibration under real-world distribution shift and analyst drift. If the ECE remains low on this held-out temporal slice, the model is empirically calibrated for the environment's inherent noise.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic accepted the R1 rebuttal. Window length is a hyperparameter for PoC refinement.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were successfully rebutted or accepted. However, F1 (label noise/bias) remains a significant uncertainty that cannot be resolved by design argument and requires empirical testing, leading to an 'empirical_test_agreed' verdict."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Analyst disposition decisions recorded within 7 days of each alert are a reliable ground truth for whether an alert represents a true intrusion.",
+        "failure_mechanism": "Analyst decisions may be noisy or biased, especially for low-severity or ambiguous alerts. A 7-day window may exclude delayed analyst actions (e.g., incidents discovered later via forensics or external reports), leading to false negatives in the label set. Conversely, analysts may over-disposition benign alerts as malicious due to alert fatigue or policy pressure, creating false positives. The label noise is not quantified or corrected, and may disproportionately affect rare classes (true incidents), inflating or deflating PR-AUC.",
+        "evidence_test": "Compare model performance on alerts with analyst dispositions recorded within 7 days vs. those with dispositions recorded between 8\u201330 days. If PR-AUC drops significantly for the latter, labels are unstable over time, invalidating the ground truth assumption. Alternatively, measure inter-analyst agreement (kappa) on a subset of alerts to quantify label noise.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split (months 1\u201312 train, 13\u201315 val, 16\u201318 test) prevents leakage of future information, including analyst responses and incident context.",
+        "failure_mechanism": "The split is applied at the alert level, but alerts are not independent events. A single incident may generate multiple alerts across days (e.g., failed logins, endpoint detections, email alerts). If one alert in the test set belongs to an incident that began in the validation or training period, the model may indirectly observe incident context through earlier alerts in the same incident chain. This violates the independence assumption and leaks information about future outcomes into the model's training or validation data.",
+        "evidence_test": "Audit a sample of test-set alerts to identify incidents spanning multiple days. For each such incident, check whether earlier alerts from the same incident appear in the training or validation sets. If >5% of test alerts are part of incidents with prior alerts in earlier splits, the split strategy is invalid. Alternatively, re-split at the incident level (not alert level) and re-run experiments to measure PR-AUC degradation.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 30-day lookback window for both tabular and GNN features ensures that the model does not use post-alert information (analyst actions, subsequent incidents) to predict alert disposition.",
+        "failure_mechanism": "The window is defined relative to the alert timestamp, but the alert timestamp may not align with the start of the incident. If an alert is a late-stage indicator of an incident that began >30 days prior, the model may still observe incident context indirectly (e.g., repeated failed logins, endpoint detections) within the 30-day window. This is a form of leakage: the model uses information about the incident's history, which is only available because the incident is ongoing. The mechanism violates the hypothesis's requirement that the model predict disposition using only information available at alert time.",
+        "evidence_test": "For each alert in the test set, measure the time between the first event in the incident (earliest timestamp in the incident chain) and the alert timestamp. If the median time delta is >30 days for a significant fraction of alerts, the 30-day window leaks incident history. Alternatively, truncate the lookback window to the alert timestamp (no history before the alert) and re-run experiments to measure PR-AUC degradation.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The GNN's advantage over the tabular baseline (XGBoost/LightGBM) and the sequential baseline (Transformer/LSTM) is attributable to its ability to exploit relational structure in entity interactions.",
+        "failure_mechanism": "The GNN may benefit from implicit temporal modeling (e.g., temporal attention over edge timestamps) or from richer feature representations (e.g., edge metadata) rather than graph structure per se. The sequential baseline controls for temporal modeling but not for feature richness. The comparison is confounded: the GNN may have access to more granular or higher-dimensional features than the baselines, not just graph structure.",
+        "evidence_test": "Ablate the GNN's graph structure: train a GNN variant that ignores edges (treats the graph as a set of isolated nodes) and compare its PR-AUC to the full GNN. If performance is similar, the advantage comes from node features or temporal attention, not graph structure. Alternatively, engineer the tabular baseline to include pairwise interaction features (e.g., user-host co-occurrence counts) to match the GNN's feature richness without graph structure.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "PR-AUC is the appropriate metric for operationalizing the goal of ranking alerts to minimize analyst labor.",
+        "failure_mechanism": "PR-AUC is sensitive to the base rate of positive labels. If the base rate of true incidents shifts between validation and test sets (e.g., due to seasonal variation or attacker behavior changes), PR-AUC may not reflect the operational goal of ranking alerts to minimize analyst labor. Additionally, PR-AUC does not directly measure the cost of analyst labor (e.g., time to triage a ranked list of alerts). The metric may not align with the deployment objective if the cost of false negatives (missed incidents) is high.",
+        "evidence_test": "Simulate a shift in base rate by re-weighting the test set to reflect a 2x increase or decrease in incident rate. Measure whether the ranking of models (GNN vs. baselines) changes under the shifted base rate. Alternatively, compute a cost-sensitive metric (e.g., expected analyst labor cost) using a cost matrix for false positives/negatives and compare models using this metric.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model's predicted scores are well-calibrated, enabling downstream threshold tuning by operations teams.",
+        "failure_mechanism": "Calibration is only meaningful if the predicted scores reflect true probabilities of an alert being a true intrusion. If the model is overconfident (e.g., due to label noise or distributional shift), calibration metrics (ECE) may appear acceptable on the validation set but fail in deployment. The PoC does not verify calibration under distribution shift or label noise.",
+        "evidence_test": "Evaluate calibration on a held-out subset of alerts with analyst dispositions recorded after 7 days (to measure label stability). Alternatively, simulate label noise by flipping a subset of labels and measure whether calibration degrades. If calibration error increases significantly under noise or shift, the claim is invalid.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 30-day lookback window is sufficient to capture entity behavior relevant to alert triage.",
+        "failure_mechanism": "The window length is arbitrary and may not reflect the temporal scale of attacker behavior (e.g., slow-moving campaigns) or entity behavior (e.g., long-lived compromised accounts). A fixed window may exclude relevant history for some entities or include irrelevant history for others.",
+        "evidence_test": "Ablate the window length (e.g., 7 days, 60 days, 90 days) and measure PR-AUC degradation. If performance is robust to window length, the claim is supported. If performance degrades significantly for shorter windows, the window is too short; if performance degrades for longer windows, the window is too long.",
+        "flaw_category": "implicit_dist_assump"
+      }
+    ],
+    "summary": "Three FATAL flaws invalidate the core assumptions of the PoC: label unreliability (F1), alert-level temporal leakage (F2), and incident history leakage within the 30-day window (F3). These flaws mean the experiment cannot distinguish whether the GNN's performance comes from exploiting relational structure or from indirect access to future or incident context. MATERIAL flaws include confounded comparisons (F4), misaligned metrics (F5), and unvalidated calibration (F6).",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my position on F2, as the critic continues to mischaracterize the nature of temporal leakage in a streaming context. I am deferring on F1, as the critic's point about label noise in rare classes is a valid empirical uncertainty that cannot be resolved by design argument alone. I am strengthening the defense for F5 and F6 by clarifying how the chosen metrics and splits specifically address the operational concerns raised.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly points out that while analyst disposition is the operational goal, the inherent noise and bias in those labels (especially for rare incidents) could impact PR-AUC. Whether this noise is negligible or material cannot be determined by the design alone; it requires the empirical evidence test suggested by the critic (comparing 7-day vs 30-day disposition stability). I defer this to the empirical results phase.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's concern about 'incident-level leakage' is a misunderstanding of the temporal causality in this design. In a production SOC, an incident is a sequence of alerts. If Alert A (Month 12) and Alert B (Month 16) belong to the same incident, the model training on Alert A does not 'leak' the outcome of Alert B; rather, it learns the patterns that lead to a 'malicious' label. When the model encounters Alert B in the test set, it uses the 30-day lookback (which may include Alert A) to make a prediction. This is not leakage; it is the exact mechanism of 'incident context' the model is intended to exploit. The temporal split at the alert level correctly mirrors the real-world arrival of data.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted the R1 rebuttal. The use of historical context is the core of the hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic accepted the R1 rebuttal. The Transformer/LSTM baseline isolates the graph structure advantage.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic's concern regarding base rate shifts is addressed by the chronological split; the test set (months 16-18) naturally contains any seasonal or behavioral shifts present in the production stream. Furthermore, P@R (Precision at Recall) is specifically chosen because it is more robust to base rate shifts than PR-AUC when evaluating the 'top-K' alerts an analyst actually reviews, directly mapping to the labor cost of false positives at a required detection rate.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "The design uses a locked test set from the final three months of the production stream. This is the most rigorous way to test calibration under real-world distribution shift and analyst drift. If the ECE remains low on this held-out temporal slice, the model is empirically calibrated for the environment's inherent noise.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The critic accepted the R1 rebuttal. Window length is a hyperparameter for PoC refinement.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were successfully rebutted or accepted. However, F1 (label noise/bias) remains a significant uncertainty that cannot be resolved by design argument and requires empirical testing, leading to an 'empirical_test_agreed' verdict."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=9, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "1 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

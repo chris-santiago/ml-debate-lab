@@ -1,0 +1,431 @@
+{
+  "case_id": "eval_scenario_777",
+  "stratum": "regular",
+  "flaw_category": "distribution_shift",
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer's performance gain, if observed, is attributable to its ability to model temporal sequences.",
+        "failure_mechanism": "The transformer receives the same baseline features as logistic regression, plus temporal sequences. If the transformer's embedding layer or architecture can learn a more powerful representation of the baseline features themselves (e.g., non-linear interactions), the performance gain could be due to this representational capacity, not the temporal modeling. This is a confounded comparison.",
+        "evidence_test": "Ablation study: Train a transformer model on baseline features only (no temporal sequences) and compare its performance to the logistic regression baseline. If this 'baseline-only transformer' outperforms logistic regression, the claimed mechanism is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal-stratified split by patient prevents information leakage and ensures the model only uses data 'known at that moment'.",
+        "failure_mechanism": "The split is by discharge date, but sequences include data from 'prior admissions'. If a patient has multiple admissions within the training period, the model learns from sequences that include admissions occurring later in the patient's history relative to an earlier index admission. When predicting on a test-set index admission, the model's learned patterns are implicitly informed by future admissions of other patients from the training set, violating the 'data known at that moment' principle. This is a form of subtle temporal leakage.",
+        "evidence_test": "Audit the data pipeline: For each index admission in the training set, verify that the constructed patient sequence uses only clinical events recorded *before* the discharge date of that specific index admission. If any sequence includes events from a later admission of the same patient, leakage exists.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The label validation process (5% manual review) ensures label quality is sufficient for model evaluation.",
+        "failure_mechanism": "A 5% error rate threshold is arbitrary. If the true label noise is 5%, it introduces significant uncertainty into model comparisons, especially for a rare event. Differences in PR-AUC between models could be within the margin of error caused by label noise. The validation sample size may be too small to reliably estimate the error rate.",
+        "evidence_test": "Quantify the impact of label noise: Introduce synthetic label noise (e.g., flip 5% of labels) into the test set and re-evaluate both models. If the performance ranking (transformer vs. LR) changes or the confidence intervals overlap substantially, the experiment's conclusion is not robust.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying the temporal split by discharge unit ensures the model generalizes across clinical contexts.",
+        "failure_mechanism": "Stratification by unit within time slices does not guarantee the distribution of case-mix or readmission risk factors within each unit is stable over time. If certain units specialize in increasingly complex patients over the 36-month period, the test set (most recent 20%) could be systematically harder than the training set, unfairly disadvantarding both models equally but also potentially masking a transformer's true advantage if it better handles complexity.",
+        "evidence_test": "Compare the distribution of baseline features (e.g., comorbidity indices, age) and the raw readmission rate across discharge units between the training and test temporal windows. Significant shifts indicate a distribution shift not addressed by unit stratification.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer architecture (2\u20134 heads, 2\u20133 layers) is sufficient to capture meaningful temporal dependencies for this task.",
+        "failure_mechanism": "This is an implicit architectural assumption. The chosen hyperparameter range may be too constrained. If longer-range dependencies (beyond 12 months) or more complex interactions are relevant, a deeper/wider model might be needed. The tuning process might find a local optimum within the provided search space, missing a better configuration.",
+        "evidence_test": "Perform an architectural sensitivity analysis: Expand the hyperparameter search to include more layers/heads and different attention mechanisms (e.g., linear attention). If performance on the validation set improves significantly with a larger architecture, the original assumption is limiting.",
+        "flaw_category": "fixable_flaw"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 'same convergence criterion' for both models ensures a fair comparison.",
+        "failure_mechanism": "Convergence criteria defined by loss or metric plateaus are not directly comparable across fundamentally different optimization landscapes (convex for LR, non-convex for transformer). The transformer might benefit from more epochs or early stopping at a different point relative to LR.",
+        "evidence_test": "Plot validation PR-AUC vs. training step for both models. If the transformer's performance continues to improve (or degrade) after LR has converged, the stopping point choice could bias the comparison.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Bootstrap resampling 'by patient' is sufficient for confidence intervals.",
+        "failure_mechanism": "If readmission events are clustered within patients (a patient with one readmission is more likely to have another), bootstrapping by patient may underestimate variance because it treats patient-level blocks as independent, which they are, but doesn't account for temporal autocorrelation of readmission risk across the population over time.",
+        "evidence_test": "Compare patient-level bootstrap CIs with time-series aware bootstrap methods (e.g., block bootstrap across time). Large discrepancies would indicate the CI method is mis-specified.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The PoC contains a fatal confound in its comparison (F1) and a likely fatal temporal leakage risk (F2), which together invalidate any causal claim about the transformer's temporal modeling advantage. Several material assumptions about label noise and distribution shift also weaken the experiment's robustness.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each critique finding against the methodology to determine validity and appropriate rebuttal.\n\nF1 (FATAL, 8): The critic claims the comparison is confounded because the Transformer might outperform LR due to representational capacity on baseline features, not temporal sequences. The methodology's primary objective (Section 1) is to test whether 'a transformer model trained on temporal sequences... outperforms logistic regression'. This is a performance comparison. The critique conflates the performance hypothesis with the mechanism attribution hypothesis. While Section 7 mentions verifying the gain comes from temporal sequences via permutation importance, this is a secondary analysis. The primary conclusion (Transformer > LR) remains valid regardless of the mechanism. The critique's demand for an ablation study (Transformer-Baseline vs LR) is a deeper causal analysis, not a requirement for the primary performance PoC. This is a scope mismatch.\n\nF2 (FATAL, 7): The critic claims temporal leakage exists because sequences include 'prior admissions' that might occur later in a patient's history relative to an index admission. The methodology explicitly states in Section 2 that the split 'respects the deployment scenario (predicting at discharge using only data known at that moment)'. Section 3 defines the sequence as 'prior admissions', which in the context of Section 2 implies events prior to the index admission. The critique assumes an implementation that violates the stated design intent. The design control (temporal split + 'known at that moment' constraint) eliminates the leakage mechanism by construction.\n\nF3 (MATERIAL, 6): The critic claims the 5% label validation threshold is arbitrary and noise could invalidate comparisons. The methodology in Section 1 includes a quality gate: 'if the error rate exceeds 5%, label definitions are refined or ambiguous cases are excluded.' This means the experiment will not proceed with >5% noise. The critique assumes the noise persists despite the control. The design control (refinement/exclusion) mitigates the risk.\n\nF4 (MATERIAL, 5): The critic claims distribution shift across units could mask the Transformer's advantage. The methodology in Section 7 includes a control: 'We report performance across temporal quarters and discharge units to detect drift or unit-specific bias.' While this monitors rather than prevents the shift, the primary metric is relative performance (Transformer vs LR). A uniform shift in difficulty affects both models equally, preserving the validity of the comparison. The design explicitly accounts for this via reporting.\n\nF5 (MATERIAL, 4): The critic claims the architecture (2-4 heads, 2-3 layers) is too constrained. The methodology in Section 4 defines this range as part of the PoC scope. The objective is to test 'a transformer model', not 'the optimal transformer model'. Expanding the search space is a future step. This is a scope limitation, not a design flaw.\n\nF6 (MINOR, 1): The critic claims convergence criteria are not comparable across LR and Transformer. The methodology in Section 4 states 'Both models are trained to the same convergence criterion.' If early stopping is used on the validation metric, it is comparable. This is a technical detail that does not invalidate the primary conclusion.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The primary objective (Section 1) is performance comparison ('whether a transformer... outperforms logistic regression'). Mechanism attribution (Section 7) is a secondary analysis. The critique conflates the performance hypothesis with the causal attribution hypothesis. The performance conclusion remains valid regardless of whether the gain is due to architecture or temporal data."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Section 2 explicitly states the split 'respects the deployment scenario (predicting at discharge using only data known at that moment)'. Section 3 defines sequences as 'prior admissions', which implies prior to the index admission. The design control eliminates the leakage mechanism by construction."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "Section 1 includes a quality gate: 'if the error rate exceeds 5%, label definitions are refined or ambiguous cases are excluded.' This prevents the experiment from proceeding with >5% noise, mitigating the critique's concern about label uncertainty."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "Section 7 includes a monitoring control: 'We report performance across temporal quarters and discharge units to detect drift.' Since the primary metric is relative performance, a uniform shift in difficulty affects both models equally, preserving the validity of the comparison."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Section 4 defines the architecture range as part of the PoC scope. The objective is to test 'a transformer model', not 'the optimal transformer model'. Expanding the search space is a future step, not a flaw in the current PoC design."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Section 4 states 'Both models are trained to the same convergence criterion.' If early stopping is used on the validation metric, it is comparable. This is a technical detail that does not invalidate the primary conclusion."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been rebutted with adjusted severities \u2264 3. The methodology's design controls (temporal split, quality gates, monitoring) address the core concerns, and scope limitations do not invalidate the primary performance hypothesis."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal mischaracterizes the finding as conflating performance with causal attribution. The failure mechanism is about confounding in the comparison itself: if the transformer outperforms logistic regression, we cannot know whether it's due to temporal sequences (the stated hypothesis) or simply better representation of baseline features. The rebuttal's scope argument ('performance conclusion remains valid') ignores that the experiment's stated objective includes testing whether transformers 'trained on temporal sequences' outperform. Without the ablation study, a positive result could be misinterpreted as evidence for temporal modeling when it might just be architectural advantage. This is a fundamental confound in the experimental design, not a secondary analysis issue."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal cites design language but doesn't address the specific leakage mechanism. The concern is that sequences are defined as 'prior admissions' but could include admissions that occur chronologically later in the dataset than the index admission being predicted, even if they're 'prior' in the patient's medical history. The design states sequences use 'prior admissions' but doesn't specify the temporal cutoff relative to the index discharge date. If the pipeline uses all admissions before the index admission date (regardless of whether those admissions occurred in the training or future test period), that's correct. However, the rebuttal doesn't provide this implementation detail. The severity should be reduced because the design intent is clear, but the mechanism remains ambiguous."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly identifies that the design includes a quality gate: if error rate exceeds 5%, labels are refined or ambiguous cases excluded. This directly addresses the concern about proceeding with high label noise. While 5% is arbitrary, the design actively mitigates the risk by not proceeding with noisy labels. The residual risk of <5% noise affecting comparisons is minimal for the primary performance comparison."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly notes that the design includes monitoring for drift and that the primary metric is relative performance. The failure mechanism described (distribution shift unfairly disadvantaging both models) would indeed affect both models equally if the shift is uniform. Since the comparison is relative, this preserves validity. The design's reporting of performance across temporal quarters provides detection capability."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly frames this as a scope issue. The experiment tests 'a transformer model' with specified architecture bounds, not 'the optimal transformer'. The failure mechanism assumes the architecture must be sufficient to capture all meaningful dependencies, but the experiment's goal is to test whether this particular implementation (with reasonable hyperparameter tuning) outperforms logistic regression. Expanding the search space is an optimization concern, not a validity concern for the PoC."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal correctly identifies this as immaterial. While convergence criteria across different optimization landscapes aren't perfectly comparable, using validation-set early stopping for both models provides a fair pragmatic comparison. Any minor bias from this technical detail is unlikely to materially affect the primary conclusion given the other design controls."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic correctly challenged F1 and F2 on design gaps that my R1 rebuttals overstated. F1 lacks an ablation study to isolate temporal sequences from architectural capacity - this is a genuine confound requiring DEFER. F2 has unclear implementation detail on temporal cutoff for sequence construction - the design intent is clear but the mechanism is ambiguous, requiring DEFER. F3-F6 were accepted by the critic and I maintain my R1 positions. Two DEFER findings means the verdict will be empirical_test_agreed, which is appropriate for genuinely unresolved questions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that without an ablation study (transformer on baseline features only), we cannot distinguish whether performance gain comes from temporal sequences or architectural capacity. Section 7 mentions permutation importance but this is post-hoc and does not isolate the temporal component. The design has no control that eliminates this confound. However, the primary performance comparison (transformer vs LR on PR-AUC) would remain valid even if the mechanism differs. This is a genuine ambiguity requiring empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that the methodology states sequences use 'prior admissions' but does not explicitly specify the temporal cutoff rule relative to the index discharge date. While the design intent (Section 2) is to prevent leakage, the implementation detail is missing. This creates genuine ambiguity about whether sequences could include events from later admissions in the dataset. The settling experiment is the audit the critic suggested: verify each training sequence uses only events before the index discharge date.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The critic accepted my R1 position. Section 1 includes a quality gate: 'if the error rate exceeds 5%, labels are refined or ambiguous cases excluded.' This actively mitigates the risk of proceeding with high label noise. The residual risk of <5% noise is minimal for the primary performance comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted my R1 position. Section 7 includes monitoring for drift across temporal quarters and discharge units. Since the primary metric is relative performance, uniform distribution shifts affect both models equally, preserving the validity of the comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted my R1 position. Section 4 defines the architecture range as part of the PoC scope. The objective is to test 'a transformer model' with specified bounds, not 'the optimal transformer'. This is a scope decision, not a validity concern.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted my R1 position. Using validation-set early stopping for both models provides a fair pragmatic comparison. Any minor bias from technical convergence differences is unlikely to materially affect the primary conclusion.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1, F2) are deferred to empirical resolution rather than conceded, indicating the design has partial answers but genuine uncertainty that the experiment should test. This is the correct outcome when reasonable people can disagree and empirical evidence is the right arbiter."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The transformer's performance gain, if observed, is attributable to its ability to model temporal sequences.",
+        "failure_mechanism": "The transformer receives the same baseline features as logistic regression, plus temporal sequences. If the transformer's embedding layer or architecture can learn a more powerful representation of the baseline features themselves (e.g., non-linear interactions), the performance gain could be due to this representational capacity, not the temporal modeling. This is a confounded comparison.",
+        "evidence_test": "Ablation study: Train a transformer model on baseline features only (no temporal sequences) and compare its performance to the logistic regression baseline. If this 'baseline-only transformer' outperforms logistic regression, the claimed mechanism is invalid.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal-stratified split by patient prevents information leakage and ensures the model only uses data 'known at that moment'.",
+        "failure_mechanism": "The split is by discharge date, but sequences include data from 'prior admissions'. If a patient has multiple admissions within the training period, the model learns from sequences that include admissions occurring later in the patient's history relative to an earlier index admission. When predicting on a test-set index admission, the model's learned patterns are implicitly informed by future admissions of other patients from the training set, violating the 'data known at that moment' principle. This is a form of subtle temporal leakage.",
+        "evidence_test": "Audit the data pipeline: For each index admission in the training set, verify that the constructed patient sequence uses only clinical events recorded *before* the discharge date of that specific index admission. If any sequence includes events from a later admission of the same patient, leakage exists.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The label validation process (5% manual review) ensures label quality is sufficient for model evaluation.",
+        "failure_mechanism": "A 5% error rate threshold is arbitrary. If the true label noise is 5%, it introduces significant uncertainty into model comparisons, especially for a rare event. Differences in PR-AUC between models could be within the margin of error caused by label noise. The validation sample size may be too small to reliably estimate the error rate.",
+        "evidence_test": "Quantify the impact of label noise: Introduce synthetic label noise (e.g., flip 5% of labels) into the test set and re-evaluate both models. If the performance ranking (transformer vs. LR) changes or the confidence intervals overlap substantially, the experiment's conclusion is not robust.",
+        "flaw_category": "uncertain_significance"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying the temporal split by discharge unit ensures the model generalizes across clinical contexts.",
+        "failure_mechanism": "Stratification by unit within time slices does not guarantee the distribution of case-mix or readmission risk factors within each unit is stable over time. If certain units specialize in increasingly complex patients over the 36-month period, the test set (most recent 20%) could be systematically harder than the training set, unfairly disadvantarding both models equally but also potentially masking a transformer's true advantage if it better handles complexity.",
+        "evidence_test": "Compare the distribution of baseline features (e.g., comorbidity indices, age) and the raw readmission rate across discharge units between the training and test temporal windows. Significant shifts indicate a distribution shift not addressed by unit stratification.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The transformer architecture (2\u20134 heads, 2\u20133 layers) is sufficient to capture meaningful temporal dependencies for this task.",
+        "failure_mechanism": "This is an implicit architectural assumption. The chosen hyperparameter range may be too constrained. If longer-range dependencies (beyond 12 months) or more complex interactions are relevant, a deeper/wider model might be needed. The tuning process might find a local optimum within the provided search space, missing a better configuration.",
+        "evidence_test": "Perform an architectural sensitivity analysis: Expand the hyperparameter search to include more layers/heads and different attention mechanisms (e.g., linear attention). If performance on the validation set improves significantly with a larger architecture, the original assumption is limiting.",
+        "flaw_category": "fixable_flaw"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 'same convergence criterion' for both models ensures a fair comparison.",
+        "failure_mechanism": "Convergence criteria defined by loss or metric plateaus are not directly comparable across fundamentally different optimization landscapes (convex for LR, non-convex for transformer). The transformer might benefit from more epochs or early stopping at a different point relative to LR.",
+        "evidence_test": "Plot validation PR-AUC vs. training step for both models. If the transformer's performance continues to improve (or degrade) after LR has converged, the stopping point choice could bias the comparison.",
+        "flaw_category": "context_dependent"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Bootstrap resampling 'by patient' is sufficient for confidence intervals.",
+        "failure_mechanism": "If readmission events are clustered within patients (a patient with one readmission is more likely to have another), bootstrapping by patient may underestimate variance because it treats patient-level blocks as independent, which they are, but doesn't account for temporal autocorrelation of readmission risk across the population over time.",
+        "evidence_test": "Compare patient-level bootstrap CIs with time-series aware bootstrap methods (e.g., block bootstrap across time). Large discrepancies would indicate the CI method is mis-specified.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The PoC contains a fatal confound in its comparison (F1) and a likely fatal temporal leakage risk (F2), which together invalidate any causal claim about the transformer's temporal modeling advantage. Several material assumptions about label noise and distribution shift also weaken the experiment's robustness.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic correctly challenged F1 and F2 on design gaps that my R1 rebuttals overstated. F1 lacks an ablation study to isolate temporal sequences from architectural capacity - this is a genuine confound requiring DEFER. F2 has unclear implementation detail on temporal cutoff for sequence construction - the design intent is clear but the mechanism is ambiguous, requiring DEFER. F3-F6 were accepted by the critic and I maintain my R1 positions. Two DEFER findings means the verdict will be empirical_test_agreed, which is appropriate for genuinely unresolved questions.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "The critic is correct that without an ablation study (transformer on baseline features only), we cannot distinguish whether performance gain comes from temporal sequences or architectural capacity. Section 7 mentions permutation importance but this is post-hoc and does not isolate the temporal component. The design has no control that eliminates this confound. However, the primary performance comparison (transformer vs LR on PR-AUC) would remain valid even if the mechanism differs. This is a genuine ambiguity requiring empirical resolution.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that the methodology states sequences use 'prior admissions' but does not explicitly specify the temporal cutoff rule relative to the index discharge date. While the design intent (Section 2) is to prevent leakage, the implementation detail is missing. This creates genuine ambiguity about whether sequences could include events from later admissions in the dataset. The settling experiment is the audit the critic suggested: verify each training sequence uses only events before the index discharge date.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The critic accepted my R1 position. Section 1 includes a quality gate: 'if the error rate exceeds 5%, labels are refined or ambiguous cases excluded.' This actively mitigates the risk of proceeding with high label noise. The residual risk of <5% noise is minimal for the primary performance comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted my R1 position. Section 7 includes monitoring for drift across temporal quarters and discharge units. Since the primary metric is relative performance, uniform distribution shifts affect both models equally, preserving the validity of the comparison.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted my R1 position. Section 4 defines the architecture range as part of the PoC scope. The objective is to test 'a transformer model' with specified bounds, not 'the optimal transformer'. This is a scope decision, not a validity concern.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critic accepted my R1 position. Using validation-set early stopping for both models provides a fair pragmatic comparison. Any minor bias from technical convergence differences is unlikely to materially affect the primary conclusion.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Two findings (F1, F2) are deferred to empirical resolution rather than conceded, indicating the design has partial answers but genuine uncertainty that the experiment should test. This is the correct outcome when reasonable people can disagree and empirical evidence is the right arbiter."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=8, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

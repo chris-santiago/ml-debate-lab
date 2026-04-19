@@ -1,0 +1,175 @@
+{
+  "case_id": "eval_scenario_862",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "x-ai/grok-4.1-fast",
+    "defender": "minimax/minimax-m2.5",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "A pre-trained, domain-agnostic BERT-like transformer (e.g., distilBERT or RoBERTa) can be fine-tuned using a BPE vocabulary fit exclusively on the training set.",
+        "failure_mechanism": "Pre-trained transformers have fixed vocabularies and corresponding token embeddings; fitting a new BPE solely on training data produces a mismatched vocabulary and tokenization scheme, preventing direct use of pre-trained weights without unmentioned adaptations like vocabulary expansion, embedding projection, or reinitialization\u2014which would nullify pre-training transfer. The model would effectively train from scratch on email data, but still produce plausible PR-AUC numbers from successful training, masking the absence of hypothesized pre-training benefits.",
+        "evidence_test": "Inspect tokenizer details: if vocab size/tokens differ from the pre-trained model (e.g., RoBERTa ~50k tokens) and no vocab alignment/projection is implemented, confirm by comparing fine-tuned model performance to a from-scratch baseline of identical architecture; equivalent performance refutes pre-training value.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological quarter-based split ensures the test set (Q16) contains novel, previously unseen attack patterns, forcing generalization beyond memorization of recurring campaigns.",
+        "failure_mechanism": "Phishing/malware campaigns often persist across quarters via reused senders, domains, IPs, subjects, or payloads, so Q16 threats may be direct continuations of train (Q1-12) or val (Q13-15) campaigns; models can exploit this temporal leakage to score held-out instances of seen campaigns highly, inflating test PR-AUC without true novelty generalization.",
+        "evidence_test": "Identify campaigns via clustering (e.g., DBSCAN on sender domain/IP + timestamp + TF-IDF subject/body similarity, with 7-30 day windows) and compute overlap fraction: % of test positives matching train/val clusters. Overlap >20% confirms leakage; compare model performance on 'pure novel' test subsets vs. overlapped ones.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The experiment design is rigorous in addressing common pitfalls like leakage and imbalance via temporal splits, confounds controls, and appropriate metrics, but is undermined by a likely fatal implementation incompatibility in the transformer's tokenizer-pretraining setup and untested temporal leakage from multi-quarter campaigns.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I need to analyze two FATAL findings carefully.\n\n**F1 - Vocabulary Mismatch:** The critic correctly identifies that pre-trained transformers (BERT, RoBERTa, DistilBERT) have fixed token vocabularies (~30k-50k tokens) with corresponding embedding matrices. The methodology states it will \"fit a BPE vocabulary fit exclusively on the training set\" while also using a \"pre-trained, domain-agnostic BERT-like transformer.\" These two requirements are technically incompatible without additional adaptation mechanisms (vocabulary expansion, embedding projection, or reinitialization). The critic is correct that if you fit a new BPE on email data, you cannot directly use pre-trained weights - you'd either need to add new token embeddings (expanding the vocabulary) or reinitialize all embeddings (losing pre-training benefits). This is a genuine technical flaw in the methodology as stated. However, I should note this could be resolved by using the pre-trained model's tokenizer instead of fitting a new one - but that's not what the methodology describes.\n\n**F2 - Campaign Overlap/Temporal Leakage:** The critic raises a valid concern that phishing campaigns often persist across quarters (reused sender domains, IPs, subject templates, payloads). A quarterly split may not guarantee that Q16 contains truly novel attack patterns - it could contain continuations of campaigns seen in Q1-15. This is a legitimate concern that the methodology does not explicitly address. The temporal robustness analysis (computing PR-AUC per week) checks for performance decay but does not measure campaign-level overlap. However, this is a harder problem to solve completely - the methodology does use chronological splitting which is the standard approach, and the concern is about degree of overlap rather than complete absence of controls. This is a real concern but not an undeniable flaw - it requires empirical verification to determine magnitude.\n\n**Verdict derivation:** F1 is a genuine technical inconsistency that would prevent the stated hypothesis (pre-training benefit) from being tested correctly. F2 is a legitimate concern about temporal leakage magnitude that needs empirical verification. With one CONCEDE on F1, I cannot use EXONERATE. F2 with DEFER means at least one finding has DEFER and none has adjusted severity \u22657 from CONCEDE, so the verdict should be empirical_test_agreed.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic correctly identifies a genuine technical inconsistency: pre-trained transformers have fixed vocabularies (e.g., RoBERTa ~50k tokens) with corresponding embedding matrices. Fitting a new BPE vocabulary 'exclusively on the training set' as stated would produce a mismatched tokenizer that cannot directly use pre-trained weights. Without vocabulary expansion, embedding projection, or partial reinitialization mechanisms, the model would either fail to tokenize pre-trained tokens correctly or would need to reinitialize all embeddings - nullifying the pre-training transfer benefit the hypothesis claims to test. The methodology as stated is internally inconsistent on this point. This is not a misunderstanding of design intent - it is a genuine flaw that would prevent the experiment from testing its stated hypothesis about pre-trained transformer benefits."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic raises a valid concern: phishing campaigns often persist across quarters via reused sender domains, IPs, subject templates, and payloads. Q16 may contain continuations of campaigns from Q1-15, allowing models to score held-out instances of seen campaigns highly. The methodology acknowledges temporal autocorrelation but does not explicitly measure campaign-level overlap between splits. The temporal robustness analysis (weekly PR-AUC) checks for performance decay but does not quantify campaign overlap. This concern requires empirical verification: cluster campaigns (sender domain + IP + subject/body TF-IDF similarity within 7-30 day windows) and compute overlap fraction between test positives and train/val campaigns. If overlap >20%, leakage exists; if <5%, the temporal split is effective. The design uses chronological splitting (the standard approach) but does not control for this specific failure mode. A settling experiment would identify campaigns via clustering and measure overlap percentage - high overlap (>20%) would vindicate the critique and invalidate test PR-AUC as a generalization metric; low overlap (<5%) would vindicate the design."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F1 is CONCEDEd as a genuine technical flaw (vocabulary mismatch prevents testing pre-training benefits). F2 is DEFERred - the concern is valid but requires empirical measurement of campaign overlap to determine significance. With one CONCEDE and one DEFER, neither defense_wins nor critique_wins applies; empirical_test_agreed is the correct verdict requiring the vocabulary fix and campaign overlap measurement."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "Defender uses CONCEDE with detailed justification fully agreeing with the failure mechanism (fixed pre-trained vocab mismatch with new BPE fit), confirming the silent misconfig without resolution or severity reduction. Per instructions, CONCEDE rebuttals are accepted; finding concern remains fully valid."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 7,
+        "reasoning": "Defender uses DEFER, acknowledging the exact failure mechanism (campaign persistence across quarters enabling leakage) and proposing empirical verification via campaign clustering and overlap measurement matching the evidence_test (>20% overlap confirms leakage). This partially addresses by validating the concern and noting lack of explicit control in design, but leaves open question unresolved without actual measurement; residual risk of temporal leakage inflating PR-AUC remains."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "For F1, the critic ACCEPTed my CONCEDE - maintaining the fatal flaw at severity 9. For F2, the critic issued PARTIAL, noting that DEFER leaves the question unresolved without actual measurement. After reviewing the design controls, I conclude that while temporal splitting exists, there is no specific control that eliminates the campaign overlap mechanism - the temporal robustness analysis checks for performance decay but does not measure or control for campaign-level overlap between splits. Since the flaw could invalidate the primary metric (test PR-AUC) by inflating scores through held-out instances of seen campaigns, and the design has no explicit control for this, I must CONCEDE F2.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic ACCEPTed my CONCEDE. The methodology as stated contains an internal inconsistency: fitting a new BPE vocabulary exclusively on training data produces a tokenizer incompatible with pre-trained transformer weights, nullifying the pre-training transfer benefit the hypothesis claims to test. No resolution exists within the stated design. Finding remains FATAL.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's PARTIAL verdict correctly identifies that DEFER leaves the concern unresolved. Reviewing the methodology: while temporal splitting exists (Q1-12 train, Q13-15 val, Q16 test), there is NO specific control that eliminates campaign overlap. The temporal robustness analysis ('compute PR-AUC separately for each week') checks for performance decay but does NOT measure or control for campaign-level overlap between splits. The critic's evidence_test (clustering to identify campaign overlap) is not implemented. Without explicit campaign overlap control, Q16 may contain direct continuations of Q1-15 campaigns, allowing models to score held-out instances highly - inflating test PR-AUC without true novelty generalization. This concern would invalidate the primary metric (test set PR-AUC) as a measure of generalization to novel threats. The design has no control for this specific failure mechanism.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL/MATERIAL findings remain at adjusted severity 7+ after final rebuttals: F1 (vocabulary mismatch nullifying pre-training transfer) at severity 9, and F2 (campaign overlap leakage inflating test PR-AUC) at severity 7. Both represent design flaws that would prevent the experiment from validly testing its stated hypothesis."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "A pre-trained, domain-agnostic BERT-like transformer (e.g., distilBERT or RoBERTa) can be fine-tuned using a BPE vocabulary fit exclusively on the training set.",
+        "failure_mechanism": "Pre-trained transformers have fixed vocabularies and corresponding token embeddings; fitting a new BPE solely on training data produces a mismatched vocabulary and tokenization scheme, preventing direct use of pre-trained weights without unmentioned adaptations like vocabulary expansion, embedding projection, or reinitialization\u2014which would nullify pre-training transfer. The model would effectively train from scratch on email data, but still produce plausible PR-AUC numbers from successful training, masking the absence of hypothesized pre-training benefits.",
+        "evidence_test": "Inspect tokenizer details: if vocab size/tokens differ from the pre-trained model (e.g., RoBERTa ~50k tokens) and no vocab alignment/projection is implemented, confirm by comparing fine-tuned model performance to a from-scratch baseline of identical architecture; equivalent performance refutes pre-training value.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The chronological quarter-based split ensures the test set (Q16) contains novel, previously unseen attack patterns, forcing generalization beyond memorization of recurring campaigns.",
+        "failure_mechanism": "Phishing/malware campaigns often persist across quarters via reused senders, domains, IPs, subjects, or payloads, so Q16 threats may be direct continuations of train (Q1-12) or val (Q13-15) campaigns; models can exploit this temporal leakage to score held-out instances of seen campaigns highly, inflating test PR-AUC without true novelty generalization.",
+        "evidence_test": "Identify campaigns via clustering (e.g., DBSCAN on sender domain/IP + timestamp + TF-IDF subject/body similarity, with 7-30 day windows) and compute overlap fraction: % of test positives matching train/val clusters. Overlap >20% confirms leakage; compare model performance on 'pure novel' test subsets vs. overlapped ones.",
+        "flaw_category": "signal_leakage"
+      }
+    ],
+    "summary": "The experiment design is rigorous in addressing common pitfalls like leakage and imbalance via temporal splits, confounds controls, and appropriate metrics, but is undermined by a likely fatal implementation incompatibility in the transformer's tokenizer-pretraining setup and untested temporal leakage from multi-quarter campaigns.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "For F1, the critic ACCEPTed my CONCEDE - maintaining the fatal flaw at severity 9. For F2, the critic issued PARTIAL, noting that DEFER leaves the question unresolved without actual measurement. After reviewing the design controls, I conclude that while temporal splitting exists, there is no specific control that eliminates the campaign overlap mechanism - the temporal robustness analysis checks for performance decay but does not measure or control for campaign-level overlap between splits. Since the flaw could invalidate the primary metric (test PR-AUC) by inflating scores through held-out instances of seen campaigns, and the design has no explicit control for this, I must CONCEDE F2.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The critic ACCEPTed my CONCEDE. The methodology as stated contains an internal inconsistency: fitting a new BPE vocabulary exclusively on training data produces a tokenizer incompatible with pre-trained transformer weights, nullifying the pre-training transfer benefit the hypothesis claims to test. No resolution exists within the stated design. Finding remains FATAL.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic's PARTIAL verdict correctly identifies that DEFER leaves the concern unresolved. Reviewing the methodology: while temporal splitting exists (Q1-12 train, Q13-15 val, Q16 test), there is NO specific control that eliminates campaign overlap. The temporal robustness analysis ('compute PR-AUC separately for each week') checks for performance decay but does NOT measure or control for campaign-level overlap between splits. The critic's evidence_test (clustering to identify campaign overlap) is not implemented. Without explicit campaign overlap control, Q16 may contain direct continuations of Q1-15 campaigns, allowing models to score held-out instances highly - inflating test PR-AUC without true novelty generalization. This concern would invalidate the primary metric (test set PR-AUC) as a measure of generalization to novel threats. The design has no control for this specific failure mechanism.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Two FATAL/MATERIAL findings remain at adjusted severity 7+ after final rebuttals: F1 (vocabulary mismatch nullifying pre-training transfer) at severity 9, and F2 (campaign overlap leakage inflating test PR-AUC) at severity 7. Both represent design flaws that would prevent the experiment from validly testing its stated hypothesis."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=7 \u2265 7 \u2192 critique_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

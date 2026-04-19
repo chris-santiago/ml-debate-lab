@@ -1,0 +1,726 @@
+{
+  "case_id": "eval_scenario_773",
+  "stratum": "regular",
+  "flaw_category": "missing_baselines",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model (Stream C) is a fair comparison to the multimodal model because it uses 'the same early-stopping and regularization framework' and 'identical train/val/test splits with the same preprocessing pipeline.'",
+        "failure_mechanism": "The baseline explicitly excludes longitudinal time-series features (min, max, mean, last value, slope, measurement frequency of labs/vitals) that the multimodal model uses. The document's Section 3 lists these as Stream A features. The baseline only gets 'aggregated lab/vital summaries\u2014min, max, mean, last value' but NOT the temporal features (slope, hours from admission to last measurement, rate of change) that distinguish Streams A from C. This creates an unfair comparison where the multimodal model has access to additional temporal signal the baseline cannot capture.",
+        "evidence_test": "Compare the feature sets: does the baseline receive the same temporal features (creatinine slope, hours to last measurement, measurement frequency) that the multimodal model receives? If not, the comparison conflates 'multimodal vs. tabular' with 'temporal features present vs. absent.'",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline uses a 'fixed, clinically conservative hyperparameter configuration rather than the full search used for the multimodal model,' which is intended to keep the comparison 'focused on whether multimodal inputs add practical value beyond a stable tabular reference.'",
+        "failure_mechanism": "Deliberately weakening the baseline's hyperparameter optimization creates an asymmetric comparison. The multimodal model gets full 5-fold cross-validation hyperparameter search while the baseline gets fixed settings. This inflates the apparent improvement from multimodal features because part of the gain may come from better-tuned hyperparameters rather than additional signal. The experiment cannot distinguish whether improvements come from features or from optimization effort.",
+        "evidence_test": "Run the baseline with the same hyperparameter search as the multimodal model (or run the multimodal model with the baseline's fixed hyperparameters) and compare results. If the gap shrinks substantially, the improvement is partially due to optimization asymmetry.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Precision at 80% recall is a stable selection criterion because it is computed on held-out folds during 5-fold cross-validation.",
+        "failure_mechanism": "Precision at a fixed recall threshold is inherently unstable when the positive class is rare (readmission rates are typically 10-20%). The threshold required to achieve exactly 80% recall varies substantially across folds due to random variation in score distributions. This means the selected hyperparameters may be optimizing for a threshold that is a statistical artifact of the particular fold split, not a robust operating point. The metric may not be achievable or stable across folds.",
+        "evidence_test": "Report the variance of the precision-at-80%-recall metric across folds. If the threshold required for 80% recall varies significantly across folds (e.g., by >10%ile rank), the selection criterion is unstable. Report how often 80% recall is achievable at all in each fold.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The validation window (months 37-42) is used to 'confirm metric stability' after final models are trained on the entire training set.",
+        "failure_mechanism": "The validation window is used twice: (1) to confirm metric stability after training on full training set, and (2) implicitly for threshold selection when they later evaluate on test set. This creates a form of leakage - the validation set influences both model training decisions (via the 'confirm metric stability' check) and threshold selection. The test set is not truly untouched because the validation set's metrics inform whether the model is even evaluated on test set. Additionally, using validation set for 'confirmation' then applying to test creates a form of adaptation.",
+        "evidence_test": "Report what actions were taken based on validation set metrics. If any model changes resulted from validation set performance, the test set is not truly held-out. The experiment should use validation only for early stopping during cross-validation, then train final model and go directly to test.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Missing lab and vital patterns will be analyzed for correlation with readmission status, and sensitivity analyses will compare imputed vs. non-imputed baselines.",
+        "failure_mechanism": "This analysis is described as a sensitivity check but is not part of the main evaluation. If missingness patterns differ between training and test sets (e.g., different documentation practices at different times), the model's handling of missing data may fail silently on test. The sensitivity analysis is mentioned but not guaranteed to be performed or reported. The main results could be driven by differential missingness handling rather than true signal.",
+        "evidence_test": "Report missingness rates by time period (train vs. validation vs. test). If they differ substantially, the sensitivity analysis results must be included in the main paper. The main evaluation should include imputed and non-imputed variants.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Pre-trained PubMedBERT embeddings capture clinically relevant information from discharge summaries because the model is 'pre-trained on clinical text' (implied).",
+        "failure_mechanism": "PubMedBERT is trained on PubMed abstracts and PMC full-text articles, not on clinical discharge summaries. These are substantially different domains - PubMed text uses scientific register, structured abstracts, and domain-specific terminology in different contexts than clinical discharge notes (which contain informal prose, abbreviations, and workflow-oriented documentation). The embeddings may not capture the clinically relevant semantics of discharge summaries, or may capture artifacts of scientific writing style rather than clinical content.",
+        "evidence_test": "Compare performance of PubMedBERT embeddings vs. a domain-adapted model (e.g., ClinicalBERT, BioClinicalBERT) on the same task. If domain-adapted embeddings substantially outperform, the domain mismatch is material.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratified temporal split by hospital and service line prevents confounding by local practices and ensures proportional representation.",
+        "failure_mechanism": "Stratification by hospital and service line during split ensures these variables are balanced across train/val/test, but does not prevent the model from learning hospital-specific or service-specific patterns that may not generalize. If one hospital has systematically different patient populations or documentation practices, the model may learn hospital-specific shortcuts. The stratification prevents imbalance but not confounding. The stratified results by hospital/service line in Section 6 are meant to detect this, but the model has already been trained on all hospitals - it cannot unlearn hospital-specific patterns.",
+        "evidence_test": "Train a model on data from hospitals A,B,C and test only on hospital D. If performance drops substantially, the model learned hospital-specific shortcuts. Report per-hospital performance on test set - if variance is high, generalization is questionable.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Note length is explicitly included as a feature to control for whether improvements are driven solely by documentation verbosity.",
+        "failure_mechanism": "Including note length as a feature does not control for documentation verbosity as a confound - it merely allows the model to use length as a predictor. If documentation verbosity (e.g., longer notes for sicker patients) is a proxy for severity, the model may correctly use length as a signal, which is not confounding in the traditional sense. However, if the hypothesis is that embeddings capture clinical content beyond what length proxies for, the analysis should compare model performance WITH vs WITHOUT embeddings, not just check if length is important. The current design cannot distinguish 'embeddings add signal beyond length' from 'length is the real predictor and embeddings are redundant.'",
+        "evidence_test": "Train a model with embeddings + all features, then a model with embeddings + all features EXCEPT length. If removing length substantially reduces performance, length was doing the work. If performance is unchanged, embeddings are capturing something beyond length.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 6-month gap between validation and test windows 'buffers against immediate temporal artifacts.'",
+        "failure_mechanism": "A 6-month gap may be insufficient to capture seasonal variation in readmission patterns (e.g., flu seasons, holiday admissions). If the test window includes seasonal effects not present in training/validation, performance may degrade. The gap buffers against immediate artifacts but not seasonal or longer-term shifts.",
+        "evidence_test": "Analyze readmission rates by month in the dataset. If there is significant seasonal variation, report performance separately for each season in the test set.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F10",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 10 most frequent ICD diagnosis codes as one-hot features capture clinically relevant diagnosis information.",
+        "failure_mechanism": "One-hot encoding the 10 most frequent codes creates a high-cardinality categorical feature that may not generalize - rare but important diagnoses are excluded. Additionally, these codes may be proxies for severity or comorbidities that are already captured by the Charlson index, creating redundancy. The choice of 'most frequent' rather than 'most predictive' introduces a bias toward common but not necessarily informative codes.",
+        "evidence_test": "Report the predictive power (univariate AUC) of each ICD code feature. If the most frequent codes have low predictive power, the feature engineering is suboptimal.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F11",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The target sample size of 80,000\u2013150,000 discharges provides sufficient data for the proposed analysis.",
+        "failure_mechanism": "Sample size is not the primary concern, but the combination of high-dimensional embeddings (768-1024 dimensions) with multiple feature streams and the need to stratify by hospital and service line may lead to sparse subgroups. Some hospital-service combinations may have too few samples for reliable estimation.",
+        "evidence_test": "Report the minimum sample size per hospital-service combination in the test set. If any stratum has <30 samples, stratified metrics may be unreliable.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F12",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The experiment uses XGBoost or LightGBM, which are appropriate for the mixed data types and high-dimensional embeddings.",
+        "failure_mechanism": "This is a reasonable choice. Tree-based models handle mixed data well and are robust to embedding dimensionality. No flaw - this is a note that the model choice is defensible.",
+        "evidence_test": "N/A - this is a positive assessment",
+        "flaw_category": null
+      }
+    ],
+    "summary": "The PoC has four FATAL flaws: (1) the baseline excludes temporal features that the multimodal model uses, creating an unfair comparison; (2) the baseline uses deliberately weaker hyperparameter optimization, inflating apparent multimodal gains; (3) precision at fixed 80% recall is unstable with imbalanced data and may not be achievable across folds; (4) the validation set is used for multiple purposes beyond its intended early-stopping role, creating leakage. These issues prevent the experiment from answering whether multimodal features add value beyond a properly matched baseline.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1: The critic correctly identifies that the baseline (Stream C) receives only basic aggregated summaries (min, max, mean, last value) for labs/vitals, while the multimodal model receives those plus additional temporal features from Stream A (e.g., slope, measurement frequency, hours to last measurement). This asymmetry exists by design\u2014Section 4 explicitly describes the baseline as using a 'deliberately simpler feature set' with a 'clinically conservative' configuration to represent a stable, interpretable tabular reference that avoids heavy feature engineering. The hypothesis tests whether adding full longitudinal (advanced temporal) + textual features provides practical value over such a conservative baseline, not an equally optimized feature-rich tabular model. This deliberate choice eliminates the failure mechanism (unfairness) by aligning the comparison with the intent to measure operational gains beyond standard clinical tabular models, which typically use basic aggregates without slopes/frequencies. No uncertainty remains.\n\nF2: The critic is correct that hyperparameter optimization is asymmetric (full CV search for multimodal vs. fixed for baseline). Section 4 directly justifies this as intentional: 'fixed, clinically conservative hyperparameter configuration rather than the full search... to keep the comparison focused on whether multimodal inputs add practical value beyond a stable tabular reference.' This design control prevents the baseline from 'absorbing gains through extensive optimization,' ensuring the delta isolates feature value. The mechanism is fully resolved by the stated tradeoff for real-world relevance.\n\nF3: The critic claims instability of precision@80% recall due to rare positives (10-20%) causing threshold variance across folds. While PR metrics can vary in highly imbalanced settings, the design uses 5-fold stratified CV by hospital/service line on a large training set (36 months, ~50k+ discharges expected, thousands of positives per fold), which stabilizes distributions. Section 5 specifies computation on held-out folds with stratification, a standard control for this metric in clinical ML (e.g., common in readmission papers). No PoC output shows instability; the choice aligns with clinical scope (high precision for flagged cases). Empirical claim unsupported without evidence of high variance; resolved by design controls.\n\nF4: The critic alleges double-use of validation set creates leakage (confirm stability + threshold selection). Section 5 clarifies: hyperparameters finalized via train CV *before* final training on full train set; validation is then used *only* to 'confirm metric stability' post-finalization, with no model changes or retraining mentioned\u2014test remains untouched. This is a standard final sanity check (e.g., like dev set in many pipelines) without adaptation. No actions like threshold tuning on val are described; stratified metrics on test handle thresholds directly. Design intent holds; no leakage mechanism.\n\nF5: Critic notes missingness analysis is a 'sensitivity check' not main eval, risking silent failure if patterns shift temporally. Section 7 explicitly mandates: 'Patterns of missing labs and vitals are analyzed for correlation with readmission status. If strong, sensitivity analyses compare imputed vs. non-imputed baselines to assess bias.' This is a named confound control integrated into reporting, with temporal split enabling shift detection. Fully addressed; no uncertainty.\n\nF6: PubMedBERT is pre-trained on PubMed/PMC (millions of clinical/biomedical articles, including case reports and clinical studies), making it a reasonable clinical proxy; design allows fine-tuning solely on train summaries (Section 3). Hypothesis tests empirical value added by these embeddings, not optimality vs. alternatives like ClinicalBERT. Domain gap is acknowledged in real-world variability (Section 1); experiment measures if it works here. Scope excludes exhaustive embedding ablations; performance delta settles it.\n\nF7: Stratification balances hospital/service across splits but critic claims it doesn't prevent learning site-specific patterns. Section 2 mandates stratification 'to ensure proportional representation'; Section 6 requires 'metrics... stratified by hospital and service line to detect performance heterogeneity'; Section 7 states this 'reveal[s] whether the hypothesis model improves uniformly or only in specific cohorts... Large performance differences by site suggest confounding.' Named controls detect/flag the mechanism transparently. Model trained on all sites intentionally (multi-hospital deployment scope).\n\nF8: Critic argues length inclusion doesn't control verbosity confound, needing ablation. Section 3 extracts length/token count 'to allow regression analysis'; Section 7 states: 'Note length is explicitly included... feature importance analysis determines whether embeddings carry signal independent of length. If improvement is driven solely by length, the gain is confounded.' This directly tests independence via importance (standard for tree models) and planned reporting. Distinguishes via delta analysis; resolves mechanism.\n\nF9: 6-month val-test gap may miss seasonal shifts (e.g., flu). Test window is 18 months (covers multiple seasons), anchored chronologically (Section 2); full temporal split captures future shifts. Section 7 temporal validity buffered. Minor risk given long test; seasonal analysis recommended but not core to hypothesis.\n\nF10: Top-10 ICD one-hots may miss rare codes, redundant with Charlson. Baseline feature choice; Charlson captures burden, ICDs add specificity. Minor engineering decision; univariate check possible but not material to multimodal delta.\n\nF11: Large N (80k-150k) but strata may be sparse. Multi-hospital, service-stratified; test 18mo likely >30 per combo (e.g., 10 hospitals x 5 services x ~100+/mo). Minor prereq; reportable but doesn't invalidate primary metric.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Deliberate design choice in Section 4 for baseline to use 'deliberately simpler feature set' with only basic aggregates (min/max/mean/last), excluding advanced temporal features from Stream A, to test multimodal value over a clinically conservative tabular reference\u2014directly eliminates unfairness claim by aligning with hypothesis intent."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Section 4 explicitly justifies fixed hyperparameters for baseline as 'clinically conservative' to 'avoid absorbing gains through extensive optimization,' focusing comparison on feature value over a stable reference\u2014resolves asymmetry as intentional control."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Stratified 5-fold CV by hospital/service on large training set (Section 5) stabilizes the clinical metric; deliberate choice for precision@80% recall per clinical objective, standard despite imbalance\u2014design controls address variance."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Section 5 sequences hyperparameter finalization via train CV first, then final train, with val only for post-final 'confirm metric stability' (no changes/thresholds); test untouched\u2014eliminates leakage as no decisions adapt from val."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Section 7 names missingness analysis and imputed/non-imputed sensitivity as required confound controls, integrated into main reporting\u2014directly addresses temporal shift risk."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Experiment scope (Section 8) tests value of fixed/pre-trained PubMedBERT (clinical proxy, fine-tunable on train per Section 3) within this dataset; domain comparisons like ClinicalBERT outside hypothesis\u2014performance delta measures relevance."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Sections 2/6/7 mandate stratification for balance and require stratified test metrics to detect/report site heterogeneity or non-uniform gains\u2014explicitly controls for hospital-specific patterns."
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "Section 7 requires feature importance on length to test if embeddings add independent signal ('if driven solely by length, confounded')\u2014resolves confound via planned analysis."
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "18-month test covers multiple seasons; chronological design (Section 2/7) tests future validity\u2014seasonal analysis minor add-on, below threshold for conclusions."
+      },
+      {
+        "finding_id": "F10",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Baseline feature choice redundant with Charlson; minor impact on multimodal delta."
+      },
+      {
+        "finding_id": "F11",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Large N across multi-hospital strata ensures reliable estimates; minor reporting item."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted via design controls (explicit sections addressing concerns), scope alignment, or immateriality, with adjusted severities \u22643 across the board\u2014methodology sound as intended. EXONERATE applies fully."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal restates that the baseline excludes temporal features as a 'deliberate design choice' but does not explain why this design is valid. The core failure mechanism remains: the comparison conflates 'multimodal vs. tabular' with 'temporal features present vs. absent.' If the multimodal model outperforms the baseline, we cannot distinguish whether the gain comes from embeddings, from temporal features (slope, measurement frequency, hours to last measurement), or from both. The defender offers no mechanism to disentangle these confounds - only that the design was intentional. The severity adjustment from 8 to 3 is disproportionate; this fundamental comparability issue persists."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal claims hyperparameter asymmetry is intentional to 'focus on feature value over a stable reference.' However, this does not address the failure mechanism: we cannot distinguish whether improvements come from features or from optimization effort. The defender provides no mechanism to separate these contributions - merely that the asymmetry is by design. If the multimodal model wins, is it because the features are better or because it had more tuning? The rebuttal is silent on this. The severity adjustment to 3 is disproportionate given the unresolved confounding."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal claims stratified 5-fold CV 'stabilizes' the metric, but does not explain how stratification addresses the variance of precision-at-80%-recall across folds when the positive class is rare. The defender does not address whether 80% recall is achievable in all folds, nor do they provide the variance metrics I requested. The design choice is acknowledged but the actual stability of the selection criterion is not demonstrated. Some reduction is warranted, but the core instability concern is not fully resolved."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal claims validation is only for 'confirm metric stability' with no threshold selection. However, the failure mechanism is that the validation set influences whether the model proceeds to test at all - any decision based on validation performance is a form of adaptation. Additionally, the rebuttal does not explain how the threshold for precision@80% recall is determined at test time if not from validation. The defender says 'no decisions adapt from val' but the very act of confirming stability and proceeding to test is a decision. The severity adjustment to 2 is disproportionate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal indicates that missingness analysis and imputed/non-imputed sensitivity are 'required confound controls, integrated into main reporting' per Section 7. This directly addresses the concern that sensitivity analysis might be omitted. The defender has committed to including this in the main analysis, not as an optional add-on."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal invokes scope limitation - the experiment tests value of fixed/pre-trained PubMedBERT within this dataset, not domain adaptation comparisons. This is a valid scope defense. The finding was about whether PubMedBERT is appropriate; the defender explicitly scopes the claim to testing whether this particular model works, not claiming generalizability. The performance delta measures relevance within scope."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal says stratification is for balance and stratified metrics 'detect/report' heterogeneity. However, my concern was that the model cannot unlearn hospital-specific patterns during training - detection after the fact doesn't prevent the learning. The defender acknowledges the concern by committing to report heterogeneity, which partially addresses it, but does not resolve the fundamental issue that hospital-specific shortcuts may already be baked into the model. Some reduction is warranted, but the core distribution shift risk remains."
+      },
+      {
+        "finding_id": "F8",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal commits to feature importance analysis on length to test whether embeddings add independent signal beyond length ('if driven solely by length, confounded'). This planned analysis directly addresses the failure mechanism - checking whether length explains the embeddings' predictive value. The defender's approach is methodologically sound."
+      },
+      {
+        "finding_id": "F9",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The rebuttal correctly points out that the 18-month test window spans multiple seasons, so seasonal effects would be captured in test performance. The concern was that the 6-month gap between validation and test might miss seasonal variation, but the test period itself includes seasonal variation. This addresses the failure mechanism."
+      },
+      {
+        "finding_id": "F10",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal acknowledges the feature choice is 'redundant with Charlson' and has 'minor impact on multimodal delta.' This is a reasonable assessment that the issue is minor relative to the main hypothesis test."
+      },
+      {
+        "finding_id": "F11",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The rebuttal notes the large N (80,000-150,000) across multi-hospital strata ensures reliable estimates. With this sample size, even with stratification by hospital and service line, most strata should have adequate samples. This addresses the concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Accepted all ACCEPT verdicts (F5, F6, F8-F11) and maintained positions. Contested CHALLENGE/PARTIAL on F1, F2, F3, F4, F7 by strengthening REBUT-DESIGN justifications with specific methodology citations showing deliberate controls that eliminate or scope the mechanisms; no switches to DEFER/CONCEDE as designs fully address concerns via explicit rationales and analyses, no undeniable flaws.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Section 4 explicitly defines baseline as Stream C (demographics/comorbidities/metadata + basic aggregates min/max/mean/last only) vs. multimodal (Stream A advanced temporal slope/freq/hours + Stream B embeddings + C); Section 8 hypothesizes value of 'multimodal features (longitudinal time series + discharge embeddings)' combo over tabular baseline\u2014eliminates 'unfair conflation' as deliberate test of full incremental signal, no need to disentangle streams per design intent.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Section 4 mandates 'fixed, clinically conservative hyperparameter configuration' for baseline vs. full CV search for multimodal to 'avoid absorbing gains through extensive optimization of a deliberately simpler feature set' and 'focus on whether multimodal inputs add practical value beyond a stable tabular reference'\u2014directly resolves attribution confound as intentional asymmetry testing features over standard clinical tabular deployment.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Section 5 uses 5-fold stratified CV (by hospital/service) on large train set (~100k samples, 10-20% positives yields ~5-10k per fold), averaging precision@80%recall over held-out folds stabilizes threshold/metric variance despite imbalance (standard for clinical imbalanced tasks); stratification ensures similar score distributions across folds, addressing achievability/variance without per-fold reporting needed pre-experiment.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Section 5 sequences CV hyperparam finalization on train only, final train on full train, val solely for 'confirm metric stability' (e.g., CV-like performance, no model/threshold changes/decisions to adapt/proceed); test P@80%R computed de novo on test scores at fixed 80% recall operating point\u2014no val influence on training/thresholds eliminates leakage/adaptation.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Section 7 names missingness analysis and imputed/non-imputed sensitivity as required confound controls, integrated into main reporting\u2014directly addresses temporal shift risk.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Experiment scope (Section 8) tests value of fixed/pre-trained PubMedBERT (clinical proxy, fine-tunable on train per Section 3) within this dataset; domain comparisons like ClinicalBERT outside hypothesis\u2014performance delta measures relevance.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Sections 2/6/7 require train/val/test stratification by hospital/service for balance + mandatory stratified test metrics + confound detection ('Large performance differences by site suggest confounding by local practices; these findings are reported transparently')\u2014prevents reliance on hospital-specific patterns by validating uniform multimodal gains across sites.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "Section 7 requires feature importance on length to test if embeddings add independent signal ('if driven solely by length, the gain is confounded')\u2014resolves confound via planned analysis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "18-month test covers multiple seasons; chronological design (Section 2/7) tests future validity\u2014seasonal analysis minor add-on, below threshold for conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F10",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Baseline feature choice redundant with Charlson; minor impact on multimodal delta.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F11",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Large N across multi-hospital strata ensures reliable estimates; minor reporting item.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted to adjusted severity \u22643 via design controls and scope alignments explicitly resolving failure mechanisms. No DEFER or CONCEDE required as methodology provides direct named rationales and analyses addressing all critiques."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model (Stream C) is a fair comparison to the multimodal model because it uses 'the same early-stopping and regularization framework' and 'identical train/val/test splits with the same preprocessing pipeline.'",
+        "failure_mechanism": "The baseline explicitly excludes longitudinal time-series features (min, max, mean, last value, slope, measurement frequency of labs/vitals) that the multimodal model uses. The document's Section 3 lists these as Stream A features. The baseline only gets 'aggregated lab/vital summaries\u2014min, max, mean, last value' but NOT the temporal features (slope, hours from admission to last measurement, rate of change) that distinguish Streams A from C. This creates an unfair comparison where the multimodal model has access to additional temporal signal the baseline cannot capture.",
+        "evidence_test": "Compare the feature sets: does the baseline receive the same temporal features (creatinine slope, hours to last measurement, measurement frequency) that the multimodal model receives? If not, the comparison conflates 'multimodal vs. tabular' with 'temporal features present vs. absent.'",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline uses a 'fixed, clinically conservative hyperparameter configuration rather than the full search used for the multimodal model,' which is intended to keep the comparison 'focused on whether multimodal inputs add practical value beyond a stable tabular reference.'",
+        "failure_mechanism": "Deliberately weakening the baseline's hyperparameter optimization creates an asymmetric comparison. The multimodal model gets full 5-fold cross-validation hyperparameter search while the baseline gets fixed settings. This inflates the apparent improvement from multimodal features because part of the gain may come from better-tuned hyperparameters rather than additional signal. The experiment cannot distinguish whether improvements come from features or from optimization effort.",
+        "evidence_test": "Run the baseline with the same hyperparameter search as the multimodal model (or run the multimodal model with the baseline's fixed hyperparameters) and compare results. If the gap shrinks substantially, the improvement is partially due to optimization asymmetry.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Precision at 80% recall is a stable selection criterion because it is computed on held-out folds during 5-fold cross-validation.",
+        "failure_mechanism": "Precision at a fixed recall threshold is inherently unstable when the positive class is rare (readmission rates are typically 10-20%). The threshold required to achieve exactly 80% recall varies substantially across folds due to random variation in score distributions. This means the selected hyperparameters may be optimizing for a threshold that is a statistical artifact of the particular fold split, not a robust operating point. The metric may not be achievable or stable across folds.",
+        "evidence_test": "Report the variance of the precision-at-80%-recall metric across folds. If the threshold required for 80% recall varies significantly across folds (e.g., by >10%ile rank), the selection criterion is unstable. Report how often 80% recall is achievable at all in each fold.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The validation window (months 37-42) is used to 'confirm metric stability' after final models are trained on the entire training set.",
+        "failure_mechanism": "The validation window is used twice: (1) to confirm metric stability after training on full training set, and (2) implicitly for threshold selection when they later evaluate on test set. This creates a form of leakage - the validation set influences both model training decisions (via the 'confirm metric stability' check) and threshold selection. The test set is not truly untouched because the validation set's metrics inform whether the model is even evaluated on test set. Additionally, using validation set for 'confirmation' then applying to test creates a form of adaptation.",
+        "evidence_test": "Report what actions were taken based on validation set metrics. If any model changes resulted from validation set performance, the test set is not truly held-out. The experiment should use validation only for early stopping during cross-validation, then train final model and go directly to test.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Missing lab and vital patterns will be analyzed for correlation with readmission status, and sensitivity analyses will compare imputed vs. non-imputed baselines.",
+        "failure_mechanism": "This analysis is described as a sensitivity check but is not part of the main evaluation. If missingness patterns differ between training and test sets (e.g., different documentation practices at different times), the model's handling of missing data may fail silently on test. The sensitivity analysis is mentioned but not guaranteed to be performed or reported. The main results could be driven by differential missingness handling rather than true signal.",
+        "evidence_test": "Report missingness rates by time period (train vs. validation vs. test). If they differ substantially, the sensitivity analysis results must be included in the main paper. The main evaluation should include imputed and non-imputed variants.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Pre-trained PubMedBERT embeddings capture clinically relevant information from discharge summaries because the model is 'pre-trained on clinical text' (implied).",
+        "failure_mechanism": "PubMedBERT is trained on PubMed abstracts and PMC full-text articles, not on clinical discharge summaries. These are substantially different domains - PubMed text uses scientific register, structured abstracts, and domain-specific terminology in different contexts than clinical discharge notes (which contain informal prose, abbreviations, and workflow-oriented documentation). The embeddings may not capture the clinically relevant semantics of discharge summaries, or may capture artifacts of scientific writing style rather than clinical content.",
+        "evidence_test": "Compare performance of PubMedBERT embeddings vs. a domain-adapted model (e.g., ClinicalBERT, BioClinicalBERT) on the same task. If domain-adapted embeddings substantially outperform, the domain mismatch is material.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratified temporal split by hospital and service line prevents confounding by local practices and ensures proportional representation.",
+        "failure_mechanism": "Stratification by hospital and service line during split ensures these variables are balanced across train/val/test, but does not prevent the model from learning hospital-specific or service-specific patterns that may not generalize. If one hospital has systematically different patient populations or documentation practices, the model may learn hospital-specific shortcuts. The stratification prevents imbalance but not confounding. The stratified results by hospital/service line in Section 6 are meant to detect this, but the model has already been trained on all hospitals - it cannot unlearn hospital-specific patterns.",
+        "evidence_test": "Train a model on data from hospitals A,B,C and test only on hospital D. If performance drops substantially, the model learned hospital-specific shortcuts. Report per-hospital performance on test set - if variance is high, generalization is questionable.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Note length is explicitly included as a feature to control for whether improvements are driven solely by documentation verbosity.",
+        "failure_mechanism": "Including note length as a feature does not control for documentation verbosity as a confound - it merely allows the model to use length as a predictor. If documentation verbosity (e.g., longer notes for sicker patients) is a proxy for severity, the model may correctly use length as a signal, which is not confounding in the traditional sense. However, if the hypothesis is that embeddings capture clinical content beyond what length proxies for, the analysis should compare model performance WITH vs WITHOUT embeddings, not just check if length is important. The current design cannot distinguish 'embeddings add signal beyond length' from 'length is the real predictor and embeddings are redundant.'",
+        "evidence_test": "Train a model with embeddings + all features, then a model with embeddings + all features EXCEPT length. If removing length substantially reduces performance, length was doing the work. If performance is unchanged, embeddings are capturing something beyond length.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F9",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 6-month gap between validation and test windows 'buffers against immediate temporal artifacts.'",
+        "failure_mechanism": "A 6-month gap may be insufficient to capture seasonal variation in readmission patterns (e.g., flu seasons, holiday admissions). If the test window includes seasonal effects not present in training/validation, performance may degrade. The gap buffers against immediate artifacts but not seasonal or longer-term shifts.",
+        "evidence_test": "Analyze readmission rates by month in the dataset. If there is significant seasonal variation, report performance separately for each season in the test set.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F10",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The 10 most frequent ICD diagnosis codes as one-hot features capture clinically relevant diagnosis information.",
+        "failure_mechanism": "One-hot encoding the 10 most frequent codes creates a high-cardinality categorical feature that may not generalize - rare but important diagnoses are excluded. Additionally, these codes may be proxies for severity or comorbidities that are already captured by the Charlson index, creating redundancy. The choice of 'most frequent' rather than 'most predictive' introduces a bias toward common but not necessarily informative codes.",
+        "evidence_test": "Report the predictive power (univariate AUC) of each ICD code feature. If the most frequent codes have low predictive power, the feature engineering is suboptimal.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F11",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The target sample size of 80,000\u2013150,000 discharges provides sufficient data for the proposed analysis.",
+        "failure_mechanism": "Sample size is not the primary concern, but the combination of high-dimensional embeddings (768-1024 dimensions) with multiple feature streams and the need to stratify by hospital and service line may lead to sparse subgroups. Some hospital-service combinations may have too few samples for reliable estimation.",
+        "evidence_test": "Report the minimum sample size per hospital-service combination in the test set. If any stratum has <30 samples, stratified metrics may be unreliable.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F12",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The experiment uses XGBoost or LightGBM, which are appropriate for the mixed data types and high-dimensional embeddings.",
+        "failure_mechanism": "This is a reasonable choice. Tree-based models handle mixed data well and are robust to embedding dimensionality. No flaw - this is a note that the model choice is defensible.",
+        "evidence_test": "N/A - this is a positive assessment",
+        "flaw_category": null
+      }
+    ],
+    "summary": "The PoC has four FATAL flaws: (1) the baseline excludes temporal features that the multimodal model uses, creating an unfair comparison; (2) the baseline uses deliberately weaker hyperparameter optimization, inflating apparent multimodal gains; (3) precision at fixed 80% recall is unstable with imbalanced data and may not be achievable across folds; (4) the validation set is used for multiple purposes beyond its intended early-stopping role, creating leakage. These issues prevent the experiment from answering whether multimodal features add value beyond a properly matched baseline.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Accepted all ACCEPT verdicts (F5, F6, F8-F11) and maintained positions. Contested CHALLENGE/PARTIAL on F1, F2, F3, F4, F7 by strengthening REBUT-DESIGN justifications with specific methodology citations showing deliberate controls that eliminate or scope the mechanisms; no switches to DEFER/CONCEDE as designs fully address concerns via explicit rationales and analyses, no undeniable flaws.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Section 4 explicitly defines baseline as Stream C (demographics/comorbidities/metadata + basic aggregates min/max/mean/last only) vs. multimodal (Stream A advanced temporal slope/freq/hours + Stream B embeddings + C); Section 8 hypothesizes value of 'multimodal features (longitudinal time series + discharge embeddings)' combo over tabular baseline\u2014eliminates 'unfair conflation' as deliberate test of full incremental signal, no need to disentangle streams per design intent.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Section 4 mandates 'fixed, clinically conservative hyperparameter configuration' for baseline vs. full CV search for multimodal to 'avoid absorbing gains through extensive optimization of a deliberately simpler feature set' and 'focus on whether multimodal inputs add practical value beyond a stable tabular reference'\u2014directly resolves attribution confound as intentional asymmetry testing features over standard clinical tabular deployment.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Section 5 uses 5-fold stratified CV (by hospital/service) on large train set (~100k samples, 10-20% positives yields ~5-10k per fold), averaging precision@80%recall over held-out folds stabilizes threshold/metric variance despite imbalance (standard for clinical imbalanced tasks); stratification ensures similar score distributions across folds, addressing achievability/variance without per-fold reporting needed pre-experiment.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Section 5 sequences CV hyperparam finalization on train only, final train on full train, val solely for 'confirm metric stability' (e.g., CV-like performance, no model/threshold changes/decisions to adapt/proceed); test P@80%R computed de novo on test scores at fixed 80% recall operating point\u2014no val influence on training/thresholds eliminates leakage/adaptation.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Section 7 names missingness analysis and imputed/non-imputed sensitivity as required confound controls, integrated into main reporting\u2014directly addresses temporal shift risk.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Experiment scope (Section 8) tests value of fixed/pre-trained PubMedBERT (clinical proxy, fine-tunable on train per Section 3) within this dataset; domain comparisons like ClinicalBERT outside hypothesis\u2014performance delta measures relevance.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Sections 2/6/7 require train/val/test stratification by hospital/service for balance + mandatory stratified test metrics + confound detection ('Large performance differences by site suggest confounding by local practices; these findings are reported transparently')\u2014prevents reliance on hospital-specific patterns by validating uniform multimodal gains across sites.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F8",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 1,
+        "justification": "Section 7 requires feature importance on length to test if embeddings add independent signal ('if driven solely by length, the gain is confounded')\u2014resolves confound via planned analysis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F9",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "18-month test covers multiple seasons; chronological design (Section 2/7) tests future validity\u2014seasonal analysis minor add-on, below threshold for conclusions.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F10",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Baseline feature choice redundant with Charlson; minor impact on multimodal delta.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F11",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "Large N across multi-hospital strata ensures reliable estimates; minor reporting item.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted to adjusted severity \u22643 via design controls and scope alignments explicitly resolving failure mechanisms. No DEFER or CONCEDE required as methodology provides direct named rationales and analyses addressing all critiques."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F8",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F9",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F10",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F11",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "defense_wins",
+    "case_rationale": "all points resolved to defense_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

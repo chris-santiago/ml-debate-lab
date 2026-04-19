@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_852",
+  "stratum": "regular",
+  "flaw_category": "eval_inflation",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test set acts as a true holdout for final performance evaluation",
+        "failure_mechanism": "The experiment partitions the test period into two random halves: first half for 'deployment-readiness confirmation' to verify the configuration remains stable, second half for reported metrics. Using any portion of test data to verify or confirm the model configuration constitutes model selection/tuning on test data. If the first half reveals issues that trigger changes to the training recipe, hyperparameters, or model selection, then the second half is no longer a true holdout \u2014 the experiment has used test data to make modeling decisions. This invalidates the test set as an unbiased evaluator of generalization performance.",
+        "evidence_test": "Compare model performance between the first and second halves of the test set. A significant drop in performance on the second half (after 'verification' on the first half) would indicate the model was tuned to the first half's distribution. Alternatively, document whether any modeling decisions were revised after the deployment-readiness pass.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Campaign leakage is detected and controlled by reporting the proportion of test predictions from leaked clusters",
+        "failure_mechanism": "The experiment identifies clusters (e.g., identical subject lines from same sender) appearing in both train and test, flags them, and reports the proportion. However, it does not remove these leaked clusters from the test set. If >5% of test emails belong to leaked clusters, the split is 're-evaluated or sender-based stratification is applied' \u2014 but this happens after training, meaning the model has already seen and potentially memorized campaign-specific patterns from training. The model can leverage these memorized patterns to achieve inflated performance on the leaked test instances, biasing the comparison between Transformer and BoW.",
+        "evidence_test": "Remove all test emails belonging to detected leaked clusters and recompute PR-AUC. A substantial drop in performance after removal would confirm the model was relying on leaked campaign patterns rather than learning generalizable phishing indicators.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "HTML tag stripping and non-ASCII character removal preserve semantic nuance while cleaning the text",
+        "failure_mechanism": "Phishing emails frequently exploit HTML formatting (e.g., disguised links, HTML-based social engineering) and non-ASCII characters (e.g., homograph attacks using Cyrillic letters that mimic Latin). Stripping HTML tags removes structural signals that could indicate malicious intent. Removing non-ASCII characters eliminates potential spoofing indicators. This preprocessing may discard discriminative signals specific to phishing detection, potentially hurting both models, but the Transformer may be more robust to this loss than BoW due to its pretrained knowledge.",
+        "evidence_test": "Train and evaluate models on both preprocessed (current) and unprocessed email text. Compare performance to determine whether HTML/non-ASCII signals contain discriminative phishing information.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "A standard BERT tokenizer is appropriate for embedding email body text",
+        "failure_mechanism": "BERT tokenizers are trained on natural language corpora (books, Wikipedia). Email text is structurally and stylistically distinct: it contains signatures, quoted replies, fragmented sentences, boilerplate, and domain-specific jargon. The tokenizer may produce suboptimal tokenizations for email-specific patterns (e.g., URLs, email addresses, domain names), potentially losing information that a domain-adapted tokenizer would preserve. This is an implicit distributional assumption about text domain transferability.",
+        "evidence_test": "Compare against an email-specific tokenizer (e.g., one trained on email corpora) or a character-level approach. If email-specific tokenization yields meaningfully different token distributions or improved performance, the standard BERT tokenizer may be suboptimal.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Results are aggregated across 3 random seeds to provide mean and 95% confidence intervals",
+        "failure_mechanism": "The experiment uses a temporal split (months 1-18), not a random split. The 'random seeds' therefore cannot affect the data split. It is unclear what the seeds control: model weight initialization? Dropout? If they only affect initialization, the variation captured is insufficient \u2014 different random seeds in a temporal validation context could also mean different temporal validation windows or different cluster seeds for the leakage detection algorithm. The lack of clarity makes it difficult to interpret the reported confidence intervals.",
+        "evidence_test": "Explicitly document what the random seeds control (initialization, dropout, data ordering, etc.) and whether the temporal split itself is replicated with different seeds or held fixed.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "SPF/DKIM pass rate is a metadata feature computed from training data statistics",
+        "failure_mechanism": "The feature 'SPF/DKIM pass rate' is ambiguous: it could represent (a) an aggregate statistic per domain computed from training data (like sender reputation), or (b) the per-email authentication result. If (b), this is a direct, highly predictive signal available at inference time that may dominate the classification decision. Both models receive this feature, so the comparison remains fair, but the feature's nature should be clarified. If it's a per-email boolean, it may be too strong a signal, masking whether the text-based models actually learn meaningful content-based patterns.",
+        "evidence_test": "Clarify whether SPF/DKIM is an aggregate domain-level feature (fraction of emails from domain passing authentication in training) or a per-email boolean. If per-email, evaluate a text-only model to assess whether authentication signals dominate the classification.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has two significant methodology issues: (1) FATAL signal leakage through the 'deployment-readiness confirmation pass' that uses test data for model verification, invalidating the test set as an unbiased holdout; (2) MATERIAL leakage through campaign clusters that are detected but not removed from evaluation. Additional minor concerns include preprocessing choices that may discard useful phishing signals and unclear documentation of random seed usage in a temporal split context.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding in the context of the provided methodology. The methodology is presumed sound, and my role is to determine if the critique identifies genuine, material flaws or if the design holds.\n\n**F1 (Severity 9):** The critic claims the test set is not a true holdout because the first half is used for a 'deployment-readiness confirmation pass.' The methodology states: 'Once hyperparameters are finalized using the validation set, the test period is partitioned into two random halves. The first half is used as a deployment-readiness confirmation pass to verify that the selected configuration remains stable under the final attack mix before the training recipe is locked. The second half is retained as the final holdout for reported metrics.' This is a critical point. The design intent is to use the validation set (months 13-15) for all model selection and hyperparameter tuning. The 'confirmation pass' on the first test half is described as a stability check *after* the configuration is locked. If this pass is purely observational\u2014no changes are made based on its results\u2014then the second half remains a true holdout. However, the methodology says it's used 'to verify that the selected configuration remains stable... before the training recipe is locked.' The phrase 'before the training recipe is locked' implies a potential for re-locking or adjustment if instability is detected, which would constitute using test data for model decisions. Without an explicit design control stating that no changes are permitted after this check, this is a valid FATAL concern about leakage. I must scan the methodology for a control. There is no explicit statement that the confirmation pass is read-only. Therefore, the critic's failure mechanism is plausible and material. This is a genuine flaw that invalidates the test set's unbiased status if the pass influences the model. I must consider CONCEDE or DEFER. Since the design does not have a control that eliminates the mechanism (it only describes the pass, not a rule against changes), and the significance is undeniable if the pass leads to adjustments, CONCEDE is appropriate. A DEFER would require specifying an experiment, but the flaw is in the design specification itself, not an empirical uncertainty about magnitude.\n\n**F2 (Severity 5):** The critic claims campaign leakage control is insufficient because leaked clusters are not removed from the test set, and the model may have memorized them. The methodology states: 'After training, the experiment identifies sender/recipient clusters and campaign-like patterns... Any clusters appearing in both training and test sets are flagged, and the proportion of test predictions from leaked clusters is reported. If >5% of test emails belong to leaked clusters, the split is re-evaluated or sender-based stratification is applied.' The critic is correct that detection occurs after training, so memorization is possible. However, the design includes a control: if leakage exceeds 5%, the split is 're-evaluated or sender-based stratification is applied.' This is a mitigation, not a resolution. It reduces the impact but does not eliminate the bias for the initial evaluation. The control does not guarantee the model didn't benefit from memorization. Therefore, this is a valid concern, but its materiality depends on the actual leakage proportion. Since the design anticipates the issue and has a mitigation plan, but the magnitude of bias remains uncertain, DEFER is the correct choice. I can specify the experiment (remove leaked clusters and recompute PR-AUC) and what outcomes would vindicate or validate the critique.\n\n**F3 (Severity 2):** The critic claims HTML stripping and non-ASCII removal may discard discriminative signals for phishing. This is a MINOR finding about preprocessing choices. The methodology states the preprocessing is 'minimal... to preserve semantic nuance.' The critic's point is valid\u2014phishing emails may use these elements. However, this is a design trade-off: simplifying text for the transformer vs. retaining potential signals. Both models receive the same preprocessed text, so the comparison between Transformer and BoW remains fair. The potential loss of signal affects absolute performance but not the relative comparison, which is the hypothesis under test. The finding is real but below significance for the experiment's conclusions about model comparison. REBUT-IMMATERIAL is appropriate.\n\n**F4 (Severity 2):** The critic claims a standard BERT tokenizer may be suboptimal for email text. This is another MINOR finding about an implicit assumption. The methodology uses a standard BERT tokenizer, which is a common, practical choice for a proof-of-concept. The critic suggests an email-specific tokenizer might be better. This is a valid concern about domain transferability, but it is a baseline modeling choice, not a flaw in the experimental design. Both models are subject to the same tokenization (BoW uses TF-IDF on the same tokenized text? Actually, BoW uses TF-IDF on raw text, not BERT tokens, so they are different). Wait: The methodology says for the baseline: 'Email body text is vectorized using TF-IDF (fit on the training set only...).' It does not specify tokenization for TF-IDF; it may use its own tokenizer. Therefore, the tokenizer choice specifically affects the Transformer, not the baseline. However, the hypothesis is to compare a Transformer to a BoW model, each with their standard, representative text processing pipelines. Using a standard BERT tokenizer for the Transformer is a deliberate, justified choice for a realistic comparison. The concern is below significance for the conclusion about whether a Transformer provides benefit over BoW in this enterprise setting. REBUT-IMMATERIAL is appropriate.\n\n**F5 (Severity 1):** The critic claims ambiguity about what the '3 random seeds' control in a temporal split. The methodology states: 'Results are aggregated across 3 random seeds with mean and 95% confidence intervals.' In a temporal split, seeds typically control model initialization, dropout, data shuffling within batches, etc. The critic is correct that the description is unclear. However, this is a minor reporting issue. The confidence intervals still capture some variation (e.g., initialization variance). The lack of clarity does not materially affect the validity of the primary metric or comparison. This is a MINOR finding that is real but immaterial. REBUT-IMMATERIAL is appropriate.\n\n**F6 (Severity 1):** The critic claims ambiguity about whether 'SPF/DKIM pass rate' is a per-email boolean or an aggregate domain-level feature. The methodology says: 'SPF/DKIM pass rate' is listed under metadata features and that 'All metadata features are scaled... using statistics computed from the training set.' This suggests it is a numerical feature, likely an aggregate rate per domain (consistent with 'sender domain reputation'). However, the description is ambiguous. The critic notes that if it's a per-email boolean, it could be a very strong signal. This is a valid clarification need. However, since both models receive the same feature, the comparison remains fair. The potential for the feature to dominate is a concern for absolute performance interpretation, but not for the relative comparison between Transformer and BoW. This is a MINOR finding about documentation. REBUT-IMMATERIAL is appropriate.\n\nNow, for Pass 2 verdict selection: I have one FATAL finding (F1) that I plan to CONCEDE because the design lacks an explicit control against using the confirmation pass for model decisions. This will keep its adjusted severity at 9. This alone makes EXONERATE impossible and leads to a critique_wins verdict, as a conceded FATAL finding with adjusted severity \u22657 invalidates the defense. For F2, I will use DEFER with a specified experiment. For the MINOR findings (F3, F4, F5, F6), I will use REBUT-IMMATERIAL, reducing their adjusted severity to 0 or 1.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The methodology partitions the test period into two random halves and uses the first half for a 'deployment-readiness confirmation pass' to verify stability 'before the training recipe is locked.' This creates a clear risk that test data influences model selection or configuration adjustments. No explicit design control (e.g., a rule that the confirmation pass is read-only and cannot trigger changes) is stated to eliminate this leakage mechanism. If the pass leads to any revision of the model, hyperparameters, or training recipe, the second half is no longer a true holdout. This invalidates the unbiased evaluation of generalization performance, constituting a fatal flaw in the experimental design."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The design detects campaign leakage after training and has a mitigation plan (re-evaluate split if >5%), but does not eliminate the risk that the model memorized leaked patterns, potentially biasing the comparison. The significance is empirically uncertain. Settling experiment: Remove all test emails belonging to detected leaked clusters and recompute PR-AUC for both models. Vindication: If performance drop is minimal (<5% relative PR-AUC change) and the Transformer still outperforms BoW, the bias is negligible. Validation: If performance drops substantially and the Transformer's advantage diminishes or reverses, the critique is correct and the initial comparison is biased. The primary conclusion (Transformer vs. BoW) remains valid only if the flaw affects both models equally; if leakage benefits one model more, the conclusion could change."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The preprocessing choice (HTML stripping, non-ASCII removal) is a deliberate simplification to focus on semantic text content. While phishing emails may exploit these elements, the same preprocessing is applied to both Transformer and BoW models, so the relative comparison remains fair. The potential loss of discriminative signals affects absolute performance but does not materially impact the hypothesis test of whether a Transformer provides a genuine benefit over BoW in this enterprise context."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Using a standard BERT tokenizer is a pragmatic, representative choice for a Transformer-based phishing detector in a proof-of-concept. While an email-specific tokenizer might capture domain nuances better, this concern pertains to model architecture selection, not experimental validity. The hypothesis compares a standard Transformer pipeline to a standard BoW pipeline; the tokenizer choice is part of that standard pipeline. Any suboptimality applies to the Transformer condition but does not invalidate the comparison's fairness or the conclusion about relative performance."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The ambiguity about what 'random seeds' control in a temporal split is a minor documentation oversight. In practice, seeds would control model initialization, dropout, and data ordering within batches for training. The confidence intervals still capture some variance (e.g., from initialization). This lack of clarity does not affect the primary metric's validity or the comparison between models, as the same seed protocol is applied to both."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The feature 'SPF/DKIM pass rate' is described as a metadata feature scaled using training statistics, implying it is an aggregate domain-level statistic (consistent with 'sender domain reputation'). While the description could be clarified, the feature is given to both models equally, so the comparison remains fair. Even if it were a per-email boolean, its inclusion does not bias the relative performance evaluation between Transformer and BoW; it merely provides a strong baseline signal that both models can leverage."
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "Finding F1 (FATAL) is conceded with adjusted severity 9, as the test set partitioning for a 'deployment-readiness confirmation pass' creates an unacceptable risk of test data leakage without a design control to prevent model adjustments. This fatal flaw invalidates the unbiased evaluation of generalization performance."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 9,
+        "reasoning": "The defender CONCEDEs this finding entirely, acknowledging that the methodology creates a clear risk of test data influencing model selection, and that no explicit design control prevents this leakage. The rebuttal correctly identifies that the 'deployment-readiness confirmation pass' on the first half of test data could lead to revisions of the model, hyperparameters, or training recipe, invalidating the second half as a true holdout. This is a valid concession - the fatal flaw stands."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender DEFERs this finding, acknowledging the concern but proposing empirical validation. They correctly note that while the design detects leakage and has a mitigation plan (>5% threshold triggers re-evaluation), it does not eliminate the risk that the model memorized leaked patterns. The defender's proposed settling experiment (remove leaked clusters, recompute PR-AUC) is appropriate. This is a valid deferral - the material concern remains unresolved pending empirical validation."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's REBUT-IMMATERIAL argument is valid. The preprocessing choice (HTML stripping, non-ASCII removal) is applied identically to both Transformer and BoW models. While absolute performance may suffer from lost signals, the relative comparison remains fair. The finding pertained to whether discriminative signals are lost; the defender does not dispute this but correctly notes it doesn't invalidate the comparative hypothesis test. The severity adjustment to 0 is appropriate."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's REBUT-IMMATERIAL argument is valid. Using a standard BERT tokenizer is a pragmatic choice that is part of the standard Transformer pipeline being compared. The finding was about suboptimal tokenization potentially losing information; the defender does not dispute this but correctly notes it applies to the Transformer condition and does not invalidate the fairness of the comparison. The hypothesis compares standard pipelines; the tokenizer choice is within that standard. Severity adjustment to 0 is appropriate."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's REBUT-IMMATERIAL argument is valid. The ambiguity about what random seeds control in a temporal split is a documentation issue that does not affect the primary metric's validity or the fairness of the comparison between models. The same seed protocol applies to both conditions. Severity adjustment to 0 is appropriate."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's REBUT-IMMATERIAL argument is valid. The feature is described as being scaled using training statistics, implying it is an aggregate domain-level feature (consistent with sender domain reputation). Even if interpreted as a per-email boolean, it is given to both models equally, so the relative performance evaluation remains fair. The finding pertained to potential dominance of a strong signal; the defender correctly notes this doesn't bias the comparison. Severity adjustment to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The critic ACCEPTED all R1 rebuttals, so my positions are maintained unchanged. For F1, I conceded a fatal flaw. For F2, I deferred to empirical validation. For F3-F6, I successfully rebutted as immaterial, reducing severity to 0.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The methodology partitions the test period into two random halves and uses the first half for a 'deployment-readiness confirmation pass' to verify stability 'before the training recipe is locked.' This creates a clear risk that test data influences model selection or configuration adjustments. No explicit design control (e.g., a rule that the confirmation pass is read-only and cannot trigger changes) is stated to eliminate this leakage mechanism. If the pass leads to any revision of the model, hyperparameters, or training recipe, the second half is no longer a true holdout. This invalidates the unbiased evaluation of generalization performance, constituting a fatal flaw in the experimental design.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The design detects campaign leakage after training and has a mitigation plan (re-evaluate split if >5%), but does not eliminate the risk that the model memorized leaked patterns, potentially biasing the comparison. The significance is empirically uncertain. Settling experiment: Remove all test emails belonging to detected leaked clusters and recompute PR-AUC for both models. Vindication: If performance drop is minimal (<5% relative PR-AUC change) and the Transformer still outperforms BoW, the bias is negligible. Validation: If performance drops substantially and the Transformer's advantage diminishes or reverses, the critique is correct and the initial comparison is biased. The primary conclusion (Transformer vs. BoW) remains valid only if the flaw affects both models equally; if leakage benefits one model more, the conclusion could change.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The preprocessing choice (HTML stripping, non-ASCII removal) is a deliberate simplification to focus on semantic text content. While phishing emails may exploit these elements, the same preprocessing is applied to both Transformer and BoW models, so the relative comparison remains fair. The potential loss of discriminative signals affects absolute performance but does not materially impact the hypothesis test of whether a Transformer provides a genuine benefit over BoW in this enterprise context.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Using a standard BERT tokenizer is a pragmatic, representative choice for a Transformer-based phishing detector in a proof-of-concept. While an email-specific tokenizer might capture domain nuances better, this concern pertains to model architecture selection, not experimental validity. The hypothesis compares a standard Transformer pipeline to a standard BoW pipeline; the tokenizer choice is part of that standard pipeline. Any suboptimality applies to the Transformer condition but does not invalidate the comparison's fairness or the conclusion about relative performance.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The ambiguity about what 'random seeds' control in a temporal split is a minor documentation oversight. In practice, seeds would control model initialization, dropout, and data ordering within batches for training. The confidence intervals still capture some variance (e.g., from initialization). This lack of clarity does not affect the primary metric's validity or the comparison between models, as the same seed protocol is applied to both.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The feature 'SPF/DKIM pass rate' is described as a metadata feature scaled using training statistics, implying it is an aggregate domain-level statistic (consistent with 'sender domain reputation'). While the description could be clarified, the feature is given to both models equally, so the comparison remains fair. Even if it were a per-email boolean, its inclusion does not bias the relative performance evaluation between Transformer and BoW; it merely provides a strong baseline signal that both models can leverage.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 (severity 9) was conceded as a fatal flaw with no design control to prevent test data leakage, invalidating the primary evaluation. This alone means the critique wins, as a FATAL finding remains above severity 3 and undermines the experiment's core validity."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The test set acts as a true holdout for final performance evaluation",
+        "failure_mechanism": "The experiment partitions the test period into two random halves: first half for 'deployment-readiness confirmation' to verify the configuration remains stable, second half for reported metrics. Using any portion of test data to verify or confirm the model configuration constitutes model selection/tuning on test data. If the first half reveals issues that trigger changes to the training recipe, hyperparameters, or model selection, then the second half is no longer a true holdout \u2014 the experiment has used test data to make modeling decisions. This invalidates the test set as an unbiased evaluator of generalization performance.",
+        "evidence_test": "Compare model performance between the first and second halves of the test set. A significant drop in performance on the second half (after 'verification' on the first half) would indicate the model was tuned to the first half's distribution. Alternatively, document whether any modeling decisions were revised after the deployment-readiness pass.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Campaign leakage is detected and controlled by reporting the proportion of test predictions from leaked clusters",
+        "failure_mechanism": "The experiment identifies clusters (e.g., identical subject lines from same sender) appearing in both train and test, flags them, and reports the proportion. However, it does not remove these leaked clusters from the test set. If >5% of test emails belong to leaked clusters, the split is 're-evaluated or sender-based stratification is applied' \u2014 but this happens after training, meaning the model has already seen and potentially memorized campaign-specific patterns from training. The model can leverage these memorized patterns to achieve inflated performance on the leaked test instances, biasing the comparison between Transformer and BoW.",
+        "evidence_test": "Remove all test emails belonging to detected leaked clusters and recompute PR-AUC. A substantial drop in performance after removal would confirm the model was relying on leaked campaign patterns rather than learning generalizable phishing indicators.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "HTML tag stripping and non-ASCII character removal preserve semantic nuance while cleaning the text",
+        "failure_mechanism": "Phishing emails frequently exploit HTML formatting (e.g., disguised links, HTML-based social engineering) and non-ASCII characters (e.g., homograph attacks using Cyrillic letters that mimic Latin). Stripping HTML tags removes structural signals that could indicate malicious intent. Removing non-ASCII characters eliminates potential spoofing indicators. This preprocessing may discard discriminative signals specific to phishing detection, potentially hurting both models, but the Transformer may be more robust to this loss than BoW due to its pretrained knowledge.",
+        "evidence_test": "Train and evaluate models on both preprocessed (current) and unprocessed email text. Compare performance to determine whether HTML/non-ASCII signals contain discriminative phishing information.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "A standard BERT tokenizer is appropriate for embedding email body text",
+        "failure_mechanism": "BERT tokenizers are trained on natural language corpora (books, Wikipedia). Email text is structurally and stylistically distinct: it contains signatures, quoted replies, fragmented sentences, boilerplate, and domain-specific jargon. The tokenizer may produce suboptimal tokenizations for email-specific patterns (e.g., URLs, email addresses, domain names), potentially losing information that a domain-adapted tokenizer would preserve. This is an implicit distributional assumption about text domain transferability.",
+        "evidence_test": "Compare against an email-specific tokenizer (e.g., one trained on email corpora) or a character-level approach. If email-specific tokenization yields meaningfully different token distributions or improved performance, the standard BERT tokenizer may be suboptimal.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Results are aggregated across 3 random seeds to provide mean and 95% confidence intervals",
+        "failure_mechanism": "The experiment uses a temporal split (months 1-18), not a random split. The 'random seeds' therefore cannot affect the data split. It is unclear what the seeds control: model weight initialization? Dropout? If they only affect initialization, the variation captured is insufficient \u2014 different random seeds in a temporal validation context could also mean different temporal validation windows or different cluster seeds for the leakage detection algorithm. The lack of clarity makes it difficult to interpret the reported confidence intervals.",
+        "evidence_test": "Explicitly document what the random seeds control (initialization, dropout, data ordering, etc.) and whether the temporal split itself is replicated with different seeds or held fixed.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "SPF/DKIM pass rate is a metadata feature computed from training data statistics",
+        "failure_mechanism": "The feature 'SPF/DKIM pass rate' is ambiguous: it could represent (a) an aggregate statistic per domain computed from training data (like sender reputation), or (b) the per-email authentication result. If (b), this is a direct, highly predictive signal available at inference time that may dominate the classification decision. Both models receive this feature, so the comparison remains fair, but the feature's nature should be clarified. If it's a per-email boolean, it may be too strong a signal, masking whether the text-based models actually learn meaningful content-based patterns.",
+        "evidence_test": "Clarify whether SPF/DKIM is an aggregate domain-level feature (fraction of emails from domain passing authentication in training) or a per-email boolean. If per-email, evaluate a text-only model to assess whether authentication signals dominate the classification.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has two significant methodology issues: (1) FATAL signal leakage through the 'deployment-readiness confirmation pass' that uses test data for model verification, invalidating the test set as an unbiased holdout; (2) MATERIAL leakage through campaign clusters that are detected but not removed from evaluation. Additional minor concerns include preprocessing choices that may discard useful phishing signals and unclear documentation of random seed usage in a temporal split context.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The critic ACCEPTED all R1 rebuttals, so my positions are maintained unchanged. For F1, I conceded a fatal flaw. For F2, I deferred to empirical validation. For F3-F6, I successfully rebutted as immaterial, reducing severity to 0.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 9,
+        "justification": "The methodology partitions the test period into two random halves and uses the first half for a 'deployment-readiness confirmation pass' to verify stability 'before the training recipe is locked.' This creates a clear risk that test data influences model selection or configuration adjustments. No explicit design control (e.g., a rule that the confirmation pass is read-only and cannot trigger changes) is stated to eliminate this leakage mechanism. If the pass leads to any revision of the model, hyperparameters, or training recipe, the second half is no longer a true holdout. This invalidates the unbiased evaluation of generalization performance, constituting a fatal flaw in the experimental design.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The design detects campaign leakage after training and has a mitigation plan (re-evaluate split if >5%), but does not eliminate the risk that the model memorized leaked patterns, potentially biasing the comparison. The significance is empirically uncertain. Settling experiment: Remove all test emails belonging to detected leaked clusters and recompute PR-AUC for both models. Vindication: If performance drop is minimal (<5% relative PR-AUC change) and the Transformer still outperforms BoW, the bias is negligible. Validation: If performance drops substantially and the Transformer's advantage diminishes or reverses, the critique is correct and the initial comparison is biased. The primary conclusion (Transformer vs. BoW) remains valid only if the flaw affects both models equally; if leakage benefits one model more, the conclusion could change.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The preprocessing choice (HTML stripping, non-ASCII removal) is a deliberate simplification to focus on semantic text content. While phishing emails may exploit these elements, the same preprocessing is applied to both Transformer and BoW models, so the relative comparison remains fair. The potential loss of discriminative signals affects absolute performance but does not materially impact the hypothesis test of whether a Transformer provides a genuine benefit over BoW in this enterprise context.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Using a standard BERT tokenizer is a pragmatic, representative choice for a Transformer-based phishing detector in a proof-of-concept. While an email-specific tokenizer might capture domain nuances better, this concern pertains to model architecture selection, not experimental validity. The hypothesis compares a standard Transformer pipeline to a standard BoW pipeline; the tokenizer choice is part of that standard pipeline. Any suboptimality applies to the Transformer condition but does not invalidate the comparison's fairness or the conclusion about relative performance.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The ambiguity about what 'random seeds' control in a temporal split is a minor documentation oversight. In practice, seeds would control model initialization, dropout, and data ordering within batches for training. The confidence intervals still capture some variance (e.g., from initialization). This lack of clarity does not affect the primary metric's validity or the comparison between models, as the same seed protocol is applied to both.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The feature 'SPF/DKIM pass rate' is described as a metadata feature scaled using training statistics, implying it is an aggregate domain-level statistic (consistent with 'sender domain reputation'). While the description could be clarified, the feature is given to both models equally, so the comparison remains fair. Even if it were a per-email boolean, its inclusion does not bias the relative performance evaluation between Transformer and BoW; it merely provides a strong baseline signal that both models can leverage.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "critique_wins",
+    "verdict_rationale": "F1 (severity 9) was conceded as a fatal flaw with no design control to prevent test data leakage, invalidating the primary evaluation. This alone means the critique wins, as a FATAL finding remains above severity 3 and undermines the experiment's core validity."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 9,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: CONCEDE + adj_sev=9 \u2265 7 \u2192 critique_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

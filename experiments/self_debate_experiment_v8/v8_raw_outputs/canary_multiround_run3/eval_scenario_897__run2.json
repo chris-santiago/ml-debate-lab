@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_897",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "mistralai/mistral-small-2603",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that labeling alerts as true high-severity incidents based on analyst-confirmed incident tickets within 72 hours is sufficient to capture all true incidents and avoid false positives.",
+        "failure_mechanism": "The 72-hour window for labeling may miss incidents that require longer investigation or are confirmed after the window closes. This could lead to under-labeling of true incidents, inflating Recall@10 metrics because the model is only evaluated against a subset of true incidents. Additionally, analyst-confirmed incidents may still include false positives or benign events misclassified as incidents, introducing label noise that could mislead the model.",
+        "evidence_test": "Compare the set of labeled incidents to a gold-standard set of incidents confirmed by a second, independent team or process (e.g., threat hunting or IR team post-mortem) to quantify the false negative and false positive rates of the labeling pipeline. If the false negative rate is high (>10%), the Recall@10 metric is not measuring what it claims.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that temporal splitting (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) is sufficient to prevent information leakage and simulate realistic deployment conditions.",
+        "failure_mechanism": "Temporal splitting does not account for potential concept drift within the training window (e.g., changes in attacker TTPs, rule updates, or SOC processes). If the distribution of incidents or alerts changes significantly within months 1\u201312, the model may be trained on stale or unrepresentative data, leading to poor generalization. Additionally, the 72-hour labeling window may introduce temporal leakage if analyst behavior changes over time (e.g., faster confirmation of incidents in later months), causing the model to exploit this artifact rather than learn generalizable ranking behavior.",
+        "evidence_test": "Perform a temporal stability analysis: split the training data into sub-windows (e.g., months 1\u20136 vs. 7\u201312) and evaluate model performance on each. If performance degrades significantly on later training sub-windows, concept drift is present. Alternatively, evaluate the model on a synthetic 'future' dataset where known concept drift has occurred (e.g., post-major rule update or new threat campaign).",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that upsampling confirmed incidents to 5% of training alerts does not introduce bias or degrade model performance.",
+        "failure_mechanism": "Upsampling by duplication can create artificial patterns (e.g., repeated identical alerts) that the model may exploit, leading to overfitting on duplicated samples rather than learning generalizable ranking behavior. This could inflate validation/test metrics without improving real-world performance. Additionally, the 5% target may not reflect the true class imbalance in production, where the ratio of confirmed incidents to total alerts could be much lower or higher.",
+        "evidence_test": "Compare the performance of the model trained on upsampled data to a model trained on the original imbalanced data (with class weights or focal loss to handle imbalance). If the upsampled model performs significantly better on the test set but worse in a simulated production environment (e.g., with natural class imbalance), the upsampling has introduced bias. Alternatively, evaluate the model on a held-out set of naturally balanced data to verify generalization.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that the incident-level evaluation (grouping alerts by incident ID) prevents duplicate or correlated alerts from inflating metrics.",
+        "failure_mechanism": "While grouping by incident ID controls for duplicate alerts within the same incident, it does not account for correlated alerts across different incidents. For example, a widespread campaign (e.g., phishing) may generate many similar alerts across multiple incidents. If the model ranks one alert from this campaign highly, it may implicitly rank others highly as well, leading to overestimation of Recall@10. The evaluation does not measure whether the model ranks diverse incidents or just flags correlated alerts.",
+        "evidence_test": "Perform a diversity analysis: for each time window, count the number of unique incidents represented in the top 10 alerts. If the same incident or correlated alerts dominate the top 10, the metric is inflated. Alternatively, evaluate Recall@10 on a subset of incidents where alerts are less correlated (e.g., isolated incidents with no shared rule or asset).",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that the logistic regression baseline is a fair comparison for the learning-to-rank model.",
+        "failure_mechanism": "The baseline may not be sufficiently optimized or may lack the capacity to capture the same patterns as the ranking model. For example, if the logistic regression is trained with default hyperparameters and no feature engineering, it may underperform the ranking model not due to the ranking inductive bias but due to poor baseline tuning. The experiment does not verify whether the baseline is a 'strong' baseline (e.g., tuned with extensive hyperparameter search or feature selection).",
+        "evidence_test": "Train the logistic regression baseline with extensive hyperparameter tuning (e.g., regularization strength, class weights, feature selection) and compare its performance to the default configuration. If the tuned baseline performs similarly to the ranking model, the ranking advantage may be overstated. Alternatively, include a stronger baseline (e.g., XGBoost classifier or a neural network) to verify the ranking model's superiority.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that Recall@10 per time window is the correct metric for evaluating SOC alert triage.",
+        "failure_mechanism": "Recall@10 measures whether true incidents appear in the top 10 alerts, but it does not account for the cost of false positives (e.g., analyst time wasted on benign alerts). A model with high Recall@10 but low Precision@10 may not be operationally useful. Additionally, the metric does not consider the severity of missed incidents (e.g., missing a critical incident is worse than missing a low-severity one). The experiment does not justify why Recall@10 is prioritized over other metrics (e.g., Precision@10 or a cost-sensitive metric).",
+        "evidence_test": "Evaluate the model using a cost-sensitive metric that incorporates the operational cost of false positives and the severity of missed incidents (e.g., weighted Recall@10 where false positives are penalized more heavily). If the ranking model's advantage disappears under this metric, the primary claim is weakened.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that the 'unknown' token for new categories in validation/test sets is sufficient to handle unseen data.",
+        "failure_mechanism": "The 'unknown' token may not capture the true diversity of unseen categories, leading to poor generalization. For example, if a new alert rule family emerges in the test set, treating it as 'unknown' may degrade performance more than a dedicated embedding for rare categories. The experiment does not evaluate the impact of this strategy on model performance.",
+        "evidence_test": "Compare the performance of the model with the 'unknown' token to a model that uses embeddings for rare categories (e.g., subword tokenization or hashing). If the 'unknown' token strategy leads to significant performance degradation, it should be revised.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains multiple FATAL flaws that undermine its core claims: label definition may miss true incidents, temporal splitting may not prevent leakage or drift, and upsampling may introduce bias. MATERIAL flaws include an insufficient baseline comparison and metric limitations. These issues must be addressed before the experiment can produce a valid verdict.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims the 72-hour labeling window is insufficient and introduces noise. However, the design intent is to benchmark a ranking approach against a baseline using existing production labels. The labeling logic (confirmed security event + analyst/TI confirmation) is a standard proxy for 'ground truth' in SOC environments. Since both the ranking model and the baseline use the same labels, any systemic under-labeling or noise affects both conditions equally, preserving the relative comparison of the ranking inductive bias. This is a scope and design choice, not a flaw in the comparison.\n\nF2 claims temporal splitting doesn't account for concept drift and that the 72-hour window causes leakage. Concept drift is exactly why temporal splitting is used; it tests the model's ability to generalize to a future window (months 16-18) after training on a past one. The claim about leakage via analyst behavior is speculative and not supported by evidence; the 72-hour window is a label-generation rule, not a feature. The temporal split is the gold standard for this use case.\n\nF3 concerns upsampling by duplication. The design explicitly states upsampling is applied only to the training set to prevent metric degeneration from extreme imbalance. Validation and test sets remain untouched. While duplication can lead to overfitting, the use of a held-out temporal test set (months 16-18) directly measures whether this overfitting generalizes. This is a standard training technique for sparse labels.\n\nF4 argues that correlated alerts across different incidents inflate metrics. The design groups by incident ID, meaning an incident is 'found' if any of its alerts rank in the top 10. If a campaign generates 10 different incidents, and the model finds 5 of them, Recall@10 correctly reflects that 5 distinct incidents were surfaced. The critic's concern about 'diversity' is a separate operational goal, but for the hypothesis (Ranking vs. Classification), the incident-level unit is the correct control for the primary failure mode (duplicate alerts for one event).\n\nF5 claims the Logistic Regression (LR) baseline is too weak. The design specifies that the LR is tuned with 'equivalent hyperparameter search effort' and uses the same features. While a GBDT classifier might be stronger, the goal is to test the 'ranking-specific inductive bias.' LR provides a clean, transparent baseline for probability-based ranking. Given equivalent tuning, it is a fair baseline for a PoC.\n\nF6 argues Recall@10 ignores the cost of false positives. The design explicitly includes Precision@10 as a secondary metric to monitor analyst waste. The primary goal is 'incident recall' (not missing the breach), which is the standard priority in high-stakes security triage. The choice of Recall@10 as the primary metric is a deliberate design decision aligned with SOC priorities.\n\nF7 claims the 'unknown' token is insufficient. This is a standard handling method for categorical features in ML. Given this is a PoC to compare ranking vs. classification, the specific method of handling rare categories (as long as it is consistent across both models) does not invalidate the comparison of the ranking objective.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The experiment's goal is to compare two modeling approaches (Ranking vs. Classification) using the same available production labels. Any label noise or under-labeling inherent in the 72-hour window affects both the ranking model and the baseline identically, leaving the relative performance delta valid."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Temporal splitting is specifically designed to evaluate performance under concept drift by testing on a future time window. The claim regarding leakage via analyst behavior is unsupported; the 72-hour window is a labeling criterion, not a feature ingested by the model."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Upsampling is restricted to the training set. The use of a strictly temporal, held-out test set (months 16-18) directly controls for and detects any overfitting caused by duplication, ensuring that reported metrics reflect generalization, not memorization."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Grouping by incident ID eliminates the primary risk of metric inflation (multiple alerts for one event). Correlated alerts across *different* incidents are, by definition, different incidents; surfacing them is a success of the model, not a failure of the metric."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The baseline is tuned with equivalent effort to the proposed model. The choice of Logistic Regression provides a clear baseline for probability-based ranking, which is the direct alternative to the ranking-specific loss functions being tested."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Recall@10 is the primary metric because the operational priority in SOC triage is minimizing missed critical incidents. Precision@10 is explicitly included as a secondary metric to ensure the cost of false positives remains acceptable."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The 'unknown' token is a standard preprocessing step. Since it is applied consistently to both the baseline and the ranking model, it does not bias the comparison between the two architectures."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings were successfully rebutted. The design's use of temporal splitting, incident-level grouping, and consistent baseline tuning directly addresses the critic's concerns. All adjusted severities are \u2264 3, qualifying the methodology for exoneration."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 7,
+        "reasoning": "The rebuttal argues that label noise affects both models identically, leaving the relative performance delta valid. However, this does not address the core failure mechanism: the 72-hour window may miss true incidents or include false positives, which could systematically bias the evaluation. The rebuttal does not provide evidence that the labeling pipeline's false negative/positive rates are acceptably low or that the subset of labeled incidents is representative of all true incidents. The scope disclaimer does not resolve the mechanistic concern about label quality."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal directly addresses the failure mechanism by noting that temporal splitting evaluates performance under concept drift and that the 72-hour labeling window is not a feature ingested by the model. The design explicitly accounts for temporal generalization, and the claim about leakage via analyst behavior is addressed by separating labeling criteria from model features."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal mechanistically addresses the concern by noting that upsampling is restricted to the training set and that the temporal test set (months 16\u201318) controls for overfitting. The design ensures that any bias from duplication would manifest as poor test performance, which is not observed. This directly addresses the failure mechanism of artificial patterns from duplication."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal partially addresses the concern by eliminating duplicate alerts within the same incident, but it does not fully resolve the issue of correlated alerts across *different* incidents. The claim that 'surfacing correlated alerts is a success' conflates correlation with diversity. The evaluation does not measure whether the top 10 alerts represent diverse incidents or are dominated by correlated alerts from a few campaigns. A residual risk remains that Recall@10 is inflated by correlated alerts."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal directly addresses the failure mechanism by stating that the baseline is tuned with equivalent effort and that logistic regression provides a clear baseline for probability-based ranking. This addresses the concern that the baseline may be weak or poorly optimized."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal directly addresses the failure mechanism by noting that Recall@10 is prioritized because the operational priority is minimizing missed critical incidents, and Precision@10 is included as a secondary metric. This justifies the metric choice and addresses the concern about false positives."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The rebuttal argues that the 'unknown' token is a standard preprocessing step and does not bias the comparison between models. Since it is applied consistently to both architectures, the concern about generalization to unseen categories is mitigated. No further action is needed."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F3, F5, F6, and F7 as they were accepted. For F1, the critic argues that label noise could systematically bias the evaluation; however, since the same labels are used for both the ranking model and the baseline, the relative comparison remains sound, though the absolute metric value may be biased. I will maintain REBUT-SCOPE. For F4, the critic raises a valid point about 'diversity' versus 'correlation' across different incidents. While the design handles within-incident duplicates, it does not explicitly measure the diversity of the top 10. I will switch this to DEFER, as a diversity analysis can empirically settle whether the model is simply flagging a single campaign or diverse threats.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge focuses on the absolute quality of the labels (false negatives/positives). However, the experiment's primary claim is a relative one: whether a ranking model outperforms a classification baseline. Because both models are trained and evaluated on the exact same labeling pipeline (including the 72-hour window), any systematic bias in label quality is a constant across both conditions. The relative delta in Recall@10 remains a valid measure of which architecture better utilizes the available signal, regardless of whether that signal is a perfect representation of all true incidents.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Temporal splitting is specifically designed to evaluate performance under concept drift by testing on a future time window. The claim regarding leakage via analyst behavior is unsupported; the 72-hour window is a labeling criterion, not a feature ingested by the model.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Upsampling is restricted to the training set. The use of a strictly temporal, held-out test set (months 16-18) directly controls for and detects any overfitting caused by duplication, ensuring that reported metrics reflect generalization, not memorization.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that grouping by incident ID does not prevent the top 10 from being dominated by a single correlated campaign across multiple incidents. To settle this: (1) We will implement a 'Unique Campaign Recall' metric, where alerts are grouped by shared TTPs/Rule-Families before calculating Recall@10. (2) A result showing high Recall@10 but low Unique Campaign Recall would validate the critique that the model lacks diversity. (3) A result showing high Unique Campaign Recall would vindicate the design. (4) The primary conclusion (Ranking vs. Classification) remains valid because both models would be subject to the same correlation patterns; the relative improvement of the ranking model would still be observable even if both models struggle with diversity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The baseline is tuned with equivalent effort to the proposed model. The choice of Logistic Regression provides a clear baseline for probability-based ranking, which is the direct alternative to the ranking-specific loss functions being tested.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Recall@10 is the primary metric because the operational priority in SOC triage is minimizing missed critical incidents. Precision@10 is explicitly included as a secondary metric to ensure the cost of false positives remains acceptable.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The 'unknown' token is a standard preprocessing step. Since it is applied consistently to both the baseline and the ranking model, it does not bias the comparison between the two architectures.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were resolved via design or scope rebuttals, but F4 remains a point of genuine ambiguity regarding incident diversity that requires an empirical diversity analysis to settle."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that labeling alerts as true high-severity incidents based on analyst-confirmed incident tickets within 72 hours is sufficient to capture all true incidents and avoid false positives.",
+        "failure_mechanism": "The 72-hour window for labeling may miss incidents that require longer investigation or are confirmed after the window closes. This could lead to under-labeling of true incidents, inflating Recall@10 metrics because the model is only evaluated against a subset of true incidents. Additionally, analyst-confirmed incidents may still include false positives or benign events misclassified as incidents, introducing label noise that could mislead the model.",
+        "evidence_test": "Compare the set of labeled incidents to a gold-standard set of incidents confirmed by a second, independent team or process (e.g., threat hunting or IR team post-mortem) to quantify the false negative and false positive rates of the labeling pipeline. If the false negative rate is high (>10%), the Recall@10 metric is not measuring what it claims.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that temporal splitting (months 1\u201312 train, 13\u201315 validation, 16\u201318 test) is sufficient to prevent information leakage and simulate realistic deployment conditions.",
+        "failure_mechanism": "Temporal splitting does not account for potential concept drift within the training window (e.g., changes in attacker TTPs, rule updates, or SOC processes). If the distribution of incidents or alerts changes significantly within months 1\u201312, the model may be trained on stale or unrepresentative data, leading to poor generalization. Additionally, the 72-hour labeling window may introduce temporal leakage if analyst behavior changes over time (e.g., faster confirmation of incidents in later months), causing the model to exploit this artifact rather than learn generalizable ranking behavior.",
+        "evidence_test": "Perform a temporal stability analysis: split the training data into sub-windows (e.g., months 1\u20136 vs. 7\u201312) and evaluate model performance on each. If performance degrades significantly on later training sub-windows, concept drift is present. Alternatively, evaluate the model on a synthetic 'future' dataset where known concept drift has occurred (e.g., post-major rule update or new threat campaign).",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that upsampling confirmed incidents to 5% of training alerts does not introduce bias or degrade model performance.",
+        "failure_mechanism": "Upsampling by duplication can create artificial patterns (e.g., repeated identical alerts) that the model may exploit, leading to overfitting on duplicated samples rather than learning generalizable ranking behavior. This could inflate validation/test metrics without improving real-world performance. Additionally, the 5% target may not reflect the true class imbalance in production, where the ratio of confirmed incidents to total alerts could be much lower or higher.",
+        "evidence_test": "Compare the performance of the model trained on upsampled data to a model trained on the original imbalanced data (with class weights or focal loss to handle imbalance). If the upsampled model performs significantly better on the test set but worse in a simulated production environment (e.g., with natural class imbalance), the upsampling has introduced bias. Alternatively, evaluate the model on a held-out set of naturally balanced data to verify generalization.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that the incident-level evaluation (grouping alerts by incident ID) prevents duplicate or correlated alerts from inflating metrics.",
+        "failure_mechanism": "While grouping by incident ID controls for duplicate alerts within the same incident, it does not account for correlated alerts across different incidents. For example, a widespread campaign (e.g., phishing) may generate many similar alerts across multiple incidents. If the model ranks one alert from this campaign highly, it may implicitly rank others highly as well, leading to overestimation of Recall@10. The evaluation does not measure whether the model ranks diverse incidents or just flags correlated alerts.",
+        "evidence_test": "Perform a diversity analysis: for each time window, count the number of unique incidents represented in the top 10 alerts. If the same incident or correlated alerts dominate the top 10, the metric is inflated. Alternatively, evaluate Recall@10 on a subset of incidents where alerts are less correlated (e.g., isolated incidents with no shared rule or asset).",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that the logistic regression baseline is a fair comparison for the learning-to-rank model.",
+        "failure_mechanism": "The baseline may not be sufficiently optimized or may lack the capacity to capture the same patterns as the ranking model. For example, if the logistic regression is trained with default hyperparameters and no feature engineering, it may underperform the ranking model not due to the ranking inductive bias but due to poor baseline tuning. The experiment does not verify whether the baseline is a 'strong' baseline (e.g., tuned with extensive hyperparameter search or feature selection).",
+        "evidence_test": "Train the logistic regression baseline with extensive hyperparameter tuning (e.g., regularization strength, class weights, feature selection) and compare its performance to the default configuration. If the tuned baseline performs similarly to the ranking model, the ranking advantage may be overstated. Alternatively, include a stronger baseline (e.g., XGBoost classifier or a neural network) to verify the ranking model's superiority.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that Recall@10 per time window is the correct metric for evaluating SOC alert triage.",
+        "failure_mechanism": "Recall@10 measures whether true incidents appear in the top 10 alerts, but it does not account for the cost of false positives (e.g., analyst time wasted on benign alerts). A model with high Recall@10 but low Precision@10 may not be operationally useful. Additionally, the metric does not consider the severity of missed incidents (e.g., missing a critical incident is worse than missing a low-severity one). The experiment does not justify why Recall@10 is prioritized over other metrics (e.g., Precision@10 or a cost-sensitive metric).",
+        "evidence_test": "Evaluate the model using a cost-sensitive metric that incorporates the operational cost of false positives and the severity of missed incidents (e.g., weighted Recall@10 where false positives are penalized more heavily). If the ranking model's advantage disappears under this metric, the primary claim is weakened.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The experiment assumes that the 'unknown' token for new categories in validation/test sets is sufficient to handle unseen data.",
+        "failure_mechanism": "The 'unknown' token may not capture the true diversity of unseen categories, leading to poor generalization. For example, if a new alert rule family emerges in the test set, treating it as 'unknown' may degrade performance more than a dedicated embedding for rare categories. The experiment does not evaluate the impact of this strategy on model performance.",
+        "evidence_test": "Compare the performance of the model with the 'unknown' token to a model that uses embeddings for rare categories (e.g., subword tokenization or hashing). If the 'unknown' token strategy leads to significant performance degradation, it should be revised.",
+        "flaw_category": "silent_misconfig"
+      }
+    ],
+    "summary": "The PoC contains multiple FATAL flaws that undermine its core claims: label definition may miss true incidents, temporal splitting may not prevent leakage or drift, and upsampling may introduce bias. MATERIAL flaws include an insufficient baseline comparison and metric limitations. These issues must be addressed before the experiment can produce a valid verdict.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F3, F5, F6, and F7 as they were accepted. For F1, the critic argues that label noise could systematically bias the evaluation; however, since the same labels are used for both the ranking model and the baseline, the relative comparison remains sound, though the absolute metric value may be biased. I will maintain REBUT-SCOPE. For F4, the critic raises a valid point about 'diversity' versus 'correlation' across different incidents. While the design handles within-incident duplicates, it does not explicitly measure the diversity of the top 10. I will switch this to DEFER, as a diversity analysis can empirically settle whether the model is simply flagging a single campaign or diverse threats.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 4,
+        "justification": "The critic's challenge focuses on the absolute quality of the labels (false negatives/positives). However, the experiment's primary claim is a relative one: whether a ranking model outperforms a classification baseline. Because both models are trained and evaluated on the exact same labeling pipeline (including the 72-hour window), any systematic bias in label quality is a constant across both conditions. The relative delta in Recall@10 remains a valid measure of which architecture better utilizes the available signal, regardless of whether that signal is a perfect representation of all true incidents.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Temporal splitting is specifically designed to evaluate performance under concept drift by testing on a future time window. The claim regarding leakage via analyst behavior is unsupported; the 72-hour window is a labeling criterion, not a feature ingested by the model.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "Upsampling is restricted to the training set. The use of a strictly temporal, held-out test set (months 16-18) directly controls for and detects any overfitting caused by duplication, ensuring that reported metrics reflect generalization, not memorization.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that grouping by incident ID does not prevent the top 10 from being dominated by a single correlated campaign across multiple incidents. To settle this: (1) We will implement a 'Unique Campaign Recall' metric, where alerts are grouped by shared TTPs/Rule-Families before calculating Recall@10. (2) A result showing high Recall@10 but low Unique Campaign Recall would validate the critique that the model lacks diversity. (3) A result showing high Unique Campaign Recall would vindicate the design. (4) The primary conclusion (Ranking vs. Classification) remains valid because both models would be subject to the same correlation patterns; the relative improvement of the ranking model would still be observable even if both models struggle with diversity.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The baseline is tuned with equivalent effort to the proposed model. The choice of Logistic Regression provides a clear baseline for probability-based ranking, which is the direct alternative to the ranking-specific loss functions being tested.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "Recall@10 is the primary metric because the operational priority in SOC triage is minimizing missed critical incidents. Precision@10 is explicitly included as a secondary metric to ensure the cost of false positives remains acceptable.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The 'unknown' token is a standard preprocessing step. Since it is applied consistently to both the baseline and the ranking model, it does not bias the comparison between the two architectures.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were resolved via design or scope rebuttals, but F4 remains a point of genuine ambiguity regarding incident diversity that requires an empirical diversity analysis to settle."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=9 \u2265 7, REBUT-SCOPE \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "1 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

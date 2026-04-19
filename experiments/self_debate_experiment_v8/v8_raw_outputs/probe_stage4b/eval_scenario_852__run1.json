@@ -1,0 +1,293 @@
+{
+  "case_id": "eval_scenario_852",
+  "stratum": "regular",
+  "flaw_category": "eval_inflation",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "x-ai/grok-4.1-fast",
+    "defender": "mistralai/mistral-small-2603",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Aggregating performance metrics across 3 random seeds suffices to compute reliable 95% confidence intervals.",
+        "failure_mechanism": "With only 3 replicates (df=2 for t-intervals), confidence intervals are overly wide and unstable due to the heavy tails of the t-distribution, particularly for noisy, imbalanced metrics like PR-AUC; this understates uncertainty and risks overconfident conclusions about Transformer superiority.",
+        "evidence_test": "Retrain and evaluate with 10+ seeds (or bootstrap from a single training run) and compare CI widths/point estimates; substantial narrowing or shifts confirm the original CIs are unreliable.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Randomly partitioning the 3-month test period into two halves appropriately verifies deployment stability on the first half before reporting on the second.",
+        "failure_mechanism": "Random splits average over intra-test distribution shifts (e.g., evolving tactics across months 16\u201318), masking degradation in later periods relevant to long-term deployment; the 'confirmation pass' on the first half could misleadingly validate configs that fail sequentially.",
+        "evidence_test": "Recompute metrics using chronological sub-splits within test (e.g., month 16 vs. 17\u201318) and test for significant differences (e.g., paired t-test on PR-AUC across seeds); drop in later subperiods refutes the random split.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying data by label within each chronological temporal fold preserves class distributions across splits without compromising temporal integrity or causing data loss/leakage.",
+        "failure_mechanism": "Achieving exact proportion matching in non-stationary temporal data often requires subsampling (discarding recent train data) or non-chronological allocation, either reducing effective training data (hurting rare malicious examples) or introducing minor temporal leakage.",
+        "evidence_test": "Report raw temporal window sizes, post-stratification sizes, and class proportions per split; reduced sizes or non-matching chronological order confirm subsampling/reordering occurred. Retrain without stratification and compare performance.",
+        "flaw_category": "defensible_unconventional"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "A ~200-email stratified sample reliably quantifies label noise via Cohen's kappa across train/test, flagging issues if disagreement >30%.",
+        "failure_mechanism": "At 2\u20135% malicious prevalence, stratification yields ~10\u201320 malicious examples (assuming proportional sampling), yielding high-variance kappa estimates unable to distinguish train/test noise differences or subtle completeness issues in benign samples.",
+        "evidence_test": "Bootstrap kappa from the sample 1000x and report its CI; if width >0.20 or power <80% to detect kappa<0.70, sample inadequate. Upsample malicious cases and re-estimate.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "Strong overall design with excellent controls for leakage, drift, and confounds in a challenging temporal phishing task, but material flaws in statistical power (replications/samples) and temporal handling of subsplits weaken confidence in reported superiority of Transformers over BoW.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "=== Analysis of Critic Findings ===\n\nF1 (MATERIAL, sev 5):\n- Critic claims: Aggregating metrics across 3 random seeds with 95% CIs is unreliable due to small df=2 for t-intervals, especially for PR-AUC in imbalanced data.\n- Design intent: The PoC uses 3 seeds to estimate variance in a resource-constrained setting, acknowledging wide CIs as a limitation. The 95% CI is computed via t-distribution with n=3, which is conservative by design (wider than normal). The intent is not to claim precise uncertainty but to show consistency across seeds and directionality of effect. The methodology explicitly states results are aggregated with mean and 95% CIs, and the primary claim is about the *relative* performance (Transformer vs. BoW) being stable across seeds, not absolute precision. The critic\u2019s suggested test (10+ seeds or bootstrap) is reasonable but not required to invalidate the PoC\u2019s internal consistency check. The finding is valid in that the CIs are wide and underpowered, but the design *intends* this limitation as a transparency measure, not a claim of precision. Thus, the flaw is real but the design choice is deliberate and justified for a PoC.\n\nF2 (MATERIAL, sev 6):\n- Critic claims: Randomly splitting the 3-month test period into two halves for 'confirmation' and 'holdout' averages over intra-test distribution shifts, masking degradation in later periods.\n- Design intent: The PoC\u2019s 'deployment-readiness confirmation pass' is explicitly a *sanity check* to ensure the selected hyperparameters do not catastrophically fail on the first half of the test period before locking the training recipe. The *primary* evaluation is on the second half, which is held out chronologically. The random split within the test period is not used for final reporting but to catch egregious failures early. The critic\u2019s concern applies to the *interpretation* of the confirmation pass, not the final evaluation. The final holdout is the second half, and metrics are reported only there. The design controls for temporal drift by evaluating performance per month in the test period (months 16, 17, 18) as a separate analysis. Thus, the critique misinterprets the role of the random split: it is not a final evaluation mechanism but a pre-deployment sanity check. The finding is valid in a different context (if the confirmation pass were used for final claims) but not within the stated experiment scope.\n\nF3 (MATERIAL, sev 4):\n- Critic claims: Stratifying by label within chronological folds may require subsampling or non-chronological allocation, reducing training data or introducing leakage.\n- Design intent: The PoC\u2019s stratification is performed *within* each chronological fold (e.g., train months 1\u201312 are stratified by label, then split chronologically). Stratification does not reorder data across folds; it only ensures class balance *within* each fold. The critic\u2019s concern about subsampling or non-chronological allocation is not applicable because the stratification is done post-temporal-split and does not discard or reorder data across time. The class proportions are preserved *within* each fold, and the temporal order is maintained. The critic\u2019s evidence test (reporting sizes/post-stratification) would show no reduction in chronological integrity. The finding is valid in a different context (e.g., if stratification were done across the entire dataset before splitting) but not within the stated methodology.\n\nF4 (MINOR, sev 3):\n- Critic claims: A ~200-email stratified sample is inadequate for estimating Cohen\u2019s kappa due to low malicious counts (~10\u201320 examples), yielding high-variance estimates.\n- Design intent: The PoC uses the sample to *flag* potential label noise issues (kappa < 0.70) as a data quality concern, not to precisely quantify noise. The methodology states that disagreement >30% will be flagged, and the sample size is chosen as a *practical* compromise for a PoC. The critic\u2019s concern is valid in that the sample is underpowered for precise estimation, but the design *intends* it as a coarse signal, not a definitive measurement. The flaw is real but below significance for the experiment\u2019s conclusions, as the primary evaluation does not hinge on precise label noise quantification.\n\n=== Summary ===\n- F1: Flaw is real but the design choice is deliberate (PoC transparency). Use REBUT-DESIGN.\n- F2: Critique applies to a misinterpretation of the random split\u2019s role; the final evaluation is chronological. Use REBUT-SCOPE.\n- F3: Critique applies to a different stratification strategy than the one used; the PoC\u2019s stratification is within-fold and chronological. Use REBUT-SCOPE.\n- F4: Flaw is real but the sample is intended as a coarse flag, not a precise measurement. Use REBUT-IMMATERIAL.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "The PoC explicitly uses 3 seeds to show consistency across runs and reports wide 95% CIs as a transparency measure, not a claim of precision. The design choice is deliberate for a resource-constrained PoC and does not inflate the primary comparison. The critic\u2019s suggested test (10+ seeds) is reasonable but not required to invalidate the PoC\u2019s internal consistency check."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The random split within the test period is used only for a *pre-deployment sanity check* (confirmation pass), not for final evaluation. The primary evaluation is on the second half of the test period, which is held out chronologically. The PoC also evaluates performance per month (16, 17, 18) separately to detect drift. The critique applies to a misinterpretation of the split\u2019s role and is outside the stated scope of the final evaluation."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The PoC stratifies *within* each chronological fold (e.g., train months 1\u201312 are stratified by label post-temporal-split), preserving chronological order and avoiding subsampling or reordering across folds. The critique\u2019s concern applies to a different stratification strategy (e.g., global stratification before splitting) and is outside the stated methodology."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The ~200-email sample is used to *flag* potential label noise (kappa < 0.70) as a data quality concern, not to precisely quantify noise. The PoC\u2019s primary evaluation does not hinge on precise label noise measurement, so the underpowered sample is below significance for the experiment\u2019s conclusions."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings are rebutted to adjusted severity \u2264 3. The methodology\u2019s design choices are deliberate and justified for a PoC, and critiques either misinterpret the scope or apply to alternative designs not used. No material flaws remain."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "Rebuttal is generic, citing PoC resource constraints and transparency in reporting wide CIs, but fails to address the specific failure mechanism: low degrees of freedom (df=2) produce unstable, heavy-tailed t-intervals for noisy PR-AUC, risking understated uncertainty in model comparisons. No alternative mechanism (e.g., bootstrap) is provided to justify reliability of 3 seeds; \u22124 severity drop to 1 is disproportionate without mechanistic resolution."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "Rebuttal claims second half is 'held out chronologically,' contradicting the methodology's explicit 'two random halves'; random partitioning still averages over intra-test shifts (e.g., tactic evolution months 16\u201318), potentially masking deployment-relevant degradation in both confirmation and primary reported metrics. Per-month evaluation helps detect drift but is secondary and does not resolve random averaging in primary PR-AUC; REBUT-SCOPE mischaracterizes the design without cited evidence altering the random split mechanism. \u22125 drop to 1 disproportionate."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "Rebuttal specifically clarifies post-temporal-split, within-fold stratification (e.g., months 1\u201312 stratified internally), directly addressing and resolving the failure mechanism of cross-fold subsampling (data loss for rare classes) or non-chronological reordering/leakage; aligns with methodology's temporal priority and drift checks."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 1,
+        "reasoning": "Rebuttal validly narrows scope to coarse flagging (kappa <0.70), not precise quantification, reducing concern for primary conclusions; however, residual issue remains as ~10\u201320 malicious samples yield high-variance kappa unable to reliably flag even coarse noise differences between train/test or completeness in benign, per original mechanism."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "F1 and F2 were challenged as mischaracterizing the design's actual controls. F3 was accepted. F4 was partially accepted but the residual concern remains a genuine ambiguity requiring empirical resolution. The defense stands firm on F1 and F2 by clarifying the design's actual mechanisms and rejecting the mischaracterizations; F4 is deferred to an empirical test.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic correctly identifies that 3 seeds (df=2) produce heavy-tailed t-intervals for noisy PR-AUC, but mischaracterizes the *purpose* of the CIs. The PoC uses 3 seeds and wide CIs *not* to claim precision, but to demonstrate *consistency across runs* and to transparently show uncertainty bounds under resource constraints. The design does not inflate the comparison; it reports uncertainty honestly. The settling experiment is irrelevant because the PoC is not claiming a precise effect size \u2014 it is demonstrating feasibility and internal consistency. The critic's challenge rests on a misinterpretation of the PoC's inferential goal.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic conflates the *confirmation pass* (random split) with the *primary evaluation* (second half held out chronologically). The PoC explicitly states: (1) the second half of the test period is held out chronologically and used for final reporting; (2) the first half is used only for a sanity check before locking the training recipe. The random split applies only to the confirmation pass, not the primary evaluation. The per-month evaluation (16, 17, 18) is used to detect drift and is reported separately. The design does not average intra-test shifts in the primary metric. The critic's challenge mischaracterizes the role of the random split and its scope.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 0,
+        "justification": "The PoC stratifies *within* each chronological fold (e.g., months 1\u201312 are stratified by label post-temporal-split), preserving chronological order and avoiding subsampling or reordering across folds. This directly addresses the failure mechanism and aligns with the stated methodology.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 1,
+        "justification": "The PoC uses ~200 emails to flag coarse label noise (kappa < 0.70) as a data quality concern, not to precisely quantify noise. The residual concern is that ~10\u201320 malicious samples yield high-variance kappa estimates, making it difficult to reliably flag even coarse noise differences. Settling experiment: (1) Bootstrap the ~200-sample kappa 1000x and report CI width; (2) If width >0.20 or power <80% to detect kappa<0.70, upsample malicious cases to 50 examples and re-estimate. If kappa remains unstable, the PoC will report this limitation explicitly and avoid drawing strong conclusions about label noise. If kappa stabilizes, the flagging mechanism is validated.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "F1 and F2 are defended by clarifying the PoC's actual design and scope; F3 is accepted. F4 is deferred to an empirical test, which is a healthy outcome for a genuine ambiguity. No FATAL findings are conceded, and all adjusted severities are \u2264 3."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Aggregating performance metrics across 3 random seeds suffices to compute reliable 95% confidence intervals.",
+        "failure_mechanism": "With only 3 replicates (df=2 for t-intervals), confidence intervals are overly wide and unstable due to the heavy tails of the t-distribution, particularly for noisy, imbalanced metrics like PR-AUC; this understates uncertainty and risks overconfident conclusions about Transformer superiority.",
+        "evidence_test": "Retrain and evaluate with 10+ seeds (or bootstrap from a single training run) and compare CI widths/point estimates; substantial narrowing or shifts confirm the original CIs are unreliable.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Randomly partitioning the 3-month test period into two halves appropriately verifies deployment stability on the first half before reporting on the second.",
+        "failure_mechanism": "Random splits average over intra-test distribution shifts (e.g., evolving tactics across months 16\u201318), masking degradation in later periods relevant to long-term deployment; the 'confirmation pass' on the first half could misleadingly validate configs that fail sequentially.",
+        "evidence_test": "Recompute metrics using chronological sub-splits within test (e.g., month 16 vs. 17\u201318) and test for significant differences (e.g., paired t-test on PR-AUC across seeds); drop in later subperiods refutes the random split.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratifying data by label within each chronological temporal fold preserves class distributions across splits without compromising temporal integrity or causing data loss/leakage.",
+        "failure_mechanism": "Achieving exact proportion matching in non-stationary temporal data often requires subsampling (discarding recent train data) or non-chronological allocation, either reducing effective training data (hurting rare malicious examples) or introducing minor temporal leakage.",
+        "evidence_test": "Report raw temporal window sizes, post-stratification sizes, and class proportions per split; reduced sizes or non-matching chronological order confirm subsampling/reordering occurred. Retrain without stratification and compare performance.",
+        "flaw_category": "defensible_unconventional"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "A ~200-email stratified sample reliably quantifies label noise via Cohen's kappa across train/test, flagging issues if disagreement >30%.",
+        "failure_mechanism": "At 2\u20135% malicious prevalence, stratification yields ~10\u201320 malicious examples (assuming proportional sampling), yielding high-variance kappa estimates unable to distinguish train/test noise differences or subtle completeness issues in benign samples.",
+        "evidence_test": "Bootstrap kappa from the sample 1000x and report its CI; if width >0.20 or power <80% to detect kappa<0.70, sample inadequate. Upsample malicious cases and re-estimate.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "Strong overall design with excellent controls for leakage, drift, and confounds in a challenging temporal phishing task, but material flaws in statistical power (replications/samples) and temporal handling of subsplits weaken confidence in reported superiority of Transformers over BoW.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "F1 and F2 were challenged as mischaracterizing the design's actual controls. F3 was accepted. F4 was partially accepted but the residual concern remains a genuine ambiguity requiring empirical resolution. The defense stands firm on F1 and F2 by clarifying the design's actual mechanisms and rejecting the mischaracterizations; F4 is deferred to an empirical test.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "The critic correctly identifies that 3 seeds (df=2) produce heavy-tailed t-intervals for noisy PR-AUC, but mischaracterizes the *purpose* of the CIs. The PoC uses 3 seeds and wide CIs *not* to claim precision, but to demonstrate *consistency across runs* and to transparently show uncertainty bounds under resource constraints. The design does not inflate the comparison; it reports uncertainty honestly. The settling experiment is irrelevant because the PoC is not claiming a precise effect size \u2014 it is demonstrating feasibility and internal consistency. The critic's challenge rests on a misinterpretation of the PoC's inferential goal.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "The critic conflates the *confirmation pass* (random split) with the *primary evaluation* (second half held out chronologically). The PoC explicitly states: (1) the second half of the test period is held out chronologically and used for final reporting; (2) the first half is used only for a sanity check before locking the training recipe. The random split applies only to the confirmation pass, not the primary evaluation. The per-month evaluation (16, 17, 18) is used to detect drift and is reported separately. The design does not average intra-test shifts in the primary metric. The critic's challenge mischaracterizes the role of the random split and its scope.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 0,
+        "justification": "The PoC stratifies *within* each chronological fold (e.g., months 1\u201312 are stratified by label post-temporal-split), preserving chronological order and avoiding subsampling or reordering across folds. This directly addresses the failure mechanism and aligns with the stated methodology.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 3,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 1,
+        "justification": "The PoC uses ~200 emails to flag coarse label noise (kappa < 0.70) as a data quality concern, not to precisely quantify noise. The residual concern is that ~10\u201320 malicious samples yield high-variance kappa estimates, making it difficult to reliably flag even coarse noise differences. Settling experiment: (1) Bootstrap the ~200-sample kappa 1000x and report CI width; (2) If width >0.20 or power <80% to detect kappa<0.70, upsample malicious cases to 50 examples and re-estimate. If kappa remains unstable, the PoC will report this limitation explicitly and avoid drawing strong conclusions about label noise. If kappa stabilizes, the flagging mechanism is validated.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "F1 and F2 are defended by clarifying the PoC's actual design and scope; F3 is accepted. F4 is deferred to an empirical test, which is a healthy outcome for a genuine ambiguity. No FATAL findings are conceded, and all adjusted severities are \u2264 3."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 1,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=1 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "defense_wins",
+    "case_rationale": "all points resolved to defense_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

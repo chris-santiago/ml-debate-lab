@@ -1,0 +1,470 @@
+{
+  "case_id": "eval_scenario_858",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "openai/gpt-4o-mini",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Weak supervision labels derived from agent behavior (clicks, sends, citations) accurately capture article relevance to customer queries.",
+        "failure_mechanism": "Agents may not send the best article\u2014they send the most familiar or easiest-to-find article. Labels capture 'what agents actually used' not 'what is actually relevant.' This creates selection bias: the model learns to predict agent behavior patterns rather than semantic relevance. A model that ranks articles by agent familiarity would score well on these labels but fail in production where the goal is true relevance.",
+        "evidence_test": "Compare MRR on automatic labels vs. manual labels for the ~300 hold-out set. If automatic-label MRR improves but manual-label MRR does not, this confirms systematic label noise. Report correlation between article click frequency in training and model ranking score.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ~300 manually-annotated queries are sufficient to validate that automatic-label improvements correlate with human-judged relevance.",
+        "failure_mechanism": "300 queries is too small to detect meaningful differences between models. With MRR as the metric, a difference of 0.05 (e.g., 0.72 vs 0.77) would require ~500 queries per group for 80% power at p<0.05. The manual set is used only for 'sanity-checking' rather than as the primary evaluation, meaning model selection is driven entirely by noisy automatic labels.",
+        "evidence_test": "Calculate statistical power of the manual annotation set. Report confidence intervals for MRR differences on manual labels. If confidence intervals span zero, the sanity check provides no evidence.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Temporal split ensures fair comparison by evaluating on articles and queries contemporaneous with the test period.",
+        "failure_mechanism": "Temporal split creates distribution shift between train and test (product changes, agent behavior evolution). The experiment acknowledges this but does not test whether the transformer is more sensitive to temporal shift than BM25. A model that generalizes poorly across time could outperform BM25 on the test set simply because the shift happens to favor its learned patterns, not because it understands semantics better.",
+        "evidence_test": "Report per-month MRR for both models on test period. If transformer performance drops sharply in month 18 vs month 16 while BM25 is stable, this indicates temporal sensitivity. Report corpus statistics drift between train/val/test.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratified analysis by article click frequency will detect whether improvements are driven by agent familiarity bias rather than semantic understanding.",
+        "failure_mechanism": "The experiment proposes to stratify by article click frequency post-hoc, but this is a diagnostic rather than a control. If the model exploits familiarity bias, the experiment would still report high MRR. The stratified analysis would only reveal the problem after the fact\u2014it does not prevent the model from learning this shortcut.",
+        "evidence_test": "Report correlation between article click frequency in training data and the transformer's predicted score. If correlation > 0.3, this indicates the model is exploiting familiarity rather than semantics.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "MRR @ top-10 is the appropriate primary metric because agents need to find the correct article quickly.",
+        "failure_mechanism": "MRR only penalizes failures to get the first relevant article at rank 1. A model that places the most-frequently-clicked article at rank 1 for every query would achieve high MRR if that article happens to be relevant for many queries\u2014but would fail on novel or unusual queries. MRR does not distinguish between 'consistently good' and 'lucky on average.'",
+        "evidence_test": "Report median rank of first relevant article, not just reciprocal rank. Report variance in ranks across queries. If variance is high, MRR may be masking inconsistent performance.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Both models use identical input signals (query text, article text, metadata) ensuring fair comparison.",
+        "failure_mechanism": "The transformer uses subword tokenization while BM25 uses whole-word matching with stopword removal. This creates an asymmetry: the transformer can handle misspellings and OOV words while BM25 cannot. If the test set contains more spelling errors than training, BM25 is disadvantaged not by semantic capability but by preprocessing choice.",
+        "evidence_test": "Report spelling error rate in test set. Run BM25 with character n-grams or fuzzy matching as an additional baseline to control for this asymmetry.",
+        "flaw_category": "defensible_unconventional"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "No stratification by query length or product area at split time; stratified analysis is performed post-hoc.",
+        "failure_mechanism": "Post-hoc stratification cannot correct for a model that has learned to exploit confounds during training. If the training data has imbalanced representation across product areas, the model may overfit to frequent areas. Post-hoc analysis only detects this, it does not prevent it.",
+        "evidence_test": "Report distribution of queries by product area and query length across train/val/test. If distributions differ substantially, report per-stratum performance with confidence intervals.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has a sound high-level design with temporal splits and multiple evaluation metrics, but contains fatal flaws in its weak supervision labeling strategy (F1) and insufficient manual validation (F2). The core evaluation relies on agent behavior labels that may capture familiarity rather than relevance, and the sanity-check manual annotation set is too small to detect this systematic bias. These issues could lead to deploying a model that performs well on automatic metrics but fails to retrieve genuinely relevant articles in production.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "The critique presents several findings regarding the methodology used in the experiment. Finding F1 raises a significant concern about the weak supervision labels derived from agent behavior, suggesting that these labels may not accurately reflect true article relevance. This is a valid concern; however, the methodology includes a manual annotation check with domain experts to validate the automatic labels, which mitigates this issue. Finding F2 questions the sufficiency of the ~300 manually-annotated queries for validating automatic-label improvements. While the critique is correct that larger sample sizes are generally better for statistical power, the manual annotations serve as a sanity check rather than the primary evaluation, which is an acceptable design choice. Finding F3 discusses the potential distribution shift created by the temporal split, which is a valid concern, but the methodology acknowledges this and reports corpus statistics to document any distribution drift. Finding F4 critiques the post-hoc stratification by article click frequency as a diagnostic rather than a control. While this is a valid point, the methodology does aim to detect and report potential biases, which is a reasonable approach. Finding F5 questions the appropriateness of MRR as the primary metric, suggesting it may mask inconsistent performance. This is a legitimate concern; however, the methodology includes additional metrics to provide a more comprehensive evaluation. Finding F6 raises a minor concern about the asymmetry in preprocessing between the transformer and BM25 models. This is a valid point, but the methodology does not claim that both models are identical in every aspect, and the transformer is designed to handle a wider range of input variations. Finding F7 highlights the lack of stratification at split time, which is a valid concern, but the methodology includes post-hoc stratification to analyze potential confounds. Overall, while there are valid concerns raised, the methodology includes several controls and considerations that address these issues sufficiently.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 3,
+        "justification": "While the concern about weak supervision labels is valid, the methodology incorporates a manual annotation check with domain experts to validate the automatic labels. This design choice mitigates the risk of selection bias by ensuring that improvements in automatic labels correlate with human-judged relevance."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The ~300 manually-annotated queries are used as a sanity check rather than the primary evaluation. While larger sample sizes are generally preferred, the methodology's design acknowledges the limitations of the manual set and uses it appropriately to validate automatic-label improvements."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The methodology acknowledges the potential for distribution shift due to the temporal split and reports corpus statistics to document any drift. This design choice allows for an understanding of how temporal factors may affect model performance."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "While the critique points out that post-hoc stratification is diagnostic, the methodology aims to detect and report potential biases. This approach is reasonable and allows for an understanding of how familiarity bias may impact results."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The critique regarding MRR as the primary metric is valid; however, the methodology includes additional metrics to provide a comprehensive evaluation of model performance, which addresses the concern of masking inconsistent performance."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 1,
+        "justification": "The concern about preprocessing asymmetry is valid, but the methodology does not claim that both models are identical in every aspect. The transformer is designed to handle a wider range of input variations, which is a known advantage."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -1,
+        "adjusted_severity": 0,
+        "justification": "The critique about the lack of stratification at split time is valid, but the methodology includes post-hoc stratification to analyze potential confounds. This approach is acceptable and allows for the detection of any issues that may arise."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings have been addressed with sufficient rebuttals, resulting in adjusted severities of 3 or lower, demonstrating that the methodology holds up under scrutiny."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal is generic and does not address the specific failure mechanism. The defender claims the manual annotation check 'mitigates the risk of selection bias,' but this is a post-hoc diagnostic, not a prevention mechanism. The failure mechanism is that the model learns to predict agent behavior patterns (familiarity, ease of finding) rather than semantic relevance. The manual check only validates whether automatic-label improvements correlate with human-judged relevance after training\u2014it does not prevent the model from exploiting agent familiarity during training. Furthermore, F2 establishes the manual set is too small (300 queries) to provide meaningful validation. The rebuttal conflates 'detection' with 'mitigation' and does not explain how the design prevents the model from learning the agent-behavior shortcut."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The rebuttal is generic and does not address the specific failure mechanism. The defender argues the manual set is used 'appropriately' as a sanity check, but this does not resolve the core concern: model selection is driven entirely by automatic labels with no statistical validation. The failure mechanism is that the sanity check lacks power to detect meaningful differences (0.05 MRR difference requires ~500 queries per group for 80% power). The rebuttal provides no calculation of statistical power or confidence intervals\u2014it simply asserts the design is 'appropriate.' The defender does not address the specific evidence_test I provided (calculate power, report CIs). This is a scope statement that does not resolve the methodological concern."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal acknowledges the concern and documents drift via corpus statistics, which partially addresses the failure mechanism. However, the specific failure mechanism is that the experiment does not test whether the transformer is more sensitive to temporal shift than BM25. The defender's response is essentially 'we acknowledge and document'\u2014this is a DEFER rather than a true rebuttal. The evidence_test I provided was to report per-month MRR for both models to detect differential temporal sensitivity. The defender does not commit to this analysis. The concern remains: without explicit testing for differential temporal sensitivity, the transformer could outperform BM25 on the test set due to temporal shift favoring its learned patterns rather than superior semantic understanding. Some progress made but residual issue remains."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 4,
+        "reasoning": "The rebuttal is generic and does not address the specific failure mechanism. The defender claims post-hoc stratification 'allows for understanding' of familiarity bias, but this is a diagnostic, not a control. The failure mechanism is that the model can exploit familiarity bias during training and still report high MRR\u2014the stratified analysis would only reveal the problem after the fact. The rebuttal does not explain how detection prevents the model from learning the shortcut. The defender does not address the specific evidence_test (report correlation between article click frequency in training and transformer's predicted score). This is a scope statement that does not resolve the methodological concern."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The rebuttal partially addresses the concern by including secondary metrics. However, the specific failure mechanism is that MRR can mask inconsistent performance\u2014a model that places the most-frequently-clicked article at rank 1 for every query could achieve high MRR if that article happens to be relevant for many queries. The defender's response is that additional metrics 'provide comprehensive evaluation,' but this does not resolve the core issue that MRR is the primary metric and can be gamed by popularity bias. The evidence_test I provided was to report median rank and variance in ranks across queries. The defender does not commit to this analysis. Some progress made but the primary metric limitation remains unresolved."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly identifies that the asymmetry (transformer handling misspellings vs. BM25 not) is a known advantage of the transformer architecture, not a methodological flaw. This is a valid characterization of the design choice. The rebuttal is specific and directly addresses the failure mechanism by framing it as an intentional architectural difference rather than a confounding preprocessing choice."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly notes that post-hoc stratification is an acceptable approach for detecting confounds when stratification at split time is not feasible. This is a valid methodological choice. The rebuttal is specific and directly addresses the failure mechanism by explaining why post-hoc analysis is sufficient for this particular concern."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am contesting the challenges to F1, F2, F3, F4, and F5, as I believe the design includes mechanisms that address the concerns raised. I will strengthen my rebuttals to clarify how the design mitigates these issues. I accept the challenges for F6 and F7, as they accurately reflect the design's strengths.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "While the concern about weak supervision labels is valid, the methodology incorporates a manual annotation check with domain experts to validate the automatic labels. This manual check is not merely diagnostic; it serves as a control mechanism to ensure that the automatic labels are aligned with human judgment. Furthermore, the design includes a statistical analysis of the correlation between agent behavior and model predictions, which provides additional evidence against the model learning shortcuts based on familiarity alone.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The ~300 manually-annotated queries serve as a critical sanity check, and while larger sample sizes are preferred, they are sufficient for detecting significant trends when combined with the automatic labels. The design acknowledges the limitations of the manual set and uses it appropriately to validate automatic-label improvements. Additionally, I will commit to calculating the statistical power of the manual annotation set and reporting confidence intervals for MRR differences to further substantiate the findings.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "While the methodology acknowledges the potential for distribution shift due to the temporal split, I recognize the need for explicit testing of differential temporal sensitivity between the transformer and BM25. To settle this question, I will conduct an analysis of per-month MRR for both models during the test period. If the transformer shows a significant drop in performance relative to BM25, it would indicate sensitivity to temporal shifts.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "While the critique points out that post-hoc stratification is diagnostic, the methodology aims to detect and report potential biases, which is a reasonable approach. Additionally, I will commit to reporting the correlation between article click frequency in training data and the transformer's predicted scores to provide further insight into whether familiarity bias is influencing the results.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The critique regarding MRR as the primary metric is valid; however, the methodology includes additional metrics to provide a comprehensive evaluation of model performance. To address the concern that MRR can mask inconsistent performance, I will report the median rank of the first relevant article and the variance in ranks across queries, which will provide a clearer picture of the model's performance consistency.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 1,
+        "justification": "The concern about preprocessing asymmetry is valid, and I accept that the transformer architecture's ability to handle a wider range of input variations is a known advantage rather than a methodological flaw.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 0,
+        "justification": "The critique about the lack of stratification at split time is valid, and I accept that post-hoc stratification is an acceptable approach for detecting confounds when stratification at split time is not feasible.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals have addressed the critiques where possible, but the need for empirical testing remains for F3, F4, and F5, indicating that some concerns are valid and require further investigation."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Weak supervision labels derived from agent behavior (clicks, sends, citations) accurately capture article relevance to customer queries.",
+        "failure_mechanism": "Agents may not send the best article\u2014they send the most familiar or easiest-to-find article. Labels capture 'what agents actually used' not 'what is actually relevant.' This creates selection bias: the model learns to predict agent behavior patterns rather than semantic relevance. A model that ranks articles by agent familiarity would score well on these labels but fail in production where the goal is true relevance.",
+        "evidence_test": "Compare MRR on automatic labels vs. manual labels for the ~300 hold-out set. If automatic-label MRR improves but manual-label MRR does not, this confirms systematic label noise. Report correlation between article click frequency in training and model ranking score.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The ~300 manually-annotated queries are sufficient to validate that automatic-label improvements correlate with human-judged relevance.",
+        "failure_mechanism": "300 queries is too small to detect meaningful differences between models. With MRR as the metric, a difference of 0.05 (e.g., 0.72 vs 0.77) would require ~500 queries per group for 80% power at p<0.05. The manual set is used only for 'sanity-checking' rather than as the primary evaluation, meaning model selection is driven entirely by noisy automatic labels.",
+        "evidence_test": "Calculate statistical power of the manual annotation set. Report confidence intervals for MRR differences on manual labels. If confidence intervals span zero, the sanity check provides no evidence.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Temporal split ensures fair comparison by evaluating on articles and queries contemporaneous with the test period.",
+        "failure_mechanism": "Temporal split creates distribution shift between train and test (product changes, agent behavior evolution). The experiment acknowledges this but does not test whether the transformer is more sensitive to temporal shift than BM25. A model that generalizes poorly across time could outperform BM25 on the test set simply because the shift happens to favor its learned patterns, not because it understands semantics better.",
+        "evidence_test": "Report per-month MRR for both models on test period. If transformer performance drops sharply in month 18 vs month 16 while BM25 is stable, this indicates temporal sensitivity. Report corpus statistics drift between train/val/test.",
+        "flaw_category": "distribution_shift"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Stratified analysis by article click frequency will detect whether improvements are driven by agent familiarity bias rather than semantic understanding.",
+        "failure_mechanism": "The experiment proposes to stratify by article click frequency post-hoc, but this is a diagnostic rather than a control. If the model exploits familiarity bias, the experiment would still report high MRR. The stratified analysis would only reveal the problem after the fact\u2014it does not prevent the model from learning this shortcut.",
+        "evidence_test": "Report correlation between article click frequency in training data and the transformer's predicted score. If correlation > 0.3, this indicates the model is exploiting familiarity rather than semantics.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "MRR @ top-10 is the appropriate primary metric because agents need to find the correct article quickly.",
+        "failure_mechanism": "MRR only penalizes failures to get the first relevant article at rank 1. A model that places the most-frequently-clicked article at rank 1 for every query would achieve high MRR if that article happens to be relevant for many queries\u2014but would fail on novel or unusual queries. MRR does not distinguish between 'consistently good' and 'lucky on average.'",
+        "evidence_test": "Report median rank of first relevant article, not just reciprocal rank. Report variance in ranks across queries. If variance is high, MRR may be masking inconsistent performance.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Both models use identical input signals (query text, article text, metadata) ensuring fair comparison.",
+        "failure_mechanism": "The transformer uses subword tokenization while BM25 uses whole-word matching with stopword removal. This creates an asymmetry: the transformer can handle misspellings and OOV words while BM25 cannot. If the test set contains more spelling errors than training, BM25 is disadvantaged not by semantic capability but by preprocessing choice.",
+        "evidence_test": "Report spelling error rate in test set. Run BM25 with character n-grams or fuzzy matching as an additional baseline to control for this asymmetry.",
+        "flaw_category": "defensible_unconventional"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "No stratification by query length or product area at split time; stratified analysis is performed post-hoc.",
+        "failure_mechanism": "Post-hoc stratification cannot correct for a model that has learned to exploit confounds during training. If the training data has imbalanced representation across product areas, the model may overfit to frequent areas. Post-hoc analysis only detects this, it does not prevent it.",
+        "evidence_test": "Report distribution of queries by product area and query length across train/val/test. If distributions differ substantially, report per-stratum performance with confidence intervals.",
+        "flaw_category": "unverified_prereqs"
+      }
+    ],
+    "summary": "The PoC has a sound high-level design with temporal splits and multiple evaluation metrics, but contains fatal flaws in its weak supervision labeling strategy (F1) and insufficient manual validation (F2). The core evaluation relies on agent behavior labels that may capture familiarity rather than relevance, and the sanity-check manual annotation set is too small to detect this systematic bias. These issues could lead to deploying a model that performs well on automatic metrics but fails to retrieve genuinely relevant articles in production.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am contesting the challenges to F1, F2, F3, F4, and F5, as I believe the design includes mechanisms that address the concerns raised. I will strengthen my rebuttals to clarify how the design mitigates these issues. I accept the challenges for F6 and F7, as they accurately reflect the design's strengths.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 4,
+        "justification": "While the concern about weak supervision labels is valid, the methodology incorporates a manual annotation check with domain experts to validate the automatic labels. This manual check is not merely diagnostic; it serves as a control mechanism to ensure that the automatic labels are aligned with human judgment. Furthermore, the design includes a statistical analysis of the correlation between agent behavior and model predictions, which provides additional evidence against the model learning shortcuts based on familiarity alone.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 3,
+        "justification": "The ~300 manually-annotated queries serve as a critical sanity check, and while larger sample sizes are preferred, they are sufficient for detecting significant trends when combined with the automatic labels. The design acknowledges the limitations of the manual set and uses it appropriately to validate automatic-label improvements. Additionally, I will commit to calculating the statistical power of the manual annotation set and reporting confidence intervals for MRR differences to further substantiate the findings.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 4,
+        "justification": "While the methodology acknowledges the potential for distribution shift due to the temporal split, I recognize the need for explicit testing of differential temporal sensitivity between the transformer and BM25. To settle this question, I will conduct an analysis of per-month MRR for both models during the test period. If the transformer shows a significant drop in performance relative to BM25, it would indicate sensitivity to temporal shifts.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 2,
+        "justification": "While the critique points out that post-hoc stratification is diagnostic, the methodology aims to detect and report potential biases, which is a reasonable approach. Additionally, I will commit to reporting the correlation between article click frequency in training data and the transformer's predicted scores to provide further insight into whether familiarity bias is influencing the results.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 2,
+        "justification": "The critique regarding MRR as the primary metric is valid; however, the methodology includes additional metrics to provide a comprehensive evaluation of model performance. To address the concern that MRR can mask inconsistent performance, I will report the median rank of the first relevant article and the variance in ranks across queries, which will provide a clearer picture of the model's performance consistency.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 1,
+        "justification": "The concern about preprocessing asymmetry is valid, and I accept that the transformer architecture's ability to handle a wider range of input variations is a known advantage rather than a methodological flaw.",
+        "r2_challenge_response": "CONCEDED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "CONCEDE",
+        "severity_adjustment": 0,
+        "adjusted_severity": 0,
+        "justification": "The critique about the lack of stratification at split time is valid, and I accept that post-hoc stratification is an acceptable approach for detecting confounds when stratification at split time is not feasible.",
+        "r2_challenge_response": "CONCEDED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "The rebuttals have addressed the critiques where possible, but the need for empirical testing remains for F3, F4, and F5, indicating that some concerns are valid and require further investigation."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4 (4-6), orig_sev=7 \u2265 7, REBUT-DESIGN \u2192 empirical_test_agreed (FATAL not fully cleared)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 4,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=4, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 1,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "CONCEDE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

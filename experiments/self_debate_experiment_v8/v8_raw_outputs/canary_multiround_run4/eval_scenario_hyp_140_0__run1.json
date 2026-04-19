@@ -1,0 +1,313 @@
+{
+  "case_id": "eval_scenario_hyp_140_0",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "google/gemma-4-31b-it",
+    "defender": "deepseek/deepseek-v3.2",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split at the alert level prevents leakage of future information.",
+        "failure_mechanism": "In cybersecurity, a single 'incident' often generates a burst of multiple alerts over several days. If an incident spans the boundary between the training set (month 12) and validation set (month 13), or validation and test, the model will see alerts from the same incident in both sets. Because alerts within one incident share nearly identical entity graphs and temporal patterns, the model can 'cheat' by recognizing the incident context from the training set to predict the label of the test alert, leading to inflated performance that won't generalize to new, unseen incidents.",
+        "evidence_test": "Perform a 'Grouped Temporal Split' where all alerts associated with the same Incident ID (or alerts from the same entity within a tight time window) are assigned to the same split. Compare the PR-AUC of the current alert-level split against this incident-level split; a significant drop in the latter confirms leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The GNN's advantage comes from exploiting relational structure in entity interactions.",
+        "failure_mechanism": "The PoC does not verify if the GNN is simply acting as a high-capacity feature aggregator for the 'entity' nodes. If the most predictive signal is actually a property of the entity itself (e.g., 'this user is a Domain Admin' or 'this host is a critical server') rather than the *relationship* between entities, the GNN may achieve higher PR-AUC simply by better encoding entity-level embeddings. Without a baseline that uses a non-graph model with the same entity-level feature richness (e.g., a model that concatenates the top-K most active entity features), the claim that 'graph structure' is the driver is unverified.",
+        "evidence_test": "Implement a 'Node-Only' baseline: a model that uses the same 30-day window but treats entities as independent feature vectors (no edges) and aggregates them via simple averaging or max-pooling. If the tGNN does not significantly outperform this baseline, the 'relational structure' hypothesis is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 30-day lookback window is sufficient and operationally realistic for triage.",
+        "failure_mechanism": "Advanced Persistent Threats (APTs) often operate on timescales of months, not days (low-and-slow). By capping the lookback at 30 days, the model may be blind to the initial entry vector or reconnaissance phase of an attack. Conversely, for high-velocity attacks (ransomware), 30 days of noise may dilute the signal. The choice of 30 days is an arbitrary hyperparameter that may bias the model toward 'noisy' alerts and away from 'stealthy' ones.",
+        "evidence_test": "Conduct a sensitivity analysis on the lookback window (e.g., 7, 30, 90 days). If performance varies significantly or if the model fails specifically on 'long-dwell' incidents (verified via analyst notes), the 30-day assumption is a limiting factor.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding alerts without disposition after 7 days minimizes label noise.",
+        "failure_mechanism": "This introduces a 'survivorship bias' or 'selection bias'. Alerts that are never closed (or take >7 days) are often the most complex, ambiguous, or high-effort cases. By removing them, the model is trained and evaluated only on 'easy' or 'standard' triage cases, potentially inflating performance and failing on the very cases where ML assistance is most needed (the 'hard' cases).",
+        "evidence_test": "Analyze the distribution of alert types and severities for the excluded set vs. the included set. If the excluded set contains a disproportionate amount of 'Critical' alerts or specific high-complexity alert types, the evaluation is biased.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Grid search or Bayesian optimization is sufficient for hyperparameter tuning.",
+        "failure_mechanism": "Given the complexity of tGNNs (depth, attention, decay), the search space is likely too large for simple grid search, potentially leading to sub-optimal configurations.",
+        "evidence_test": "Compare grid search results with a more robust automated tuner (e.g., Optuna) to see if significant gains are left on the table.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The PoC has a critical flaw regarding signal leakage due to alert-level temporal splitting in a domain where alerts are clustered by incident. Additionally, it lacks a baseline to isolate the effect of graph structure from entity-level feature aggregation.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "I will analyze each finding in the context of the provided methodology, which is presumed sound. My goal is to determine if the critique identifies genuine flaws that change the recommendation, or if the methodology holds up.\n\n**F1 (Severity 8 - FATAL):** The critic claims that an alert-level temporal split allows leakage because incidents can span split boundaries, allowing the model to 'cheat' by recognizing incident context. The methodology's design intent is to prevent leakage of *future information* and reflect deployment where the model scores alerts as they arrive. The split is strictly chronological at the alert timestamp. The critic's scenario is valid: a multi-alert incident could have alerts in both training and validation/test sets. However, the methodology's design explicitly uses a *temporal* split to simulate real-time scoring. In production, when an alert arrives, the model has access to the entity's historical graph from the prior 30 days, which may include past alerts from the same ongoing incident. This is not leakage; it's the operational reality the model must handle. The model's task is to predict if *this specific alert* is malicious given the history up to that point. The 'Grouped Temporal Split' test proposed by the critic changes the evaluation to predict entirely unseen *incidents*, which is a different, stricter task. The original scope is to predict alert disposition in a temporal stream, not to guarantee incident-level novelty. The design choice is deliberate and justified for the stated use case. The concern is real but does not constitute a flaw within the stated experiment scope; it's a mismatch of evaluation objectives.\n\n**F2 (Severity 7 - FATAL):** The critic claims the PoC does not verify if the GNN's advantage comes from relational structure versus simply being a better entity-level feature aggregator. The methodology includes a key control: a 'secondary baseline\u2014a Transformer or LSTM that encodes event sequences chronologically\u2014is trained to control for the possibility that the tGNN's advantage comes from temporal modeling rather than graph structure.' This directly addresses the concern that the gain might be from temporal encoding. However, the critic proposes a stricter 'Node-Only' baseline that removes edges entirely to isolate the value of relational structure. The current design uses a tabular baseline (XGBoost/LightGBM) with aggregated entity statistics, which already captures entity-level features but not relational structure. The Transformer/LSTM baseline controls for temporal modeling. The 'Node-Only' baseline is a valid additional ablation, but its absence does not invalidate the claim. The design includes controls for the most plausible confounds (recency, entity coverage, temporal encoding). The critic's proposed test would strengthen the conclusion but is not required for the PoC's validity. The finding is partially valid but the design already has substantive controls; the remaining uncertainty about entity-level embedding vs. relational structure is an empirical question that could be settled with an additional experiment.\n\n**F3 (Severity 5 - MATERIAL):** The critic claims the 30-day lookback window is arbitrary and may bias the model against long-dwell APTs or high-velocity attacks. The methodology states the lookback is 30 days but does not provide a rationale or sensitivity analysis. The choice is indeed a hyperparameter. The critic's concern is plausible: different attack patterns may require different temporal contexts. However, the methodology applies the *same* 30-day window to both the GNN and baseline models, so any bias affects both equally. The primary comparison (GNN vs. baseline) is fair. The absolute performance might be suboptimal if the window is poorly chosen, but the relative conclusion about graph structure's value is preserved. The significance of this concern for the hypothesis test is uncertain without data. The design does not explicitly address this with a control or analysis; it's a stated assumption. This is a genuine limitation where the magnitude of impact is unknown and requires empirical testing.\n\n**F4 (Severity 2 - MINOR):** The critic claims excluding alerts without disposition after 7 days introduces selection bias against complex, high-effort cases, potentially inflating performance. The methodology states this exclusion is to 'minimize label noise' and is 'operationally realistic' because SOC analysts perform triage within this window. The critic's point is valid: hard cases may be excluded. However, the primary metric is PR-AUC, which is relative. If the excluded alerts are systematically different, the model's performance on the included set may not generalize to the excluded set. But this is a known limitation of using operational labels. The design explicitly chooses to trade off label certainty for realism. The impact on the experiment's conclusion is likely minor because: (1) The comparison between GNN and baseline is on the same dataset, so any bias affects both equally, preserving the relative conclusion. (2) The proportion of excluded alerts is likely small (otherwise SOC operations would be overwhelmed). (3) The experiment's goal is to test if graph structure improves triage on *dispositioned* alerts, not to solve all edge cases. The finding is real but below significance for the experiment's primary conclusions.\n\nNow, with analysis complete, I will assign rebuttal types and adjustments.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critique proposes an incident-level split, which evaluates a different capability (predicting entirely novel incidents) than the stated experiment scope. The methodology's design is a strict chronological alert-level split to simulate real-time scoring where the model sees alerts as they arrive, with access to historical context that may include prior alerts from the same ongoing incident. This is not leakage but a reflection of the deployment scenario. The 'Grouped Temporal Split' test changes the evaluation objective; it is valid for a different experiment but not required within the stated scope of predicting alert disposition in a temporal stream."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The design includes controls for temporal encoding (Transformer/LSTM baseline) and entity coverage (tabular baseline), but does not fully isolate the value of relational structure versus entity-level embeddings. The critic's proposed 'Node-Only' baseline experiment would settle this. 1) Settling experiment: Train a model that uses the same entity node features but aggregates them via simple pooling without edges, and compare its PR-AUC to the tGNN. 2) Vindication: If tGNN significantly outperforms the Node-Only baseline, it confirms relational structure adds value. 3) Critique validation: If performance is similar, the tGNN's advantage may come from better entity representation, not relationships. 4) Primary conclusion intact? No, because if the critique is correct, the hypothesis that 'graph structure' is the driver is refuted. The magnitude of this concern is uncertain; the design has partial controls but not a complete resolution."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The 30-day lookback is a fixed hyperparameter; its impact on performance for different attack patterns is unknown. The design applies the same window to all models, so the relative comparison is fair, but absolute performance may be affected. 1) Settling experiment: Conduct sensitivity analysis with lookback windows of 7, 30, 90 days on both models. 2) Vindication: If performance is stable across windows or both models degrade similarly, the 30-day choice is not a critical bias. 3) Critique validation: If performance varies significantly, especially if long-dwell incidents are missed, the window choice is a limiting factor. 4) Primary conclusion intact? Possibly, if both models are affected equally, the relative conclusion about graph structure may hold, but the operational utility of the model could be compromised. The concern is genuine and its significance requires empirical testing."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The exclusion of alerts without disposition after 7 days is a deliberate trade-off to ensure label quality, which is standard in operational ML. Any selection bias affects both the GNN and baseline models equally, so the relative comparison of PR-AUC remains valid. The experiment's goal is to test the value of graph structure on dispositioned alerts, not to solve all edge cases. The potential inflation of absolute performance is acknowledged but does not materially affect the primary conclusion about the comparative advantage of the GNN."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Findings F2 and F3 are deferred as they identify genuine uncertainties that require empirical tests (Node-Only baseline and lookback sensitivity analysis) to settle their significance. No FATAL or MATERIAL findings were conceded at high severity, but F2 remains at adjusted severity 7, preventing a defense_wins verdict."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The defender's rebuttal is a scope disclaimer that fundamentally misunderstands the nature of signal leakage. They argue that seeing prior alerts from the same incident is 'reflection of deployment,' but they fail to address the specific failure mechanism: when an incident spans the training/test boundary, the model sees the *same incident* in both sets. In a real deployment, the model encounters a *new* incident. If the model recognizes a specific entity graph pattern from the training set and sees that same pattern in the test set (because it's the same incident), it is not predicting based on learned generalizable features, but rather 'remembering' a specific instance. This is classic data leakage. The severity adjustment is disproportionate because the mechanism of over-fitting to specific incident signatures remains entirely unaddressed."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 7,
+        "reasoning": "The defender has conceded the point by deferring to a settling experiment. They acknowledge that the current controls do not isolate relational structure from entity-level embeddings and agree that the 'Node-Only' baseline is the correct way to resolve the concern."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 5,
+        "reasoning": "The defender has deferred the finding and agreed to a sensitivity analysis. They correctly note that while the relative comparison between models remains fair (since both use the same window), the absolute operational utility and potential bias against long-dwell attacks remain open questions."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 2,
+        "reasoning": "The defender argues that selection bias affects all models equally, which is true for the *relative* comparison. However, the finding was about *eval_inflation* and the risk of the model failing on the most complex cases. While this is a minor point (severity 2), the rebuttal doesn't resolve the fact that the performance metrics are calculated on a 'sanitized' subset of the hardest problems. I accept the reduction to a negligible level for the purpose of the hypothesis test, but the bias remains a factual reality of the evaluation set."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "For F1, the critic's challenge mischaracterizes the design's intent and the nature of leakage. The methodology's strict chronological alert-level split is a deliberate design choice to simulate real-time scoring, not a flaw. Seeing prior alerts from the same incident is a feature of the deployment scenario, not leakage, because the model must predict the disposition of each alert as it arrives, using all available historical context. This is a REBUT-SCOPE. For F2 and F3, the critic ACCEPTed our DEFER positions; we maintain them. For F4, the critic's PARTIAL verdict acknowledges our REBUT-IMMATERIAL is valid for the relative comparison, which is the experiment's goal. We maintain the position; the minor bias does not affect the primary conclusion.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's challenge incorrectly labels the temporal alert-level split as 'classic data leakage.' The methodology explicitly states: 'The temporal boundary ensures that the model cannot learn patterns from analyst responses, follow-up detections, or incident context that occur after the alert in question.' This control prevents leakage of *future* information. The scenario where an incident spans the split boundary is inherent to the operational problem: in production, the model scores alerts as they arrive and must predict their disposition using only prior history, which may include earlier alerts from the same ongoing incident. This is not 'remembering' a specific instance from training; it is using historical context available at prediction time. The experiment's scope is to evaluate a model's ability to triage alerts in a chronological stream, not to predict entirely novel incidents with no prior context. The proposed 'Grouped Temporal Split' evaluates a different capability. The design's split strategy is correct for its stated objective.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic ACCEPTed our DEFER. We maintain this position. The design includes a Transformer/LSTM baseline to control for temporal encoding and a tabular baseline for entity coverage, but does not fully isolate relational structure from entity-level embeddings. 1) Settling experiment: Implement a 'Node-Only' baseline that uses the same entity node features but aggregates them via simple pooling without edges, and compare its PR-AUC to the tGNN. 2) Vindication: If tGNN significantly outperforms the Node-Only baseline, it confirms relational structure adds value. 3) Critique validation: If performance is similar, the tGNN's advantage may come from better entity representation, not relationships. 4) Primary conclusion intact? No, because if the critique is correct, the hypothesis that 'graph structure' is the driver is refuted. The magnitude of this concern is uncertain; the design has partial controls but not a complete resolution.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic ACCEPTed our DEFER. We maintain this position. The 30-day lookback is a fixed hyperparameter; its impact on performance for different attack patterns is unknown. The design applies the same window to all models, so the relative comparison is fair, but absolute performance may be affected. 1) Settling experiment: Conduct sensitivity analysis with lookback windows of 7, 30, 90 days on both models. 2) Vindication: If performance is stable across windows or both models degrade similarly, the 30-day choice is not a critical bias. 3) Critique validation: If performance varies significantly, especially if long-dwell incidents are missed, the window choice is a limiting factor. 4) Primary conclusion intact? Possibly, if both models are affected equally, the relative conclusion about graph structure may hold, but the operational utility of the model could be compromised. The concern is genuine and its significance requires empirical testing.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic's PARTIAL verdict acknowledges that the selection bias affects all models equally for the relative comparison, which is the core of our rebuttal. The methodology's goal is to test the value of graph structure on dispositioned alerts, not to solve all edge cases. The potential inflation of absolute performance is acknowledged but does not materially affect the primary conclusion about the comparative advantage of the GNN. The bias is a factual reality of the evaluation set, but its impact on the hypothesis test is negligible.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F2 and F3 are deferred to empirical tests, indicating genuine ambiguity that requires further investigation. F1 and F4 are rebutted, reducing their severity to non-material levels. The presence of deferred findings means the review has surfaced unresolved questions that the experiment should test."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal split at the alert level prevents leakage of future information.",
+        "failure_mechanism": "In cybersecurity, a single 'incident' often generates a burst of multiple alerts over several days. If an incident spans the boundary between the training set (month 12) and validation set (month 13), or validation and test, the model will see alerts from the same incident in both sets. Because alerts within one incident share nearly identical entity graphs and temporal patterns, the model can 'cheat' by recognizing the incident context from the training set to predict the label of the test alert, leading to inflated performance that won't generalize to new, unseen incidents.",
+        "evidence_test": "Perform a 'Grouped Temporal Split' where all alerts associated with the same Incident ID (or alerts from the same entity within a tight time window) are assigned to the same split. Compare the PR-AUC of the current alert-level split against this incident-level split; a significant drop in the latter confirms leakage.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The GNN's advantage comes from exploiting relational structure in entity interactions.",
+        "failure_mechanism": "The PoC does not verify if the GNN is simply acting as a high-capacity feature aggregator for the 'entity' nodes. If the most predictive signal is actually a property of the entity itself (e.g., 'this user is a Domain Admin' or 'this host is a critical server') rather than the *relationship* between entities, the GNN may achieve higher PR-AUC simply by better encoding entity-level embeddings. Without a baseline that uses a non-graph model with the same entity-level feature richness (e.g., a model that concatenates the top-K most active entity features), the claim that 'graph structure' is the driver is unverified.",
+        "evidence_test": "Implement a 'Node-Only' baseline: a model that uses the same 30-day window but treats entities as independent feature vectors (no edges) and aggregates them via simple averaging or max-pooling. If the tGNN does not significantly outperform this baseline, the 'relational structure' hypothesis is refuted.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 30-day lookback window is sufficient and operationally realistic for triage.",
+        "failure_mechanism": "Advanced Persistent Threats (APTs) often operate on timescales of months, not days (low-and-slow). By capping the lookback at 30 days, the model may be blind to the initial entry vector or reconnaissance phase of an attack. Conversely, for high-velocity attacks (ransomware), 30 days of noise may dilute the signal. The choice of 30 days is an arbitrary hyperparameter that may bias the model toward 'noisy' alerts and away from 'stealthy' ones.",
+        "evidence_test": "Conduct a sensitivity analysis on the lookback window (e.g., 7, 30, 90 days). If performance varies significantly or if the model fails specifically on 'long-dwell' incidents (verified via analyst notes), the 30-day assumption is a limiting factor.",
+        "flaw_category": "unverified_prereqs"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding alerts without disposition after 7 days minimizes label noise.",
+        "failure_mechanism": "This introduces a 'survivorship bias' or 'selection bias'. Alerts that are never closed (or take >7 days) are often the most complex, ambiguous, or high-effort cases. By removing them, the model is trained and evaluated only on 'easy' or 'standard' triage cases, potentially inflating performance and failing on the very cases where ML assistance is most needed (the 'hard' cases).",
+        "evidence_test": "Analyze the distribution of alert types and severities for the excluded set vs. the included set. If the excluded set contains a disproportionate amount of 'Critical' alerts or specific high-complexity alert types, the evaluation is biased.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "Grid search or Bayesian optimization is sufficient for hyperparameter tuning.",
+        "failure_mechanism": "Given the complexity of tGNNs (depth, attention, decay), the search space is likely too large for simple grid search, potentially leading to sub-optimal configurations.",
+        "evidence_test": "Compare grid search results with a more robust automated tuner (e.g., Optuna) to see if significant gains are left on the table.",
+        "flaw_category": "null"
+      }
+    ],
+    "summary": "The PoC has a critical flaw regarding signal leakage due to alert-level temporal splitting in a domain where alerts are clustered by incident. Additionally, it lacks a baseline to isolate the effect of graph structure from entity-level feature aggregation.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "For F1, the critic's challenge mischaracterizes the design's intent and the nature of leakage. The methodology's strict chronological alert-level split is a deliberate design choice to simulate real-time scoring, not a flaw. Seeing prior alerts from the same incident is a feature of the deployment scenario, not leakage, because the model must predict the disposition of each alert as it arrives, using all available historical context. This is a REBUT-SCOPE. For F2 and F3, the critic ACCEPTed our DEFER positions; we maintain them. For F4, the critic's PARTIAL verdict acknowledges our REBUT-IMMATERIAL is valid for the relative comparison, which is the experiment's goal. We maintain the position; the minor bias does not affect the primary conclusion.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic's challenge incorrectly labels the temporal alert-level split as 'classic data leakage.' The methodology explicitly states: 'The temporal boundary ensures that the model cannot learn patterns from analyst responses, follow-up detections, or incident context that occur after the alert in question.' This control prevents leakage of *future* information. The scenario where an incident spans the split boundary is inherent to the operational problem: in production, the model scores alerts as they arrive and must predict their disposition using only prior history, which may include earlier alerts from the same ongoing incident. This is not 'remembering' a specific instance from training; it is using historical context available at prediction time. The experiment's scope is to evaluate a model's ability to triage alerts in a chronological stream, not to predict entirely novel incidents with no prior context. The proposed 'Grouped Temporal Split' evaluates a different capability. The design's split strategy is correct for its stated objective.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic ACCEPTed our DEFER. We maintain this position. The design includes a Transformer/LSTM baseline to control for temporal encoding and a tabular baseline for entity coverage, but does not fully isolate relational structure from entity-level embeddings. 1) Settling experiment: Implement a 'Node-Only' baseline that uses the same entity node features but aggregates them via simple pooling without edges, and compare its PR-AUC to the tGNN. 2) Vindication: If tGNN significantly outperforms the Node-Only baseline, it confirms relational structure adds value. 3) Critique validation: If performance is similar, the tGNN's advantage may come from better entity representation, not relationships. 4) Primary conclusion intact? No, because if the critique is correct, the hypothesis that 'graph structure' is the driver is refuted. The magnitude of this concern is uncertain; the design has partial controls but not a complete resolution.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic ACCEPTed our DEFER. We maintain this position. The 30-day lookback is a fixed hyperparameter; its impact on performance for different attack patterns is unknown. The design applies the same window to all models, so the relative comparison is fair, but absolute performance may be affected. 1) Settling experiment: Conduct sensitivity analysis with lookback windows of 7, 30, 90 days on both models. 2) Vindication: If performance is stable across windows or both models degrade similarly, the 30-day choice is not a critical bias. 3) Critique validation: If performance varies significantly, especially if long-dwell incidents are missed, the window choice is a limiting factor. 4) Primary conclusion intact? Possibly, if both models are affected equally, the relative conclusion about graph structure may hold, but the operational utility of the model could be compromised. The concern is genuine and its significance requires empirical testing.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The critic's PARTIAL verdict acknowledges that the selection bias affects all models equally for the relative comparison, which is the core of our rebuttal. The methodology's goal is to test the value of graph structure on dispositioned alerts, not to solve all edge cases. The potential inflation of absolute performance is acknowledged but does not materially affect the primary conclusion about the comparative advantage of the GNN. The bias is a factual reality of the evaluation set, but its impact on the hypothesis test is negligible.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "F2 and F3 are deferred to empirical tests, indicating genuine ambiguity that requires further investigation. F1 and F4 are rebutted, reducing their severity to non-material levels. The presence of deferred findings means the review has surfaced unresolved questions that the experiment should test."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=7, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "empirical_test_agreed",
+    "case_rationale": "2 point(s) deferred; no critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

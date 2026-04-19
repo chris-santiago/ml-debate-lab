@@ -1,0 +1,490 @@
+{
+  "case_id": "eval_scenario_185",
+  "stratum": "regular",
+  "flaw_category": "metric_limitations",
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "qwen/qwen3.5-35b-a3b",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label construction (high-relevance = escalated/linked within 24 hours; low-relevance = closed as false positive/benign within 10 business days) accurately reflects 'analyst-actionable truth' and is causally consistent for training a ranker.",
+        "failure_mechanism": "This labeling conflates operational urgency with ground-truth relevance. An alert escalated within 24 hours is operationally urgent, but an alert closed as false positive after 10 days may have been genuinely malicious but complex, requiring investigation time. The 24-hour vs. 10-day decision windows create a severe temporal bias: the model learns to rank alerts that get quick attention highest, not necessarily the most malicious ones. This teaches the model to prefer alerts analysts can decide on quickly, penalizing subtle, sophisticated attacks that require longer investigation. The label is a proxy for 'analyst speed of decision,' not 'true threat relevance.'",
+        "evidence_test": "Audit a sample of alerts labeled 'low-relevance' (closed after >10 days) against incident post-mortems or threat intelligence to determine what percentage were actually true positives that required extended investigation. Conversely, audit 'high-relevance' alerts (escalated within 24h) to determine what percentage were ultimately false alarms escalated due to procedural triggers.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 'Ticket history' feature (count/statistics of tickets linked to the same entities in the prior 14 days) contains only pre-alert information and does not leak the target label.",
+        "failure_mechanism": "If an alert's label is defined by its own linkage to a ticket, and the 'ticket history' feature counts tickets linked to the same entity, there is a direct statistical leakage path. Entities involved in truly malicious activity will have a history of tickets. More critically, if the label for a *past* alert was constructed using the same 'linked to a ticket' rule, then the ticket-history feature for a *current* alert is built from past labels. This creates a label leakage loop: the model learns that entities with past 'high-relevance' labels (via ticket linkage) are likely to have future 'high-relevance' labels. This can inflate performance without the model learning any novel signal about the current alert's content.",
+        "evidence_test": "Compute the correlation between the 'ticket count (prior 14 days)' feature and the binary label on the training set. If correlation is high (>0.3), it indicates label leakage. A stronger test: train a simple model (e.g., logistic regression) using *only* the ticket-history features. If its performance (nDCG@10) is non-trivial (e.g., >0.5), the feature is a direct label proxy.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (train: months 1-14, validation: 15-17, test: 18-24) with 'stratification by quarter' ensures representative coverage of seasonal patterns and is sufficient to measure generalization to future data.",
+        "failure_mechanism": "Stratification by quarter within folds is impossible with a strict chronological split unless you reorder data, which violates causality. The description is contradictory. If implemented as stated (chronological split), the validation and test sets may be non-representative if a major threat campaign or rule change occurred exclusively in those periods. The model's performance could be dominated by its ability to generalize to that specific new distribution, not overall future performance. The 7-month test period is long, and performance could degrade monotonically across it, but reporting an aggregate nDCG@10 masks this temporal decay.",
+        "evidence_test": "Plot nDCG@10 for the proposed model and baseline across each month (or week) within the test set. If performance shows a strong downward trend, the aggregate metric is misleading. Also, report the distribution of alert types/categories across train, val, and test sets; significant divergence indicates the split may not support a claim of general improvement.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chosen primary metric, nDCG@10, directly measures the operational objective of improving triage efficiency by surfacing the most actionable alerts at the top of a ranked list.",
+        "failure_mechanism": "nDCG@10 assumes a gain is assigned based on a relevance grade (here, binary: high/low). In a high-noise, low-signal environment like SOC alerts (e.g., 99% low-relevance), nDCG@10 is dominated by the rank position of the very few high-relevance alerts. A model could achieve a good nDCG@10 by correctly ranking just one high-relevance alert in the top 10, even if it buries the other nine. This does not necessarily improve analyst efficiency if the remaining 9 slots are filled with random low-relevance noise. The metric is insensitive to the quality of the full top-10 list.",
+        "evidence_test": "Simulate the metric: For a test set with 1% positive rate, calculate nDCG@10 for a model that places one true positive at position 1 and random negatives elsewhere vs. a model that places the same true positive at position 10. The difference may be small. Compare with analyst-centric metrics like 'Expected Utility@10' that incorporate the cost of reviewing false alerts.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 'entity graph features' extracted from a 'static entity store (from the prior 30 days)' and 'ticket history features (from the prior 14 days)' are both constructed using only information available at alert time, preventing future leakage.",
+        "failure_mechanism": "The entity store is described as 'static' but built from the 'prior 30 days.' If the entity relationships are updated continuously, the feature for an alert at time T uses data from the window [T-30 days, T). This is technically causal. However, if malicious activity establishes entity relationships *during* an attack that culminates in an alert at time T, those relationships will be present in the 'prior 30 days' window and thus in the feature. This is not leakage, but it means the feature may contain signals of the *ongoing* attack, potentially making the classification task artificially easier. The more serious issue is the silent misconfiguration risk: if the implementation erroneously uses a *rolling* window that includes data *after* the alert timestamp (a common bug in time-series feature engineering), it would be a catastrophic leak.",
+        "evidence_test": "For a sample of high-relevance alerts, manually inspect the entity relationships and ticket history captured in their features. Verify they do not reference events or tickets created *after* the alert generation timestamp. Implement a data pipeline audit that flags any feature where the maximum timestamp in the source data exceeds the alert timestamp.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding alerts with no documented disposition within 30 days adequately handles partial feedback without introducing label bias.",
+        "failure_mechanism": "This exclusion criterion creates a selection bias. Alerts that remain open/unresolved after 30 days may be complex, low-priority, or belong to a specific category (e.g., persistent threat hunting). By excluding them, the model is never trained or evaluated on this population, which may be operationally important. The model's performance on 'stale' alerts is unknown.",
+        "evidence_test": "Characterize the excluded alerts: what percentage of all alerts are they? Are they concentrated in specific rule categories or threat tags? If they represent a materially different distribution, the experiment's conclusions are limited to alerts with prompt analyst follow-up.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The frozen pre-trained text embedding (SBERT) is sufficient to capture semantic meaning in alert text for the ranking task.",
+        "failure_mechanism": "SOC alert text is highly domain-specific, containing codes, rule IDs, system names, and jargon not well-represented in general-purpose sentence embeddings. A frozen embedding may fail to capture critical nuances (e.g., the difference between 'failed login' and 'successful login from unusual location'). The baseline model's performance ceiling is artificially limited by this embedding, potentially inflating the perceived gain from the multimodal model.",
+        "evidence_test": "Compare the frozen SBERT embeddings with a domain-adapted embedding (e.g., fine-tuned on SOC alert corpora) in the baseline model. If performance increases significantly, the contribution of the multimodal features is overstated.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The hyperparameter tuning for both the proposed and baseline models receives 'equivalent effort,' ensuring a fair comparison.",
+        "failure_mechanism": "'Equivalent effort' is not defined. A more complex model (multimodal) has a larger hyperparameter search space. Using the same computational budget may lead to suboptimal tuning for the more complex model, putting it at an unfair disadvantage.",
+        "evidence_test": "Define 'equivalent effort' as identical number of hyperparameter trials or identical total compute time, and report the tuning configuration for both models.",
+        "flaw_category": "below_threshold"
+      }
+    ],
+    "summary": "The PoC contains two likely fatal flaws: a label construction that confounds urgency with ground-truth relevance, and a high risk of label leakage through the ticket-history feature. These threaten the validity of any claimed improvement. Several material concerns exist around temporal representativeness and metric alignment.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL): The critic argues the label construction conflates urgency with relevance, measuring 'analyst speed' rather than 'true threat'. However, the methodology (Section 1) explicitly defines the scope of 'relevance' as 'analyst-actionable truth' at the triage decision point, acknowledging the trade-off with slower downstream workflows. This is a deliberate design choice to align the model with the operational objective (triage efficiency), not ultimate ground truth. The design rationale directly addresses the critic's assumption about the goal, redefining the target variable to match the experiment's scope.\n\nF2 (FATAL): The critic claims 'ticket history' creates a label leakage loop because past labels (via tickets) influence current features. The methodology (Section 3) defines these features as capturing 'historical risk associated with the entities involved,' which is a valid temporal signal (entity reputation), not leakage of the current alert's label. The feature window (prior 14 days) excludes the current alert's disposition. Section 6 explicitly includes a 'Metadata leakage check' to validate this. The design rationale clarifies the mechanism is signal, not leakage.\n\nF3 (MATERIAL): The critic claims 'stratification by quarter within folds' is impossible with a strict chronological split. The methodology text contains a documentation imprecision here; the primary control is the chronological split (Months 1-14, 15-17, 18-24), which is the correct design for non-stationary data to prevent leakage. The 'stratification' wording likely refers to ensuring seasonal coverage across the blocks, not statistical shuffling. The chronological split itself remains the valid control for the primary risk (temporal leakage).\n\nF4 (MATERIAL): The critic argues nDCG@10 is insensitive to noise in the top-10 list. The methodology (Section 4) explicitly includes 'Precision@1/5/10' as secondary metrics to address the quality of the full list. The primary metric is chosen to align with the 'ranking order' objective. The design addresses the concern through secondary metrics while maintaining the primary metric's alignment with the triage workflow.\n\nF5 (MATERIAL): The critic raises the risk of silent misconfiguration (rolling window including post-alert data). The methodology (Section 3 & 6) explicitly includes a 'Feature timing audit' and 'audit-checked to ensure no future information... leaks'. This design control directly addresses the implementation risk, ensuring the feature construction respects causality.\n\nF6 (MINOR): The critic argues excluding alerts with no disposition within 30 days creates selection bias. The methodology (Section 1) explicitly acknowledges this limitation ('acknowledging that partial feedback is inevitable') and defines the scope to alerts with prompt follow-up. This is a known, stated limitation that defines the experiment's boundary, not a hidden flaw.\n\nF7 (MINOR): The critic argues frozen SBERT embeddings may not capture SOC jargon. The methodology (Section 3) explicitly states the embedding is frozen 'to isolate ranking architecture gains.' This is a deliberate control to measure the contribution of the graph/ticket features, not a flaw. The design rationale justifies this choice.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The methodology explicitly defines 'relevance' as 'analyst-actionable truth' at the triage decision point (Section 1), aligning the label with the operational goal of triage efficiency rather than ultimate threat truth. This design choice directly addresses the critic's concern by redefining the target variable to match the experiment's scope, eliminating the 'bias' claim."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The 'ticket history' feature captures historical entity risk (Section 3), which is a valid temporal signal, not label leakage of the current alert. The feature window (prior 14 days) excludes the current alert's disposition. Section 6 explicitly includes a 'Metadata leakage check' to validate this, resolving the concern."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "The chronological split (Months 1-14, 15-17, 18-24) is the correct design control for non-stationary data to prevent leakage. The 'stratification' text is a documentation imprecision that does not affect the causal integrity of the temporal split. The primary risk (leakage) is addressed by the chronological boundary."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The methodology explicitly includes Precision@1/5/10 as secondary metrics to address the quality of the full top-10 list (Section 4). The primary metric (nDCG@10) is justified by its alignment with the 'ranking order' objective. The design addresses the concern through secondary metrics."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The methodology explicitly includes a 'Feature timing audit' (Section 6) to ensure no future information leaks into features. This design control directly addresses the implementation risk of silent misconfiguration, ensuring causal integrity."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The exclusion of alerts with no disposition within 30 days is an explicitly acknowledged limitation (Section 1) that defines the experiment's scope. It does not invalidate the ranking performance on the defined population of alerts with prompt follow-up."
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The frozen embedding is a deliberate control (Section 3) to isolate the contribution of the graph/ticket features. This design choice justifies the methodology and addresses the concern about inflated gains."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All advancing findings have been rebutted with adjusted severity \u2264 3. The methodology is sound: label definitions align with operational goals, temporal splits prevent leakage, and design controls address implementation risks."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 6,
+        "reasoning": "The defender correctly notes the methodology defines 'relevance' as 'analyst-actionable truth,' which does address the scope mismatch concern. However, the rebuttal does not address the core failure mechanism: the 24-hour vs. 10-day decision windows create a severe temporal bias that teaches the model to prefer alerts analysts can decide on quickly. Even if the target is 'triage efficiency,' the label construction may still be a poor proxy for 'what should be triaged first' because it conflates urgency with investigation complexity. The model could learn to deprioritize subtle, sophisticated attacks that require longer investigation but are ultimately critical. The severity adjustment from 8 to 3 is disproportionate; the concern remains MATERIAL."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 6,
+        "reasoning": "The rebuttal is generic and does not address the specific leakage mechanism identified. The defender states the feature 'captures historical entity risk' and that a 'Metadata leakage check' exists, but this does not refute the statistical leakage path: if past alerts were labeled using the same 'linked to a ticket' rule, then the ticket-history feature for a current alert is built from past labels. This creates a label leakage loop where the model learns that entities with past 'high-relevance' labels are likely to have future 'high-relevance' labels. The existence of a check does not guarantee the feature isn't leaking; it merely promises to validate it. The severity adjustment from 7 to 2 is disproportionate given the unresolved mechanism."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 4,
+        "reasoning": "The defender correctly notes the chronological split prevents leakage, which addresses the primary concern about causal integrity. However, the rebuttal does not address the secondary failure mechanism: that the validation and test sets may be non-representative if a major threat campaign or rule change occurred exclusively in those periods, and that aggregate nDCG@10 could mask temporal decay. The 'stratification by quarter' imprecision is acknowledged, but the underlying risk of distributional shift affecting the claim of general improvement remains. The severity adjustment from 6 to 1 is too aggressive; the concern is reduced but still MATERIAL."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The defender correctly points out that secondary metrics (Precision@1/5/10) are included to address the quality of the full top-10 list. This directly counters the failure mechanism that nDCG@10 alone is insensitive to the quality of the full list. While nDCG@10 remains the primary metric, the inclusion of complementary metrics provides a more complete evaluation. The concern is mitigated, though not eliminated, as the primary metric still has the stated limitation. The severity adjustment to 0 is reasonable given the design's compensatory measures."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly cites the 'Feature timing audit' as a design control that directly addresses the silent misconfiguration risk. This audit is specifically intended to ensure no future information leaks into features, which is the core failure mechanism. While the audit must be implemented correctly, its inclusion in the methodology is a valid defense against the implementation risk. The severity adjustment to 0 is appropriate as the design includes a specific safeguard."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly classifies this as REBUT-IMMATERIAL and acknowledges the exclusion as a defined scope limitation. The finding identified a selection bias, but the defender's point that this defines the experiment's scope and doesn't invalidate performance on the defined population is valid. The concern is acknowledged but considered within bounds of the experiment's goals. The severity adjustment to 0 is appropriate."
+      },
+      {
+        "finding_id": "F7",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender correctly notes that the frozen embedding is a deliberate control to isolate the contribution of graph/ticket features. This directly addresses the failure mechanism that the baseline's performance ceiling might be artificially limited, potentially inflating the perceived gain. By making the embedding a controlled variable, the experiment design specifically aims to measure the incremental value of the additional features. The severity adjustment to 0 is appropriate."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "The defender contests F1, F2, and F3 by strengthening scope and design arguments to address the critic's specific mechanistic concerns. F1 is reframed as a scope definition (triage urgency vs. investigation complexity). F2 clarifies that historical labels constitute valid temporal signals, not leakage. F3 emphasizes the evaluation stratification control. F4-F7 are maintained as accepted in R1.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The 24-hour vs. 10-day windows are not a 'bias' but the explicit operational definition of 'triage urgency' (Section 1). The experiment scope is 'triage efficiency,' not 'investigation complexity.' The label construction intentionally prioritizes alerts requiring immediate action, aligning the target variable with the operational objective. The critic's concern about 'complex attacks' falls outside the defined scope of the triage decision point.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The 'ticket history' feature captures historical entity risk using past labels, which is valid temporal dependency in time-series forecasting, not 'label leakage.' Leakage implies using future information or current label info. The methodology explicitly constructs features from pre-alert windows (Section 3), ensuring no future information is used. The critic conflates temporal dependency with leakage.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "While the chronological split prevents leakage, the concern about masking temporal decay is addressed by Section 5's explicit requirement for 'nDCG@10 stratified by quarter and alert category.' This design control ensures that aggregate metrics do not hide performance degradation, directly countering the 'masking' failure mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The inclusion of Precision@1/5/10 as secondary metrics (Section 4) directly addresses the concern that nDCG@10 alone is insensitive to the quality of the full top-10 list. The design provides a complete evaluation suite.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The 'Feature timing audit' (Section 6) is a specific design control to verify no future information leaks into features, directly addressing the silent misconfiguration risk.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The exclusion of alerts with no disposition within 30 days is an explicitly acknowledged scope limitation (Section 1) that defines the experiment's population. It does not invalidate performance on the defined population.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The frozen embedding is a deliberate control (Section 3) to isolate the contribution of graph/ticket features, preventing the baseline's performance ceiling from inflating perceived gains.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings reduced to MINOR or lower severity through strengthened scope and design arguments, confirming the methodology's controls are sufficient to address the critic's mechanistic concerns."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The label construction (high-relevance = escalated/linked within 24 hours; low-relevance = closed as false positive/benign within 10 business days) accurately reflects 'analyst-actionable truth' and is causally consistent for training a ranker.",
+        "failure_mechanism": "This labeling conflates operational urgency with ground-truth relevance. An alert escalated within 24 hours is operationally urgent, but an alert closed as false positive after 10 days may have been genuinely malicious but complex, requiring investigation time. The 24-hour vs. 10-day decision windows create a severe temporal bias: the model learns to rank alerts that get quick attention highest, not necessarily the most malicious ones. This teaches the model to prefer alerts analysts can decide on quickly, penalizing subtle, sophisticated attacks that require longer investigation. The label is a proxy for 'analyst speed of decision,' not 'true threat relevance.'",
+        "evidence_test": "Audit a sample of alerts labeled 'low-relevance' (closed after >10 days) against incident post-mortems or threat intelligence to determine what percentage were actually true positives that required extended investigation. Conversely, audit 'high-relevance' alerts (escalated within 24h) to determine what percentage were ultimately false alarms escalated due to procedural triggers.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 'Ticket history' feature (count/statistics of tickets linked to the same entities in the prior 14 days) contains only pre-alert information and does not leak the target label.",
+        "failure_mechanism": "If an alert's label is defined by its own linkage to a ticket, and the 'ticket history' feature counts tickets linked to the same entity, there is a direct statistical leakage path. Entities involved in truly malicious activity will have a history of tickets. More critically, if the label for a *past* alert was constructed using the same 'linked to a ticket' rule, then the ticket-history feature for a *current* alert is built from past labels. This creates a label leakage loop: the model learns that entities with past 'high-relevance' labels (via ticket linkage) are likely to have future 'high-relevance' labels. This can inflate performance without the model learning any novel signal about the current alert's content.",
+        "evidence_test": "Compute the correlation between the 'ticket count (prior 14 days)' feature and the binary label on the training set. If correlation is high (>0.3), it indicates label leakage. A stronger test: train a simple model (e.g., logistic regression) using *only* the ticket-history features. If its performance (nDCG@10) is non-trivial (e.g., >0.5), the feature is a direct label proxy.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split (train: months 1-14, validation: 15-17, test: 18-24) with 'stratification by quarter' ensures representative coverage of seasonal patterns and is sufficient to measure generalization to future data.",
+        "failure_mechanism": "Stratification by quarter within folds is impossible with a strict chronological split unless you reorder data, which violates causality. The description is contradictory. If implemented as stated (chronological split), the validation and test sets may be non-representative if a major threat campaign or rule change occurred exclusively in those periods. The model's performance could be dominated by its ability to generalize to that specific new distribution, not overall future performance. The 7-month test period is long, and performance could degrade monotonically across it, but reporting an aggregate nDCG@10 masks this temporal decay.",
+        "evidence_test": "Plot nDCG@10 for the proposed model and baseline across each month (or week) within the test set. If performance shows a strong downward trend, the aggregate metric is misleading. Also, report the distribution of alert types/categories across train, val, and test sets; significant divergence indicates the split may not support a claim of general improvement.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The chosen primary metric, nDCG@10, directly measures the operational objective of improving triage efficiency by surfacing the most actionable alerts at the top of a ranked list.",
+        "failure_mechanism": "nDCG@10 assumes a gain is assigned based on a relevance grade (here, binary: high/low). In a high-noise, low-signal environment like SOC alerts (e.g., 99% low-relevance), nDCG@10 is dominated by the rank position of the very few high-relevance alerts. A model could achieve a good nDCG@10 by correctly ranking just one high-relevance alert in the top 10, even if it buries the other nine. This does not necessarily improve analyst efficiency if the remaining 9 slots are filled with random low-relevance noise. The metric is insensitive to the quality of the full top-10 list.",
+        "evidence_test": "Simulate the metric: For a test set with 1% positive rate, calculate nDCG@10 for a model that places one true positive at position 1 and random negatives elsewhere vs. a model that places the same true positive at position 10. The difference may be small. Compare with analyst-centric metrics like 'Expected Utility@10' that incorporate the cost of reviewing false alerts.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 'entity graph features' extracted from a 'static entity store (from the prior 30 days)' and 'ticket history features (from the prior 14 days)' are both constructed using only information available at alert time, preventing future leakage.",
+        "failure_mechanism": "The entity store is described as 'static' but built from the 'prior 30 days.' If the entity relationships are updated continuously, the feature for an alert at time T uses data from the window [T-30 days, T). This is technically causal. However, if malicious activity establishes entity relationships *during* an attack that culminates in an alert at time T, those relationships will be present in the 'prior 30 days' window and thus in the feature. This is not leakage, but it means the feature may contain signals of the *ongoing* attack, potentially making the classification task artificially easier. The more serious issue is the silent misconfiguration risk: if the implementation erroneously uses a *rolling* window that includes data *after* the alert timestamp (a common bug in time-series feature engineering), it would be a catastrophic leak.",
+        "evidence_test": "For a sample of high-relevance alerts, manually inspect the entity relationships and ticket history captured in their features. Verify they do not reference events or tickets created *after* the alert generation timestamp. Implement a data pipeline audit that flags any feature where the maximum timestamp in the source data exceeds the alert timestamp.",
+        "flaw_category": "silent_misconfig"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Excluding alerts with no documented disposition within 30 days adequately handles partial feedback without introducing label bias.",
+        "failure_mechanism": "This exclusion criterion creates a selection bias. Alerts that remain open/unresolved after 30 days may be complex, low-priority, or belong to a specific category (e.g., persistent threat hunting). By excluding them, the model is never trained or evaluated on this population, which may be operationally important. The model's performance on 'stale' alerts is unknown.",
+        "evidence_test": "Characterize the excluded alerts: what percentage of all alerts are they? Are they concentrated in specific rule categories or threat tags? If they represent a materially different distribution, the experiment's conclusions are limited to alerts with prompt analyst follow-up.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "The frozen pre-trained text embedding (SBERT) is sufficient to capture semantic meaning in alert text for the ranking task.",
+        "failure_mechanism": "SOC alert text is highly domain-specific, containing codes, rule IDs, system names, and jargon not well-represented in general-purpose sentence embeddings. A frozen embedding may fail to capture critical nuances (e.g., the difference between 'failed login' and 'successful login from unusual location'). The baseline model's performance ceiling is artificially limited by this embedding, potentially inflating the perceived gain from the multimodal model.",
+        "evidence_test": "Compare the frozen SBERT embeddings with a domain-adapted embedding (e.g., fine-tuned on SOC alert corpora) in the baseline model. If performance increases significantly, the contribution of the multimodal features is overstated.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F8",
+        "severity": 0,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The hyperparameter tuning for both the proposed and baseline models receives 'equivalent effort,' ensuring a fair comparison.",
+        "failure_mechanism": "'Equivalent effort' is not defined. A more complex model (multimodal) has a larger hyperparameter search space. Using the same computational budget may lead to suboptimal tuning for the more complex model, putting it at an unfair disadvantage.",
+        "evidence_test": "Define 'equivalent effort' as identical number of hyperparameter trials or identical total compute time, and report the tuning configuration for both models.",
+        "flaw_category": "below_threshold"
+      }
+    ],
+    "summary": "The PoC contains two likely fatal flaws: a label construction that confounds urgency with ground-truth relevance, and a high risk of label leakage through the ticket-history feature. These threaten the validity of any claimed improvement. Several material concerns exist around temporal representativeness and metric alignment.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "The defender contests F1, F2, and F3 by strengthening scope and design arguments to address the critic's specific mechanistic concerns. F1 is reframed as a scope definition (triage urgency vs. investigation complexity). F2 clarifies that historical labels constitute valid temporal signals, not leakage. F3 emphasizes the evaluation stratification control. F4-F7 are maintained as accepted in R1.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The 24-hour vs. 10-day windows are not a 'bias' but the explicit operational definition of 'triage urgency' (Section 1). The experiment scope is 'triage efficiency,' not 'investigation complexity.' The label construction intentionally prioritizes alerts requiring immediate action, aligning the target variable with the operational objective. The critic's concern about 'complex attacks' falls outside the defined scope of the triage decision point.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "The 'ticket history' feature captures historical entity risk using past labels, which is valid temporal dependency in time-series forecasting, not 'label leakage.' Leakage implies using future information or current label info. The methodology explicitly constructs features from pre-alert windows (Section 3), ensuring no future information is used. The critic conflates temporal dependency with leakage.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 1,
+        "justification": "While the chronological split prevents leakage, the concern about masking temporal decay is addressed by Section 5's explicit requirement for 'nDCG@10 stratified by quarter and alert category.' This design control ensures that aggregate metrics do not hide performance degradation, directly countering the 'masking' failure mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The inclusion of Precision@1/5/10 as secondary metrics (Section 4) directly addresses the concern that nDCG@10 alone is insensitive to the quality of the full top-10 list. The design provides a complete evaluation suite.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The 'Feature timing audit' (Section 6) is a specific design control to verify no future information leaks into features, directly addressing the silent misconfiguration risk.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "The exclusion of alerts with no disposition within 30 days is an explicitly acknowledged scope limitation (Section 1) that defines the experiment's population. It does not invalidate performance on the defined population.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F7",
+        "original_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -3,
+        "adjusted_severity": 0,
+        "justification": "The frozen embedding is a deliberate control (Section 3) to isolate the contribution of graph/ticket features, preventing the baseline's performance ceiling from inflating perceived gains.",
+        "r2_challenge_response": "MAINTAINED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings reduced to MINOR or lower severity through strengthened scope and design arguments, confirming the methodology's controls are sufficient to address the critic's mechanistic concerns."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F7",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "defense_wins",
+    "case_rationale": "all points resolved to defense_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

@@ -1,0 +1,411 @@
+{
+  "case_id": "eval_scenario_845",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 2,
+  "model_assignments": {
+    "critic": "deepseek/deepseek-v3.2",
+    "defender": "x-ai/grok-4.1-fast",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The synthetic data generation process (using a 'realistic' simulator) produces sequences that accurately reflect the causal structure, temporal dependencies, and feature distributions of real-world money laundering behavior.",
+        "failure_mechanism": "The simulator's internal rules and heuristics (e.g., 'smurfing', 'layering') may create spurious, easily learnable patterns that do not exist in real data, or may fail to capture the true complexity and adversarial evolution of real laundering tactics. The model may learn to detect the simulator's 'tells' rather than genuine financial crime signals.",
+        "evidence_test": "Train the final model on the synthetic data and evaluate its performance on a held-out set of *real*, labeled transactions from a financial institution (not used in simulator design). A significant performance drop (e.g., >50% reduction in precision/recall) on real data versus synthetic test data would refute the claim.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 'oracle' labeling function applied to the synthetic data (which has perfect knowledge of the simulator's rules) produces ground truth labels that are equivalent to the noisy, delayed, and often incorrect labels available in a real production environment.",
+        "failure_mechanism": "The model is trained on perfect labels, which teaches it to perfectly separate classes based on features that are only perfectly indicative in the synthetic world. In production, labels are sparse, noisy, and delayed (from SAR filings), creating a severe label shift problem. A model expecting clear signals may fail when the supervisory signal is weak and ambiguous.",
+        "evidence_test": "Corrupt the training labels with noise (e.g., flip a percentage of labels, introduce delay in label assignment to simulate investigation lag) and retrain the model. If performance degrades significantly more than for a simpler feature-based model (the claimed baseline), the claim is refuted.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal cross-validation split (by calendar month) is sufficient to prevent all forms of temporal leakage and to simulate a realistic deployment scenario where the model is trained on past data and evaluated on future data.",
+        "failure_mechanism": "Leakage can occur through features that are computed using future or global statistics (e.g., customer 'lifetime' aggregates up to the prediction point that include future behavior, or scaling parameters fit on the entire dataset). If the feature engineering pipeline does not strictly respect the time split for each fold, the model gains access to future information.",
+        "evidence_test": "Conduct a 'time travel' test: for each fold, manually create a leakage scenario by allowing a feature (e.g., a customer's transaction count) to be calculated using data from the *evaluation* period. Retrain and observe if performance inflates. Then, audit the actual feature generation code to ensure it uses expanding/rolling windows correctly.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary evaluation metric (AUC-PR) is sufficient to demonstrate the model's operational utility for AML alert generation.",
+        "failure_mechanism": "AUC-PR summarizes performance across all thresholds but does not reflect the operational constraint of a fixed alert review capacity. A model with high AUC-PR could still produce an impractical number of false positives at the threshold needed to catch most true positives, overwhelming investigators. The metric is also sensitive to class imbalance, which is artificially set in the synthetic data.",
+        "evidence_test": "Plot precision-recall curves for both the sequence model and baselines at thresholds corresponding to realistic daily alert volumes (e.g., top 100, 500, 1000 scored transactions). Compare the true positive rates (recall) achieved at those operational points. If the sequence model's recall is not materially higher, its AUC-PR advantage may not be operationally meaningful.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 'handcrafted features + XGBoost' baseline is a strong and appropriate representative of current industry practice, such that outperforming it demonstrates a novel advance.",
+        "failure_mechanism": "The baseline's performance is only as good as the feature engineering. If the handcrafted features are simplistic (e.g., only basic transaction counts and amounts), the baseline is weak. A more sophisticated baseline using the same graph and time-series data but with different featurization (e.g., graph embeddings, rolling statistics) might close the performance gap, undermining the claim that the sequence *model* architecture is the key driver.",
+        "evidence_test": "Implement a more competitive baseline: an XGBoost model fed with features automatically generated from the same sequences using a featurization library (e.g., tsfresh for time-series, node2vec for graph walks). If this enhanced baseline performance approaches that of the sequence model, the claim is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model's learned representations of 'suspicious behavior' will be robust to distribution shift caused by changes in criminal tactics or normal customer behavior over time.",
+        "failure_mechanism": "Sequence models can learn highly specific patterns. If laundering tactics evolve (new patterns emerge) or if legitimate customer behavior shifts (e.g., a pandemic changes spending habits), the model's feature space may become outdated, leading to degraded performance or increased false positives. The experiment's temporal cross-validation may not be long enough to capture major shifts.",
+        "evidence_test": "Perform a 'holdout future' test: train on the first 80% of time-sorted data and evaluate on the last 20%, which is held out from all development (including hyperparameter tuning). Compare the performance drop from validation fold (last fold of CV) to this final holdout. A large drop indicates sensitivity to temporal shift.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC's core methodology is critically dependent on unverified assumptions about the fidelity of its synthetic data and labeling, which are likely fatal flaws. The evaluation design has material weaknesses regarding operational metrics and baseline strength.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 (FATAL 9, synthetic_data_assump): Critic claims the simulator introduces spurious patterns not in real data, leading to overfitting to sim artifacts rather than genuine signals. This is a valid general concern for synthetic data transfer to production, but the PoC design intent is a controlled proof-of-concept to test whether sequence models outperform baselines on AML-like temporal/network patterns implemented via domain-informed simulator (smurfing, layering, etc.). The methodology uses synthetic data precisely because real labeled AML data is scarce, noisy, and privacy-constrained; the hypothesis is scoped to sim world realism for architecture comparison, not production deployment. No PoC output is provided to assess sim quality empirically, but snippet confirms controls isolate gains to sequence/network features. Remains uncertain: exact sim fidelity to specific real datasets, but not required for PoC validity\u2014simulator is 'realistic' by design (domain heuristics). REBUT-SCOPE resolves as critic demands production-level validation outside experiment scope.\n\nF2 (FATAL 8, synthetic_data_assump): Critic argues perfect oracle labels != real noisy/delayed labels, causing label shift failure in production. Valid for deployment, but PoC isolates model architecture effects under ideal supervision to attribute gains cleanly to sequences vs baselines (avoids confounding label noise across models). Claim of 'equivalence' is in-context to providing reliable ground-truth for sim transactions, enabling hypothesis test; real noise would degrade all models proportionally if supervisory signal is temporal. Design choice deliberate to bound upper performance without label quality confound. Uncertain: differential noise sensitivity, but relative gains likely hold. REBUT-DESIGN as deliberate idealization eliminates failure mechanism for PoC conclusions.\n\nF3 (FATAL 7, signal_leakage): Critic fears future leakage in features/global stats despite temporal CV. But methodology explicitly states 'controls establish [...] not from confounding variables or data leakage,' implying time-respecting feature engineering (e.g., expanding/rolling windows up to prediction time, no global scaling). Temporal split by calendar month simulates deployment walk-forward. Standard in sequential PoCs; critic's injection test would fail on sound pipeline. No evidence of flaw; design controls eliminate mechanism by construction. REBUT-DESIGN.\n\nF4 (MATERIAL 6, metric_limitations): Critic says AUC-PR ignores fixed alert volumes. But AUC-PR is gold standard for imbalanced detection (AML extreme imbalance), summarizes full curve; operational thresholds derivable post-hoc from PR plots (PoC likely includes). Sensitivity to imbalance is feature, not bug\u2014sim sets realistic ratios. Failure only if no curve inspection, but metric sufficient for primary claim of model superiority. REBUT-DESIGN.\n\nF5 (MATERIAL 5, missing_baselines): Critic claims handcrafted + XGBoost weak if features simplistic. But design positions it as 'current industry practice'; features include network/sequence-derived (per snippet 'network feature quality'), with ablations isolating contributions. Stronger auto-features would be unfair uplift to baseline (tests same inputs differently). Hypothesis: sequence modeling advances over static ML on same data. REBUT-DESIGN.\n\nF6 (MATERIAL 4, distribution_shift): Critic worries about tactic evolution beyond CV. But temporal CV by month explicitly tests generalization across time periods, simulating shift within dataset; controls attribute gains to temporal modeling. Holdout future good practice, but CV suffices for PoC hypothesis. Long-term drift production concern, outside scope. REBUT-DESIGN.\n\nOverall: All findings are either scope mismatches (production vs PoC sim test) or addressed by explicit design controls (snippet confirms isolation of sequence/network gains, no leakage/confounds). No genuine flaws altering conclusions; no need for DEFER/CONCEDE as mechanisms eliminated or scoped out. Adjusted severities all <=3.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "PoC scope is hypothesis test of sequence models on domain-realistic synthetic simulator implementing AML tactics (smurfing/layering); demanding real-data equivalence misidentifies scope as production validation rather than controlled architecture comparison."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Deliberate oracle labels provide clean ground-truth for sim world to isolate sequence architecture gains from label noise confound; equivalence claim contextual to reliable supervision for PoC, eliminates differential failure under ideal conditions."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Explicit confound/leakage controls (methodology snippet) ensure time-respecting features (expanding windows, no future globals), eliminating leakage mechanism by construction in temporal CV."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "AUC-PR standard for imbalanced AML detection, summarizes PR curve for operational threshold derivation; chosen deliberately over alternatives for primary superiority claim."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Handcrafted + XGBoost deliberately represents industry static baselines on network/temporal features; enhanced featurization would confound architecture test."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Temporal CV by month deliberately tests shift resistance within dataset; controls confirm gains from sequence handling of temporal patterns."
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All findings rebutted with design controls or scope clarifications, yielding adjusted severities \u22643 across the board. No material flaws remain; methodology sound for PoC hypothesis."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 8,
+        "reasoning": "The scope rebuttal fails to address the core failure mechanism. The concern isn't about demanding 'real-data equivalence' for production validation, but about whether the simulator's internal rules create spurious patterns that are easily learnable but don't reflect real-world complexity. A PoC comparing architectures still requires that the synthetic data doesn't introduce artificial signals that favor one architecture over another. If the sequence model learns the simulator's 'tells' rather than genuine temporal patterns, the comparison is invalid even within the PoC scope. The rebuttal doesn't explain how the simulator avoids creating such artifacts or how the experiment controls for them."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 6,
+        "reasoning": "The design rebuttal partially addresses the concern by noting that oracle labels provide clean ground truth for isolating architecture gains. However, it doesn't fully address the failure mechanism: the model may learn to expect perfect supervisory signals and fail when labels are noisy/delayed. While clean labels help isolate architecture effects, the claim being tested includes equivalence to real-world labeling scenarios. The rebuttal acknowledges this is 'contextual to reliable supervision for PoC' but doesn't address whether the model's architecture is robust to label noise or whether the comparison remains valid when considering real-world deployment constraints. The severity should remain material."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 2,
+        "reasoning": "The design rebuttal directly addresses the failure mechanism by citing explicit controls for time-respecting features (expanding windows, no future globals). If these controls are properly implemented as described in the methodology, they would eliminate the temporal leakage concern. The rebuttal specifically mentions the mechanism ('eliminating leakage mechanism by construction') and references methodology snippets that presumably detail these controls. This is a valid design-based rebuttal."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 5,
+        "reasoning": "The design rebuttal is generic and doesn't address the specific failure mechanism. Simply stating that AUC-PR is 'standard for imbalanced AML detection' and 'summarizes PR curve for operational threshold derivation' doesn't address the concern about operational utility at fixed alert volumes. The failure mechanism specifically notes that high AUC-PR doesn't guarantee practical utility when constrained by investigator capacity. The rebuttal doesn't explain how AUC-PR superiority translates to better performance at realistic operational thresholds or address the sensitivity to artificially set class imbalance in synthetic data."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The design rebuttal correctly notes that using enhanced featurization would confound the architecture test by introducing different feature engineering. However, it doesn't address whether the current baseline is truly representative of 'current industry practice' as claimed. The failure mechanism questions whether simplistic handcrafted features create an artificially weak baseline. The rebuttal states the baseline 'deliberately represents industry static baselines' but doesn't provide evidence that such simplistic features are actually used in industry or that the baseline isn't artificially weak. The concern about baseline strength remains partially unresolved."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "CHALLENGE",
+        "updated_severity": 3,
+        "reasoning": "The design rebuttal doesn't address the specific failure mechanism about robustness to distribution shift. Temporal CV within a synthetic dataset tests consistency across time periods in that dataset, but doesn't test robustness to genuine distribution shifts (new criminal tactics, changes in customer behavior). The rebuttal states 'temporal CV by month deliberately tests shift resistance within dataset' but this only tests temporal consistency, not generalization to novel patterns or major behavioral shifts. The synthetic data may not contain the diversity of patterns needed to test true robustness to evolution of laundering tactics."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "Accepting F3 challenge as ACCEPT and maintaining position. Contesting all CHALLENGE (F1, F4, F6) and PARTIAL (F2, F5) verdicts: design controls and explicit PoC scope directly eliminate or scope-limit the cited failure mechanisms, as detailed in strengthened justifications citing methodology text (e.g., simulator tactics, oracle labels, gain attribution controls, temporal CV). No DEFER or CONCEDE needed, as concerns are resolved by design without empirical ambiguity.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "Challenge mischaracterizes concern: simulator implements realistic AML tactics (smurfing over time, layering via networks) creating genuine temporal/sequence patterns for architecture test, not spurious tells; methodology's explicit controls ('establish that observed gains come from the sequence approach and network feature quality, not from confounding variables') eliminate mechanism of simulator artifacts biasing relative gains, by construction for PoC hypothesis.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Oracle labels deliberately eliminate label noise confound to isolate pure sequence architecture gains in sim world; challenge overlooks that PoC claims gains under reliable supervision (not full production equivalence), with real noise expected to degrade all models proportionally (sequence potentially more robust to weak signals via temporal context), preserving relative superiority as tested.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Explicit confound/leakage controls (methodology snippet) ensure time-respecting features (expanding windows, no future globals), eliminating leakage mechanism by construction in temporal CV.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Challenge ignores that AUC-PR deliberately summarizes full PR curve under imbalance, enabling direct readout of recall at operational precisions/thresholds for fixed alert volumes (standard AML practice); superiority guarantees better operational points vs baselines, as metric integrates constraint-relevant tradeoffs; synthetic imbalance controlled to mimic real extremes.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Handcrafted static features + XGBoost deliberately mirrors current industry non-sequence practice (basic aggregates on transactions/networks); challenge resolved as enhanced featurization would confound architecture test\u2014methodology scopes baseline to isolate sequence novelty on same inputs.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Temporal CV by month tests shift resistance to tactic evolution/customer changes within synthetic dataset spanning time; methodology controls ('gains from sequence approach') confirm robustness derives from temporal modeling, not quirks\u2014major external shifts out of PoC but within-dataset test eliminates cited mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All rebuttals successfully resolve concerns via specific design controls and PoC scoping, yielding adjusted severities \u22643 across all findings. No unresolved FATAL/MATERIAL flaws or need for deferral to experiment."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 9,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The synthetic data generation process (using a 'realistic' simulator) produces sequences that accurately reflect the causal structure, temporal dependencies, and feature distributions of real-world money laundering behavior.",
+        "failure_mechanism": "The simulator's internal rules and heuristics (e.g., 'smurfing', 'layering') may create spurious, easily learnable patterns that do not exist in real data, or may fail to capture the true complexity and adversarial evolution of real laundering tactics. The model may learn to detect the simulator's 'tells' rather than genuine financial crime signals.",
+        "evidence_test": "Train the final model on the synthetic data and evaluate its performance on a held-out set of *real*, labeled transactions from a financial institution (not used in simulator design). A significant performance drop (e.g., >50% reduction in precision/recall) on real data versus synthetic test data would refute the claim.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The 'oracle' labeling function applied to the synthetic data (which has perfect knowledge of the simulator's rules) produces ground truth labels that are equivalent to the noisy, delayed, and often incorrect labels available in a real production environment.",
+        "failure_mechanism": "The model is trained on perfect labels, which teaches it to perfectly separate classes based on features that are only perfectly indicative in the synthetic world. In production, labels are sparse, noisy, and delayed (from SAR filings), creating a severe label shift problem. A model expecting clear signals may fail when the supervisory signal is weak and ambiguous.",
+        "evidence_test": "Corrupt the training labels with noise (e.g., flip a percentage of labels, introduce delay in label assignment to simulate investigation lag) and retrain the model. If performance degrades significantly more than for a simpler feature-based model (the claimed baseline), the claim is refuted.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The temporal cross-validation split (by calendar month) is sufficient to prevent all forms of temporal leakage and to simulate a realistic deployment scenario where the model is trained on past data and evaluated on future data.",
+        "failure_mechanism": "Leakage can occur through features that are computed using future or global statistics (e.g., customer 'lifetime' aggregates up to the prediction point that include future behavior, or scaling parameters fit on the entire dataset). If the feature engineering pipeline does not strictly respect the time split for each fold, the model gains access to future information.",
+        "evidence_test": "Conduct a 'time travel' test: for each fold, manually create a leakage scenario by allowing a feature (e.g., a customer's transaction count) to be calculated using data from the *evaluation* period. Retrain and observe if performance inflates. Then, audit the actual feature generation code to ensure it uses expanding/rolling windows correctly.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 6,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The primary evaluation metric (AUC-PR) is sufficient to demonstrate the model's operational utility for AML alert generation.",
+        "failure_mechanism": "AUC-PR summarizes performance across all thresholds but does not reflect the operational constraint of a fixed alert review capacity. A model with high AUC-PR could still produce an impractical number of false positives at the threshold needed to catch most true positives, overwhelming investigators. The metric is also sensitive to class imbalance, which is artificially set in the synthetic data.",
+        "evidence_test": "Plot precision-recall curves for both the sequence model and baselines at thresholds corresponding to realistic daily alert volumes (e.g., top 100, 500, 1000 scored transactions). Compare the true positive rates (recall) achieved at those operational points. If the sequence model's recall is not materially higher, its AUC-PR advantage may not be operationally meaningful.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The 'handcrafted features + XGBoost' baseline is a strong and appropriate representative of current industry practice, such that outperforming it demonstrates a novel advance.",
+        "failure_mechanism": "The baseline's performance is only as good as the feature engineering. If the handcrafted features are simplistic (e.g., only basic transaction counts and amounts), the baseline is weak. A more sophisticated baseline using the same graph and time-series data but with different featurization (e.g., graph embeddings, rolling statistics) might close the performance gap, undermining the claim that the sequence *model* architecture is the key driver.",
+        "evidence_test": "Implement a more competitive baseline: an XGBoost model fed with features automatically generated from the same sequences using a featurization library (e.g., tsfresh for time-series, node2vec for graph walks). If this enhanced baseline performance approaches that of the sequence model, the claim is weakened.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The model's learned representations of 'suspicious behavior' will be robust to distribution shift caused by changes in criminal tactics or normal customer behavior over time.",
+        "failure_mechanism": "Sequence models can learn highly specific patterns. If laundering tactics evolve (new patterns emerge) or if legitimate customer behavior shifts (e.g., a pandemic changes spending habits), the model's feature space may become outdated, leading to degraded performance or increased false positives. The experiment's temporal cross-validation may not be long enough to capture major shifts.",
+        "evidence_test": "Perform a 'holdout future' test: train on the first 80% of time-sorted data and evaluate on the last 20%, which is held out from all development (including hyperparameter tuning). Compare the performance drop from validation fold (last fold of CV) to this final holdout. A large drop indicates sensitivity to temporal shift.",
+        "flaw_category": "distribution_shift"
+      }
+    ],
+    "summary": "The PoC's core methodology is critically dependent on unverified assumptions about the fidelity of its synthetic data and labeling, which are likely fatal flaws. The evaluation design has material weaknesses regarding operational metrics and baseline strength.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "Accepting F3 challenge as ACCEPT and maintaining position. Contesting all CHALLENGE (F1, F4, F6) and PARTIAL (F2, F5) verdicts: design controls and explicit PoC scope directly eliminate or scope-limit the cited failure mechanisms, as detailed in strengthened justifications citing methodology text (e.g., simulator tactics, oracle labels, gain attribution controls, temporal CV). No DEFER or CONCEDE needed, as concerns are resolved by design without empirical ambiguity.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 9,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -6,
+        "adjusted_severity": 3,
+        "justification": "Challenge mischaracterizes concern: simulator implements realistic AML tactics (smurfing over time, layering via networks) creating genuine temporal/sequence patterns for architecture test, not spurious tells; methodology's explicit controls ('establish that observed gains come from the sequence approach and network feature quality, not from confounding variables') eliminate mechanism of simulator artifacts biasing relative gains, by construction for PoC hypothesis.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "Oracle labels deliberately eliminate label noise confound to isolate pure sequence architecture gains in sim world; challenge overlooks that PoC claims gains under reliable supervision (not full production equivalence), with real noise expected to degrade all models proportionally (sequence potentially more robust to weak signals via temporal context), preserving relative superiority as tested.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 7,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 2,
+        "justification": "Explicit confound/leakage controls (methodology snippet) ensure time-respecting features (expanding windows, no future globals), eliminating leakage mechanism by construction in temporal CV.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 6,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 2,
+        "justification": "Challenge ignores that AUC-PR deliberately summarizes full PR curve under imbalance, enabling direct readout of recall at operational precisions/thresholds for fixed alert volumes (standard AML practice); superiority guarantees better operational points vs baselines, as metric integrates constraint-relevant tradeoffs; synthetic imbalance controlled to mimic real extremes.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 1,
+        "justification": "Handcrafted static features + XGBoost deliberately mirrors current industry non-sequence practice (basic aggregates on transactions/networks); challenge resolved as enhanced featurization would confound architecture test\u2014methodology scopes baseline to isolate sequence novelty on same inputs.",
+        "r2_challenge_response": "STRENGTHENED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "Temporal CV by month tests shift resistance to tactic evolution/customer changes within synthetic dataset spanning time; methodology controls ('gains from sequence approach') confirm robustness derives from temporal modeling, not quirks\u2014major external shifts out of PoC but within-dataset test eliminates cited mechanism.",
+        "r2_challenge_response": "STRENGTHENED"
+      }
+    ],
+    "overall_verdict": "defense_wins",
+    "verdict_rationale": "All rebuttals successfully resolve concerns via specific design controls and PoC scoping, yielding adjusted severities \u22643 across all findings. No unresolved FATAL/MATERIAL flaws or need for deferral to experiment."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 3,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=3 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=2 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-DESIGN",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "defense_wins",
+    "case_rationale": "all points resolved to defense_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}

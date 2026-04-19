@@ -1,0 +1,431 @@
+{
+  "case_id": "eval_scenario_819",
+  "stratum": "defense",
+  "flaw_category": null,
+  "run_id": 1,
+  "model_assignments": {
+    "critic": "minimax/minimax-m2.5",
+    "defender": "google/gemma-4-31b-it",
+    "adjudicator": "derived"
+  },
+  "critic_r1_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model uses only structured features while the multimodal model adds text embeddings; this comparison isolates the value of text information.",
+        "failure_mechanism": "The baseline may be missing key structured features that capture the same clinical judgment that appears in triage notes. Specifically, ESI acuity level is a nurse's clinical judgment of admission probability, and chief complaint (if available as structured data) is often the primary driver of admission decisions. If these are excluded from the baseline but implicitly captured in text embeddings, the comparison measures 'text vs. missing structured data' rather than 'text vs. structured data.' The baseline is not a fair comparator if it lacks features that would be available at triage time.",
+        "evidence_test": "List all structured features available in the ED information system at the time of triage. Verify the baseline includes chief complaint (structured), ESI level, and all other triage-relevant structured fields. Compare performance when baseline has full structured data vs. the current configuration. If adding chief complaint to baseline erases the multimodal advantage, the hypothesis is not testing what it claims.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Triage notes are validated to originate at check-in, before disposition decisions, preventing post-hoc leakage.",
+        "failure_mechanism": "The design states notes are validated but does not specify the validation mechanism. In practice, ED notes are frequently amended, copied-forward, or supplemented after disposition decisions. If a note contains any text added or modified after the admission decision (e.g., 'patient admitted to floor' in the note), this creates direct label leakage. The 'validation' is claimed but not operationalized\u2014there's no mention of examining note timestamps, comparing note content to disposition time, or excluding notes with post-disposition additions.",
+        "evidence_test": "Implement concrete validation: (1) extract timestamps for note creation and last modification, (2) filter to notes last-modified before disposition timestamp, (3) report how many notes fail this check, (4) report sensitivity analysis excluding ambiguous cases. Without this, the 'validation' is an unverified assertion.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split with two-level stratification (site and admission outcome) within each temporal segment ensures proportional representation and preserves label distribution.",
+        "failure_mechanism": "Stratification within chronological segments can create artificial data reuse when some site-time-period combinations have few samples. In months 25-30 (validation) and 31-36 (test), certain hospitals may have insufficient patients to support stratification while maintaining temporal integrity. The stratification assumes all site-period combinations have enough samples to stratify on admission outcome\u2014this may fail for lower-volume sites, forcing the split to relax temporal ordering or use inappropriate sampling. Additionally, this creates a subtle form of 'site leakage' where the model sees site-specific patterns across time that may not generalize to future periods when site practices change.",
+        "evidence_test": "Report the minimum sample size per site-period-outcome cell in validation and test sets. If any cell has <20 samples, the stratification is unreliable. Report whether any site had to be grouped or excluded due to insufficient data. Report model performance broken out by site in test set\u2014if performance varies dramatically across sites, the stratification may have created overfitted site-specific patterns.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Pre-trained text embedding models are not fine-tuned on the ED dataset; they remain frozen to avoid overfitting to this domain.",
+        "failure_mechanism": "Using frozen embeddings assumes that the pre-training domain (general biomedical or clinical text) is sufficiently similar to ED triage notes. However, ED triage notes have distinctive characteristics: abbreviations, urgency language, conditional statements about likely disposition, and informal syntax. Frozen embeddings may fail to capture domain-specific terminology (e.g., 'likely admission', 'obs to rule out', 'ambulatory vs. stretcher') that would be highly predictive. The frozen approach avoids overfitting but also prevents learning the signal that is most relevant to the hypothesis. The design does not test whether frozen vs. fine-tuned embeddings differ in performance.",
+        "evidence_test": "Compare frozen embeddings against a baseline using only structured features at multiple embedding model sizes. Report the delta. If the delta is small (<2% AUROC), the frozen embeddings are not capturing ED-specific language, and the hypothesis may need to test fine-tuned embeddings or domain adaptation. Report example embeddings nearest to high-signal ED terms to verify domain coverage.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUROC is the primary metric because it measures discrimination across all thresholds and is robust to class imbalance.",
+        "failure_mechanism": "AUROC is threshold-independent but does not reflect clinical utility at any single operating point. For ED bed planning, the specific threshold determines how many beds to reserve. A model with higher AUROC may still have worse calibration at the clinically-relevant threshold. The design includes secondary metrics (calibration, sensitivity at fixed specificity), but the primary conclusion is based on AUROC alone. If the models have different calibration curves, AUROC comparison may be misleading for deployment decisions.",
+        "evidence_test": "Report calibration curves for both models. Report sensitivity at a fixed specificity that corresponds to a clinically-relevant operating point (e.g., 90% specificity = flagging top 10% risk for escalation). If models have similar AUROC but different calibration at the operating threshold, report this explicitly as a limitation.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Note length is included as an explicit feature in both models, allowing the model to account for verbosity.",
+        "failure_mechanism": "Including note length in both models controls for documentation volume but does not prevent the multimodal model from using note length as a proxy for acuity (sicker patients get longer notes). This creates an asymmetry: the multimodal model has an additional feature (embeddings) that correlates with note length, while the baseline only has note length as a standalone feature. If note length itself is highly predictive (because longer notes correlate with higher acuity/admission), both models have access to it, but the multimodal model has additional correlated signal. The secondary analysis on 'standardized or minimal-text subsets' is mentioned but not specified\u2014it's unclear how this will be executed or what threshold defines 'minimal.'",
+        "evidence_test": "Report the standalone predictive power of note length (AUROC with note length alone). Report performance on a subset where note length is normalized or where note length variance is regressed out. If the multimodal advantage persists after controlling for note length, this concern is mitigated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The hypothesis is narrowly scoped to comparative predictive accuracy on a held-out future cohort.",
+        "failure_mechanism": "The scope explicitly excludes clinical efficacy or causation, which is appropriate. However, this limits the actionable conclusion: even if multimodal outperforms, it does not establish that adding text to triage workflow improves patient outcomes, clinician adoption, or operational efficiency. This is a scope limitation, not a flaw.",
+        "evidence_test": "No test needed\u2014this is a scope statement. The design correctly acknowledges the limitation.",
+        "flaw_category": "context_dependent"
+      }
+    ],
+    "summary": "Two FATAL flaws undermine the hypothesis: (1) the baseline may be missing key structured features (chief complaint, ESI level) that capture the same clinical judgment present in text, making the comparison unfair; (2) the 'validation' of note timing is an unverified assertion without concrete implementation, creating potential label leakage. Additional material concerns include unreliable stratification in low-volume site-period cells and frozen embeddings that may miss domain-specific ED terminology.",
+    "no_material_findings": false
+  },
+  "defender_r1_output": {
+    "pass_1_analysis": "F1 claims the baseline is unfair because it might miss structured features like ESI or chief complaint. However, Section 3 explicitly lists 'ESI acuity level' as a structured baseline feature. Chief complaint is listed as a multimodal augmented feature (embedding), but the critic's claim that the baseline is 'missing' it is a misunderstanding of the design intent: the goal is to see if the *textual representation* (embeddings) adds value over the *structured* triage data. Since ESI (the primary clinical judgment) is already in the baseline, the baseline is a strong, fair comparator. \n\nF2 raises a critical point about label leakage via note amendments. Section 7 claims notes are 'validated to originate at check-in,' but the methodology does not specify the technical mechanism (e.g., timestamp filtering). In a real EHR, notes are often updated. Without a specified timestamp-based filter, the claim of 'validation' is an assertion without a described control. This is a genuine gap in the operationalization of the design.\n\nF3 argues that stratification within chronological splits might cause issues for low-volume sites or create 'site leakage.' However, the split is strictly chronological (Months 1-24, 25-30, 31-36). Stratification *within* those fixed blocks does not violate temporal ordering; it only ensures the distribution of sites and outcomes is balanced across the train/val/test sets. Site-specific patterns are expected to be learned; that is the purpose of including the site identifier as a feature. This is a misunderstanding of how stratification within a temporal block works.\n\nF4 suggests frozen embeddings might miss ED-specific nuances. This is a valid observation about model performance, but not a flaw in the experimental design. The hypothesis is whether multimodal data (via these embeddings) outperforms structured data. Whether fine-tuning would perform *better* is a separate optimization question, not a validity flaw for the current hypothesis. The frozen approach is a deliberate design choice to prevent domain-overfitting in a PoC.\n\nF5 argues AUROC doesn't reflect clinical utility. The design acknowledges this by including calibration and sensitivity/specificity as secondary metrics (Section 6). For a hypothesis investigation on 'discrimination,' AUROC is the standard and appropriate primary metric. The concern is a general limitation of the metric, not a flaw in the design.\n\nF6 claims note length creates an asymmetry. However, the design explicitly includes note length in *both* models (Section 3 and 7). If note length is a proxy for acuity, both models benefit equally from that signal. The multimodal model's advantage would then be the *content* of the note, not the length. The secondary analysis on minimal-text subsets is mentioned as a control to further isolate this.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 3,
+        "justification": "The critic claims ESI is missing from the baseline; however, Section 3 explicitly lists 'ESI acuity level' as a structured baseline feature. The baseline therefore already includes the primary nurse-driven clinical judgment of acuity."
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic is correct that the 'validation' mentioned in Section 7 is not operationalized with a specific mechanism. To settle this: (1) we will implement a filter requiring the note's 'last_modified_timestamp' < 'disposition_timestamp'. (2) If the number of excluded notes is <5%, the design is vindicated. (3) If a large percentage are excluded or if performance drops significantly after filtering, the critique is validated. The primary conclusion remains valid if the filtered dataset still shows a multimodal advantage."
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -5,
+        "adjusted_severity": 0,
+        "justification": "The split is strictly chronological by month. Stratification occurs *within* those fixed temporal blocks. This does not relax temporal ordering or create leakage; it simply ensures the test set is representative of the site distribution. Site-specific patterns are intended to be captured via the site identifier feature."
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The scope of the PoC is to test if multimodal information improves discrimination over structured data. Whether frozen embeddings are optimal compared to fine-tuned ones is an optimization problem for a later phase, not a flaw in the current comparative hypothesis."
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The design already includes calibration and sensitivity/specificity as secondary metrics (Section 6) to address clinical utility. AUROC is the correct primary metric for a discrimination hypothesis."
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "REBUT-DESIGN",
+        "severity_adjustment": -2,
+        "adjusted_severity": 0,
+        "justification": "Note length is provided to both models (Section 3), eliminating the asymmetry. Any additional gain in the multimodal model is attributable to the semantic content of the embeddings, not the length of the note."
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Most findings were rebutted as design choices or misunderstandings. However, the lack of a specified timestamp-based filter for note modifications (F2) is a genuine gap that requires an empirical check to ensure no label leakage occurred."
+  },
+  "critic_r2_output": {
+    "challenges": [
+      {
+        "finding_id": "F1",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 5,
+        "reasoning": "The defender correctly identifies that ESI acuity level is explicitly listed in Section 3. However, my finding also raised concern about chief complaint as a potentially missing structured feature, which the defender did not address at all. Chief complaint is a key structured field in ED triage that often drives admission decisions, and it's unclear whether it's included in the baseline. The broader concern remains: the baseline may still be missing other structured features that capture the same clinical judgment appearing in triage notes. The severity adjustment from 8 to 3 is disproportionate\u2014while ESI is addressed, the chief complaint gap and broader fairness concern persist."
+      },
+      {
+        "finding_id": "F2",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's rebuttal is a proper DEFER: they acknowledge the validation was not operationalized and propose concrete implementation steps (filtering by timestamp, reporting exclusion rates, sensitivity analysis). This directly matches my evidence test. The rebuttal is methodologically sound and addresses the failure mechanism."
+      },
+      {
+        "finding_id": "F3",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 3,
+        "reasoning": "The defender correctly clarifies that stratification occurs within fixed temporal blocks, not across them, so temporal ordering is preserved. This addresses part of my concern. However, my finding also raised the issue of sample size adequacy in site-period-outcome cells\u2014the defender did not address whether minimum sample thresholds were checked or how sparse cells were handled. Additionally, the 'site leakage' concern (site-specific patterns over time that may not generalize) is not addressed by noting that site is included as a feature. The severity adjustment from 5 to 0 is too large; some residual concern remains."
+      },
+      {
+        "finding_id": "F4",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 0,
+        "reasoning": "The defender's scope rebuttal is valid. The experiment tests whether adding multimodal information improves discrimination over structured data\u2014whether frozen embeddings are optimal compared to fine-tuned ones is a separate optimization question for a later phase. The scope limitation is reasonable and does not invalidate the comparative hypothesis."
+      },
+      {
+        "finding_id": "F5",
+        "challenge_verdict": "ACCEPT",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly points out that calibration and sensitivity/specificity are included as secondary metrics (Section 6), which addresses the clinical utility concern. AUROC is appropriate as the primary metric for a discrimination hypothesis. The rebuttal is valid."
+      },
+      {
+        "finding_id": "F6",
+        "challenge_verdict": "PARTIAL",
+        "updated_severity": 1,
+        "reasoning": "The defender correctly notes that note length is provided to both models. However, my concern was more subtle: the multimodal model's embeddings are generated from the same notes that have varying lengths, so the embeddings inherently contain length-correlated information. The multimodal model effectively has two correlated channels to the same underlying information (explicit note length feature + embeddings that encode length-related patterns), while the baseline has only one. The defender did not address this specific asymmetry. The adjustment from 2 to 0 is too large; a minor residual concern remains."
+      }
+    ]
+  },
+  "defender_r2_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F4, and F5 as they were accepted. For F1, I am switching to DEFER because while ESI is present, the 'chief complaint' as a structured feature is not explicitly listed in Section 3, creating a genuine ambiguity about the baseline's completeness. For F3, I am switching to DEFER regarding the sample size/sparsity concern, as the methodology does not explicitly define a minimum cell threshold for stratification. For F6, I am switching to DEFER because the critic's point about the 'dual-channel' correlation between embeddings and length is a valid mechanistic observation that cannot be dismissed by simple feature parity; it requires empirical verification via the mentioned secondary analysis.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "While ESI is explicitly included, the critic is correct that 'chief complaint' as a structured field is not listed in Section 3. To settle this: (1) we will audit the ED information system for a structured 'Chief Complaint' field; (2) if it exists, we will add it to the baseline; (3) we will compare AUROC with and without this feature in the baseline. If adding the structured chief complaint erases the multimodal advantage, the critique is validated. However, the primary conclusion (that multimodal data adds value) remains valid if the multimodal model still outperforms the baseline containing all available structured triage fields, as the text embeddings capture narrative nuance that a structured chief complaint field cannot.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic accepted the R1 DEFER. We will implement a filter requiring 'last_modified_timestamp' < 'disposition_timestamp'. If excluded notes are <5%, the design is vindicated. If a large percentage are excluded, the critique is validated. The primary conclusion remains valid if the filtered dataset still shows a multimodal advantage.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's concern regarding sample size in site-period-outcome cells is valid as the methodology does not specify a minimum threshold. To settle this: (1) we will report the minimum sample size per cell; (2) if cells <20 exist, we will re-run the test set evaluation without stratification to see if performance shifts. If performance drops or variance increases significantly, the critique is validated. The primary conclusion remains valid because the temporal split is the primary guardrail; stratification is a secondary tool for representativeness. Even if stratification is slightly unstable for low-volume sites, the overall AUROC across the entire test cohort remains a valid measure of discrimination.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The scope of the PoC is to test if multimodal information improves discrimination over structured data. Whether frozen embeddings are optimal compared to fine-tuned ones is an optimization problem for a later phase, not a flaw in the current comparative hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The design already includes calibration and sensitivity/specificity as secondary metrics (Section 6) to address clinical utility. AUROC is the correct primary metric for a discrimination hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The critic correctly identifies a 'dual-channel' correlation where embeddings may implicitly encode length. To settle this: (1) we will execute the secondary analysis mentioned in Section 7 on 'minimal-text subsets' (defined as notes within 1 standard deviation of the median length); (2) if the multimodal advantage persists on this subset, the design is vindicated. If the advantage disappears, the critique is validated. The primary conclusion remains valid because even if length is a proxy for acuity, the baseline model also has the explicit length feature; the multimodal model's advantage would then stem from the *interaction* between length and semantic content, which is itself a valid predictive signal.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several findings (F1, F2, F3, F6) have been moved to DEFER, as the review surfaced genuine ambiguities regarding feature completeness, data sparsity, and signal correlation that require empirical resolution to fully settle."
+  },
+  "critic_output": {
+    "findings": [
+      {
+        "finding_id": "F1",
+        "severity": 8,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "The baseline model uses only structured features while the multimodal model adds text embeddings; this comparison isolates the value of text information.",
+        "failure_mechanism": "The baseline may be missing key structured features that capture the same clinical judgment that appears in triage notes. Specifically, ESI acuity level is a nurse's clinical judgment of admission probability, and chief complaint (if available as structured data) is often the primary driver of admission decisions. If these are excluded from the baseline but implicitly captured in text embeddings, the comparison measures 'text vs. missing structured data' rather than 'text vs. structured data.' The baseline is not a fair comparator if it lacks features that would be available at triage time.",
+        "evidence_test": "List all structured features available in the ED information system at the time of triage. Verify the baseline includes chief complaint (structured), ESI level, and all other triage-relevant structured fields. Compare performance when baseline has full structured data vs. the current configuration. If adding chief complaint to baseline erases the multimodal advantage, the hypothesis is not testing what it claims.",
+        "flaw_category": "missing_baselines"
+      },
+      {
+        "finding_id": "F2",
+        "severity": 7,
+        "severity_label": "FATAL",
+        "suppressed": false,
+        "claim": "Triage notes are validated to originate at check-in, before disposition decisions, preventing post-hoc leakage.",
+        "failure_mechanism": "The design states notes are validated but does not specify the validation mechanism. In practice, ED notes are frequently amended, copied-forward, or supplemented after disposition decisions. If a note contains any text added or modified after the admission decision (e.g., 'patient admitted to floor' in the note), this creates direct label leakage. The 'validation' is claimed but not operationalized\u2014there's no mention of examining note timestamps, comparing note content to disposition time, or excluding notes with post-disposition additions.",
+        "evidence_test": "Implement concrete validation: (1) extract timestamps for note creation and last modification, (2) filter to notes last-modified before disposition timestamp, (3) report how many notes fail this check, (4) report sensitivity analysis excluding ambiguous cases. Without this, the 'validation' is an unverified assertion.",
+        "flaw_category": "signal_leakage"
+      },
+      {
+        "finding_id": "F3",
+        "severity": 5,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "The temporal split with two-level stratification (site and admission outcome) within each temporal segment ensures proportional representation and preserves label distribution.",
+        "failure_mechanism": "Stratification within chronological segments can create artificial data reuse when some site-time-period combinations have few samples. In months 25-30 (validation) and 31-36 (test), certain hospitals may have insufficient patients to support stratification while maintaining temporal integrity. The stratification assumes all site-period combinations have enough samples to stratify on admission outcome\u2014this may fail for lower-volume sites, forcing the split to relax temporal ordering or use inappropriate sampling. Additionally, this creates a subtle form of 'site leakage' where the model sees site-specific patterns across time that may not generalize to future periods when site practices change.",
+        "evidence_test": "Report the minimum sample size per site-period-outcome cell in validation and test sets. If any cell has <20 samples, the stratification is unreliable. Report whether any site had to be grouped or excluded due to insufficient data. Report model performance broken out by site in test set\u2014if performance varies dramatically across sites, the stratification may have created overfitted site-specific patterns.",
+        "flaw_category": "implicit_dist_assump"
+      },
+      {
+        "finding_id": "F4",
+        "severity": 4,
+        "severity_label": "MATERIAL",
+        "suppressed": false,
+        "claim": "Pre-trained text embedding models are not fine-tuned on the ED dataset; they remain frozen to avoid overfitting to this domain.",
+        "failure_mechanism": "Using frozen embeddings assumes that the pre-training domain (general biomedical or clinical text) is sufficiently similar to ED triage notes. However, ED triage notes have distinctive characteristics: abbreviations, urgency language, conditional statements about likely disposition, and informal syntax. Frozen embeddings may fail to capture domain-specific terminology (e.g., 'likely admission', 'obs to rule out', 'ambulatory vs. stretcher') that would be highly predictive. The frozen approach avoids overfitting but also prevents learning the signal that is most relevant to the hypothesis. The design does not test whether frozen vs. fine-tuned embeddings differ in performance.",
+        "evidence_test": "Compare frozen embeddings against a baseline using only structured features at multiple embedding model sizes. Report the delta. If the delta is small (<2% AUROC), the frozen embeddings are not capturing ED-specific language, and the hypothesis may need to test fine-tuned embeddings or domain adaptation. Report example embeddings nearest to high-signal ED terms to verify domain coverage.",
+        "flaw_category": "synthetic_data_assump"
+      },
+      {
+        "finding_id": "F5",
+        "severity": 3,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "AUROC is the primary metric because it measures discrimination across all thresholds and is robust to class imbalance.",
+        "failure_mechanism": "AUROC is threshold-independent but does not reflect clinical utility at any single operating point. For ED bed planning, the specific threshold determines how many beds to reserve. A model with higher AUROC may still have worse calibration at the clinically-relevant threshold. The design includes secondary metrics (calibration, sensitivity at fixed specificity), but the primary conclusion is based on AUROC alone. If the models have different calibration curves, AUROC comparison may be misleading for deployment decisions.",
+        "evidence_test": "Report calibration curves for both models. Report sensitivity at a fixed specificity that corresponds to a clinically-relevant operating point (e.g., 90% specificity = flagging top 10% risk for escalation). If models have similar AUROC but different calibration at the operating threshold, report this explicitly as a limitation.",
+        "flaw_category": "metric_limitations"
+      },
+      {
+        "finding_id": "F6",
+        "severity": 2,
+        "severity_label": "MINOR",
+        "suppressed": false,
+        "claim": "Note length is included as an explicit feature in both models, allowing the model to account for verbosity.",
+        "failure_mechanism": "Including note length in both models controls for documentation volume but does not prevent the multimodal model from using note length as a proxy for acuity (sicker patients get longer notes). This creates an asymmetry: the multimodal model has an additional feature (embeddings) that correlates with note length, while the baseline only has note length as a standalone feature. If note length itself is highly predictive (because longer notes correlate with higher acuity/admission), both models have access to it, but the multimodal model has additional correlated signal. The secondary analysis on 'standardized or minimal-text subsets' is mentioned but not specified\u2014it's unclear how this will be executed or what threshold defines 'minimal.'",
+        "evidence_test": "Report the standalone predictive power of note length (AUROC with note length alone). Report performance on a subset where note length is normalized or where note length variance is regressed out. If the multimodal advantage persists after controlling for note length, this concern is mitigated.",
+        "flaw_category": "eval_inflation"
+      },
+      {
+        "finding_id": "F7",
+        "severity": 1,
+        "severity_label": "NIT",
+        "suppressed": true,
+        "claim": "The hypothesis is narrowly scoped to comparative predictive accuracy on a held-out future cohort.",
+        "failure_mechanism": "The scope explicitly excludes clinical efficacy or causation, which is appropriate. However, this limits the actionable conclusion: even if multimodal outperforms, it does not establish that adding text to triage workflow improves patient outcomes, clinician adoption, or operational efficiency. This is a scope limitation, not a flaw.",
+        "evidence_test": "No test needed\u2014this is a scope statement. The design correctly acknowledges the limitation.",
+        "flaw_category": "context_dependent"
+      }
+    ],
+    "summary": "Two FATAL flaws undermine the hypothesis: (1) the baseline may be missing key structured features (chief complaint, ESI level) that capture the same clinical judgment present in text, making the comparison unfair; (2) the 'validation' of note timing is an unverified assertion without concrete implementation, creating potential label leakage. Additional material concerns include unreliable stratification in low-volume site-period cells and frozen embeddings that may miss domain-specific ED terminology.",
+    "no_material_findings": false
+  },
+  "defender_output": {
+    "pass_2_analysis": "I am maintaining my positions on F2, F4, and F5 as they were accepted. For F1, I am switching to DEFER because while ESI is present, the 'chief complaint' as a structured feature is not explicitly listed in Section 3, creating a genuine ambiguity about the baseline's completeness. For F3, I am switching to DEFER regarding the sample size/sparsity concern, as the methodology does not explicitly define a minimum cell threshold for stratification. For F6, I am switching to DEFER because the critic's point about the 'dual-channel' correlation between embeddings and length is a valid mechanistic observation that cannot be dismissed by simple feature parity; it requires empirical verification via the mentioned secondary analysis.",
+    "rebuttals": [
+      {
+        "finding_id": "F1",
+        "original_severity": 8,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 8,
+        "justification": "While ESI is explicitly included, the critic is correct that 'chief complaint' as a structured field is not listed in Section 3. To settle this: (1) we will audit the ED information system for a structured 'Chief Complaint' field; (2) if it exists, we will add it to the baseline; (3) we will compare AUROC with and without this feature in the baseline. If adding the structured chief complaint erases the multimodal advantage, the critique is validated. However, the primary conclusion (that multimodal data adds value) remains valid if the multimodal model still outperforms the baseline containing all available structured triage fields, as the text embeddings capture narrative nuance that a structured chief complaint field cannot.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F2",
+        "original_severity": 7,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 7,
+        "justification": "The critic accepted the R1 DEFER. We will implement a filter requiring 'last_modified_timestamp' < 'disposition_timestamp'. If excluded notes are <5%, the design is vindicated. If a large percentage are excluded, the critique is validated. The primary conclusion remains valid if the filtered dataset still shows a multimodal advantage.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F3",
+        "original_severity": 5,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 5,
+        "justification": "The critic's concern regarding sample size in site-period-outcome cells is valid as the methodology does not specify a minimum threshold. To settle this: (1) we will report the minimum sample size per cell; (2) if cells <20 exist, we will re-run the test set evaluation without stratification to see if performance shifts. If performance drops or variance increases significantly, the critique is validated. The primary conclusion remains valid because the temporal split is the primary guardrail; stratification is a secondary tool for representativeness. Even if stratification is slightly unstable for low-volume sites, the overall AUROC across the entire test cohort remains a valid measure of discrimination.",
+        "r2_challenge_response": "DEFERRED"
+      },
+      {
+        "finding_id": "F4",
+        "original_severity": 4,
+        "rebuttal_type": "REBUT-SCOPE",
+        "severity_adjustment": -4,
+        "adjusted_severity": 0,
+        "justification": "The scope of the PoC is to test if multimodal information improves discrimination over structured data. Whether frozen embeddings are optimal compared to fine-tuned ones is an optimization problem for a later phase, not a flaw in the current comparative hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F5",
+        "original_severity": 3,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "severity_adjustment": -2,
+        "adjusted_severity": 1,
+        "justification": "The design already includes calibration and sensitivity/specificity as secondary metrics (Section 6) to address clinical utility. AUROC is the correct primary metric for a discrimination hypothesis.",
+        "r2_challenge_response": "MAINTAINED"
+      },
+      {
+        "finding_id": "F6",
+        "original_severity": 2,
+        "rebuttal_type": "DEFER",
+        "severity_adjustment": 0,
+        "adjusted_severity": 2,
+        "justification": "The critic correctly identifies a 'dual-channel' correlation where embeddings may implicitly encode length. To settle this: (1) we will execute the secondary analysis mentioned in Section 7 on 'minimal-text subsets' (defined as notes within 1 standard deviation of the median length); (2) if the multimodal advantage persists on this subset, the design is vindicated. If the advantage disappears, the critique is validated. The primary conclusion remains valid because even if length is a proxy for acuity, the baseline model also has the explicit length feature; the multimodal model's advantage would then stem from the *interaction* between length and semantic content, which is itself a valid predictive signal.",
+        "r2_challenge_response": "DEFERRED"
+      }
+    ],
+    "overall_verdict": "empirical_test_agreed",
+    "verdict_rationale": "Several findings (F1, F2, F3, F6) have been moved to DEFER, as the review surfaced genuine ambiguities regarding feature completeness, data sparsity, and signal correlation that require empirical resolution to fully settle."
+  },
+  "adjudicator_output": {
+    "point_verdicts": [
+      {
+        "finding_id": "F1",
+        "adjusted_severity": 8,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=8 \u2265 7 + adj_sev=8 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F2",
+        "adjusted_severity": 7,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "critique_wins",
+        "rule_applied": "constitutional: DEFER + orig_sev=7 \u2265 7 + adj_sev=7 \u2265 6 \u2192 critique_wins (FATAL finding unresolved by DEFER)"
+      },
+      {
+        "finding_id": "F3",
+        "adjusted_severity": 5,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "empirical_test_agreed",
+        "rule_applied": "adj_sev=5, DEFER \u2192 empirical_test_agreed"
+      },
+      {
+        "finding_id": "F4",
+        "adjusted_severity": 0,
+        "rebuttal_type": "REBUT-SCOPE",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=0 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F5",
+        "adjusted_severity": 1,
+        "rebuttal_type": "REBUT-IMMATERIAL",
+        "point_verdict": "defense_wins",
+        "rule_applied": "adj_sev=1 \u2264 3 \u2192 defense_wins"
+      },
+      {
+        "finding_id": "F6",
+        "adjusted_severity": 2,
+        "rebuttal_type": "DEFER",
+        "point_verdict": "defense_wins",
+        "rule_applied": "constitutional: DEFER + adj_sev=2 \u2264 3 \u2192 defense_wins"
+      }
+    ],
+    "case_verdict": "critique_wins",
+    "case_rationale": "2 point(s) reached critique_wins",
+    "preflight_checklist": [],
+    "proposed_experiments": []
+  },
+  "multiround": true
+}
