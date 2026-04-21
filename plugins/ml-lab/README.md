@@ -26,6 +26,7 @@ Skills are user-invocable slash commands that live in `skills/<name>/SKILL.md`.
 | Skill | Invocation | Applicable to |
 |-------|-----------|---------------|
 | `intent-watch` | `/intent-watch <experiment_dir> <source_of_truth>` | **Gate 1 (mandatory):** run once before Step 6 begins — must return a clean pass; any HIGH or CRITICAL conflict blocks the experiment. **Step 6 (active loop):** run `/loop 2m /intent-watch <experiment_dir> HYPOTHESIS.md` during scripting to catch pre-registration drift immediately. Not useful before `HYPOTHESIS.md` exists or after the experiment is complete. |
+| `deep-dive` | `/deep-dive [experiment_path]` | After any investigation phase or full run is complete. Surveys scripts, results schemas, journal decisions, and existing docs to produce `DEEP_DIVE.md` — a comprehensive technical reference covering data construction, model architecture, scoring mechanics, statistical methods, per-test detail, quality gates, aggregation, and key design decisions with sources cited. Works with or without a project journal; degrades gracefully when artifacts are missing. |
 
 ## What these copies are
 
