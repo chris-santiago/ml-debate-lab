@@ -91,6 +91,10 @@ Before drafting any non-trivial plan, query the journal:
 
 When a plan step is informed by a journal entry, cite the short ID inline (e.g. `[→ issue 71af7634]`). A `decision` entry is a resolved constraint — retrieve full context before re-opening: `python3 .project-log/journal_query.py --entry <id>`.
 
+## Journal — Committing
+
+The word **"commit"** means the **ml-journal `/log-commit` skill** — not bare `git commit`, not any other commit helper. The skill stages files, synthesizes a commit message, creates the commit, and writes a `git` journal entry in one step. Never use a different commit path in this project.
+
 ## Journal — Proactive Logging
 
 When `.project-log/journal.jsonl` exists, propose logging at natural pauses — not mid-investigation. Always ask first; full draft only after user confirms.
