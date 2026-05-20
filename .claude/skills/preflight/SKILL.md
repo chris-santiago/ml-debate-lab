@@ -120,11 +120,21 @@ done
 The Execution Rules section of `plan/PLAN.md` contains exactly one sentence of the form:
 > `Agents (`ml-critic`, `ml-defender`, ...) are invoked by name via the Agent tool.`
 
-Extract agent names from that sentence only — not from the full file. Run:
+Extract agent names from that sentence only — not from the full file. Resolve the ml-lab plugin install path from the registry, then check for each agent there:
 ```bash
+INSTALL_PATH=$(python3 -c "
+import json
+with open('$HOME/.claude/plugins/installed_plugins.json') as f:
+    d = json.load(f)
+for key, entries in d.get('plugins', {}).items():
+    if key.startswith('ml-lab@') and entries:
+        print(entries[0].get('installPath', ''))
+        break
+")
+
 grep 'invoked by name' plan/PLAN.md | grep -o '`[a-z][a-z-]*`' | tr -d '`' | while read agent; do
-  if [ -f "$HOME/.claude/agents/${agent}.md" ]; then
-    echo "INSTALLED: $agent"
+  if [ -n "$INSTALL_PATH" ] && [ -f "$INSTALL_PATH/${agent}.md" ]; then
+    echo "INSTALLED: $agent (plugin cache)"
   else
     echo "MISSING: $agent"
   fi
@@ -134,7 +144,7 @@ done
 The pattern `` `[a-z][a-z-]*` `` matches only lowercase-letter agent names in backticks — it will not match schema field names, step numbers, or other backtick-quoted terms in the file.
 
 - PASS if all agents print INSTALLED.
-- FAIL for each MISSING agent. Remediation: `cp plugins/ml-lab/<agent-name>.md ~/.claude/agents/` from the repo root.
+- FAIL for each MISSING agent. Remediation: `claude plugin install ml-lab@ml-lab` to install the plugin, or verify the plugin cache is intact.
 
 ---
 

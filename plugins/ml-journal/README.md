@@ -28,17 +28,14 @@ cp -r plugins/ml-journal /your/repo/plugins/ml-journal
 
 Then register it in your repo's `.claude-plugin/marketplace.json` and run `claude plugin install ml-journal@your-repo`. Skills are auto-discovered from `plugins/ml-journal/skills/`.
 
-**Manual option 2 — copy skills directly into `~/.claude/`:**
+**Manual option 2 — copy skills directly into `~/.claude/skills/`:**
 
 ```bash
 # Copy all skills into your global Claude Code skills directory
 cp -r plugins/ml-journal/skills/* ~/.claude/skills/
-
-# Copy the report-drafter agent
-cp plugins/ml-journal/report-drafter.md ~/.claude/agents/
 ```
 
-Skills copied to `~/.claude/skills/` are available globally across all repos without any plugin install step. Run `/log-init` in any repo to initialize the journal.
+Skills copied to `~/.claude/skills/` are available globally across all repos without any plugin install step. The `report-drafter` agent is loaded automatically from the plugin cache when installed via option 1. Run `/log-init` in any repo to initialize the journal.
 
 ---
 

@@ -15,7 +15,7 @@ The original FastText idea has now recursed several levels deep into its own eva
 ## Prerequisites
 - `uv` must be installed — no pyproject.toml exists; all scripts use PEP 723 inline headers
 - All scripts must be run via `uv run <script>.py` (never `python3` directly)
-- Agents (`ml-critic`, `ml-defender`, etc.) must be installed in `~/.claude/agents/` — copy from `plugins/ml-lab/` or run `/plugin install`
+- Agents (`ml-critic`, `ml-defender`, etc.) are loaded from the plugin cache — run `claude plugin install ml-lab@ml-lab` if not installed
 
 ## Experiment Structure
 - v2: complete — results in `experiments/self_debate_experiment_v2/`
@@ -79,6 +79,6 @@ The word **"commit"** means the **ml-journal `/log-commit` skill** — not bare 
 **Never switch branches without explicit user approval.** Always confirm the target branch and reason before running `git checkout` or `git switch`. This repo has multiple long-lived experiment branches with large output trees — an accidental switch can create confusing diffs or lose working state.
 
 ## Agent Sync
-Plugin cache is kept in sync automatically via a PostToolUse hook (`.claude/hooks/sync-plugin-cache.sh`). Any edit to `plugins/ml-lab/` or `plugins/ml-journal/` is rsynced to the cache immediately — no manual reinstall needed.
+Plugin cache is kept in sync automatically via a PostToolUse hook (`.claude/hooks/sync-plugin-cache.sh`). Any edit to `plugins/ml-lab/` or `plugins/ml-journal/` is rsynced to the versioned plugin cache immediately — no manual reinstall needed.
 
 
