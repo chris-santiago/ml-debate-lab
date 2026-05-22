@@ -1,6 +1,6 @@
 # ml-lab
 
-`ml-lab` is a Claude Code agent that runs structured ML hypothesis investigations using an adversarial critic-defender debate protocol (default) or an ensemble of independent critics for high-recall sweeps (opt-in). It enforces rigor at every step — pre-specified metrics, confidence-tiered review findings, agreed experiments only — and produces a self-contained report with a production re-evaluation. The methodology has been empirically evaluated across two studies with pre-registered hypotheses — detection and ambiguity judgment performance validated; defense-case performance under v8 calibration still pending. See [Part 2](#part-2-the-experiment-behind-ml-lab) for results.
+`ml-lab` is a Claude Code plugin that runs structured ML hypothesis investigations using an adversarial critic-defender debate protocol (default) or an ensemble of independent critics for high-recall sweeps (opt-in). It enforces rigor at every step — pre-specified metrics, confidence-tiered review findings, agreed experiments only — and produces a self-contained report with a production re-evaluation. The methodology has been empirically evaluated across two studies with pre-registered hypotheses — detection and ambiguity judgment performance validated; defense-case performance under v8 calibration still pending. See [Part 2](#part-2-the-experiment-behind-ml-lab) for results.
 
 **Jump to:** [Part 1 — Using ml-lab](#part-1-using-ml-lab) · [Part 2 — The Experiment](#part-2-the-experiment-behind-ml-lab) · [FAQ](#faq) · [Artifact Index](#artifact-index) · [ml-journal](#ml-journal--session-audit-trail)
 
@@ -17,22 +17,21 @@
 /plugin install ml-lab@ml-lab
 ```
 
-This installs all eight agent files to `~/.claude/agents/` automatically.
+This installs the `/ml-lab` skill and all seven subagent files automatically.
 
 **Manual install:**
 
 ```bash
-cp plugins/ml-lab/ml-lab.md ~/.claude/agents/
-cp plugins/ml-lab/ml-critic.md ~/.claude/agents/
-cp plugins/ml-lab/ml-critic-r2.md ~/.claude/agents/
-cp plugins/ml-lab/ml-defender.md ~/.claude/agents/
-cp plugins/ml-lab/research-reviewer.md ~/.claude/agents/
-cp plugins/ml-lab/research-reviewer-lite.md ~/.claude/agents/
-cp plugins/ml-lab/readme-rewriter.md ~/.claude/agents/
-cp plugins/ml-lab/report-writer.md ~/.claude/agents/
+cp plugins/ml-lab/agents/ml-critic.md ~/.claude/agents/
+cp plugins/ml-lab/agents/ml-critic-r2.md ~/.claude/agents/
+cp plugins/ml-lab/agents/ml-defender.md ~/.claude/agents/
+cp plugins/ml-lab/agents/research-reviewer.md ~/.claude/agents/
+cp plugins/ml-lab/agents/research-reviewer-lite.md ~/.claude/agents/
+cp plugins/ml-lab/agents/readme-rewriter.md ~/.claude/agents/
+cp plugins/ml-lab/agents/report-writer.md ~/.claude/agents/
 ```
 
-Once installed, Claude Code will make `ml-lab` available as a spawnable agent. Invoke it by describing an ML hypothesis — it will ask you to sharpen it into a falsifiable claim before starting the investigation.
+Once installed, Claude Code will make `/ml-lab` available as a skill. Invoke it by describing an ML hypothesis — it will ask you to sharpen it into a falsifiable claim before starting the investigation.
 
 **Invoking:**
 
@@ -45,9 +44,9 @@ Once installed, Claude Code will make `ml-lab` available as a spawnable agent. I
 
 ### What ml-lab Does
 
-`ml-lab` is a Claude Code subagent that runs a structured ML hypothesis investigation workflow: (1) sharpen the hypothesis into a falsifiable claim, (2) agree on metrics and pass criteria before any code runs, (3) build a minimal PoC, (4) ensemble or adversarial review, (5) agreed empirical tests, (6) run experiments, (7) synthesize conclusions, (8) evidence-informed re-critique if findings are surprising, (9) production re-evaluation against operational constraints, (10) optional peer review loop (`research-reviewer` + `research-reviewer-lite`), (11) optional final technical report in results mode. Steps 10–11 are user-confirmed — neither starts automatically.
+`ml-lab` is a Claude Code skill that runs a structured ML hypothesis investigation workflow in the main session: (1) sharpen the hypothesis into a falsifiable claim, (2) agree on metrics and pass criteria before any code runs, (3) build a minimal PoC, (4) ensemble or adversarial review, (5) agreed empirical tests, (6) run experiments, (7) synthesize conclusions, (8) evidence-informed re-critique if findings are surprising, (9) production re-evaluation against operational constraints, (10) optional peer review loop (`research-reviewer` + `research-reviewer-lite`), (11) optional final technical report in results mode. Steps 10–11 are user-confirmed — neither starts automatically.
 
-The workflow is designed for rigor over speed. Given a hypothesis, `ml-lab` first sharpens it into a falsifiable claim with agreed metrics, then builds a minimal runnable PoC. From there it routes to one of two review modes:
+The workflow is designed for rigor over speed. Given a hypothesis, `/ml-lab` first sharpens it into a falsifiable claim with agreed metrics, then builds a minimal runnable PoC. From there it routes to one of two review modes:
 
 **Debate mode (default):** `ml-critic` and `ml-defender` are dispatched as adversarial subagents with distinct mandates. Stage A runs once: `ml-critic` (R1) identifies every implicit claim the PoC makes but hasn't tested; `ml-defender` (R1) responds point-by-point using a 7-type structured rebuttal taxonomy (CONCEDE, REBUT-DESIGN, REBUT-SCOPE, REBUT-EVIDENCE, REBUT-IMMATERIAL, DEFER, EXONERATE). Stage B runs a convergence loop (min 2, max 4 rounds): `ml-critic-r2` challenges each rebuttal, `ml-defender` responds, and `derive_verdict()` — a pure Python function (no LLM) that maps final-round severity, rebuttal type, and acceptance to a case-level verdict in `{critique_wins, defense_wins, empirical_test_agreed}` — deterministically computes a per-finding and case-level verdict. The loop stops when verdicts stabilize or the round cap is reached. Recommended for all cases following v8 calibration fixes — see [Part 2](#part-2-the-experiment-behind-ml-lab).
 
@@ -141,7 +140,7 @@ flowchart TD
     S13GATE[/"❓ README readability review?<br/>User confirmation required"/]
     S13GATE -- "No" --> DONE
     S13GATE -- "Yes" --> S13["Step 13 — README Rewrite<br/>readme-rewriter · outside reader<br/>diagnose → outline → rewrite"]
-    S13 --> DONE(["✓ Final Output to Caller"])
+    S13 --> DONE(["✓ Investigation Complete"])
 ```
 
 </details>
@@ -150,23 +149,24 @@ flowchart TD
 
 ### How the Agents Interact
 
-| File | Role | Spawned by |
-|------|------|------------|
-| `ml-lab.md` | Orchestrator — runs the full 13-step investigation | User / calling agent |
-| `ml-critic.md` | Adversarial critic — finds flaws the PoC hasn't tested (Stage A.1) | `ml-lab` (Step 3: 1× in debate Stage A; 3× in ensemble mode) |
-| `ml-critic-r2.md` | R2 challenger — issues ACCEPT/CHALLENGE/PARTIAL verdicts on defender rebuttals (Stage B.1) | `ml-lab` (Step 3: debate Stage B only) |
-| `ml-defender.md` | Design defender — 7-type structured rebuttal taxonomy; concedes, rebuts, or defers (Stage A.2 and B.2) | `ml-lab` (Step 3 — **debate mode only**) |
-| `report-writer.md` | Technical report writer — Opus-class; Mode 1: full investigation report (REPORT.md); Mode 2: publication-ready results-mode synthesis (TECHNICAL_REPORT.md) | `ml-lab` (Steps 8, 11) |
-| `research-reviewer.md` | Deep peer reviewer — Opus-class structured review of REPORT.md | `ml-lab` (Step 10, Round 1) |
-| `research-reviewer-lite.md` | Verification reviewer — Haiku-class follow-up review | `ml-lab` (Step 10, Rounds 2–3) |
-| `readme-rewriter.md` | Outside-reader README rewriter — diagnoses and rewrites for external audiences | `ml-lab` (Step 13) |
+The `/ml-lab` skill orchestrates the investigation in the main session. It dispatches the following subagents via the Agent tool:
 
-All agents except `ml-lab` are subagents dispatched via the Agent tool. In **debate mode** (the default), `ml-critic` (Stage A.1) and `ml-defender` (Stage A.2) run once, followed by a convergence loop of `ml-critic-r2` (Stage B.1) and `ml-defender` (Stage B.2) up to max_rounds=4. In **ensemble mode** (opt-in), `ml-defender` and `ml-critic-r2` are not dispatched — three independent `ml-critic` dispatches with union pooling.
+| File | Role | Dispatched at |
+|------|------|---------------|
+| `ml-critic.md` | Adversarial critic — finds flaws the PoC hasn't tested (Stage A.1) | Step 3: 1× in debate Stage A; 3× in ensemble mode |
+| `ml-critic-r2.md` | R2 challenger — issues ACCEPT/CHALLENGE/PARTIAL verdicts on defender rebuttals (Stage B.1) | Step 3: debate Stage B only |
+| `ml-defender.md` | Design defender — 7-type structured rebuttal taxonomy; concedes, rebuts, or defers (Stage A.2 and B.2) | Step 3 — **debate mode only** |
+| `report-writer.md` | Technical report writer — Opus-class; Mode 1: full investigation report (REPORT.md); Mode 2: publication-ready results-mode synthesis (TECHNICAL_REPORT.md) | Steps 8, 11 |
+| `research-reviewer.md` | Deep peer reviewer — Opus-class structured review of REPORT.md | Step 10, Round 1 |
+| `research-reviewer-lite.md` | Verification reviewer — Haiku-class follow-up review | Step 10, Rounds 2–3 |
+| `readme-rewriter.md` | Outside-reader README rewriter — diagnoses and rewrites for external audiences | Step 13 |
+
+In **debate mode** (the default), `ml-critic` (Stage A.1) and `ml-defender` (Stage A.2) run once, followed by a convergence loop of `ml-critic-r2` (Stage B.1) and `ml-defender` (Stage B.2) up to max_rounds=4. In **ensemble mode** (opt-in), `ml-defender` and `ml-critic-r2` are not dispatched — three independent `ml-critic` dispatches with union pooling.
 
 ```
 User hypothesis
       |
-   [ml-lab]  ←——————————————— orchestrates all 13 core steps
+   /ml-lab   ←——————————————— orchestrates all 13 core steps (main session skill)
       |
       +——— Steps 1-2:   builds PoC, reviews intent
       |
@@ -232,7 +232,7 @@ uv run log_entry.py --step 5 --cat gate --action gate_experiment_plan_approved \
   --meta '{"empirical_tests":4,"conceded_points":2}'
 ```
 
-The full schema, rhythm rules, and `log_entry.py` source are in [`plugins/ml-lab/ml-lab.md`](plugins/ml-lab/ml-lab.md).
+The full schema, rhythm rules, and `log_entry.py` source are in [`plugins/ml-lab/skills/ml-lab/SKILL.md`](plugins/ml-lab/skills/ml-lab/SKILL.md).
 
 ---
 
@@ -502,19 +502,15 @@ See [`experiments/self_debate_experiment_v2/README.md`](experiments/self_debate_
 
 **Do I need Claude Code installed before I can use ml-lab?**
 
-Yes. ml-lab is a Claude Code agent — it requires Claude Code to be installed. The plugin copies agent definition files to `~/.claude/agents/`; Claude Code then makes them available as spawnable agents.
+Yes. ml-lab is a Claude Code plugin — it requires Claude Code to be installed. The plugin installs the `/ml-lab` skill and subagent definitions; Claude Code then makes them available for investigations.
 
-**Are all eight agent files required, or can I use a subset?**
+**Are all seven agent files required, or can I use a subset?**
 
-`ml-lab.md` and `ml-critic.md` are required for the core workflow. `ml-critic-r2.md` and `ml-defender.md` are only needed if you plan to use debate mode (the default) — they are not dispatched in ensemble mode. `research-reviewer.md` and `research-reviewer-lite.md` are only needed if you want the Step 10 peer review loop. `readme-rewriter.md` is only needed for the optional Step 13 README rewrite. `report-writer.md` is only needed for report generation (Steps 8, 11). The plugin installs all eight by default.
+`ml-critic.md` is required for the core workflow. `ml-critic-r2.md` and `ml-defender.md` are only needed if you plan to use debate mode (the default) — they are not dispatched in ensemble mode. `research-reviewer.md` and `research-reviewer-lite.md` are only needed if you want the Step 10 peer review loop. `readme-rewriter.md` is only needed for the optional Step 13 README rewrite. `report-writer.md` is only needed for report generation (Steps 8, 11). The plugin installs all seven by default.
 
 **Is manual installation equivalent to the plugin?**
 
-Yes — both copy the same eight agent files to `~/.claude/agents/`. The plugin method automates the copy and surfaces updates when you run `/plugin marketplace update ml-lab`. Manual install gives you direct control but requires manual updates.
-
-**If I uninstall the plugin, what happens to my investigation data?**
-
-Uninstalling removes the agent files from `~/.claude/agents/` but does **not** remove agent memory at `~/.claude/agent-memory/ml-lab/`. Your investigation history is preserved. Delete that directory manually if you want a clean slate.
+Yes — both install the same skill and seven agent files. The plugin method automates the install and surfaces updates when you run `/plugin marketplace update ml-lab`. Manual install gives you direct control but requires manual updates.
 
 ---
 
@@ -522,7 +518,7 @@ Uninstalling removes the agent files from `~/.claude/agents/` but does **not** r
 
 **What happens when I first invoke ml-lab?**
 
-Before writing any code, ml-lab asks four questions: (1) the hypothesis sharpened into a falsifiable claim with a named mechanism and expected observable, (2) the primary evaluation metric(s), (3) report mode — full report or conclusions only, and (4) review mode — debate (default) or ensemble (opt-in). It will not dispatch any subagents or write any code until all four are settled and `HYPOTHESIS.md` is written.
+Before writing any code, `/ml-lab` asks four questions: (1) the hypothesis sharpened into a falsifiable claim with a named mechanism and expected observable, (2) the primary evaluation metric(s), (3) report mode — full report or conclusions only, and (4) review mode — debate (default) or ensemble (opt-in). It will not dispatch any subagents or write any code until all four are settled and `HYPOTHESIS.md` is written.
 
 **How long does a full investigation take?**
 
@@ -614,7 +610,7 @@ This was a known limitation in v2 (all roles including scorer used Claude). Both
 | [`experiments/self_debate_experiment_v6/REPORT.md`](experiments/self_debate_experiment_v6/REPORT.md) | v6 full technical report — 120-case benchmark results |
 | [`experiments/self_debate_experiment_v6/plan/PLAN.md`](experiments/self_debate_experiment_v6/plan/PLAN.md) | v6 10-phase experimental design, reference documents |
 | [`experiments/self_debate_experiment_v2/TECHNICAL_REPORT.md`](experiments/self_debate_experiment_v2/TECHNICAL_REPORT.md) | **v2 technical report** — all v2 findings, decomposition, external validation, limitations |
-| [`plugins/ml-lab/`](plugins/ml-lab/) | Plugin source: all eight agent definitions, install config, and flow diagram |
+| [`plugins/ml-lab/`](plugins/ml-lab/) | Plugin source: `/ml-lab` skill, seven subagent definitions, install config, and flow diagram |
 | [`multi-agent-prompt.md`](experiments/self_debate_experiment/multi-agent-prompt.md) | Bootstrap prompt for the full multi-agent harness (v1) |
 | [`experiments/self_debate_experiment/`](experiments/self_debate_experiment/) | Phase 1: frozen transcripts, contaminated + isolated protocol, 11–15 cases |
 | [`experiments/self_debate_experiment_v2/`](experiments/self_debate_experiment_v2/) | Phase 2: live API, isolated protocol, 20 cases, full results |
@@ -664,4 +660,4 @@ Four project-local slash commands (defined in [`.claude/skills/`](.claude/skills
 | `/preflight` | Pre-execution readiness check for any experiment version; verifies uv, PEP 723 headers, phase files, step-number consistency, agent installation, and script syntax; reports PASS/WARN/FAIL + READY/BLOCKED |
 | `/sync-ml-lab-docs` | Propagate ml-lab.md changes to downstream artifacts (ML\_LAB\_FLOW.md mermaid flowchart and README.md) |
 
-Plugin skills: [`/ml-lab`](#install) (investigation workflow, see Part 1) and [10 ml-journal skills](#ml-journal--session-audit-trail) (session audit trail, see above).
+Plugin skills: [`/ml-lab`](#install) (investigation workflow — see Part 1) and [10 ml-journal skills](#ml-journal--session-audit-trail) (session audit trail — see above).
