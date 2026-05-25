@@ -17,6 +17,11 @@ The original FastText idea has now recursed several levels deep into its own eva
 - All scripts must be run via `uv run <script>.py` (never `python3` directly)
 - Agents (`ml-critic`, `ml-defender`, etc.) are loaded from the plugin cache — run `claude plugin install ml-lab@ml-lab` if not installed
 
+## Docs
+- `uvx zensical serve -o` — start docs dev server (opens browser)
+- `zensical build --clean` — build static site to `site/`
+- Docs source: `docs/`; config: `zensical.toml`; deploy: `.github/workflows/docs.yml`
+
 ## Experiment Structure
 - v2: complete — results in `experiments/self_debate_experiment_v2/`
 - v3: complete — results in `experiments/self_debate_experiment_v3/`; issues tracked in `POST_MORTEM.md`
